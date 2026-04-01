@@ -2,10 +2,11 @@ import crypto from 'crypto';
 import { inferenceServer } from './inferenceServer.js';
 
 const DEFAULTS = {
-  maxChunkLength: 180,
-  maxSentencesPerChunk: 3,
-  chunkJoinPauseMs: 180,
-  retryCount: 2,
+  maxChunkLength: 140,
+  maxSentencesPerChunk: 2,
+  chunkJoinPauseMs: 70,
+  crossfadeMs: 35,
+  retryCount: 3,
 };
 
 function clampNumber(value, fallback) {
@@ -13,25 +14,68 @@ function clampNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function normalizeWhitespace(text) {
   return String(text || '')
     .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+/g, ' ')
+    .replace(/[\t\f\v ]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
+function normalizeInferenceText(text) {
+  return normalizeWhitespace(text)
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/([,.;:!?])(?=[^\s\n”"')\]\}])/g, '$1 ')
+    .replace(/([。！？；：，、])(?=[^\s\n”"')\]\}])/gu, '$1 ')
+    .replace(/([\-–—]){2,}/g, '—')
+    .replace(/([!?。，、；：])\1{1,}/gu, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function splitIntoSentences(text) {
-  const normalized = normalizeWhitespace(text);
+  const normalized = normalizeInferenceText(text);
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…])\s+|\n+/u)
+    .split(/(?<=[.!?。！？…;；:：])\s+|\n+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
-  if (sentences.length > 0) return sentences;
-  return [normalized];
+  return sentences.length > 0 ? sentences : [normalized];
+}
+
+function cutAtPreferredBoundary(text, maxChunkLength) {
+  const searchWindow = text.slice(0, maxChunkLength + 1);
+  const boundaries = [
+    /,\s+/g,
+    /;\s+/g,
+    /:\s+/g,
+    /，\s*/gu,
+    /；\s*/gu,
+    /：\s*/gu,
+    /\s+(and|but|or|because|which|that|while|when|then|so)\s+/giu,
+    /\s+/g,
+  ];
+
+  let bestIndex = -1;
+  for (const regex of boundaries) {
+    let match;
+    while ((match = regex.exec(searchWindow)) !== null) {
+      const candidate = match.index + match[0].length - 1;
+      if (candidate >= Math.floor(maxChunkLength * 0.5)) {
+        bestIndex = Math.max(bestIndex, candidate);
+      }
+    }
+    if (bestIndex >= Math.floor(maxChunkLength * 0.72)) break;
+  }
+
+  return bestIndex >= 0 ? bestIndex : maxChunkLength;
 }
 
 function splitLongSentence(sentence, maxChunkLength) {
@@ -39,23 +83,11 @@ function splitLongSentence(sentence, maxChunkLength) {
 
   const parts = [];
   let remaining = sentence.trim();
-  const separators = [',', ';', ':', '，', '；', '：'];
 
   while (remaining.length > maxChunkLength) {
-    let cut = -1;
-    const searchWindow = remaining.slice(0, maxChunkLength + 1);
-    for (const sep of separators) {
-      const idx = searchWindow.lastIndexOf(sep);
-      if (idx > cut) cut = idx;
-    }
-    if (cut < Math.floor(maxChunkLength * 0.5)) {
-      cut = searchWindow.lastIndexOf(' ');
-    }
-    if (cut < Math.floor(maxChunkLength * 0.5)) {
-      cut = maxChunkLength;
-    }
-
-    parts.push(remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim());
+    const cut = cutAtPreferredBoundary(remaining, maxChunkLength);
+    const nextPart = remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    if (nextPart) parts.push(nextPart);
     remaining = remaining.slice(cut + (cut === maxChunkLength ? 0 : 1)).trim();
   }
 
@@ -64,7 +96,7 @@ function splitLongSentence(sentence, maxChunkLength) {
 }
 
 export function splitTextIntoChunks(text, options = {}) {
-  const maxChunkLength = Math.max(80, clampNumber(options.maxChunkLength, DEFAULTS.maxChunkLength));
+  const maxChunkLength = Math.max(70, clampNumber(options.maxChunkLength, DEFAULTS.maxChunkLength));
   const maxSentencesPerChunk = Math.max(1, clampNumber(options.maxSentencesPerChunk, DEFAULTS.maxSentencesPerChunk));
 
   const rawSentences = splitIntoSentences(text).flatMap(sentence => splitLongSentence(sentence, maxChunkLength));
@@ -166,7 +198,106 @@ function createSilenceBytes(durationMs, parsedWav) {
   return Buffer.alloc(byteLength, 0);
 }
 
-export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
+function bytesToSampleArray(dataChunk, wav) {
+  const frameCount = Math.floor(dataChunk.length / wav.blockAlign);
+  const sampleCount = frameCount * wav.numChannels;
+
+  if (wav.audioFormat === 1 && wav.bitsPerSample === 16) {
+    const samples = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i += 1) {
+      samples[i] = dataChunk.readInt16LE(i * 2) / 32768;
+    }
+    return samples;
+  }
+
+  if (wav.audioFormat === 3 && wav.bitsPerSample === 32) {
+    const samples = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i += 1) {
+      samples[i] = dataChunk.readFloatLE(i * 4);
+    }
+    return samples;
+  }
+
+  throw new Error(`Unsupported WAV format for smoothing: format=${wav.audioFormat}, bits=${wav.bitsPerSample}`);
+}
+
+function sampleArrayToBytes(samples, wav) {
+  if (wav.audioFormat === 1 && wav.bitsPerSample === 16) {
+    const output = Buffer.alloc(samples.length * 2);
+    for (let i = 0; i < samples.length; i += 1) {
+      const value = Math.round(clamp(samples[i], -1, 1) * 32767);
+      output.writeInt16LE(value, i * 2);
+    }
+    return output;
+  }
+
+  if (wav.audioFormat === 3 && wav.bitsPerSample === 32) {
+    const output = Buffer.alloc(samples.length * 4);
+    for (let i = 0; i < samples.length; i += 1) {
+      output.writeFloatLE(clamp(samples[i], -1, 1), i * 4);
+    }
+    return output;
+  }
+
+  throw new Error(`Unsupported WAV format for smoothing: format=${wav.audioFormat}, bits=${wav.bitsPerSample}`);
+}
+
+function joinSampleArraysWithCrossfade(arrays, wav, pauseMs, crossfadeMs) {
+  const channels = wav.numChannels;
+  const pauseFrames = Math.max(0, Math.round((pauseMs / 1000) * wav.sampleRate));
+  const crossfadeFramesTarget = Math.max(0, Math.round((crossfadeMs / 1000) * wav.sampleRate));
+  const pauseSamples = pauseFrames * channels;
+
+  let output = new Float32Array(0);
+
+  arrays.forEach((currentArray, index) => {
+    if (index === 0) {
+      output = currentArray;
+      return;
+    }
+
+    const prevFrames = Math.floor(output.length / channels);
+    const currFrames = Math.floor(currentArray.length / channels);
+    const crossfadeFrames = Math.min(crossfadeFramesTarget, prevFrames, currFrames, 4096);
+
+    if (crossfadeFrames <= 0) {
+      const combined = new Float32Array(output.length + pauseSamples + currentArray.length);
+      combined.set(output, 0);
+      combined.set(currentArray, output.length + pauseSamples);
+      output = combined;
+      return;
+    }
+
+    const crossfadeSamples = crossfadeFrames * channels;
+    const keptOutputLength = output.length - crossfadeSamples;
+    const tail = output.slice(keptOutputLength);
+    const head = currentArray.slice(0, crossfadeSamples);
+    const remainder = currentArray.slice(crossfadeSamples);
+    const adjustedPauseSamples = Math.max(0, pauseSamples - crossfadeSamples);
+
+    const combined = new Float32Array(keptOutputLength + crossfadeSamples + adjustedPauseSamples + remainder.length);
+    combined.set(output.slice(0, keptOutputLength), 0);
+
+    for (let frame = 0; frame < crossfadeFrames; frame += 1) {
+      const fadeOut = (crossfadeFrames - frame) / crossfadeFrames;
+      const fadeIn = (frame + 1) / crossfadeFrames;
+      for (let channel = 0; channel < channels; channel += 1) {
+        const idx = frame * channels + channel;
+        combined[keptOutputLength + idx] = (tail[idx] * fadeOut) + (head[idx] * fadeIn);
+      }
+    }
+
+    if (remainder.length > 0) {
+      combined.set(remainder, keptOutputLength + crossfadeSamples + adjustedPauseSamples);
+    }
+
+    output = combined;
+  });
+
+  return output;
+}
+
+export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, crossfadeMs = DEFAULTS.crossfadeMs) {
   if (!Array.isArray(buffers) || buffers.length === 0) {
     throw new Error('No audio buffers to concatenate');
   }
@@ -186,14 +317,24 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
     }
   }
 
-  const joinedChunks = [];
-  const silence = createSilenceBytes(pauseMs, first);
-  parsed.forEach((wav, index) => {
-    joinedChunks.push(wav.dataChunk);
-    if (index < parsed.length - 1 && silence.length > 0) joinedChunks.push(silence);
-  });
-
-  return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
+  try {
+    const sampleArrays = parsed.map(wav => bytesToSampleArray(wav.dataChunk, wav));
+    const joinedSamples = joinSampleArraysWithCrossfade(
+      sampleArrays,
+      first,
+      clampNumber(pauseMs, DEFAULTS.chunkJoinPauseMs),
+      clampNumber(crossfadeMs, DEFAULTS.crossfadeMs),
+    );
+    return buildWav(first.fmtChunk, sampleArrayToBytes(joinedSamples, first));
+  } catch {
+    const joinedChunks = [];
+    const silence = createSilenceBytes(pauseMs, first);
+    parsed.forEach((wav, index) => {
+      joinedChunks.push(wav.dataChunk);
+      if (index < parsed.length - 1 && silence.length > 0) joinedChunks.push(silence);
+    });
+    return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
+  }
 }
 
 export function analyzeAudioQuality(buffer, expectedText = '') {
@@ -202,13 +343,16 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   const bytesPerSample = Math.max(1, wav.bitsPerSample / 8);
   const frameCount = Math.floor(bytes.length / wav.blockAlign);
   const durationSec = frameCount / wav.sampleRate;
-  const expectedMinDurationSec = Math.max(0.25, Math.min(12, expectedText.length / 45));
+  const expectedMinDurationSec = Math.max(0.25, Math.min(14, expectedText.length / 42));
 
   let sampleCount = 0;
   let absPeak = 0;
   let rmsSum = 0;
   let zeroishCount = 0;
   let clippedCount = 0;
+  let highEnergyCount = 0;
+
+  const isQuiet = (abs) => abs < 0.0025;
 
   if (wav.audioFormat === 1 && wav.bitsPerSample === 16) {
     for (let offset = 0; offset + 1 < bytes.length; offset += bytesPerSample) {
@@ -216,8 +360,9 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
       const abs = Math.abs(sample);
       absPeak = Math.max(absPeak, abs);
       rmsSum += sample * sample;
-      if (abs < 0.002) zeroishCount += 1;
-      if (abs > 0.98) clippedCount += 1;
+      if (isQuiet(abs)) zeroishCount += 1;
+      if (abs > 0.985) clippedCount += 1;
+      if (abs > 0.5) highEnergyCount += 1;
       sampleCount += 1;
     }
   } else if (wav.audioFormat === 3 && wav.bitsPerSample === 32) {
@@ -226,8 +371,9 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
       const abs = Math.abs(sample);
       absPeak = Math.max(absPeak, abs);
       rmsSum += sample * sample;
-      if (abs < 0.002) zeroishCount += 1;
-      if (abs > 0.98) clippedCount += 1;
+      if (isQuiet(abs)) zeroishCount += 1;
+      if (abs > 0.985) clippedCount += 1;
+      if (abs > 0.5) highEnergyCount += 1;
       sampleCount += 1;
     }
   } else {
@@ -242,73 +388,96 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   const rms = sampleCount > 0 ? Math.sqrt(rmsSum / sampleCount) : 0;
   const zeroishRatio = sampleCount > 0 ? zeroishCount / sampleCount : 1;
   const clippedRatio = sampleCount > 0 ? clippedCount / sampleCount : 0;
+  const harshRatio = sampleCount > 0 ? highEnergyCount / sampleCount : 0;
 
   let reason = null;
-  if (durationSec < expectedMinDurationSec * 0.45) {
+  if (durationSec < expectedMinDurationSec * 0.42) {
     reason = `Audio duration too short for text (${durationSec.toFixed(2)}s)`;
   } else if (rms < 0.003) {
     reason = 'Generated audio is effectively silent';
   } else if (zeroishRatio > 0.995) {
     reason = 'Generated audio contains almost no speech energy';
-  } else if (clippedRatio > 0.2) {
+  } else if (clippedRatio > 0.18) {
     reason = 'Generated audio appears heavily clipped or corrupted';
+  } else if (absPeak > 0.999 && harshRatio > 0.2) {
+    reason = 'Generated audio looks unstable or overly noisy';
   }
 
   return {
     ok: !reason,
     durationSec,
     reason,
-    metrics: { rms, absPeak, zeroishRatio, clippedRatio },
+    metrics: { rms, absPeak, zeroishRatio, clippedRatio, harshRatio },
   };
 }
 
 function buildAttemptVariants(baseParams, attemptIndex) {
-  const variants = [];
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
   const safeTopK = clampNumber(baseParams.top_k, 5);
   const speed = clampNumber(baseParams.speed_factor, 1);
+  const normalizedText = normalizeInferenceText(baseParams.text);
 
-  variants.push({
+  const baseVariant = {
     ...baseParams,
+    text: normalizedText,
     seed: baseParams.seed ?? Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16),
     text_split_method: baseParams.text_split_method || 'cut5',
     batch_size: 1,
+    batch_threshold: 0.7,
     streaming_mode: false,
     split_bucket: true,
     parallel_infer: false,
-    fragment_interval: 0.18,
-    repetition_penalty: 1.05,
+    fragment_interval: 0.12,
+    repetition_penalty: 1.08,
     speed_factor: speed,
-  });
+    top_k: safeTopK,
+    top_p: safeTopP,
+    temperature: safeTemperature,
+  };
 
-  if (attemptIndex >= 1) {
-    variants.push({
-      ...variants[0],
-      temperature: Math.max(0.6, safeTemperature * 0.82),
-      top_p: Math.min(0.92, safeTopP),
-      top_k: Math.max(3, Math.min(safeTopK, 8)),
-      fragment_interval: 0.22,
-      repetition_penalty: 1.08,
-      seed: (variants[0].seed + 17) >>> 0,
-    });
-  }
+  if (attemptIndex === 0) return baseVariant;
 
-  if (attemptIndex >= 2) {
-    variants.push({
-      ...variants[0],
-      temperature: 0.65,
-      top_p: 0.88,
-      top_k: 5,
-      fragment_interval: 0.25,
+  if (attemptIndex === 1) {
+    return {
+      ...baseVariant,
+      temperature: Math.max(0.68, safeTemperature * 0.82),
+      top_p: Math.min(0.9, safeTopP),
+      top_k: Math.max(3, Math.min(safeTopK, 6)),
+      fragment_interval: 0.16,
       repetition_penalty: 1.1,
-      seed: (variants[0].seed + 31) >>> 0,
-      text_split_method: 'cut0',
-      split_bucket: false,
-    });
+      speed_factor: Math.min(speed, 0.98),
+      seed: (baseVariant.seed + 17) >>> 0,
+    };
   }
 
-  return variants[variants.length - 1];
+  if (attemptIndex === 2) {
+    return {
+      ...baseVariant,
+      temperature: 0.65,
+      top_p: 0.86,
+      top_k: 4,
+      fragment_interval: 0.2,
+      repetition_penalty: 1.12,
+      speed_factor: Math.min(speed, 0.96),
+      text_split_method: 'cut4',
+      split_bucket: false,
+      seed: (baseVariant.seed + 31) >>> 0,
+    };
+  }
+
+  return {
+    ...baseVariant,
+    temperature: 0.62,
+    top_p: 0.82,
+    top_k: 3,
+    fragment_interval: 0.24,
+    repetition_penalty: 1.15,
+    speed_factor: Math.min(speed, 0.94),
+    text_split_method: 'cut0',
+    split_bucket: false,
+    seed: (baseVariant.seed + 53) >>> 0,
+  };
 }
 
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
@@ -333,7 +502,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
 }
 
 export async function synthesizeLongText(params, options = {}) {
-  const chunks = splitTextIntoChunks(params.text, options);
+  const cleanedText = normalizeInferenceText(params.text);
+  const chunks = splitTextIntoChunks(cleanedText, options);
   if (chunks.length === 0) {
     throw new Error('No text to synthesize');
   }
@@ -355,7 +525,11 @@ export async function synthesizeLongText(params, options = {}) {
 
   const finalBuffer = buffers.length === 1
     ? buffers[0]
-    : concatWavs(buffers, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs));
+    : concatWavs(
+      buffers,
+      clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs),
+      clampNumber(options.crossfadeMs, DEFAULTS.crossfadeMs),
+    );
 
-  return { audioBuffer: finalBuffer, chunks: metadata };
+  return { audioBuffer: finalBuffer, chunks: metadata, normalizedText: cleanedText };
 }
