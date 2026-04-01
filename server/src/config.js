@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs';
 
 if (!process.env.GPT_SOVITS_ROOT) {
   console.error('ERROR: GPT_SOVITS_ROOT is not set.');
@@ -9,6 +10,22 @@ if (!process.env.GPT_SOVITS_ROOT) {
 }
 
 const GPT_SOVITS_ROOT = process.env.GPT_SOVITS_ROOT;
+
+// Validate that the GPT-SoVITS root actually exists
+if (!fs.existsSync(GPT_SOVITS_ROOT)) {
+  console.error(`ERROR: GPT_SOVITS_ROOT path does not exist: ${GPT_SOVITS_ROOT}`);
+  console.error('Update your .env file with the correct path to your GPT-SoVITS installation.');
+  process.exit(1);
+}
+
+const pythonPath = path.join(GPT_SOVITS_ROOT, 'runtime', 'python.exe');
+if (!fs.existsSync(pythonPath)) {
+  console.error(`ERROR: Python executable not found at: ${pythonPath}`);
+  console.error('Make sure your GPT-SoVITS installation includes the runtime/ folder.');
+  process.exit(1);
+}
+
+console.log(`GPT-SoVITS root: ${GPT_SOVITS_ROOT}`);
 
 const PYTHON_EXEC = path.join(GPT_SOVITS_ROOT, 'runtime', 'python.exe');
 

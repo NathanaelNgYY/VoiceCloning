@@ -1,6 +1,28 @@
 class SSEManager {
   constructor() {
     this.clients = new Map(); // sessionId -> { res, heartbeat }
+    this.buffers = new Map(); // sessionId -> [{ event, data }]
+    this.waiters = new Map(); // sessionId -> resolve function
+  }
+
+  // Call this before starting the pipeline to buffer events until client connects
+  prepareSession(sessionId) {
+    this.buffers.set(sessionId, []);
+  }
+
+  // Returns a promise that resolves when the SSE client connects
+  waitForClient(sessionId, timeoutMs = 5000) {
+    if (this.clients.has(sessionId)) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters.delete(sessionId);
+        reject(new Error('SSE client did not connect in time'));
+      }, timeoutMs);
+      this.waiters.set(sessionId, () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   addClient(sessionId, res) {
@@ -28,6 +50,22 @@ class SSEManager {
 
     this.clients.set(sessionId, { res, heartbeat });
 
+    // Flush any buffered events
+    const buffer = this.buffers.get(sessionId);
+    if (buffer) {
+      for (const msg of buffer) {
+        res.write(`event: ${msg.event}\ndata: ${JSON.stringify(msg.data)}\n\n`);
+      }
+      this.buffers.delete(sessionId);
+    }
+
+    // Resolve anyone waiting for this client
+    const waiter = this.waiters.get(sessionId);
+    if (waiter) {
+      this.waiters.delete(sessionId);
+      waiter();
+    }
+
     res.on('close', () => {
       clearInterval(heartbeat);
       this.clients.delete(sessionId);
@@ -36,9 +74,16 @@ class SSEManager {
 
   send(sessionId, event, data) {
     const client = this.clients.get(sessionId);
-    if (!client) return;
+    if (client) {
+      client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      return;
+    }
 
-    client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    // Buffer the event if session is prepared but client hasn't connected yet
+    const buffer = this.buffers.get(sessionId);
+    if (buffer) {
+      buffer.push({ event, data });
+    }
   }
 
   hasClient(sessionId) {

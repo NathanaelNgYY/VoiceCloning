@@ -29,16 +29,25 @@ router.post('/train', (req, res) => {
   const sessionId = uuidv4();
   sessions.set(sessionId, { expName, startedAt: Date.now() });
 
-  // Run pipeline in background (don't await)
-  runPipeline(sessionId, {
-    expName,
-    batchSize,
-    sovitsEpochs,
-    gptEpochs,
-    sovitsSaveEvery,
-    gptSaveEvery,
-    asrLanguage,
-    asrModel,
+  // Prepare SSE buffer so events are captured before the client connects
+  sseManager.prepareSession(sessionId);
+
+  // Wait for SSE client to connect, then start pipeline
+  sseManager.waitForClient(sessionId).then(() => {
+    return runPipeline(sessionId, {
+      expName,
+      batchSize,
+      sovitsEpochs,
+      gptEpochs,
+      sovitsSaveEvery,
+      gptSaveEvery,
+      asrLanguage,
+      asrModel,
+    });
+  }).catch((err) => {
+    sseManager.send(sessionId, 'error', {
+      message: err.message || 'Pipeline failed to start',
+    });
   }).finally(() => {
     sessions.delete(sessionId);
   });
