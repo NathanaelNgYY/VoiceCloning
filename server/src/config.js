@@ -66,6 +66,7 @@ const SCRIPTS = {
   slice: path.join(TOOLS_DIR, 'slice_audio.py'),
   denoise: path.join(TOOLS_DIR, 'cmd-denoise.py'),
   asr: path.join(TOOLS_DIR, 'asr', 'fasterwhisper_asr.py'),
+  transcribeSingle: path.join(TOOLS_DIR, 'asr', 'transcribe_single.py'),
   getText: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '1-get-text.py'),
   getHubert: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '2-get-hubert-wav32k.py'),
   getSemantic: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '3-get-semantic.py'),
