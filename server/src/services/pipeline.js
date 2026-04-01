@@ -11,20 +11,12 @@ import {
 } from '../config.js';
 import { processManager } from './processManager.js';
 import { sseManager } from './sseManager.js';
+import { trainingState } from './trainingState.js';
 import { generateSoVITSConfig, generateGPTConfig } from './configGenerator.js';
-
-const STEPS = [
-  'Slice Audio',
-  'Denoise',
-  'ASR (Speech Recognition)',
-  'Extract Text Features',
-  'Extract HuBERT Features',
-  'Extract Semantic Features',
-  'Train SoVITS',
-  'Train GPT',
-];
+import { STEPS } from './trainingSteps.js';
 
 function sendStep(sessionId, stepIndex, status, detail) {
+  trainingState.setStepStatus(stepIndex, status, detail || '');
   sseManager.send(sessionId, 'step-start', {
     step: stepIndex,
     name: STEPS[stepIndex],
@@ -34,6 +26,7 @@ function sendStep(sessionId, stepIndex, status, detail) {
 }
 
 function completeStep(sessionId, stepIndex, code = 0) {
+  trainingState.setStepStatus(stepIndex, code === 0 ? 'done' : 'error');
   sseManager.send(sessionId, 'step-complete', {
     step: stepIndex,
     name: STEPS[stepIndex],
@@ -64,11 +57,11 @@ function mergePartFiles(dir, baseName, ext, hasHeader = false) {
 }
 
 function skipStep(sessionId, stepIndex, reason) {
-  sseManager.send(sessionId, 'step-start', {
-    step: stepIndex,
-    name: STEPS[stepIndex],
-    status: 'skipped',
-    detail: reason,
+  sendStep(sessionId, stepIndex, 'skipped', reason);
+  trainingState.appendLog({
+    stream: 'stdout',
+    data: `Skipping "${STEPS[stepIndex]}": ${reason}\n`,
+    timestamp: Date.now(),
   });
   sseManager.send(sessionId, 'log', {
     stream: 'stdout',
@@ -281,15 +274,20 @@ export async function runPipeline(sessionId, {
   ];
 
   try {
+    trainingState.setStatus('running');
+
     for (let i = 0; i < steps.length; i++) {
       const result = await steps[i]();
       if (result !== 'skipped') {
         completeStep(sessionId, i, 0);
       }
     }
+
+    trainingState.setStatus('complete');
     sseManager.send(sessionId, 'pipeline-complete', { success: true });
   } catch (err) {
     const errorMsg = parseError(err.message || String(err));
+    trainingState.setError(errorMsg);
     sseManager.send(sessionId, 'error', {
       message: errorMsg,
       raw: String(err),

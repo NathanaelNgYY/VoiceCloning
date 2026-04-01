@@ -31,6 +31,11 @@ export function stopTraining(sessionId) {
   return api.post('/train/stop', { sessionId });
 }
 
+// Get current training state
+export function getCurrentTraining() {
+  return api.get('/train/current');
+}
+
 // Get available models
 export function getModels() {
   return api.get('/models');
