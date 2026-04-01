@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from '../components/ModelSelector.jsx';
 import AudioPlayer from '../components/AudioPlayer.jsx';
-import { getModels, selectModels, uploadRefAudio, synthesize, getInferenceStatus } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus } from '../services/api.js';
 
 /* ── Shared styles ── */
 
@@ -107,6 +107,133 @@ const SpinnerSmall = () => (
   </svg>
 );
 
+function formatTime(s) {
+  if (!s || !isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+const PlayIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="#d4a053" stroke="none">
+    <polygon points="4,2 14,8 4,14" />
+  </svg>
+);
+
+const PauseIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="#d4a053" stroke="none">
+    <rect x="3" y="2" width="3.5" height="12" rx="1" />
+    <rect x="9.5" y="2" width="3.5" height="12" rx="1" />
+  </svg>
+);
+
+function RefAudioPlayer({ src }) {
+  const audioRef = useRef(null);
+  const progressRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [src]);
+
+  const togglePlay = useCallback(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) { a.play(); setPlaying(true); }
+    else { a.pause(); setPlaying(false); }
+  }, []);
+
+  const handleSeek = useCallback((e) => {
+    const bar = progressRef.current;
+    const a = audioRef.current;
+    if (!bar || !a || !a.duration) return;
+    const rect = bar.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    a.currentTime = ratio * a.duration;
+  }, []);
+
+  const progress = duration ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div style={{
+      marginTop: '10px',
+      padding: '8px 12px',
+      background: '#0c0c0f',
+      border: '1px solid #2a2a30',
+      borderRadius: '8px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+    }}>
+      <audio
+        ref={audioRef}
+        src={src}
+        onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onEnded={() => setPlaying(false)}
+      />
+
+      <button
+        onClick={togglePlay}
+        style={{
+          width: '32px',
+          height: '32px',
+          borderRadius: '50%',
+          border: '1px solid #d4a053',
+          background: 'rgba(212, 160, 83, 0.08)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          transition: 'background 0.15s ease',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(212, 160, 83, 0.18)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(212, 160, 83, 0.08)'; }}
+      >
+        {playing ? <PauseIcon /> : <PlayIcon />}
+      </button>
+
+      <span style={{ fontSize: '11px', color: '#6b6b70', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        {formatTime(currentTime)}
+      </span>
+
+      <div
+        ref={progressRef}
+        onClick={handleSeek}
+        style={{
+          flex: 1,
+          height: '6px',
+          background: '#1e1e24',
+          borderRadius: '3px',
+          cursor: 'pointer',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          height: '100%',
+          width: `${progress}%`,
+          background: 'linear-gradient(90deg, #d4a053, #c08a3a)',
+          borderRadius: '3px',
+          transition: 'width 0.1s linear',
+        }} />
+      </div>
+
+      <span style={{ fontSize: '11px', color: '#6b6b70', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+        {formatTime(duration)}
+      </span>
+    </div>
+  );
+}
+
 export default function InferencePage() {
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
@@ -118,8 +245,10 @@ export default function InferencePage() {
 
   const [refAudioPath, setRefAudioPath] = useState('');
   const [refAudioFile, setRefAudioFile] = useState(null);
+  const [refAudioUrl, setRefAudioUrl] = useState(null);
   const [promptText, setPromptText] = useState('');
   const [promptLang, setPromptLang] = useState('en');
+  const [transcribing, setTranscribing] = useState(false);
 
   const [text, setText] = useState('');
   const [textLang, setTextLang] = useState('en');
@@ -174,11 +303,28 @@ export default function InferencePage() {
     const file = e.target.files[0];
     if (!file) return;
     setRefAudioFile(file);
+    // Revoke old blob URL to avoid memory leaks
+    if (refAudioUrl) URL.revokeObjectURL(refAudioUrl);
+    setRefAudioUrl(URL.createObjectURL(file));
     try {
       const res = await uploadRefAudio(file);
       setRefAudioPath(res.data.path);
     } catch (err) {
       alert('Failed to upload reference audio: ' + (err.response?.data?.error || err.message));
+    }
+  }
+
+  async function handleTranscribe() {
+    if (!refAudioPath) return alert('Upload reference audio first');
+    setTranscribing(true);
+    try {
+      const res = await transcribeAudio(refAudioPath, promptLang);
+      setPromptText(res.data.text);
+      if (res.data.language) setPromptLang(res.data.language);
+    } catch (err) {
+      alert('Transcription failed: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setTranscribing(false);
     }
   }
 
@@ -369,17 +515,47 @@ export default function InferencePage() {
                 </span>
               </div>
             )}
+            {refAudioUrl && (
+              <RefAudioPlayer src={refAudioUrl} />
+            )}
           </div>
           <div>
             <label style={label}>Reference Transcript</label>
-            <input
-              style={input}
-              placeholder="What the reference audio says..."
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = '#d4a053'; }}
-              onBlur={(e) => { e.target.style.borderColor = '#2a2a30'; }}
-            />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                style={{ ...input, flex: 1 }}
+                placeholder="What the reference audio says..."
+                value={promptText}
+                onChange={(e) => setPromptText(e.target.value)}
+                onFocus={(e) => { e.target.style.borderColor = '#d4a053'; }}
+                onBlur={(e) => { e.target.style.borderColor = '#2a2a30'; }}
+              />
+              <button
+                style={{
+                  padding: '8px 14px',
+                  background: transcribing ? '#18181d' : '#18181d',
+                  border: '1px solid #2a2a30',
+                  borderRadius: '8px',
+                  color: transcribing ? '#4a4a50' : '#b0ada6',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  cursor: transcribing ? 'not-allowed' : 'pointer',
+                  fontFamily: '"DM Sans", sans-serif',
+                  transition: 'all 0.15s ease',
+                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                }}
+                onClick={handleTranscribe}
+                disabled={transcribing || !refAudioPath}
+                onMouseEnter={(e) => { if (!transcribing && refAudioPath) { e.currentTarget.style.borderColor = '#d4a053'; e.currentTarget.style.color = '#d4a053'; }}}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#2a2a30'; e.currentTarget.style.color = '#b0ada6'; }}
+              >
+                {transcribing ? <SpinnerSmall /> : null}
+                {transcribing ? 'Transcribing...' : 'Auto Transcribe'}
+              </button>
+            </div>
             <div style={{ marginTop: '12px' }}>
               <label style={label}>Reference Language</label>
               <select

@@ -41,6 +41,11 @@ export function selectModels(gptPath, sovitsPath) {
   return api.post('/models/select', { gptPath, sovitsPath });
 }
 
+// Transcribe reference audio
+export function transcribeAudio(filePath, language = 'auto') {
+  return api.post('/transcribe', { filePath, language });
+}
+
 // Synthesize speech
 export async function synthesize(params) {
   const res = await api.post('/inference', params, {
