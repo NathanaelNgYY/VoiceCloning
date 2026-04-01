@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import AudioUploader from '../components/AudioUploader.jsx';
 import ProgressTracker from '../components/ProgressTracker.jsx';
 import LogViewer from '../components/LogViewer.jsx';
-import { uploadFiles, startTraining, stopTraining } from '../services/api.js';
+import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 
 /* ── Shared style builders ── */
@@ -97,9 +97,51 @@ export default function TrainingPage() {
   const [sessionId, setSessionId] = useState(null);
   const [uploadError, setUploadError] = useState(null);
 
-  const { logs, steps, pipelineStatus, error, connect, disconnect } = useSSE();
+  const { logs, steps, pipelineStatus, error, connect, disconnect, hydrate } = useSSE();
+  const restoredSessionRef = useRef(null);
 
-  const isRunning = pipelineStatus === 'running';
+  const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function restoreTrainingState() {
+      try {
+        const res = await getCurrentTraining();
+        const current = res.data;
+        if (ignore || !current?.sessionId) return;
+
+        setSessionId(current.sessionId);
+        setExpName(current.expName || '');
+
+        if (current.sessionId === restoredSessionRef.current) return;
+
+        const nextState = {
+          initialLogs: current.logs || [],
+          initialSteps: current.steps || [],
+          initialStatus: current.status || 'idle',
+          initialError: current.error || null,
+        };
+
+        if (current.status === 'running' || current.status === 'waiting') {
+          connect(current.sessionId, nextState);
+        } else {
+          disconnect();
+          hydrate(nextState);
+        }
+
+        restoredSessionRef.current = current.sessionId;
+      } catch (err) {
+        console.error('Failed to restore training state:', err);
+      }
+    }
+
+    restoreTrainingState();
+
+    return () => {
+      ignore = true;
+    };
+  }, [connect, disconnect, hydrate]);
 
   async function handleStart() {
     if (!expName.trim()) return alert('Enter an experiment name');
@@ -123,7 +165,8 @@ export default function TrainingPage() {
       });
 
       setSessionId(res.data.sessionId);
-      connect(res.data.sessionId);
+      restoredSessionRef.current = res.data.sessionId;
+      connect(res.data.sessionId, { initialStatus: 'waiting' });
     } catch (err) {
       setUploading(false);
       setUploadError(err.response?.data?.error || err.message);
@@ -135,6 +178,12 @@ export default function TrainingPage() {
     try {
       await stopTraining(sessionId);
       disconnect();
+      hydrate({
+        initialLogs: logs,
+        initialSteps: steps,
+        initialStatus: 'stopped',
+        initialError: 'Training stopped by user',
+      });
     } catch (err) {
       console.error('Failed to stop training:', err);
     }
