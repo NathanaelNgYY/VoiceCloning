@@ -1,0 +1,31 @@
+export function connectSSE(sessionId, { onLog, onStepStart, onStepComplete, onComplete, onError }) {
+  const es = new EventSource(`/api/train/status/${sessionId}`);
+
+  es.addEventListener('log', (e) => {
+    onLog?.(JSON.parse(e.data));
+  });
+
+  es.addEventListener('step-start', (e) => {
+    onStepStart?.(JSON.parse(e.data));
+  });
+
+  es.addEventListener('step-complete', (e) => {
+    onStepComplete?.(JSON.parse(e.data));
+  });
+
+  es.addEventListener('pipeline-complete', (e) => {
+    onComplete?.(JSON.parse(e.data));
+    es.close();
+  });
+
+  // Custom 'pipeline-error' event from our server (not the built-in connection error)
+  es.addEventListener('error', (e) => {
+    if (e.data) {
+      onError?.(JSON.parse(e.data));
+      es.close();
+    }
+    // If no e.data, this is a connection drop — let EventSource auto-reconnect
+  });
+
+  return es;
+}

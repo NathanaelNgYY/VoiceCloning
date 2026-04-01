@@ -1,0 +1,32 @@
+Backend (server/)                                                                                                                                                                                                   
+  - src/config.js - All GPT-SoVITS path constants                                                            - src/index.js - Express app with SSE wiring                                                               - src/services/processManager.js - Spawns/kills Python child processes, emits log events                 
+  - src/services/sseManager.js - Manages SSE client connections, broadcasts events
+  - src/services/configGenerator.js - Generates SoVITS (JSON) and GPT (YAML) training configs
+  - src/services/pipeline.js - 8-step pipeline orchestrator with file merging after steps 4 & 6
+  - src/services/inferenceServer.js - Launches/manages api_v2.py, proxies TTS requests
+  - src/routes/upload.js - File upload for training audio and reference audio
+  - src/routes/training.js - Start/stop pipeline, SSE status streaming
+  - src/routes/inference.js - Model listing, weight loading, TTS synthesis
+
+  Frontend (client/)
+
+  - App.jsx - Router with Training and Inference tabs
+  - pages/TrainingPage.jsx - Upload + settings + pipeline progress + logs
+  - pages/InferencePage.jsx - Model selection + reference audio + TTS form + audio player
+  - components/AudioUploader.jsx - Drag-and-drop audio upload with file list
+  - components/ProgressTracker.jsx - 8-step visual stepper with animated states
+  - components/LogViewer.jsx - Real-time scrollable log output with auto-scroll toggle
+  - components/AudioPlayer.jsx - Audio playback with download button
+  - components/ModelSelector.jsx - Dropdown for weight files
+  - services/api.js - Axios API client
+  - services/sse.js - EventSource wrapper
+  - hooks/useSSE.js - React hook for SSE subscription
+
+  To run:
+
+  # Terminal 1 - Backend
+  cd server && npm run dev
+
+  # Terminal 2 - Frontend
+  cd client && npm run dev
+  Then open http://localhost:5173.
