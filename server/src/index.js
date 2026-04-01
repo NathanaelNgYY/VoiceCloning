@@ -17,10 +17,6 @@ processManager.on('log', ({ sessionId, stream, data }) => {
   sseManager.send(sessionId, 'log', { stream, data, timestamp: Date.now() });
 });
 
-processManager.on('exit', ({ sessionId, code }) => {
-  sseManager.send(sessionId, 'step-complete', { code });
-});
-
 // Routes
 app.use('/api', uploadRoutes);
 app.use('/api', trainingRoutes);

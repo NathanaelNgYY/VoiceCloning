@@ -1,8 +1,22 @@
 import { spawn, execSync } from 'child_process';
 import axios from 'axios';
-import { PYTHON_EXEC, SCRIPTS, GPT_SOVITS_ROOT, INFERENCE_HOST, INFERENCE_PORT } from '../config.js';
+import { PYTHON_EXEC, SCRIPTS, GPT_SOVITS_ROOT, INFERENCE_HOST, INFERENCE_PORT, assertConfig } from '../config.js';
 
 const BASE_URL = `http://${INFERENCE_HOST}:${INFERENCE_PORT}`;
+const PYTHON_RUNNER = [
+  '-c',
+  [
+    'import runpy, sys',
+    'ROOT = sys.argv[1]',
+    'TOOLS = sys.argv[2]',
+    'GPT = sys.argv[3]',
+    'SCRIPT = sys.argv[4]',
+    'ARGS = sys.argv[5:]',
+    'sys.path[:0] = [path for path in (GPT, TOOLS, ROOT) if path and path not in sys.path]',
+    'sys.argv = [SCRIPT, *ARGS]',
+    'runpy.run_path(SCRIPT, run_name="__main__")',
+  ].join('; '),
+];
 
 class InferenceServer {
   constructor() {
@@ -15,8 +29,14 @@ class InferenceServer {
       throw new Error('Inference server is already running');
     }
 
+    assertConfig({ requirePython: true });
+
     return new Promise((resolve, reject) => {
       this.process = spawn(PYTHON_EXEC, [
+        ...PYTHON_RUNNER,
+        GPT_SOVITS_ROOT,
+        `${GPT_SOVITS_ROOT}\\tools`,
+        `${GPT_SOVITS_ROOT}\\GPT_SoVITS`,
         SCRIPTS.apiServer,
         '-a', INFERENCE_HOST,
         '-p', String(INFERENCE_PORT),
@@ -28,6 +48,9 @@ class InferenceServer {
           PYTHONIOENCODING: 'utf-8',
           // ffmpeg.exe lives in GPT_SOVITS_ROOT, add to PATH
           PATH: `${GPT_SOVITS_ROOT};${process.env.PATH}`,
+          PYTHONPATH: process.env.PYTHONPATH
+            ? `${GPT_SOVITS_ROOT};${process.env.PYTHONPATH}`
+            : GPT_SOVITS_ROOT,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
