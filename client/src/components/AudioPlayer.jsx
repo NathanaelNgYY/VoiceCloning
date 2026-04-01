@@ -8,8 +8,13 @@ const DownloadIcon = () => (
 );
 
 const WaveIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#d4a053" strokeWidth="1.5" strokeLinecap="round">
-    <path d="M2 10h1M5 6v8M8 4v12M11 7v6M14 5v10M17 8v4" />
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" strokeLinecap="round">
+    <path d="M2 10h1" stroke="#E8654A" strokeWidth="1.5" opacity="0.5" />
+    <path d="M5 6v8" stroke="#E8654A" strokeWidth="1.5" opacity="0.65" />
+    <path d="M8 4v12" stroke="#E8654A" strokeWidth="1.5" />
+    <path d="M11 7v6" stroke="#D94E7A" strokeWidth="1.5" opacity="0.8" />
+    <path d="M14 5v10" stroke="#D94E7A" strokeWidth="1.5" opacity="0.7" />
+    <path d="M17 8v4" stroke="#D94E7A" strokeWidth="1.5" opacity="0.5" />
   </svg>
 );
 
@@ -37,9 +42,9 @@ export default function AudioPlayer({ audioBlob }) {
 
   return (
     <div style={{
-      background: '#14141a',
-      border: '1px solid #1e1e24',
-      borderRadius: '12px',
+      background: '#F8F6F3',
+      border: '1px solid #E8E4DE',
+      borderRadius: '14px',
       padding: '18px',
       animation: 'slide-in 0.4s ease',
     }}>
@@ -54,8 +59,9 @@ export default function AudioPlayer({ audioBlob }) {
         <span style={{
           fontSize: '13px',
           fontWeight: 600,
-          color: '#d4a053',
+          color: '#E8654A',
           letterSpacing: '0.01em',
+          fontFamily: '"Space Grotesk", sans-serif',
         }}>
           Generated Audio
         </span>
@@ -68,8 +74,8 @@ export default function AudioPlayer({ audioBlob }) {
         autoPlay
         style={{
           width: '100%',
-          height: '40px',
-          borderRadius: '8px',
+          height: '44px',
+          borderRadius: '10px',
         }}
       />
 
@@ -81,10 +87,10 @@ export default function AudioPlayer({ audioBlob }) {
             alignItems: 'center',
             gap: '6px',
             padding: '8px 16px',
-            background: '#18181d',
-            border: '1px solid #2a2a30',
-            borderRadius: '8px',
-            color: '#b0ada6',
+            background: '#FFFFFF',
+            border: '1px solid #E8E4DE',
+            borderRadius: '10px',
+            color: '#6B635A',
             cursor: 'pointer',
             fontSize: '13px',
             fontFamily: '"DM Sans", sans-serif',
@@ -93,12 +99,12 @@ export default function AudioPlayer({ audioBlob }) {
           }}
           onClick={handleDownload}
           onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = '#d4a053';
-            e.currentTarget.style.color = '#d4a053';
+            e.currentTarget.style.borderColor = '#E8654A';
+            e.currentTarget.style.color = '#E8654A';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = '#2a2a30';
-            e.currentTarget.style.color = '#b0ada6';
+            e.currentTarget.style.borderColor = '#E8E4DE';
+            e.currentTarget.style.color = '#6B635A';
           }}
         >
           <DownloadIcon />

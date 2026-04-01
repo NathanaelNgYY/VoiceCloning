@@ -5,18 +5,18 @@ import InferencePage from './pages/InferencePage.jsx';
 
 const WaveformIcon = () => (
   <svg width="28" height="28" viewBox="0 0 28 28" fill="none" style={{ display: 'block' }}>
-    <rect x="2" y="10" width="2.5" height="8" rx="1.25" fill="#d4a053" opacity="0.5" />
-    <rect x="7" y="6" width="2.5" height="16" rx="1.25" fill="#d4a053" opacity="0.7" />
-    <rect x="12" y="3" width="2.5" height="22" rx="1.25" fill="#d4a053" />
-    <rect x="17" y="7" width="2.5" height="14" rx="1.25" fill="#d4a053" opacity="0.8" />
-    <rect x="22" y="9" width="2.5" height="10" rx="1.25" fill="#d4a053" opacity="0.6" />
+    <rect x="2" y="10" width="2.5" height="8" rx="1.25" fill="#E8654A" opacity="0.4" />
+    <rect x="7" y="6" width="2.5" height="16" rx="1.25" fill="#E8654A" opacity="0.6" />
+    <rect x="12" y="3" width="2.5" height="22" rx="1.25" fill="#E8654A" />
+    <rect x="17" y="7" width="2.5" height="14" rx="1.25" fill="#D94E7A" opacity="0.7" />
+    <rect x="22" y="9" width="2.5" height="10" rx="1.25" fill="#D94E7A" opacity="0.5" />
   </svg>
 );
 
 const TrainIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M8 2v12M4 6l4-4 4 4" />
-    <rect x="2" y="12" width="12" height="2" rx="1" fill="currentColor" stroke="none" opacity="0.3" />
+    <rect x="2" y="12" width="12" height="2" rx="1" fill="currentColor" stroke="none" opacity="0.2" />
   </svg>
 );
 
@@ -32,15 +32,16 @@ export default function App() {
   const location = useLocation();
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#F8F6F3' }}>
       {/* Header */}
       <header style={{
-        background: '#111115',
-        borderBottom: '1px solid #1e1e24',
+        background: 'rgba(255, 255, 255, 0.85)',
+        borderBottom: '1px solid #E8E4DE',
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        backdropFilter: 'blur(12px)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
       }}>
         <div style={{
           maxWidth: '1280px',
@@ -60,15 +61,16 @@ export default function App() {
                 <h1 style={{
                   fontSize: '18px',
                   fontWeight: 700,
-                  color: '#f0ede8',
+                  color: '#1A1614',
                   letterSpacing: '-0.02em',
                   lineHeight: 1.2,
+                  fontFamily: '"Space Grotesk", sans-serif',
                 }}>
                   Voice Cloning Studio
                 </h1>
                 <p style={{
                   fontSize: '12px',
-                  color: '#5a5a60',
+                  color: '#9B938A',
                   fontWeight: 400,
                   letterSpacing: '0.02em',
                   marginTop: '1px',
@@ -82,7 +84,7 @@ export default function App() {
           {/* Navigation */}
           <nav style={{
             display: 'flex',
-            gap: '2px',
+            gap: '4px',
             marginTop: '12px',
           }}>
             <NavLink
@@ -96,8 +98,8 @@ export default function App() {
                 textDecoration: 'none',
                 fontSize: '13px',
                 fontWeight: isActive ? 600 : 500,
-                color: isActive ? '#d4a053' : '#6b6b70',
-                borderBottom: isActive ? '2px solid #d4a053' : '2px solid transparent',
+                color: isActive ? '#E8654A' : '#9B938A',
+                borderBottom: isActive ? '2px solid #E8654A' : '2px solid transparent',
                 transition: 'all 0.2s ease',
                 letterSpacing: '0.01em',
               })}
@@ -115,8 +117,8 @@ export default function App() {
                 textDecoration: 'none',
                 fontSize: '13px',
                 fontWeight: isActive ? 600 : 500,
-                color: isActive ? '#d4a053' : '#6b6b70',
-                borderBottom: isActive ? '2px solid #d4a053' : '2px solid transparent',
+                color: isActive ? '#E8654A' : '#9B938A',
+                borderBottom: isActive ? '2px solid #E8654A' : '2px solid transparent',
                 transition: 'all 0.2s ease',
                 letterSpacing: '0.01em',
               })}
@@ -142,13 +144,13 @@ export default function App() {
         </Routes>
       </main>
 
-      {/* Subtle footer */}
+      {/* Footer */}
       <footer style={{
         padding: '16px 32px',
-        borderTop: '1px solid #1a1a1f',
+        borderTop: '1px solid #E8E4DE',
         textAlign: 'center',
         fontSize: '11px',
-        color: '#3a3a40',
+        color: '#B8B0A6',
         letterSpacing: '0.03em',
       }}>
         Voice Cloning Studio — Built with GPT-SoVITS
