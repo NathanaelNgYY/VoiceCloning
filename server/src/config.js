@@ -2,26 +2,33 @@ import path from 'path';
 import fs from 'fs';
 
 const GPT_SOVITS_ROOT = process.env.GPT_SOVITS_ROOT || '';
-const pythonPath = GPT_SOVITS_ROOT ? path.join(GPT_SOVITS_ROOT, 'runtime', 'python.exe') : '';
+const runtimeDir = GPT_SOVITS_ROOT ? path.join(GPT_SOVITS_ROOT, 'runtime') : '';
+const pythonCandidates = [
+  runtimeDir ? path.join(runtimeDir, 'python.exe') : '',
+  runtimeDir ? path.join(runtimeDir, 'bin', 'python') : '',
+  process.env.PYTHON_EXEC || '',
+].filter(Boolean);
+
+const PYTHON_EXEC = pythonCandidates.find(candidate => fs.existsSync(candidate))
+  || process.env.PYTHON_EXEC
+  || (process.platform === 'win32' ? 'python.exe' : 'python3');
 
 function getConfigError({ requirePython = false } = {}) {
   if (!GPT_SOVITS_ROOT) {
-    return 'GPT_SOVITS_ROOT is not set. Configure server/.env first.';
+    return 'GPT_SOVITS_ROOT is not configured. Set it in server/.env';
   }
   if (!fs.existsSync(GPT_SOVITS_ROOT)) {
     return `GPT_SOVITS_ROOT path does not exist: ${GPT_SOVITS_ROOT}`;
   }
-  if (requirePython && !fs.existsSync(pythonPath)) {
-    return `Python executable not found at: ${pythonPath}`;
+  if (requirePython && !fs.existsSync(PYTHON_EXEC) && !['python', 'python3', 'python.exe'].includes(PYTHON_EXEC)) {
+    return `Python executable not found at: ${PYTHON_EXEC}`;
   }
   return null;
 }
 
-function assertConfig(options) {
-  const error = getConfigError(options);
-  if (error) {
-    throw new Error(error);
-  }
+function assertConfig(options = {}) {
+  const err = getConfigError(options);
+  if (err) throw new Error(err);
 }
 
 const startupError = getConfigError();
@@ -29,9 +36,8 @@ if (startupError) {
   console.warn(`[config] ${startupError}`);
 } else {
   console.log(`GPT-SoVITS root: ${GPT_SOVITS_ROOT}`);
+  console.log(`Python executable: ${PYTHON_EXEC}`);
 }
-
-const PYTHON_EXEC = path.join(GPT_SOVITS_ROOT, 'runtime', 'python.exe');
 
 const PRETRAINED = {
   sovitsG: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'gsv-v2final-pretrained', 's2G2333k.pth'),
@@ -60,7 +66,6 @@ const SCRIPTS = {
   slice: path.join(TOOLS_DIR, 'slice_audio.py'),
   denoise: path.join(TOOLS_DIR, 'cmd-denoise.py'),
   asr: path.join(TOOLS_DIR, 'asr', 'fasterwhisper_asr.py'),
-  transcribeSingle: path.join(TOOLS_DIR, 'asr', 'transcribe_single.py'),
   getText: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '1-get-text.py'),
   getHubert: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '2-get-hubert-wav32k.py'),
   getSemantic: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '3-get-semantic.py'),
