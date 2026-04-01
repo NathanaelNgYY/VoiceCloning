@@ -1,13 +1,18 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { WEIGHT_DIRS } from '../config.js';
+import { WEIGHT_DIRS, getConfigError } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 
 const router = Router();
 
 // GET /api/models - list available model weights
 router.get('/models', (_req, res) => {
+  const configError = getConfigError();
+  if (configError) {
+    return res.status(503).json({ error: configError });
+  }
+
   try {
     const gptFiles = fs.existsSync(WEIGHT_DIRS.gpt)
       ? fs.readdirSync(WEIGHT_DIRS.gpt).filter(f => f.endsWith('.ckpt'))
@@ -35,6 +40,10 @@ router.get('/models', (_req, res) => {
 // POST /api/models/select - load weights into inference server
 router.post('/models/select', async (req, res) => {
   const { gptPath, sovitsPath } = req.body;
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(503).json({ error: configError });
+  }
 
   try {
     // Start inference server if not running
@@ -57,6 +66,11 @@ router.post('/models/select', async (req, res) => {
 
 // POST /api/inference - synthesize speech
 router.post('/inference', async (req, res) => {
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(503).json({ error: configError });
+  }
+
   const {
     text,
     text_lang = 'en',
@@ -114,7 +128,8 @@ router.post('/inference/stop', (_req, res) => {
 
 // GET /api/inference/status - check inference server status
 router.get('/inference/status', (_req, res) => {
-  res.json({ ready: inferenceServer.isReady() });
+  const configError = getConfigError({ requirePython: true });
+  res.json({ ready: !configError && inferenceServer.isReady(), error: configError });
 });
 
 export default router;

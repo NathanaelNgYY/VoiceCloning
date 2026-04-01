@@ -1,6 +1,21 @@
 import { spawn, execSync } from 'child_process';
 import { EventEmitter } from 'events';
-import { PYTHON_EXEC, GPT_SOVITS_ROOT } from '../config.js';
+import { PYTHON_EXEC, GPT_SOVITS_ROOT, assertConfig } from '../config.js';
+
+const PYTHON_RUNNER = [
+  '-c',
+  [
+    'import runpy, sys',
+    'ROOT = sys.argv[1]',
+    'TOOLS = sys.argv[2]',
+    'GPT = sys.argv[3]',
+    'SCRIPT = sys.argv[4]',
+    'ARGS = sys.argv[5:]',
+    'sys.path[:0] = [path for path in (GPT, TOOLS, ROOT) if path and path not in sys.path]',
+    'sys.argv = [SCRIPT, *ARGS]',
+    'runpy.run_path(SCRIPT, run_name="__main__")',
+  ].join('; '),
+];
 
 class ProcessManager extends EventEmitter {
   constructor() {
@@ -10,6 +25,13 @@ class ProcessManager extends EventEmitter {
 
   run({ scriptPath, args = [], env = {}, sessionId }) {
     return new Promise((resolve, reject) => {
+      try {
+        assertConfig({ requirePython: true });
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
       if (this.processes.has(sessionId)) {
         reject(new Error(`Process already running for session ${sessionId}`));
         return;
@@ -20,10 +42,13 @@ class ProcessManager extends EventEmitter {
         PYTHONUNBUFFERED: '1',
         PYTHONIOENCODING: 'utf-8',
         PATH: `${GPT_SOVITS_ROOT};${process.env.PATH}`,
+        PYTHONPATH: process.env.PYTHONPATH
+          ? `${GPT_SOVITS_ROOT};${process.env.PYTHONPATH}`
+          : GPT_SOVITS_ROOT,
         ...env,
       };
 
-      const child = spawn(PYTHON_EXEC, [scriptPath, ...args], {
+      const child = spawn(PYTHON_EXEC, [...PYTHON_RUNNER, GPT_SOVITS_ROOT, `${GPT_SOVITS_ROOT}\\tools`, `${GPT_SOVITS_ROOT}\\GPT_SoVITS`, scriptPath, ...args], {
         cwd: GPT_SOVITS_ROOT,
         env: mergedEnv,
         stdio: ['ignore', 'pipe', 'pipe'],

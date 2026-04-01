@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { sseManager } from '../services/sseManager.js';
 import { processManager } from '../services/processManager.js';
 import { runPipeline, STEPS } from '../services/pipeline.js';
+import { getConfigError } from '../config.js';
 
 const router = Router();
 
@@ -11,6 +12,11 @@ const sessions = new Map();
 
 // POST /api/train - start the full pipeline
 router.post('/train', (req, res) => {
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(503).json({ error: configError });
+  }
+
   const {
     expName,
     batchSize,
