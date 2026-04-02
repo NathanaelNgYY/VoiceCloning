@@ -6,85 +6,136 @@
     <title>Voice Cloning Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       *, *::before, *::after {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
       }
+
+      :root {
+        --bg-base: #E9E6E0;
+        --bg-surface: #F2EFEA;
+        --bg-surface-hover: #EDEBE6;
+        --bg-inset: #E2DFD9;
+        --bg-elevated: #F2EFEA;
+
+        --border-subtle: #E8E4DE;
+        --border-default: #DDD8D0;
+        --border-strong: #C8C2B8;
+
+        --text-primary: #1A1614;
+        --text-secondary: #6B635A;
+        --text-tertiary: #9B938A;
+        --text-muted: #B8B0A6;
+
+        --accent: #E8654A;
+        --accent-hover: #D45A42;
+        --accent-soft: rgba(232, 101, 74, 0.08);
+        --accent-medium: rgba(232, 101, 74, 0.15);
+        --accent-gradient: #E8654A;
+
+        --success: #2D9D6F;
+        --success-soft: rgba(45, 157, 111, 0.08);
+        --success-medium: rgba(45, 157, 111, 0.15);
+
+        --error: #D94545;
+        --error-soft: rgba(217, 69, 69, 0.06);
+        --error-medium: rgba(217, 69, 69, 0.12);
+
+        --warning: #D49A2A;
+        --warning-soft: rgba(212, 154, 42, 0.08);
+
+        --audio-track: #EDE9E3;
+        --audio-fill: linear-gradient(90deg, #E8654A, #D94E7A);
+        --audio-thumb: #E8654A;
+
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-xl: 20px;
+
+        --shadow-sm: 0 1px 3px rgba(26, 22, 20, 0.04), 0 1px 2px rgba(26, 22, 20, 0.02);
+        --shadow-md: 0 4px 16px rgba(26, 22, 20, 0.06), 0 1px 4px rgba(26, 22, 20, 0.03);
+        --shadow-lg: 0 8px 32px rgba(26, 22, 20, 0.08), 0 2px 8px rgba(26, 22, 20, 0.04);
+        --shadow-accent: 0 4px 20px rgba(232, 101, 74, 0.2);
+      }
+
       body {
         font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-        background: #0c0c0f;
-        color: #e0ddd8;
+        background: var(--bg-base);
+        color: var(--text-primary);
         line-height: 1.6;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
       }
       #root { min-height: 100vh; }
 
-      /* Custom scrollbar */
+      /* Scrollbar */
       ::-webkit-scrollbar { width: 6px; height: 6px; }
       ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #2a2a30; border-radius: 3px; }
-      ::-webkit-scrollbar-thumb:hover { background: #3a3a42; }
+      ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
-      /* Range input styling */
+      /* Range inputs */
       input[type="range"] {
         -webkit-appearance: none;
         appearance: none;
         width: 100%;
-        height: 4px;
-        background: #1e1e24;
-        border-radius: 2px;
+        height: 5px;
+        background: var(--audio-track);
+        border-radius: 3px;
         outline: none;
         cursor: pointer;
       }
       input[type="range"]::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
-        background: #d4a053;
+        background: var(--accent);
         cursor: pointer;
-        border: 2px solid #0c0c0f;
-        box-shadow: 0 0 8px rgba(212, 160, 83, 0.3);
+        border: 3px solid var(--bg-surface);
+        box-shadow: 0 1px 6px rgba(232, 101, 74, 0.3);
         transition: transform 0.15s ease, box-shadow 0.15s ease;
       }
       input[type="range"]::-webkit-slider-thumb:hover {
-        transform: scale(1.2);
-        box-shadow: 0 0 12px rgba(212, 160, 83, 0.5);
+        transform: scale(1.15);
+        box-shadow: 0 2px 10px rgba(232, 101, 74, 0.4);
       }
       input[type="range"]::-moz-range-thumb {
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
-        background: #d4a053;
+        background: var(--accent);
         cursor: pointer;
-        border: 2px solid #0c0c0f;
-        box-shadow: 0 0 8px rgba(212, 160, 83, 0.3);
+        border: 3px solid var(--bg-surface);
+        box-shadow: 0 1px 6px rgba(232, 101, 74, 0.3);
       }
 
-      /* Select styling */
+      /* Select */
       select {
         -webkit-appearance: none;
         appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236b6b70' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%239B938A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
         background-repeat: no-repeat;
         background-position: right 12px center;
         padding-right: 32px !important;
       }
 
-      /* Audio element styling */
+      /* Audio element */
       audio {
         width: 100%;
-        height: 40px;
-        border-radius: 8px;
+        height: 44px;
+        border-radius: var(--radius-md);
         outline: none;
+        filter: contrast(0.95) brightness(1.02);
       }
       audio::-webkit-media-controls-panel {
-        background: #18181d;
+        background: var(--bg-inset);
+        border-radius: var(--radius-md);
       }
 
       /* File input */
@@ -93,33 +144,34 @@
       }
       input[type="file"]::file-selector-button {
         font-family: 'DM Sans', sans-serif;
-        padding: 6px 14px;
-        border-radius: 6px;
-        border: 1px solid #2a2a30;
-        background: #18181d;
-        color: #b0ada6;
+        padding: 7px 16px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-default);
+        background: var(--bg-surface);
+        color: var(--text-secondary);
         cursor: pointer;
         font-size: 13px;
+        font-weight: 500;
         margin-right: 10px;
         transition: all 0.2s ease;
       }
       input[type="file"]::file-selector-button:hover {
-        background: #222228;
-        border-color: #d4a053;
-        color: #d4a053;
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent);
       }
 
       /* Animations */
       @keyframes pulse-glow {
-        0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(212, 160, 83, 0.4); }
-        50% { opacity: 0.7; box-shadow: 0 0 16px rgba(212, 160, 83, 0.6); }
+        0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(232, 101, 74, 0.3); }
+        50% { opacity: 0.8; box-shadow: 0 0 18px rgba(232, 101, 74, 0.45); }
       }
       @keyframes fade-in {
-        from { opacity: 0; transform: translateY(8px); }
+        from { opacity: 0; transform: translateY(6px); }
         to { opacity: 1; transform: translateY(0); }
       }
       @keyframes slide-in {
-        from { opacity: 0; transform: translateY(12px); }
+        from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
       }
       @keyframes shimmer {

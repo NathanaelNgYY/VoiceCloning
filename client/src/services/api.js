@@ -31,6 +31,11 @@ export function stopTraining(sessionId) {
   return api.post('/train/stop', { sessionId });
 }
 
+// Get current training state
+export function getCurrentTraining() {
+  return api.get('/train/current');
+}
+
 // Get available models
 export function getModels() {
   return api.get('/models');
@@ -39,6 +44,11 @@ export function getModels() {
 // Load model weights
 export function selectModels(gptPath, sovitsPath) {
   return api.post('/models/select', { gptPath, sovitsPath });
+}
+
+// Transcribe reference audio
+export function transcribeAudio(filePath, language = 'auto') {
+  return api.post('/transcribe', { filePath, language });
 }
 
 // Synthesize speech

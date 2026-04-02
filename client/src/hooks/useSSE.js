@@ -12,21 +12,38 @@ const STEP_NAMES = [
   'Train GPT',
 ];
 
+function createDefaultSteps() {
+  return STEP_NAMES.map((name, i) => ({ index: i, name, status: 'pending', detail: '' }));
+}
+
 export function useSSE() {
   const [logs, setLogs] = useState([]);
-  const [steps, setSteps] = useState(
-    STEP_NAMES.map((name, i) => ({ index: i, name, status: 'pending' }))
-  );
-  const [pipelineStatus, setPipelineStatus] = useState('idle'); // idle | running | complete | error
+  const [steps, setSteps] = useState(createDefaultSteps);
+  const [pipelineStatus, setPipelineStatus] = useState('idle'); // idle | waiting | running | complete | error | stopped
   const [error, setError] = useState(null);
   const esRef = useRef(null);
 
-  const connect = useCallback((sessionId) => {
-    // Reset state
-    setLogs([]);
-    setSteps(STEP_NAMES.map((name, i) => ({ index: i, name, status: 'pending' })));
-    setPipelineStatus('running');
-    setError(null);
+  const hydrate = useCallback((initialState = {}) => {
+    const {
+      initialLogs = [],
+      initialSteps = createDefaultSteps(),
+      initialStatus = 'idle',
+      initialError = null,
+    } = initialState;
+
+    setLogs(Array.isArray(initialLogs) ? initialLogs : []);
+    setSteps(Array.isArray(initialSteps) && initialSteps.length > 0 ? initialSteps : createDefaultSteps());
+    setPipelineStatus(initialStatus);
+    setError(initialError);
+  }, []);
+
+  const connect = useCallback((sessionId, initialState = {}) => {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+
+    hydrate({ ...initialState, initialStatus: initialState.initialStatus || 'running' });
 
     esRef.current = connectSSE(sessionId, {
       onLog(data) {
@@ -34,7 +51,7 @@ export function useSSE() {
       },
       onStepStart(data) {
         setSteps(prev => prev.map(s =>
-          s.index === data.step ? { ...s, status: data.status || 'running' } : s
+          s.index === data.step ? { ...s, status: data.status || 'running', detail: data.detail || '' } : s
         ));
       },
       onStepComplete(data) {
@@ -46,15 +63,15 @@ export function useSSE() {
         setPipelineStatus('complete');
       },
       onError(data) {
-        setError(data.message);
-        setPipelineStatus('error');
-        // Mark the currently running step as errored
+        const nextStatus = data?.message === 'Training stopped by user' ? 'stopped' : 'error';
+        setError(data?.message || null);
+        setPipelineStatus(nextStatus);
         setSteps(prev => prev.map(s =>
-          s.status === 'running' ? { ...s, status: 'error' } : s
+          s.status === 'running' ? { ...s, status: nextStatus === 'stopped' ? 'pending' : 'error' } : s
         ));
       },
     });
-  }, []);
+  }, [hydrate]);
 
   const disconnect = useCallback(() => {
     if (esRef.current) {
@@ -63,11 +80,16 @@ export function useSSE() {
     }
   }, []);
 
+  const reset = useCallback(() => {
+    disconnect();
+    hydrate();
+  }, [disconnect, hydrate]);
+
   useEffect(() => {
     return () => disconnect();
   }, [disconnect]);
 
-  return { logs, steps, pipelineStatus, error, connect, disconnect };
+  return { logs, steps, pipelineStatus, error, connect, disconnect, hydrate, reset };
 }
 
 export { STEP_NAMES };

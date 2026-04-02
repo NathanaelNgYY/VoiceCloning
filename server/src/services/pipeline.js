@@ -11,25 +11,26 @@ import {
 } from '../config.js';
 import { processManager } from './processManager.js';
 import { sseManager } from './sseManager.js';
+import { trainingState } from './trainingState.js';
 import { generateSoVITSConfig, generateGPTConfig } from './configGenerator.js';
-
-const STEPS = [
-  'Slice Audio',
-  'Denoise',
-  'ASR (Speech Recognition)',
-  'Extract Text Features',
-  'Extract HuBERT Features',
-  'Extract Semantic Features',
-  'Train SoVITS',
-  'Train GPT',
-];
+import { STEPS } from './trainingSteps.js';
 
 function sendStep(sessionId, stepIndex, status, detail) {
+  trainingState.setStepStatus(stepIndex, status, detail || '');
   sseManager.send(sessionId, 'step-start', {
     step: stepIndex,
     name: STEPS[stepIndex],
     status,
     detail: detail || '',
+  });
+}
+
+function completeStep(sessionId, stepIndex, code = 0) {
+  trainingState.setStepStatus(stepIndex, code === 0 ? 'done' : 'error');
+  sseManager.send(sessionId, 'step-complete', {
+    step: stepIndex,
+    name: STEPS[stepIndex],
+    code,
   });
 }
 
@@ -56,18 +57,19 @@ function mergePartFiles(dir, baseName, ext, hasHeader = false) {
 }
 
 function skipStep(sessionId, stepIndex, reason) {
-  sseManager.send(sessionId, 'step-start', {
-    step: stepIndex,
-    name: STEPS[stepIndex],
-    status: 'skipped',
-    detail: reason,
+  sendStep(sessionId, stepIndex, 'skipped', reason);
+  trainingState.appendLog({
+    stream: 'stdout',
+    data: `Skipping "${STEPS[stepIndex]}": ${reason}\n`,
+    timestamp: Date.now(),
   });
   sseManager.send(sessionId, 'log', {
     stream: 'stdout',
     data: `Skipping "${STEPS[stepIndex]}": ${reason}\n`,
     timestamp: Date.now(),
   });
-  sseManager.send(sessionId, 'step-complete', { step: stepIndex, name: STEPS[stepIndex], code: 0 });
+  completeStep(sessionId, stepIndex, 0);
+  return 'skipped';
 }
 
 export async function runPipeline(sessionId, {
@@ -103,8 +105,7 @@ export async function runPipeline(sessionId, {
     // Step 0: Slice Audio
     async () => {
       if (dirHasFiles(slicedDir, /\.(wav|mp3|ogg|flac)$/i)) {
-        skipStep(sessionId, 0, 'sliced audio already exists');
-        return;
+        return skipStep(sessionId, 0, 'sliced audio already exists');
       }
       sendStep(sessionId, 0, 'running');
       await processManager.run({
@@ -121,8 +122,7 @@ export async function runPipeline(sessionId, {
     // Step 1: Denoise
     async () => {
       if (dirHasFiles(denoisedDir, /\.(wav|mp3|ogg|flac)$/i)) {
-        skipStep(sessionId, 1, 'denoised audio already exists');
-        return;
+        return skipStep(sessionId, 1, 'denoised audio already exists');
       }
       sendStep(sessionId, 1, 'running');
       await processManager.run({
@@ -136,8 +136,7 @@ export async function runPipeline(sessionId, {
     // Step 2: ASR
     async () => {
       if (dirHasFiles(asrDir, /\.list$/i)) {
-        skipStep(sessionId, 2, 'ASR transcript already exists');
-        return;
+        return skipStep(sessionId, 2, 'ASR transcript already exists');
       }
       sendStep(sessionId, 2, 'running');
       await processManager.run({
@@ -157,8 +156,7 @@ export async function runPipeline(sessionId, {
     // Step 3: 1-get-text.py
     async () => {
       if (fs.existsSync(path.join(expDir, '2-name2text.txt'))) {
-        skipStep(sessionId, 3, 'text features already extracted');
-        return;
+        return skipStep(sessionId, 3, 'text features already extracted');
       }
       sendStep(sessionId, 3, 'running');
       await processManager.run({
@@ -184,8 +182,7 @@ export async function runPipeline(sessionId, {
     // Step 4: 2-get-hubert-wav32k.py
     async () => {
       if (dirHasFiles(path.join(expDir, '4-cnhubert'))) {
-        skipStep(sessionId, 4, 'HuBERT features already extracted');
-        return;
+        return skipStep(sessionId, 4, 'HuBERT features already extracted');
       }
       sendStep(sessionId, 4, 'running');
       await processManager.run({
@@ -209,8 +206,7 @@ export async function runPipeline(sessionId, {
     // Step 5: 3-get-semantic.py
     async () => {
       if (fs.existsSync(path.join(expDir, '6-name2semantic.tsv'))) {
-        skipStep(sessionId, 5, 'semantic features already extracted');
-        return;
+        return skipStep(sessionId, 5, 'semantic features already extracted');
       }
       sendStep(sessionId, 5, 'running');
       await processManager.run({
@@ -236,8 +232,7 @@ export async function runPipeline(sessionId, {
     async () => {
       const pattern = new RegExp(`^${expName}_e\\d+_s\\d+\\.pth$`);
       if (dirHasFiles(WEIGHT_DIRS.sovits, pattern)) {
-        skipStep(sessionId, 6, 'SoVITS weights already exist');
-        return;
+        return skipStep(sessionId, 6, 'SoVITS weights already exist');
       }
       sendStep(sessionId, 6, 'running');
       const configPath = generateSoVITSConfig({
@@ -257,8 +252,7 @@ export async function runPipeline(sessionId, {
     async () => {
       const pattern = new RegExp(`^${expName}-e\\d+\\.ckpt$`);
       if (dirHasFiles(WEIGHT_DIRS.gpt, pattern)) {
-        skipStep(sessionId, 7, 'GPT weights already exist');
-        return;
+        return skipStep(sessionId, 7, 'GPT weights already exist');
       }
       sendStep(sessionId, 7, 'running');
       const configPath = generateGPTConfig({
@@ -280,13 +274,20 @@ export async function runPipeline(sessionId, {
   ];
 
   try {
+    trainingState.setStatus('running');
+
     for (let i = 0; i < steps.length; i++) {
-      await steps[i]();
-      // step-complete is sent by skipStep if skipped, only send here for ran steps
+      const result = await steps[i]();
+      if (result !== 'skipped') {
+        completeStep(sessionId, i, 0);
+      }
     }
+
+    trainingState.setStatus('complete');
     sseManager.send(sessionId, 'pipeline-complete', { success: true });
   } catch (err) {
     const errorMsg = parseError(err.message || String(err));
+    trainingState.setError(errorMsg);
     sseManager.send(sessionId, 'error', {
       message: errorMsg,
       raw: String(err),

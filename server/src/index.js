@@ -3,6 +3,7 @@ import cors from 'cors';
 import { SERVER_PORT } from './config.js';
 import { processManager } from './services/processManager.js';
 import { sseManager } from './services/sseManager.js';
+import { trainingState } from './services/trainingState.js';
 import uploadRoutes from './routes/upload.js';
 import trainingRoutes from './routes/training.js';
 import inferenceRoutes from './routes/inference.js';
@@ -14,11 +15,9 @@ app.use(express.json());
 
 // Wire processManager events to SSE
 processManager.on('log', ({ sessionId, stream, data }) => {
-  sseManager.send(sessionId, 'log', { stream, data, timestamp: Date.now() });
-});
-
-processManager.on('exit', ({ sessionId, code }) => {
-  sseManager.send(sessionId, 'step-complete', { code });
+  const payload = { stream, data, timestamp: Date.now() };
+  trainingState.appendLog(payload);
+  sseManager.send(sessionId, 'log', payload);
 });
 
 // Routes

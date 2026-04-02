@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { sseManager } from '../services/sseManager.js';
 import { processManager } from '../services/processManager.js';
 import { runPipeline, STEPS } from '../services/pipeline.js';
+import { getConfigError } from '../config.js';
+import { trainingState } from '../services/trainingState.js';
 
 const router = Router();
 
@@ -11,6 +13,11 @@ const sessions = new Map();
 
 // POST /api/train - start the full pipeline
 router.post('/train', (req, res) => {
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(503).json({ error: configError });
+  }
+
   const {
     expName,
     batchSize,
@@ -28,12 +35,14 @@ router.post('/train', (req, res) => {
 
   const sessionId = uuidv4();
   sessions.set(sessionId, { expName, startedAt: Date.now() });
+  trainingState.resetForNewSession({ sessionId, expName });
 
   // Prepare SSE buffer so events are captured before the client connects
   sseManager.prepareSession(sessionId);
 
   // Wait for SSE client to connect, then start pipeline
   sseManager.waitForClient(sessionId).then(() => {
+    trainingState.setStatus('running');
     return runPipeline(sessionId, {
       expName,
       batchSize,
@@ -45,6 +54,7 @@ router.post('/train', (req, res) => {
       asrModel,
     });
   }).catch((err) => {
+    trainingState.setError(err.message || 'Pipeline failed to start');
     sseManager.send(sessionId, 'error', {
       message: err.message || 'Pipeline failed to start',
     });
@@ -53,6 +63,12 @@ router.post('/train', (req, res) => {
   });
 
   res.json({ sessionId, steps: STEPS });
+});
+
+
+// GET /api/train/current - restore current training state
+router.get('/train/current', (req, res) => {
+  res.json(trainingState.getState());
 });
 
 // GET /api/train/status/:sessionId - SSE stream
@@ -70,6 +86,7 @@ router.post('/train/stop', (req, res) => {
 
   const killed = processManager.kill(sessionId);
   if (killed) {
+    trainingState.setStatus('stopped');
     sseManager.send(sessionId, 'error', { message: 'Training stopped by user' });
     sessions.delete(sessionId);
     res.json({ message: 'Training stopped' });

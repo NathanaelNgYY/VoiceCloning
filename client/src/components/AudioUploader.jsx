@@ -9,7 +9,7 @@ function formatSize(bytes) {
 }
 
 const UploadIcon = () => (
-  <svg width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="#6b6b70" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="36" height="36" viewBox="0 0 36 36" fill="none" stroke="#9B938A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M18 24V8" />
     <path d="M12 14l6-6 6 6" />
     <path d="M6 24v4a2 2 0 002 2h20a2 2 0 002-2v-4" />
@@ -17,7 +17,7 @@ const UploadIcon = () => (
 );
 
 const MusicIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#d4a053" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#E8654A" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
     <path d="M5 11.5V3.5L12 2v8" />
     <circle cx="3.5" cy="11.5" r="1.5" />
     <circle cx="10.5" cy="10" r="1.5" />
@@ -55,13 +55,13 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
       {/* Drop zone */}
       <div
         style={{
-          border: dragOver ? '2px solid #d4a053' : '2px dashed #2a2a30',
-          borderRadius: '12px',
+          border: dragOver ? '2px solid #E8654A' : '2px dashed #DDD8D0',
+          borderRadius: '14px',
           padding: '36px 24px',
           textAlign: 'center',
           cursor: disabled ? 'not-allowed' : 'pointer',
           transition: 'all 0.25s ease',
-          background: dragOver ? 'rgba(212, 160, 83, 0.04)' : '#111115',
+          background: dragOver ? 'rgba(232, 101, 74, 0.04)' : '#FAFAF8',
           opacity: disabled ? 0.5 : 1,
         }}
         onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragOver(true); }}
@@ -79,7 +79,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
             width: '56px',
             height: '56px',
             borderRadius: '14px',
-            background: dragOver ? 'rgba(212, 160, 83, 0.1)' : '#18181d',
+            background: dragOver ? 'rgba(232, 101, 74, 0.08)' : '#F1EEE9',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -90,7 +90,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
           <div>
             <p style={{
               fontSize: '14px',
-              color: dragOver ? '#d4a053' : '#8a8a90',
+              color: dragOver ? '#E8654A' : '#6B635A',
               fontWeight: 500,
               transition: 'color 0.2s ease',
             }}>
@@ -98,7 +98,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
             </p>
             <p style={{
               fontSize: '12px',
-              color: '#4a4a50',
+              color: '#B8B0A6',
               marginTop: '4px',
             }}>
               WAV, MP3, OGG, FLAC, M4A
@@ -132,14 +132,14 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
           }}>
             <span style={{
               fontSize: '12px',
-              color: '#6b6b70',
+              color: '#6B635A',
               fontWeight: 500,
             }}>
               {files.length} file{files.length !== 1 ? 's' : ''} selected
             </span>
             <span style={{
               fontSize: '11px',
-              color: '#4a4a50',
+              color: '#B8B0A6',
             }}>
               {formatSize(totalSize)} total
             </span>
@@ -160,23 +160,23 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 padding: '8px 12px',
-                background: '#14141a',
-                borderRadius: '8px',
-                border: '1px solid #1e1e24',
+                background: '#FAFAF8',
+                borderRadius: '10px',
+                border: '1px solid #E8E4DE',
                 transition: 'background 0.15s ease',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                   <MusicIcon />
                   <span style={{
                     fontSize: '13px',
-                    color: '#b0ada6',
+                    color: '#1A1614',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                   }}>
                     {f.name}
                   </span>
-                  <span style={{ fontSize: '11px', color: '#4a4a50', flexShrink: 0 }}>
+                  <span style={{ fontSize: '11px', color: '#B8B0A6', flexShrink: 0 }}>
                     {formatSize(f.size || 0)}
                   </span>
                 </div>
@@ -184,7 +184,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: '#5a5a60',
+                    color: '#B8B0A6',
                     cursor: disabled ? 'not-allowed' : 'pointer',
                     fontSize: '18px',
                     padding: '0 2px',
@@ -195,8 +195,8 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
                   onClick={(e) => { e.stopPropagation(); removeFile(i); }}
                   disabled={disabled}
                   title="Remove file"
-                  onMouseEnter={(e) => { if (!disabled) e.target.style.color = '#e85750'; }}
-                  onMouseLeave={(e) => { e.target.style.color = '#5a5a60'; }}
+                  onMouseEnter={(e) => { if (!disabled) e.target.style.color = '#D94545'; }}
+                  onMouseLeave={(e) => { e.target.style.color = '#B8B0A6'; }}
                 >
                   ×
                 </button>
