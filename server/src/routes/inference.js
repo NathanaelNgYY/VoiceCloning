@@ -63,23 +63,18 @@ router.post('/inference', async (req, res) => {
     return res.status(500).json({ error: configError });
   }
 
- const {
-  text,
-  text_lang = 'en',
-  ref_audio_path,
-  prompt_text = '',
-  prompt_lang = 'en',
-  top_k = 5,
-  top_p = 1,
-  temperature = 1,
-  speed_factor = 1.0,
-  seed,
-  maxChunkLength = 140,
-  maxSentencesPerChunk = 2,
-  chunkJoinPauseMs = 70,
-  crossfadeMs = 35,
-  retryCount = 3,
-} = req.body;
+  const {
+    text,
+    text_lang = 'en',
+    ref_audio_path,
+    prompt_text = '',
+    prompt_lang = 'en',
+    top_k = 4,
+    top_p = 0.85,
+    temperature = 0.8,
+    speed_factor = 1.0,
+    seed = 1234,
+  } = req.body;
 
   if (!text) {
     return res.status(400).json({ error: 'text is required' });
@@ -105,11 +100,10 @@ router.post('/inference', async (req, res) => {
       speed_factor,
       seed,
     }, {
-      maxChunkLength,
-      maxSentencesPerChunk,
-      chunkJoinPauseMs,
-      crossfadeMs,
-      retryCount,
+      maxChunkLength: 180,
+      maxSentencesPerChunk: 2,
+      chunkJoinPauseMs: 180,
+      retryCount: 2,
     });
 
     res.set({
