@@ -69,11 +69,11 @@ router.post('/inference', async (req, res) => {
     ref_audio_path,
     prompt_text = '',
     prompt_lang = 'en',
-    top_k = 5,
-    top_p = 1,
-    temperature = 1,
+    top_k = 4,
+    top_p = 0.85,
+    temperature = 0.8,
     speed_factor = 1.0,
-    seed,
+    seed = 1234,
   } = req.body;
 
   if (!text) {
@@ -101,7 +101,7 @@ router.post('/inference', async (req, res) => {
       seed,
     }, {
       maxChunkLength: 180,
-      maxSentencesPerChunk: 3,
+      maxSentencesPerChunk: 2,
       chunkJoinPauseMs: 180,
       retryCount: 2,
     });

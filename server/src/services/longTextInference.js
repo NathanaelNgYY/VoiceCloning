@@ -3,7 +3,7 @@ import { inferenceServer } from './inferenceServer.js';
 
 const DEFAULTS = {
   maxChunkLength: 180,
-  maxSentencesPerChunk: 3,
+  maxSentencesPerChunk: 2,
   chunkJoinPauseMs: 180,
   retryCount: 2,
 };
@@ -210,24 +210,51 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   let zeroishCount = 0;
   let clippedCount = 0;
 
+  let currentQuietRun = 0;
+  let longestQuietRun = 0;
+
   if (wav.audioFormat === 1 && wav.bitsPerSample === 16) {
     for (let offset = 0; offset + 1 < bytes.length; offset += bytesPerSample) {
       const sample = bytes.readInt16LE(offset) / 32768;
       const abs = Math.abs(sample);
+
       absPeak = Math.max(absPeak, abs);
       rmsSum += sample * sample;
+
       if (abs < 0.002) zeroishCount += 1;
       if (abs > 0.98) clippedCount += 1;
+
+      if (abs < 0.0035) {
+        currentQuietRun += 1;
+        if (currentQuietRun > longestQuietRun) {
+          longestQuietRun = currentQuietRun;
+        }
+      } else {
+        currentQuietRun = 0;
+      }
+
       sampleCount += 1;
     }
   } else if (wav.audioFormat === 3 && wav.bitsPerSample === 32) {
     for (let offset = 0; offset + 3 < bytes.length; offset += bytesPerSample) {
       const sample = bytes.readFloatLE(offset);
       const abs = Math.abs(sample);
+
       absPeak = Math.max(absPeak, abs);
       rmsSum += sample * sample;
+
       if (abs < 0.002) zeroishCount += 1;
       if (abs > 0.98) clippedCount += 1;
+
+      if (abs < 0.0035) {
+        currentQuietRun += 1;
+        if (currentQuietRun > longestQuietRun) {
+          longestQuietRun = currentQuietRun;
+        }
+      } else {
+        currentQuietRun = 0;
+      }
+
       sampleCount += 1;
     }
   } else {
@@ -242,6 +269,7 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   const rms = sampleCount > 0 ? Math.sqrt(rmsSum / sampleCount) : 0;
   const zeroishRatio = sampleCount > 0 ? zeroishCount / sampleCount : 1;
   const clippedRatio = sampleCount > 0 ? clippedCount / sampleCount : 0;
+  const longestQuietSec = longestQuietRun / wav.sampleRate;
 
   let reason = null;
   if (durationSec < expectedMinDurationSec * 0.45) {
@@ -252,26 +280,29 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
     reason = 'Generated audio contains almost no speech energy';
   } else if (clippedRatio > 0.2) {
     reason = 'Generated audio appears heavily clipped or corrupted';
+  } else if (durationSec > 1.2 && longestQuietSec > 0.7) {
+    reason = `Generated audio contains a long internal pause (${longestQuietSec.toFixed(2)}s)`;
   }
 
   return {
     ok: !reason,
     durationSec,
     reason,
-    metrics: { rms, absPeak, zeroishRatio, clippedRatio },
+    metrics: { rms, absPeak, zeroishRatio, clippedRatio, longestQuietSec },
   };
 }
 
 function buildAttemptVariants(baseParams, attemptIndex) {
-  const variants = [];
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
   const safeTopK = clampNumber(baseParams.top_k, 5);
   const speed = clampNumber(baseParams.speed_factor, 1);
 
-  variants.push({
+  const baseSeed = baseParams.seed ?? Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16);
+
+  const base = {
     ...baseParams,
-    seed: baseParams.seed ?? Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16),
+    seed: baseSeed,
     text_split_method: baseParams.text_split_method || 'cut5',
     batch_size: 1,
     streaming_mode: false,
@@ -280,35 +311,42 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     fragment_interval: 0.18,
     repetition_penalty: 1.05,
     speed_factor: speed,
-  });
+  };
 
-  if (attemptIndex >= 1) {
-    variants.push({
-      ...variants[0],
+  if (attemptIndex === 0) {
+    return base;
+  }
+
+  if (attemptIndex === 1) {
+    return {
+      ...base,
+      seed: (baseSeed + 17) >>> 0,
+    };
+  }
+
+  if (attemptIndex === 2) {
+    return {
+      ...base,
       temperature: Math.max(0.6, safeTemperature * 0.82),
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(3, Math.min(safeTopK, 8)),
       fragment_interval: 0.22,
       repetition_penalty: 1.08,
-      seed: (variants[0].seed + 17) >>> 0,
-    });
+      seed: (baseSeed + 31) >>> 0,
+    };
   }
 
-  if (attemptIndex >= 2) {
-    variants.push({
-      ...variants[0],
-      temperature: 0.65,
-      top_p: 0.88,
-      top_k: 5,
-      fragment_interval: 0.25,
-      repetition_penalty: 1.1,
-      seed: (variants[0].seed + 31) >>> 0,
-      text_split_method: 'cut0',
-      split_bucket: false,
-    });
-  }
-
-  return variants[variants.length - 1];
+  return {
+    ...base,
+    temperature: 0.65,
+    top_p: 0.88,
+    top_k: 5,
+    fragment_interval: 0.25,
+    repetition_penalty: 1.1,
+    seed: (baseSeed + 47) >>> 0,
+    text_split_method: 'cut0',
+    split_bucket: false,
+  };
 }
 
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
@@ -316,7 +354,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   let lastError = null;
 
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-    const params = buildAttemptVariants({ ...baseParams, text: chunkText }, attempt);
+    const paddedText = `${chunkText.trim()} `;
+const params = buildAttemptVariants({ ...baseParams, text: paddedText }, attempt);
     try {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);
