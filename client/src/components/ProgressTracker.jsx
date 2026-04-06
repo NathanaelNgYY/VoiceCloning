@@ -1,43 +1,85 @@
 import React from 'react';
 
 const statusConfig = {
-  pending: { color: '#DDD8D0', iconColor: '#B8B0A6', bg: 'transparent' },
-  running: { color: '#E8654A', iconColor: '#FFFFFF', bg: '#E8654A' },
-  done: { color: '#2D9D6F', iconColor: '#FFFFFF', bg: '#2D9D6F' },
-  error: { color: '#D94545', iconColor: '#FFFFFF', bg: '#D94545' },
-  skipped: { color: '#C8C2B8', iconColor: '#B8B0A6', bg: 'transparent' },
+  pending:  { dotBg: 'transparent', dotBorder: 'var(--border-default)', textColor: 'var(--text-muted)', lineColor: 'var(--border-hairline)' },
+  running:  { dotBg: 'var(--accent)', dotBorder: 'var(--accent)', textColor: 'var(--accent)', lineColor: 'var(--border-hairline)' },
+  done:     { dotBg: 'var(--text-primary)', dotBorder: 'var(--text-primary)', textColor: 'var(--text-primary)', lineColor: 'var(--text-primary)' },
+  error:    { dotBg: 'var(--accent)', dotBorder: 'var(--accent)', textColor: 'var(--accent)', lineColor: 'var(--border-hairline)' },
+  skipped:  { dotBg: 'transparent', dotBorder: 'var(--border-default)', textColor: 'var(--text-muted)', lineColor: 'var(--border-hairline)' },
 };
 
-const CheckIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 7l3 3 5-5" />
-  </svg>
-);
-
-const XIcon = () => (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-    <path d="M3 3l6 6M9 3l-6 6" />
-  </svg>
-);
-
-const SpinnerIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
-    <circle cx="8" cy="8" r="6" stroke="rgba(255,255,255,0.3)" strokeWidth="2" />
-    <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-function StepIcon({ status, index }) {
+function StepDot({ status }) {
   const config = statusConfig[status];
 
-  if (status === 'done') return <CheckIcon />;
-  if (status === 'error') return <XIcon />;
-  if (status === 'running') return <SpinnerIcon />;
+  if (status === 'done') {
+    return (
+      <div style={{
+        width: '20px',
+        height: '20px',
+        borderRadius: '50%',
+        background: config.dotBg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'all 0.3s ease',
+      }}>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 5l2.5 2.5L8 3" />
+        </svg>
+      </div>
+    );
+  }
 
+  if (status === 'error') {
+    return (
+      <div style={{
+        width: '20px',
+        height: '20px',
+        borderRadius: '50%',
+        background: config.dotBg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M2 2l4 4M6 2l-4 4" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (status === 'running') {
+    return (
+      <div style={{
+        width: '20px',
+        height: '20px',
+        borderRadius: '50%',
+        background: config.dotBg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        animation: 'pulse-dot 1.5s ease-in-out infinite',
+      }}>
+        <div style={{
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          background: 'white',
+        }} />
+      </div>
+    );
+  }
+
+  // pending / skipped
   return (
-    <span style={{ fontSize: '11px', fontWeight: 600, color: config.iconColor }}>
-      {index + 1}
-    </span>
+    <div style={{
+      width: '20px',
+      height: '20px',
+      borderRadius: '50%',
+      background: config.dotBg,
+      border: `1.5px solid ${config.dotBorder}`,
+      transition: 'all 0.3s ease',
+    }} />
   );
 }
 
@@ -48,13 +90,12 @@ export default function ProgressTracker({ steps }) {
       alignItems: 'flex-start',
       gap: '0',
       overflowX: 'auto',
-      padding: '8px 0',
+      padding: '4px 0',
     }}>
       {steps.map((step, i) => {
         const config = statusConfig[step.status];
         const isActive = step.status === 'running';
         const isDone = step.status === 'done';
-        const isError = step.status === 'error';
 
         return (
           <React.Fragment key={step.index}>
@@ -62,66 +103,40 @@ export default function ProgressTracker({ steps }) {
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              minWidth: '90px',
+              minWidth: '80px',
               flex: 1,
               position: 'relative',
             }}>
-              {/* Step circle */}
-              <div style={{
-                width: '34px',
-                height: '34px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: config.bg,
-                border: (step.status === 'pending' || step.status === 'skipped')
-                  ? `2px solid ${config.color}` : 'none',
-                color: config.iconColor,
-                transition: 'all 0.3s ease',
-                ...(isActive ? {
-                  animation: 'pulse-glow 2s ease-in-out infinite',
-                  boxShadow: '0 0 12px rgba(232, 101, 74, 0.35)',
-                } : {}),
-                ...(isDone ? {
-                  boxShadow: '0 0 8px rgba(45, 157, 111, 0.25)',
-                } : {}),
-                ...(isError ? {
-                  boxShadow: '0 0 8px rgba(217, 69, 69, 0.25)',
-                } : {}),
-              }}>
-                <StepIcon status={step.status} index={i} />
-              </div>
+              <StepDot status={step.status} />
 
               {/* Step label */}
               <span style={{
-                marginTop: '8px',
-                fontSize: '11px',
+                marginTop: '10px',
+                fontSize: '10px',
                 fontWeight: isActive ? 600 : 400,
                 textAlign: 'center',
-                color: isActive ? '#E8654A' : isDone ? '#2D9D6F' : isError ? '#D94545' : '#9B938A',
+                color: config.textColor,
                 lineHeight: '1.3',
-                maxWidth: '80px',
+                maxWidth: '76px',
                 transition: 'color 0.3s ease',
+                letterSpacing: '0.03em',
+                textTransform: 'uppercase',
+                fontFamily: 'var(--font-body)',
               }}>
                 {step.name}
               </span>
             </div>
 
-            {/* Connector */}
+            {/* Connector line */}
             {i < steps.length - 1 && (
               <div style={{
                 flex: 1,
-                height: '2px',
+                height: '1px',
                 alignSelf: 'center',
-                marginTop: '-18px',
+                marginTop: '-20px',
                 minWidth: '8px',
-                background: isDone ? '#2D9D6F' : '#E8E4DE',
-                borderRadius: '1px',
-                transition: 'background 0.5s ease',
-                ...(isDone ? {
-                  boxShadow: '0 0 4px rgba(45, 157, 111, 0.15)',
-                } : {}),
+                background: isDone ? 'var(--text-primary)' : 'var(--border-hairline)',
+                transition: 'background 0.4s ease',
               }} />
             )}
           </React.Fragment>

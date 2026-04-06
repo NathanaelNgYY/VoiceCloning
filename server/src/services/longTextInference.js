@@ -166,6 +166,37 @@ function createSilenceBytes(durationMs, parsedWav) {
   return Buffer.alloc(byteLength, 0);
 }
 
+/**
+ * Apply a linear fade to PCM16 audio data in-place.
+ * @param {Buffer} data - raw PCM16 data (modified in-place)
+ * @param {number} sampleRate
+ * @param {number} numChannels
+ * @param {number} fadeMs - fade duration in milliseconds
+ * @param {'in'|'out'} direction
+ */
+function applyFade(data, sampleRate, numChannels, fadeMs, direction) {
+  const bytesPerSample = 2; // PCM16
+  const blockAlign = numChannels * bytesPerSample;
+  const totalFrames = Math.floor(data.length / blockAlign);
+  const fadeFrames = Math.min(totalFrames, Math.round((fadeMs / 1000) * sampleRate));
+  if (fadeFrames <= 0) return;
+
+  for (let frame = 0; frame < fadeFrames; frame++) {
+    const gain = frame / fadeFrames;
+    const appliedGain = direction === 'in' ? gain : 1 - gain;
+    const frameOffset = direction === 'in'
+      ? frame * blockAlign
+      : (totalFrames - 1 - frame) * blockAlign;
+
+    for (let ch = 0; ch < numChannels; ch++) {
+      const offset = frameOffset + ch * bytesPerSample;
+      if (offset + 1 >= data.length) continue;
+      const sample = data.readInt16LE(offset);
+      data.writeInt16LE(Math.round(sample * appliedGain), offset);
+    }
+  }
+}
+
 export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
   if (!Array.isArray(buffers) || buffers.length === 0) {
     throw new Error('No audio buffers to concatenate');
@@ -186,10 +217,18 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
     }
   }
 
+  const fadeMs = 12;
+  const isPCM16 = first.audioFormat === 1 && first.bitsPerSample === 16;
+
   const joinedChunks = [];
   const silence = createSilenceBytes(pauseMs, first);
   parsed.forEach((wav, index) => {
-    joinedChunks.push(wav.dataChunk);
+    const chunk = Buffer.from(wav.dataChunk);
+    if (isPCM16) {
+      if (index > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeMs, 'in');
+      if (index < parsed.length - 1) applyFade(chunk, first.sampleRate, first.numChannels, fadeMs, 'out');
+    }
+    joinedChunks.push(chunk);
     if (index < parsed.length - 1 && silence.length > 0) joinedChunks.push(silence);
   });
 
@@ -309,7 +348,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     split_bucket: true,
     parallel_infer: false,
     fragment_interval: 0.18,
-    repetition_penalty: 1.05,
+    repetition_penalty: 1.15,
     speed_factor: speed,
   };
 
@@ -331,18 +370,18 @@ function buildAttemptVariants(baseParams, attemptIndex) {
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(3, Math.min(safeTopK, 8)),
       fragment_interval: 0.22,
-      repetition_penalty: 1.08,
+      repetition_penalty: 1.2,
       seed: (baseSeed + 31) >>> 0,
     };
   }
 
   return {
     ...base,
-    temperature: 0.65,
+    temperature: 0.6,
     top_p: 0.88,
     top_k: 5,
     fragment_interval: 0.25,
-    repetition_penalty: 1.1,
+    repetition_penalty: 1.25,
     seed: (baseSeed + 47) >>> 0,
     text_split_method: 'cut0',
     split_bucket: false,

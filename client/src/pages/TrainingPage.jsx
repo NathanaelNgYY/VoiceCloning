@@ -5,83 +5,61 @@ import LogViewer from '../components/LogViewer.jsx';
 import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 
-/* ── Shared style builders ── */
+/* ── Editorial shared styles ── */
 
-const card = {
-  background: '#FFFFFF',
-  border: '1px solid #E8E4DE',
-  borderRadius: '16px',
-  padding: '24px',
-  marginBottom: '16px',
-  boxShadow: '0 1px 3px rgba(26, 22, 20, 0.04), 0 1px 2px rgba(26, 22, 20, 0.02)',
+const section = {
+  marginBottom: '56px',
 };
 
-const label = {
+const sectionHeader = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: '16px',
+  marginBottom: '24px',
+  paddingBottom: '16px',
+  borderBottom: '1px solid var(--border-hairline)',
+};
+
+const sectionNumber = {
+  fontSize: '48px',
+  fontFamily: 'var(--font-display)',
+  color: 'var(--border-default)',
+  lineHeight: 0.85,
+  fontWeight: 400,
+  userSelect: 'none',
+};
+
+const sectionTitle = {
+  fontSize: '18px',
+  fontWeight: 400,
+  color: 'var(--text-primary)',
+  fontFamily: 'var(--font-display)',
+  letterSpacing: '-0.01em',
+};
+
+const labelStyle = {
   display: 'block',
-  fontSize: '12px',
-  color: '#9B938A',
-  marginBottom: '6px',
+  fontSize: '10px',
+  color: 'var(--text-tertiary)',
+  marginBottom: '8px',
   fontWeight: 500,
-  letterSpacing: '0.04em',
+  letterSpacing: '0.1em',
   textTransform: 'uppercase',
+  fontFamily: 'var(--font-body)',
 };
 
-const input = {
+const inputStyle = {
   width: '100%',
   padding: '10px 14px',
-  background: '#F8F6F3',
-  border: '1px solid #E8E4DE',
-  borderRadius: '10px',
-  color: '#1A1614',
+  background: 'var(--bg-elevated)',
+  border: '1px solid var(--border-default)',
+  borderRadius: 'var(--radius-sm)',
+  color: 'var(--text-primary)',
   fontSize: '14px',
   outline: 'none',
-  fontFamily: '"DM Sans", sans-serif',
-  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+  fontFamily: 'var(--font-body)',
+  transition: 'border-color 0.15s ease',
 };
-
-const heading = {
-  fontSize: '15px',
-  fontWeight: 600,
-  color: '#1A1614',
-  letterSpacing: '-0.01em',
-  marginBottom: '18px',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  fontFamily: '"Space Grotesk", sans-serif',
-};
-
-/* ── Icons ── */
-
-const SetupIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="2" width="12" height="12" rx="3" />
-    <path d="M5 8h6M8 5v6" />
-  </svg>
-);
-
-const PipelineIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="3" cy="8" r="1.5" />
-    <circle cx="8" cy="8" r="1.5" />
-    <circle cx="13" cy="8" r="1.5" />
-    <path d="M4.5 8h2M9.5 8h2" />
-  </svg>
-);
-
-const SettingsIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="7" cy="7" r="2" />
-    <path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8l-1.4 1.4M4.2 9.8l-1.4 1.4" />
-  </svg>
-);
-
-const ChevronIcon = ({ open }) => (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-    style={{ transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>
-    <path d="M3 4.5l3 3 3-3" />
-  </svg>
-);
 
 export default function TrainingPage() {
   const [expName, setExpName] = useState('');
@@ -191,91 +169,109 @@ export default function TrainingPage() {
 
   return (
     <div style={{ animation: 'fade-in 0.4s ease' }}>
-      {/* Setup Section */}
-      <div style={card}>
-        <h2 style={heading}>
-          <SetupIcon />
-          Setup
-        </h2>
 
-        <div style={{ marginBottom: '18px' }}>
-          <label style={label}>Experiment Name</label>
+      {/* ── 01 Setup ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>01</span>
+          <div>
+            <h2 style={sectionTitle}>Setup</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Name your experiment and upload training audio
+            </p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '28px' }}>
+          <label style={labelStyle}>Experiment Name</label>
           <input
-            style={input}
+            style={inputStyle}
             placeholder="e.g. my_voice_model"
             value={expName}
             onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
             disabled={isRunning}
-            onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-            onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
+            onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+            onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
           />
           {expName && (
-            <p style={{ fontSize: '11px', color: '#B8B0A6', marginTop: '4px' }}>
-              Only letters, numbers, hyphens, and underscores allowed
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', fontFamily: 'var(--font-mono)' }}>
+              Letters, numbers, hyphens, underscores only
             </p>
           )}
         </div>
 
         <div>
-          <label style={label}>Training Audio</label>
+          <label style={labelStyle}>Training Audio</label>
           <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
         </div>
 
         {uploadError && (
           <div style={{
-            marginTop: '12px',
-            padding: '10px 14px',
-            background: 'rgba(217, 69, 69, 0.06)',
-            border: '1px solid rgba(217, 69, 69, 0.12)',
-            borderRadius: '10px',
-            color: '#D94545',
+            marginTop: '16px',
+            padding: '12px 16px',
+            background: 'var(--error-soft)',
+            borderLeft: '3px solid var(--accent)',
+            color: 'var(--accent)',
             fontSize: '13px',
+            fontFamily: 'var(--font-body)',
           }}>
             {uploadError}
           </div>
         )}
       </div>
 
-      {/* Advanced Settings */}
-      <div style={card}>
+      {/* ── 02 Configuration ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>02</span>
+          <div>
+            <h2 style={sectionTitle}>Configuration</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Training parameters and settings
+            </p>
+          </div>
+        </div>
+
         <button
           onClick={() => setShowSettings(!showSettings)}
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '8px',
+            gap: '10px',
             background: 'none',
             border: 'none',
-            color: '#9B938A',
+            color: 'var(--text-secondary)',
             cursor: 'pointer',
             fontSize: '13px',
             fontWeight: 500,
             padding: 0,
-            fontFamily: '"DM Sans", sans-serif',
-            transition: 'color 0.2s ease',
-            width: '100%',
+            fontFamily: 'var(--font-body)',
+            transition: 'color 0.15s ease',
+            letterSpacing: '0.02em',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#E8654A'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = '#9B938A'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
         >
-          <SettingsIcon />
-          Advanced Settings
-          <ChevronIcon open={showSettings} />
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+            style={{ transition: 'transform 0.2s ease', transform: showSettings ? 'rotate(90deg)' : 'rotate(0)' }}>
+            <path d="M3 1l4 4-4 4" />
+          </svg>
+          {showSettings ? 'Hide' : 'Show'} advanced settings
         </button>
 
         {showSettings && (
           <div style={{
-            marginTop: '20px',
+            marginTop: '28px',
             display: 'grid',
             gridTemplateColumns: '1fr 1fr',
-            gap: '20px',
+            gap: '28px 40px',
             animation: 'fade-in 0.25s ease',
           }}>
             {/* Batch Size */}
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 Batch Size
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{batchSize}</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{batchSize}</span>
               </label>
               <input type="range" min="1" max="4" value={batchSize}
                 onChange={e => setBatchSize(Number(e.target.value))} disabled={isRunning} />
@@ -283,14 +279,14 @@ export default function TrainingPage() {
 
             {/* ASR Language */}
             <div>
-              <label style={label}>ASR Language</label>
+              <label style={labelStyle}>ASR Language</label>
               <select
-                style={input}
+                style={inputStyle}
                 value={asrLanguage}
                 onChange={e => setAsrLanguage(e.target.value)}
                 disabled={isRunning}
-                onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-                onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
+                onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+                onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
               >
                 <option value="en">English</option>
                 <option value="zh">Chinese</option>
@@ -302,9 +298,9 @@ export default function TrainingPage() {
 
             {/* SoVITS Epochs */}
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 SoVITS Epochs
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{sovitsEpochs}</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{sovitsEpochs}</span>
               </label>
               <input type="range" min="1" max="50" value={sovitsEpochs}
                 onChange={e => setSovitsEpochs(Number(e.target.value))} disabled={isRunning} />
@@ -312,9 +308,9 @@ export default function TrainingPage() {
 
             {/* GPT Epochs */}
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 GPT Epochs
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{gptEpochs}</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{gptEpochs}</span>
               </label>
               <input type="range" min="1" max="50" value={gptEpochs}
                 onChange={e => setGptEpochs(Number(e.target.value))} disabled={isRunning} />
@@ -322,9 +318,9 @@ export default function TrainingPage() {
 
             {/* SoVITS Save Every */}
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 SoVITS Save Interval
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>every {sovitsSaveEvery}ep</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>every {sovitsSaveEvery}ep</span>
               </label>
               <input type="range" min="1" max="10" value={sovitsSaveEvery}
                 onChange={e => setSovitsSaveEvery(Number(e.target.value))} disabled={isRunning} />
@@ -332,9 +328,9 @@ export default function TrainingPage() {
 
             {/* GPT Save Every */}
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 GPT Save Interval
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>every {gptSaveEvery}ep</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>every {gptSaveEvery}ep</span>
               </label>
               <input type="range" min="1" max="10" value={gptSaveEvery}
                 onChange={e => setGptSaveEvery(Number(e.target.value))} disabled={isRunning} />
@@ -343,103 +339,111 @@ export default function TrainingPage() {
         )}
       </div>
 
-      {/* Pipeline Progress */}
-      <div style={card}>
-        <h2 style={heading}>
-          <PipelineIcon />
-          Pipeline
-          {pipelineStatus === 'running' && (
-            <span style={{
-              fontSize: '11px',
-              fontWeight: 500,
-              color: '#E8654A',
-              background: 'rgba(232, 101, 74, 0.08)',
-              padding: '2px 10px',
-              borderRadius: '10px',
-              marginLeft: '4px',
-            }}>
-              Running
-            </span>
-          )}
-          {pipelineStatus === 'complete' && (
-            <span style={{
-              fontSize: '11px',
-              fontWeight: 500,
-              color: '#2D9D6F',
-              background: 'rgba(45, 157, 111, 0.08)',
-              padding: '2px 10px',
-              borderRadius: '10px',
-              marginLeft: '4px',
-            }}>
-              Complete
-            </span>
-          )}
-          {pipelineStatus === 'error' && (
-            <span style={{
-              fontSize: '11px',
-              fontWeight: 500,
-              color: '#D94545',
-              background: 'rgba(217, 69, 69, 0.06)',
-              padding: '2px 10px',
-              borderRadius: '10px',
-              marginLeft: '4px',
-            }}>
-              Error
-            </span>
-          )}
-        </h2>
+      {/* ── 03 Pipeline ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>03</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <h2 style={sectionTitle}>Pipeline</h2>
+              {pipelineStatus === 'running' && (
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: 500,
+                  color: 'var(--accent)',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  fontFamily: 'var(--font-body)',
+                }}>
+                  Running
+                </span>
+              )}
+              {pipelineStatus === 'complete' && (
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  fontFamily: 'var(--font-body)',
+                }}>
+                  Complete
+                </span>
+              )}
+              {pipelineStatus === 'error' && (
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: 500,
+                  color: 'var(--accent)',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  fontFamily: 'var(--font-body)',
+                }}>
+                  Error
+                </span>
+              )}
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              8-step training pipeline progress
+            </p>
+          </div>
+        </div>
 
         <ProgressTracker steps={steps} />
 
         <div style={{
-          marginTop: '20px',
+          marginTop: '28px',
           display: 'flex',
-          gap: '12px',
+          gap: '16px',
           alignItems: 'center',
         }}>
           {!isRunning ? (
             <button
               style={{
-                padding: '11px 28px',
-                background: uploading ? '#F1EEE9' : 'linear-gradient(135deg, #E8654A, #D94E7A)',
-                color: uploading ? '#9B938A' : '#FFFFFF',
+                padding: '11px 32px',
+                background: uploading ? 'var(--bg-surface)' : 'var(--text-primary)',
+                color: uploading ? 'var(--text-muted)' : 'var(--bg-elevated)',
                 border: 'none',
-                borderRadius: '12px',
-                fontSize: '14px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '12px',
                 fontWeight: 600,
                 cursor: uploading ? 'not-allowed' : 'pointer',
-                fontFamily: '"DM Sans", sans-serif',
-                transition: 'all 0.2s ease',
-                boxShadow: uploading ? 'none' : '0 4px 20px rgba(232, 101, 74, 0.25)',
-                letterSpacing: '0.01em',
+                fontFamily: 'var(--font-body)',
+                transition: 'all 0.15s ease',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
               }}
               onClick={handleStart}
               disabled={uploading || isRunning}
+              onMouseEnter={(e) => { if (!uploading) e.currentTarget.style.background = 'var(--accent)'; }}
+              onMouseLeave={(e) => { if (!uploading) e.currentTarget.style.background = 'var(--text-primary)'; }}
             >
-              {uploading ? 'Uploading files...' : 'Start Training'}
+              {uploading ? 'Uploading...' : 'Start Training'}
             </button>
           ) : (
             <button
               style={{
-                padding: '11px 28px',
+                padding: '11px 32px',
                 background: 'transparent',
-                color: '#D94545',
-                border: '1px solid rgba(217, 69, 69, 0.25)',
-                borderRadius: '12px',
-                fontSize: '14px',
+                color: 'var(--accent)',
+                border: '1px solid var(--accent)',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '12px',
                 fontWeight: 600,
                 cursor: 'pointer',
-                fontFamily: '"DM Sans", sans-serif',
-                transition: 'all 0.2s ease',
+                fontFamily: 'var(--font-body)',
+                transition: 'all 0.15s ease',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
               }}
               onClick={handleStop}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(217, 69, 69, 0.06)';
-                e.currentTarget.style.borderColor = '#D94545';
+                e.currentTarget.style.background = 'var(--accent)';
+                e.currentTarget.style.color = 'white';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderColor = 'rgba(217, 69, 69, 0.25)';
+                e.currentTarget.style.color = 'var(--accent)';
               }}
             >
               Stop Training
@@ -448,11 +452,10 @@ export default function TrainingPage() {
 
           {error && (
             <span style={{
-              color: '#D94545',
+              color: 'var(--accent)',
               fontSize: '13px',
-              padding: '6px 12px',
-              background: 'rgba(217, 69, 69, 0.06)',
-              borderRadius: '8px',
+              paddingLeft: '8px',
+              borderLeft: '2px solid var(--accent)',
             }}>
               {error}
             </span>
@@ -460,15 +463,17 @@ export default function TrainingPage() {
         </div>
       </div>
 
-      {/* Logs */}
-      <div style={card}>
-        <h2 style={{ ...heading, marginBottom: '14px' }}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 5l3 2.5L4 10" />
-            <path d="M9 10h4" />
-          </svg>
-          Logs
-        </h2>
+      {/* ── 04 Logs ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>04</span>
+          <div>
+            <h2 style={sectionTitle}>Logs</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Real-time training output
+            </p>
+          </div>
+        </div>
         <LogViewer logs={logs} />
       </div>
     </div>

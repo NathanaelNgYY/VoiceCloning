@@ -6,7 +6,7 @@
     <title>Voice Cloning Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       *, *::before, *::after {
         box-sizing: border-box;
@@ -15,55 +15,59 @@
       }
 
       :root {
-        --bg-base: #E9E6E0;
-        --bg-surface: #F2EFEA;
-        --bg-surface-hover: #EDEBE6;
-        --bg-inset: #E2DFD9;
-        --bg-elevated: #F2EFEA;
+        /* Paper & Ink — Editorial Minimalism */
+        --bg-base: #FAFAF8;
+        --bg-surface: #F5F5F0;
+        --bg-surface-hover: #EDEDEA;
+        --bg-inset: #F0F0EC;
+        --bg-elevated: #FFFFFF;
 
-        --border-subtle: #E8E4DE;
-        --border-default: #DDD8D0;
-        --border-strong: #C8C2B8;
+        --border-hairline: #E0E0DC;
+        --border-default: #D4D4CF;
+        --border-strong: #1A1A1A;
 
-        --text-primary: #1A1614;
-        --text-secondary: #6B635A;
-        --text-tertiary: #9B938A;
-        --text-muted: #B8B0A6;
+        --text-primary: #1A1A1A;
+        --text-secondary: #4A4A4A;
+        --text-tertiary: #8A8A8A;
+        --text-muted: #B5B5B0;
 
-        --accent: #E8654A;
-        --accent-hover: #D45A42;
-        --accent-soft: rgba(232, 101, 74, 0.08);
-        --accent-medium: rgba(232, 101, 74, 0.15);
-        --accent-gradient: #E8654A;
+        /* Single accent: vermillion red */
+        --accent: #E63946;
+        --accent-hover: #D32F3B;
+        --accent-soft: rgba(230, 57, 70, 0.06);
+        --accent-medium: rgba(230, 57, 70, 0.12);
 
-        --success: #2D9D6F;
-        --success-soft: rgba(45, 157, 111, 0.08);
-        --success-medium: rgba(45, 157, 111, 0.15);
+        --success: #1A1A1A;
+        --success-soft: rgba(26, 26, 26, 0.04);
+        --success-medium: rgba(26, 26, 26, 0.08);
 
-        --error: #D94545;
-        --error-soft: rgba(217, 69, 69, 0.06);
-        --error-medium: rgba(217, 69, 69, 0.12);
+        --error: #E63946;
+        --error-soft: rgba(230, 57, 70, 0.05);
+        --error-medium: rgba(230, 57, 70, 0.10);
 
-        --warning: #D49A2A;
-        --warning-soft: rgba(212, 154, 42, 0.08);
+        --warning: #1A1A1A;
+        --warning-soft: rgba(26, 26, 26, 0.05);
 
-        --audio-track: #EDE9E3;
-        --audio-fill: linear-gradient(90deg, #E8654A, #D94E7A);
-        --audio-thumb: #E8654A;
+        --audio-track: #E0E0DC;
+        --audio-fill: #1A1A1A;
+        --audio-thumb: #1A1A1A;
 
-        --radius-sm: 8px;
-        --radius-md: 12px;
-        --radius-lg: 16px;
-        --radius-xl: 20px;
+        --radius-sm: 3px;
+        --radius-md: 4px;
+        --radius-lg: 6px;
+        --radius-xl: 8px;
 
-        --shadow-sm: 0 1px 3px rgba(26, 22, 20, 0.04), 0 1px 2px rgba(26, 22, 20, 0.02);
-        --shadow-md: 0 4px 16px rgba(26, 22, 20, 0.06), 0 1px 4px rgba(26, 22, 20, 0.03);
-        --shadow-lg: 0 8px 32px rgba(26, 22, 20, 0.08), 0 2px 8px rgba(26, 22, 20, 0.04);
-        --shadow-accent: 0 4px 20px rgba(232, 101, 74, 0.2);
+        --shadow-sm: 0 1px 2px rgba(26, 26, 26, 0.04);
+        --shadow-md: 0 2px 8px rgba(26, 26, 26, 0.05);
+        --shadow-lg: 0 4px 20px rgba(26, 26, 26, 0.07);
+
+        --font-display: 'Instrument Serif', Georgia, serif;
+        --font-body: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+        --font-mono: 'Geist Mono', 'Consolas', monospace;
       }
 
       body {
-        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: var(--font-body);
         background: var(--bg-base);
         color: var(--text-primary);
         line-height: 1.6;
@@ -72,54 +76,59 @@
       }
       #root { min-height: 100vh; }
 
-      /* Scrollbar */
-      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      /* Scrollbar — thin, understated */
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
       ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
-      ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+      ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 2px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
-      /* Range inputs */
+      /* Range inputs — editorial, black/red only */
       input[type="range"] {
         -webkit-appearance: none;
         appearance: none;
         width: 100%;
-        height: 5px;
-        background: var(--audio-track);
-        border-radius: 3px;
+        height: 1px;
+        background: var(--border-strong);
+        border-radius: 0;
         outline: none;
         cursor: pointer;
       }
       input[type="range"]::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
-        width: 18px;
-        height: 18px;
+        width: 14px;
+        height: 14px;
         border-radius: 50%;
-        background: var(--accent);
+        background: var(--text-primary);
         cursor: pointer;
-        border: 3px solid var(--bg-surface);
-        box-shadow: 0 1px 6px rgba(232, 101, 74, 0.3);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        border: 2px solid var(--bg-elevated);
+        box-shadow: 0 0 0 1px var(--text-primary);
+        transition: transform 0.15s ease, background 0.15s ease;
       }
       input[type="range"]::-webkit-slider-thumb:hover {
         transform: scale(1.15);
-        box-shadow: 0 2px 10px rgba(232, 101, 74, 0.4);
+        background: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
       }
       input[type="range"]::-moz-range-thumb {
-        width: 18px;
-        height: 18px;
+        width: 14px;
+        height: 14px;
         border-radius: 50%;
-        background: var(--accent);
+        background: var(--text-primary);
         cursor: pointer;
-        border: 3px solid var(--bg-surface);
-        box-shadow: 0 1px 6px rgba(232, 101, 74, 0.3);
+        border: 2px solid var(--bg-elevated);
+        box-shadow: 0 0 0 1px var(--text-primary);
+      }
+      input[type="range"]:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
       }
 
-      /* Select */
+      /* Select — clean, no rounded corners */
       select {
         -webkit-appearance: none;
         appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%239B938A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%231A1A1A' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
         background-repeat: no-repeat;
         background-position: right 12px center;
         padding-right: 32px !important;
@@ -128,10 +137,9 @@
       /* Audio element */
       audio {
         width: 100%;
-        height: 44px;
+        height: 42px;
         border-radius: var(--radius-md);
         outline: none;
-        filter: contrast(0.95) brightness(1.02);
       }
       audio::-webkit-media-controls-panel {
         background: var(--bg-inset);
@@ -140,32 +148,27 @@
 
       /* File input */
       input[type="file"] {
-        font-family: 'DM Sans', sans-serif;
+        font-family: var(--font-body);
       }
       input[type="file"]::file-selector-button {
-        font-family: 'DM Sans', sans-serif;
+        font-family: var(--font-body);
         padding: 7px 16px;
         border-radius: var(--radius-sm);
-        border: 1px solid var(--border-default);
-        background: var(--bg-surface);
-        color: var(--text-secondary);
+        border: 1px solid var(--border-strong);
+        background: var(--bg-elevated);
+        color: var(--text-primary);
         cursor: pointer;
         font-size: 13px;
         font-weight: 500;
         margin-right: 10px;
-        transition: all 0.2s ease;
+        transition: all 0.15s ease;
       }
       input[type="file"]::file-selector-button:hover {
-        background: var(--accent-soft);
-        border-color: var(--accent);
-        color: var(--accent);
+        background: var(--text-primary);
+        color: var(--bg-elevated);
       }
 
-      /* Animations */
-      @keyframes pulse-glow {
-        0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(232, 101, 74, 0.3); }
-        50% { opacity: 0.8; box-shadow: 0 0 18px rgba(232, 101, 74, 0.45); }
-      }
+      /* Animations — subtle, precise */
       @keyframes fade-in {
         from { opacity: 0; transform: translateY(6px); }
         to { opacity: 1; transform: translateY(0); }
@@ -174,13 +177,23 @@
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
       }
-      @keyframes shimmer {
-        0% { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
-      }
       @keyframes spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
+      }
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+      @keyframes grow-line {
+        from { transform: scaleX(0); }
+        to { transform: scaleX(1); }
+      }
+
+      /* Selection color */
+      ::selection {
+        background: var(--accent);
+        color: white;
       }
     </style>
   </head>

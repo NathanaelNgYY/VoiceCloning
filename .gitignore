@@ -4,3 +4,4 @@ dist/
 .claude/
 *.wav
 nul
+CLAUDE.md

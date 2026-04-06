@@ -3,111 +3,72 @@ import ModelSelector from '../components/ModelSelector.jsx';
 import AudioPlayer from '../components/AudioPlayer.jsx';
 import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus } from '../services/api.js';
 
-/* ── Shared styles ── */
+/* ── Editorial shared styles ── */
 
-const card = {
-  background: '#FFFFFF',
-  border: '1px solid #E8E4DE',
-  borderRadius: '16px',
-  padding: '24px',
-  marginBottom: '16px',
-  boxShadow: '0 1px 3px rgba(26, 22, 20, 0.04), 0 1px 2px rgba(26, 22, 20, 0.02)',
+const section = {
+  marginBottom: '56px',
 };
 
-const label = {
+const sectionHeader = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: '16px',
+  marginBottom: '24px',
+  paddingBottom: '16px',
+  borderBottom: '1px solid var(--border-hairline)',
+};
+
+const sectionNumber = {
+  fontSize: '48px',
+  fontFamily: 'var(--font-display)',
+  color: 'var(--border-default)',
+  lineHeight: 0.85,
+  fontWeight: 400,
+  userSelect: 'none',
+};
+
+const sectionTitle = {
+  fontSize: '18px',
+  fontWeight: 400,
+  color: 'var(--text-primary)',
+  fontFamily: 'var(--font-display)',
+  letterSpacing: '-0.01em',
+};
+
+const labelStyle = {
   display: 'block',
-  fontSize: '12px',
-  color: '#9B938A',
-  marginBottom: '6px',
+  fontSize: '10px',
+  color: 'var(--text-tertiary)',
+  marginBottom: '8px',
   fontWeight: 500,
-  letterSpacing: '0.04em',
+  letterSpacing: '0.1em',
   textTransform: 'uppercase',
+  fontFamily: 'var(--font-body)',
 };
 
-const input = {
+const inputStyle = {
   width: '100%',
   padding: '10px 14px',
-  background: '#F8F6F3',
-  border: '1px solid #E8E4DE',
-  borderRadius: '10px',
-  color: '#1A1614',
+  background: 'var(--bg-elevated)',
+  border: '1px solid var(--border-default)',
+  borderRadius: 'var(--radius-sm)',
+  color: 'var(--text-primary)',
   fontSize: '14px',
   outline: 'none',
-  fontFamily: '"DM Sans", sans-serif',
-  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+  fontFamily: 'var(--font-body)',
+  transition: 'border-color 0.15s ease',
 };
 
-const heading = {
-  fontSize: '15px',
-  fontWeight: 600,
-  color: '#1A1614',
-  letterSpacing: '-0.01em',
-  marginBottom: '18px',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  fontFamily: '"Space Grotesk", sans-serif',
-};
-
-/* ── Icons ── */
-
-const ModelIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="1" y="4" width="14" height="8" rx="2" />
-    <circle cx="5" cy="8" r="1" fill="#E8654A" stroke="none" />
-    <circle cx="8" cy="8" r="1" fill="#E8654A" stroke="none" />
-    <circle cx="11" cy="8" r="1" fill="#E8654A" stroke="none" />
-  </svg>
-);
-
-const RefIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M8 2v9" />
-    <circle cx="8" cy="12" r="2" />
-    <path d="M12 5a4 4 0 0 0-8 0" />
-  </svg>
-);
-
-const TextIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 3h10M8 3v10M5 13h6" />
-  </svg>
-);
-
-const SettingsIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="7" cy="7" r="2" />
-    <path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8l-1.4 1.4M4.2 9.8l-1.4 1.4" />
-  </svg>
-);
-
-const ChevronIcon = ({ open }) => (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-    style={{ transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>
-    <path d="M3 4.5l3 3 3-3" />
-  </svg>
-);
-
-const RefreshIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M1 2v4h4" />
-    <path d="M13 12V8H9" />
-    <path d="M2.5 9a5 5 0 008.2 1.8L13 8M1 6l2.3-2.8A5 5 0 0111.5 5" />
-  </svg>
-);
-
-const GenerateIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <polygon points="4,2 14,8 4,14" fill="currentColor" stroke="none" />
-  </svg>
-);
+/* ── Spinner ── */
 
 const SpinnerSmall = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
-    <circle cx="8" cy="8" r="6" stroke="rgba(232, 101, 74, 0.15)" strokeWidth="2" />
-    <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
+    <circle cx="7" cy="7" r="5" stroke="var(--border-default)" strokeWidth="1.5" />
+    <path d="M12 7a5 5 0 0 0-5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 );
+
+/* ── Ref Audio Player ── */
 
 function formatTime(s) {
   if (!s || !isFinite(s)) return '0:00';
@@ -115,19 +76,6 @@ function formatTime(s) {
   const sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
-
-const PlayIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="#E8654A" stroke="none">
-    <polygon points="4,2 14,8 4,14" />
-  </svg>
-);
-
-const PauseIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="#E8654A" stroke="none">
-    <rect x="3" y="2" width="3.5" height="12" rx="1" />
-    <rect x="9.5" y="2" width="3.5" height="12" rx="1" />
-  </svg>
-);
 
 function RefAudioPlayer({ src }) {
   const audioRef = useRef(null);
@@ -162,14 +110,14 @@ function RefAudioPlayer({ src }) {
 
   return (
     <div style={{
-      marginTop: '10px',
-      padding: '10px 14px',
-      background: '#F8F6F3',
-      border: '1px solid #E8E4DE',
-      borderRadius: '12px',
+      marginTop: '12px',
+      padding: '12px 16px',
+      background: 'var(--bg-surface)',
+      border: '1px solid var(--border-hairline)',
+      borderRadius: 'var(--radius-sm)',
       display: 'flex',
       alignItems: 'center',
-      gap: '10px',
+      gap: '12px',
     }}>
       <audio
         ref={audioRef}
@@ -182,25 +130,42 @@ function RefAudioPlayer({ src }) {
       <button
         onClick={togglePlay}
         style={{
-          width: '34px',
-          height: '34px',
+          width: '32px',
+          height: '32px',
           borderRadius: '50%',
-          border: 'none',
-          background: 'rgba(232, 101, 74, 0.1)',
+          border: '1px solid var(--border-strong)',
+          background: 'var(--bg-elevated)',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
-          transition: 'background 0.15s ease',
+          transition: 'all 0.15s ease',
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(232, 101, 74, 0.18)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(232, 101, 74, 0.1)'; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--text-primary)';
+          e.currentTarget.style.borderColor = 'var(--text-primary)';
+          e.currentTarget.querySelector('svg').style.color = 'var(--bg-elevated)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'var(--bg-elevated)';
+          e.currentTarget.style.borderColor = 'var(--border-strong)';
+          e.currentTarget.querySelector('svg').style.color = 'var(--text-primary)';
+        }}
       >
-        {playing ? <PauseIcon /> : <PlayIcon />}
+        {playing ? (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" stroke="none" style={{ color: 'var(--text-primary)' }}>
+            <rect x="2" y="1" width="3" height="10" rx="0.5" />
+            <rect x="7" y="1" width="3" height="10" rx="0.5" />
+          </svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" stroke="none" style={{ color: 'var(--text-primary)' }}>
+            <polygon points="3,1 11,6 3,11" />
+          </svg>
+        )}
       </button>
 
-      <span style={{ fontSize: '11px', color: '#9B938A', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
         {formatTime(currentTime)}
       </span>
 
@@ -209,32 +174,31 @@ function RefAudioPlayer({ src }) {
         onClick={handleSeek}
         style={{
           flex: 1,
-          height: '6px',
-          background: '#EDE9E3',
-          borderRadius: '3px',
+          height: '1px',
+          background: 'var(--border-default)',
           cursor: 'pointer',
           position: 'relative',
-          overflow: 'hidden',
         }}
       >
         <div style={{
           position: 'absolute',
-          top: 0,
+          top: '-1px',
           left: 0,
-          height: '100%',
+          height: '3px',
           width: `${progress}%`,
-          background: 'linear-gradient(90deg, #E8654A, #D94E7A)',
-          borderRadius: '3px',
+          background: 'var(--text-primary)',
           transition: 'width 0.1s linear',
         }} />
       </div>
 
-      <span style={{ fontSize: '11px', color: '#9B938A', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
         {formatTime(duration)}
       </span>
     </div>
   );
 }
+
+/* ── Main Page ── */
 
 export default function InferencePage() {
   const [gptModels, setGptModels] = useState([]);
@@ -258,8 +222,8 @@ export default function InferencePage() {
   const [showSettings, setShowSettings] = useState(false);
   const [speed, setSpeed] = useState(1.0);
   const [topK, setTopK] = useState(5);
-  const [topP, setTopP] = useState(1);
-  const [temperature, setTemperature] = useState(1);
+  const [topP, setTopP] = useState(0.85);
+  const [temperature, setTemperature] = useState(0.65);
 
   const [generating, setGenerating] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
@@ -360,40 +324,44 @@ export default function InferencePage() {
 
   return (
     <div style={{ animation: 'fade-in 0.4s ease' }}>
-      {/* Model Selection */}
-      <div style={card}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '18px',
-        }}>
-          <h2 style={{ ...heading, marginBottom: 0 }}>
-            <ModelIcon />
-            Model Selection
-          </h2>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '12px',
-            fontWeight: 500,
-          }}>
-            <div style={{
-              width: '7px',
-              height: '7px',
-              borderRadius: '50%',
-              background: serverReady ? '#2D9D6F' : '#C8C2B8',
-              boxShadow: serverReady ? '0 0 6px rgba(45, 157, 111, 0.4)' : 'none',
-              transition: 'all 0.3s ease',
-            }} />
-            <span style={{ color: serverReady ? '#2D9D6F' : '#B8B0A6' }}>
-              {serverReady ? 'Server ready' : 'Server offline'}
-            </span>
+
+      {/* ── 01 Models ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>01</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <h2 style={sectionTitle}>Model Selection</h2>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}>
+                <div style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: serverReady ? 'var(--text-primary)' : 'var(--border-default)',
+                  transition: 'all 0.3s ease',
+                }} />
+                <span style={{
+                  fontSize: '10px',
+                  color: serverReady ? 'var(--text-primary)' : 'var(--text-muted)',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  fontWeight: 500,
+                }}>
+                  {serverReady ? 'Ready' : 'Offline'}
+                </span>
+              </div>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Select and load your trained voice models
+            </p>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
           <ModelSelector
             label="GPT Model"
             models={gptModels}
@@ -410,27 +378,29 @@ export default function InferencePage() {
           />
         </div>
 
-        <div style={{ marginTop: '16px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div style={{ marginTop: '20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
           <button
             style={{
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
-              gap: '7px',
-              padding: '9px 20px',
-              background: '#F8F6F3',
-              border: '1px solid #E8E4DE',
-              borderRadius: '10px',
-              color: loading ? '#B8B0A6' : '#6B635A',
-              fontSize: '13px',
+              gap: '8px',
+              padding: '10px 24px',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 'var(--radius-sm)',
+              color: loading ? 'var(--text-muted)' : 'var(--text-primary)',
+              fontSize: '12px',
               fontWeight: 500,
               cursor: loading ? 'not-allowed' : 'pointer',
-              fontFamily: '"DM Sans", sans-serif',
+              fontFamily: 'var(--font-body)',
               transition: 'all 0.15s ease',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
             }}
             onClick={handleLoadModels}
             disabled={loading}
-            onMouseEnter={(e) => { if (!loading) { e.currentTarget.style.borderColor = '#E8654A'; e.currentTarget.style.color = '#E8654A'; }}}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E8E4DE'; e.currentTarget.style.color = '#6B635A'; }}
+            onMouseEnter={(e) => { if (!loading) { e.currentTarget.style.background = 'var(--text-primary)'; e.currentTarget.style.color = 'var(--bg-elevated)'; }}}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
           >
             {loading ? <SpinnerSmall /> : null}
             {loading ? 'Loading...' : 'Load Models'}
@@ -438,35 +408,40 @@ export default function InferencePage() {
 
           <button
             style={{
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
-              gap: '5px',
-              padding: '9px 14px',
+              gap: '6px',
+              padding: '10px 16px',
               background: 'transparent',
-              border: '1px solid #E8E4DE',
-              borderRadius: '10px',
-              color: '#9B938A',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-tertiary)',
               fontSize: '12px',
               fontWeight: 500,
               cursor: 'pointer',
-              fontFamily: '"DM Sans", sans-serif',
+              fontFamily: 'var(--font-body)',
               transition: 'all 0.15s ease',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
             }}
             onClick={fetchModels}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#C8C2B8'; e.currentTarget.style.color = '#6B635A'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E8E4DE'; e.currentTarget.style.color = '#9B938A'; }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--text-primary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
           >
-            <RefreshIcon />
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M1 2v3h3" />
+              <path d="M11 10V7H8" />
+              <path d="M2 8a4.5 4.5 0 017.4-1.5L11 7M1 5l1.6.5A4.5 4.5 0 0010 4" />
+            </svg>
             Refresh
           </button>
 
           {modelError && (
             <span style={{
-              color: '#D94545',
+              color: 'var(--accent)',
               fontSize: '12px',
-              padding: '5px 10px',
-              background: 'rgba(217, 69, 69, 0.06)',
-              borderRadius: '8px',
+              paddingLeft: '8px',
+              borderLeft: '2px solid var(--accent)',
             }}>
               {modelError}
             </span>
@@ -474,44 +449,46 @@ export default function InferencePage() {
         </div>
       </div>
 
-      {/* Reference Audio */}
-      <div style={card}>
-        <h2 style={heading}>
-          <RefIcon />
-          Reference Audio
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      {/* ── 02 Reference Audio ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>02</span>
           <div>
-            <label style={label}>Audio File</label>
+            <h2 style={sectionTitle}>Reference Audio</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Upload a sample of the voice you want to clone
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+          <div>
+            <label style={labelStyle}>Audio File</label>
             <div style={{
-              padding: '14px',
-              background: '#F8F6F3',
-              border: '1px solid #E8E4DE',
-              borderRadius: '10px',
+              padding: '16px',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-elevated)',
             }}>
               <input
                 type="file"
                 accept=".wav,.mp3,.ogg,.flac"
                 onChange={handleRefUpload}
-                style={{ fontSize: '13px', color: '#9B938A', width: '100%' }}
+                style={{ fontSize: '13px', color: 'var(--text-tertiary)', width: '100%' }}
               />
             </div>
             {refAudioFile && (
               <div style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                background: 'rgba(45, 157, 111, 0.06)',
-                border: '1px solid rgba(45, 157, 111, 0.12)',
-                borderRadius: '8px',
+                marginTop: '10px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
+                gap: '8px',
               }}>
                 <div style={{
-                  width: '6px', height: '6px', borderRadius: '50%',
-                  background: '#2D9D6F',
+                  width: '5px', height: '5px', borderRadius: '50%',
+                  background: 'var(--text-primary)',
                 }} />
-                <span style={{ fontSize: '12px', color: '#2D9D6F' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                   {refAudioFile.name}
                 </span>
               </div>
@@ -521,50 +498,52 @@ export default function InferencePage() {
             )}
           </div>
           <div>
-            <label style={label}>Reference Transcript</label>
+            <label style={labelStyle}>Reference Transcript</label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
-                style={{ ...input, flex: 1 }}
+                style={{ ...inputStyle, flex: 1 }}
                 placeholder="What the reference audio says..."
                 value={promptText}
                 onChange={(e) => setPromptText(e.target.value)}
-                onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-                onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
+                onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+                onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
               />
               <button
                 style={{
-                  padding: '8px 14px',
-                  background: '#F8F6F3',
-                  border: '1px solid #E8E4DE',
-                  borderRadius: '10px',
-                  color: transcribing ? '#B8B0A6' : '#6B635A',
-                  fontSize: '12px',
+                  padding: '8px 16px',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-default)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: transcribing ? 'var(--text-muted)' : 'var(--text-secondary)',
+                  fontSize: '11px',
                   fontWeight: 500,
                   cursor: transcribing ? 'not-allowed' : 'pointer',
-                  fontFamily: '"DM Sans", sans-serif',
+                  fontFamily: 'var(--font-body)',
                   transition: 'all 0.15s ease',
                   whiteSpace: 'nowrap',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '5px',
+                  gap: '6px',
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
                 }}
                 onClick={handleTranscribe}
                 disabled={transcribing || !refAudioPath}
-                onMouseEnter={(e) => { if (!transcribing && refAudioPath) { e.currentTarget.style.borderColor = '#E8654A'; e.currentTarget.style.color = '#E8654A'; }}}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E8E4DE'; e.currentTarget.style.color = '#6B635A'; }}
+                onMouseEnter={(e) => { if (!transcribing && refAudioPath) { e.currentTarget.style.borderColor = 'var(--text-primary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
               >
                 {transcribing ? <SpinnerSmall /> : null}
-                {transcribing ? 'Transcribing...' : 'Auto Transcribe'}
+                {transcribing ? 'Working...' : 'Transcribe'}
               </button>
             </div>
-            <div style={{ marginTop: '12px' }}>
-              <label style={label}>Reference Language</label>
+            <div style={{ marginTop: '16px' }}>
+              <label style={labelStyle}>Reference Language</label>
               <select
-                style={input}
+                style={inputStyle}
                 value={promptLang}
                 onChange={e => setPromptLang(e.target.value)}
-                onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-                onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
+                onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+                onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
               >
                 <option value="en">English</option>
                 <option value="zh">Chinese</option>
@@ -577,42 +556,54 @@ export default function InferencePage() {
         </div>
       </div>
 
-      {/* Text Input */}
-      <div style={card}>
-        <h2 style={heading}>
-          <TextIcon />
-          Text to Synthesize
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: '20px' }}>
+      {/* ── 03 Text Input ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>03</span>
           <div>
-            <label style={label}>Text</label>
+            <h2 style={sectionTitle}>Text to Synthesize</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Enter the text you want spoken in the cloned voice
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: '24px' }}>
+          <div>
+            <label style={labelStyle}>Text</label>
             <textarea
               style={{
-                ...input,
-                minHeight: '120px',
+                ...inputStyle,
+                minHeight: '140px',
                 resize: 'vertical',
-                lineHeight: '1.6',
+                lineHeight: '1.7',
               }}
               placeholder="Enter the text you want to synthesize..."
               value={text}
               onChange={(e) => setText(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-              onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
+              onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
             />
             {text && (
-              <p style={{ fontSize: '11px', color: '#B8B0A6', marginTop: '4px', textAlign: 'right' }}>
-                {text.length} characters
+              <p style={{
+                fontSize: '11px',
+                color: 'var(--text-muted)',
+                marginTop: '6px',
+                textAlign: 'right',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                {text.length} chars
               </p>
             )}
           </div>
           <div>
-            <label style={label}>Language</label>
+            <label style={labelStyle}>Language</label>
             <select
-              style={input}
+              style={inputStyle}
               value={textLang}
               onChange={e => setTextLang(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-              onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
+              onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+              onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
             >
               <option value="en">English</option>
               <option value="zh">Chinese</option>
@@ -624,69 +615,81 @@ export default function InferencePage() {
         </div>
       </div>
 
-      {/* Advanced Settings */}
-      <div style={card}>
+      {/* ── 04 Settings ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>04</span>
+          <div>
+            <h2 style={sectionTitle}>Generation Settings</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Fine-tune the synthesis parameters
+            </p>
+          </div>
+        </div>
+
         <button
           onClick={() => setShowSettings(!showSettings)}
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '8px',
+            gap: '10px',
             background: 'none',
             border: 'none',
-            color: '#9B938A',
+            color: 'var(--text-secondary)',
             cursor: 'pointer',
             fontSize: '13px',
             fontWeight: 500,
             padding: 0,
-            fontFamily: '"DM Sans", sans-serif',
-            transition: 'color 0.2s ease',
-            width: '100%',
+            fontFamily: 'var(--font-body)',
+            transition: 'color 0.15s ease',
+            letterSpacing: '0.02em',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#E8654A'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = '#9B938A'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
         >
-          <SettingsIcon />
-          Advanced Settings
-          <ChevronIcon open={showSettings} />
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+            style={{ transition: 'transform 0.2s ease', transform: showSettings ? 'rotate(90deg)' : 'rotate(0)' }}>
+            <path d="M3 1l4 4-4 4" />
+          </svg>
+          {showSettings ? 'Hide' : 'Show'} parameters
         </button>
 
         {showSettings && (
           <div style={{
-            marginTop: '20px',
+            marginTop: '28px',
             display: 'grid',
             gridTemplateColumns: '1fr 1fr',
-            gap: '20px',
+            gap: '28px 40px',
             animation: 'fade-in 0.25s ease',
           }}>
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 Speed
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{speed.toFixed(1)}x</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{speed.toFixed(1)}x</span>
               </label>
               <input type="range" min="0.5" max="2.0" step="0.1" value={speed}
                 onChange={e => setSpeed(Number(e.target.value))} style={{ width: '100%' }} />
             </div>
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 Top K
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{topK}</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{topK}</span>
               </label>
               <input type="range" min="1" max="50" value={topK}
                 onChange={e => setTopK(Number(e.target.value))} style={{ width: '100%' }} />
             </div>
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 Top P
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{topP.toFixed(2)}</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{topK.toFixed ? topP.toFixed(2) : topP}</span>
               </label>
               <input type="range" min="0" max="1" step="0.05" value={topP}
                 onChange={e => setTopP(Number(e.target.value))} style={{ width: '100%' }} />
             </div>
             <div>
-              <label style={label}>
+              <label style={labelStyle}>
                 Temperature
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{temperature.toFixed(2)}</span>
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{temperature.toFixed(2)}</span>
               </label>
               <input type="range" min="0" max="1" step="0.05" value={temperature}
                 onChange={e => setTemperature(Number(e.target.value))} style={{ width: '100%' }} />
@@ -695,46 +698,61 @@ export default function InferencePage() {
         )}
       </div>
 
-      {/* Generate */}
-      <div style={card}>
+      {/* ── 05 Generate ── */}
+      <div style={section}>
+        <div style={sectionHeader}>
+          <span style={sectionNumber}>05</span>
+          <div>
+            <h2 style={sectionTitle}>Generate</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+              Synthesize speech from your text
+            </p>
+          </div>
+        </div>
+
         <div style={{
           display: 'flex',
-          gap: '12px',
+          gap: '16px',
           alignItems: 'center',
-          marginBottom: audioBlob ? '20px' : '0',
+          marginBottom: audioBlob ? '28px' : '0',
         }}>
           <button
             style={{
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: '8px',
-              padding: '12px 32px',
-              background: generating ? '#F1EEE9' : 'linear-gradient(135deg, #E8654A, #D94E7A)',
-              color: generating ? '#9B938A' : '#FFFFFF',
+              padding: '12px 36px',
+              background: generating ? 'var(--bg-surface)' : 'var(--text-primary)',
+              color: generating ? 'var(--text-muted)' : 'var(--bg-elevated)',
               border: 'none',
-              borderRadius: '12px',
-              fontSize: '14px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '12px',
               fontWeight: 600,
               cursor: generating ? 'not-allowed' : 'pointer',
-              fontFamily: '"DM Sans", sans-serif',
-              transition: 'all 0.2s ease',
-              boxShadow: generating ? 'none' : '0 4px 20px rgba(232, 101, 74, 0.25)',
-              letterSpacing: '0.01em',
+              fontFamily: 'var(--font-body)',
+              transition: 'all 0.15s ease',
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
             }}
             onClick={handleGenerate}
             disabled={generating}
+            onMouseEnter={(e) => { if (!generating) e.currentTarget.style.background = 'var(--accent)'; }}
+            onMouseLeave={(e) => { if (!generating) e.currentTarget.style.background = 'var(--text-primary)'; }}
           >
-            {generating ? <SpinnerSmall /> : <GenerateIcon />}
+            {generating ? <SpinnerSmall /> : (
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" stroke="none">
+                <polygon points="3,1 11,6 3,11" />
+              </svg>
+            )}
             {generating ? 'Generating...' : 'Generate Speech'}
           </button>
 
           {inferError && (
             <span style={{
-              color: '#D94545',
+              color: 'var(--accent)',
               fontSize: '12px',
-              padding: '6px 12px',
-              background: 'rgba(217, 69, 69, 0.06)',
-              borderRadius: '8px',
+              paddingLeft: '8px',
+              borderLeft: '2px solid var(--accent)',
             }}>
               {inferError}
             </span>
