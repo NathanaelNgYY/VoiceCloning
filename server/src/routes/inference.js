@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { WEIGHT_DIRS, GPT_SOVITS_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
-import { synthesizeLongText } from '../services/longTextInference.js';
+import { sseManager } from '../services/sseManager.js';
+import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
 
 const router = Router();
 
@@ -69,9 +71,10 @@ router.post('/inference', async (req, res) => {
     ref_audio_path,
     prompt_text = '',
     prompt_lang = 'en',
-    top_k = 4,
+    top_k = 12,
     top_p = 0.85,
     temperature = 0.65,
+    repetition_penalty = 1.35,
     speed_factor = 1.0,
     seed = 1234,
   } = req.body;
@@ -97,6 +100,7 @@ router.post('/inference', async (req, res) => {
       top_k,
       top_p,
       temperature,
+      repetition_penalty,
       speed_factor,
       seed,
     }, {
@@ -116,6 +120,95 @@ router.post('/inference', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Streaming inference endpoints ──
+
+router.post('/inference/generate', async (req, res) => {
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(500).json({ error: configError });
+  }
+
+  const {
+    text,
+    text_lang = 'en',
+    ref_audio_path,
+    prompt_text = '',
+    prompt_lang = 'en',
+    top_k = 12,
+    top_p = 0.85,
+    temperature = 0.65,
+    repetition_penalty = 1.35,
+    speed_factor = 1.0,
+    seed = 1234,
+  } = req.body;
+
+  if (!text) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  if (!ref_audio_path) {
+    return res.status(400).json({ error: 'ref_audio_path is required' });
+  }
+
+  if (!inferenceServer.isReady()) {
+    return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
+  }
+
+  const sessionId = crypto.randomUUID();
+  sseManager.prepareSession(sessionId);
+  res.json({ sessionId });
+
+  // Wait for the SSE client to connect, then start streaming synthesis
+  sseManager.waitForClient(sessionId).then(() => {
+    synthesizeLongTextStreaming(sessionId, {
+      text,
+      text_lang,
+      ref_audio_path,
+      prompt_text,
+      prompt_lang,
+      top_k,
+      top_p,
+      temperature,
+      repetition_penalty,
+      speed_factor,
+      seed,
+    }, {
+      maxChunkLength: 180,
+      maxSentencesPerChunk: 2,
+      chunkJoinPauseMs: 180,
+      retryCount: 2,
+    });
+  }).catch((err) => {
+    console.error(`[inference/generate] SSE client timeout for ${sessionId}:`, err.message);
+  });
+});
+
+router.get('/inference/progress/:sessionId', (req, res) => {
+  sseManager.addClient(req.params.sessionId, res);
+});
+
+router.get('/inference/result/:sessionId', (req, res) => {
+  const finalPath = getSessionFinalPath(req.params.sessionId);
+  if (!fs.existsSync(finalPath)) {
+    return res.status(404).json({ error: 'Result not ready or session not found' });
+  }
+
+  const stat = fs.statSync(finalPath);
+  res.set({
+    'Content-Type': 'audio/wav',
+    'Content-Length': stat.size,
+  });
+  fs.createReadStream(finalPath).pipe(res);
+});
+
+router.post('/inference/cancel', (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId is required' });
+  }
+  const cancelled = cancelSession(sessionId);
+  res.json({ cancelled });
 });
 
 router.post('/inference/stop', (_req, res) => {

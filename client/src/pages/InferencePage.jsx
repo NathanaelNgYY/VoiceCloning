@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from '../components/ModelSelector.jsx';
 import AudioPlayer from '../components/AudioPlayer.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration } from '../services/api.js';
+import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 
 /* ── Editorial shared styles ── */
 
@@ -221,13 +222,16 @@ export default function InferencePage() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [speed, setSpeed] = useState(1.0);
-  const [topK, setTopK] = useState(5);
+  const [topK, setTopK] = useState(12);
   const [topP, setTopP] = useState(0.85);
   const [temperature, setTemperature] = useState(0.65);
+  const [repPenalty, setRepPenalty] = useState(1.35);
 
-  const [generating, setGenerating] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
+  const sessionIdRef = useRef(null);
+
+  const inference = useInferenceSSE();
 
   useEffect(() => {
     fetchModels();
@@ -298,12 +302,11 @@ export default function InferencePage() {
     if (!refAudioPath) return alert('Upload reference audio first');
     if (!serverReady) return alert('Load models first');
 
-    setGenerating(true);
     setInferError(null);
     setAudioBlob(null);
 
     try {
-      const blob = await synthesize({
+      const res = await startGeneration({
         text,
         text_lang: textLang,
         ref_audio_path: refAudioPath,
@@ -312,15 +315,36 @@ export default function InferencePage() {
         top_k: topK,
         top_p: topP,
         temperature,
+        repetition_penalty: repPenalty,
         speed_factor: speed,
       });
-      setAudioBlob(blob);
+      const { sessionId } = res.data;
+      sessionIdRef.current = sessionId;
+      inference.connect(sessionId);
     } catch (err) {
       setInferError(err.response?.data?.error || err.message);
-    } finally {
-      setGenerating(false);
     }
   }
+
+  async function handleCancel() {
+    if (sessionIdRef.current) {
+      try {
+        await cancelGeneration(sessionIdRef.current);
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Fetch the final WAV when generation completes
+  useEffect(() => {
+    if (inference.status === 'complete' && sessionIdRef.current) {
+      getGenerationResult(sessionIdRef.current)
+        .then(blob => setAudioBlob(blob))
+        .catch(err => setInferError(err.message));
+    }
+    if (inference.status === 'error' || inference.status === 'cancelled') {
+      setInferError(inference.error);
+    }
+  }, [inference.status]);
 
   return (
     <div style={{ animation: 'fade-in 0.4s ease' }}>
@@ -694,6 +718,14 @@ export default function InferencePage() {
               <input type="range" min="0" max="1" step="0.05" value={temperature}
                 onChange={e => setTemperature(Number(e.target.value))} style={{ width: '100%' }} />
             </div>
+            <div>
+              <label style={labelStyle}>
+                Repetition Penalty
+                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{repPenalty.toFixed(2)}</span>
+              </label>
+              <input type="range" min="1.0" max="2.0" step="0.05" value={repPenalty}
+                onChange={e => setRepPenalty(Number(e.target.value))} style={{ width: '100%' }} />
+            </div>
           </div>
         )}
       </div>
@@ -710,54 +742,148 @@ export default function InferencePage() {
           </div>
         </div>
 
-        <div style={{
-          display: 'flex',
-          gap: '16px',
-          alignItems: 'center',
-          marginBottom: audioBlob ? '28px' : '0',
-        }}>
-          <button
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '12px 36px',
-              background: generating ? 'var(--bg-surface)' : 'var(--text-primary)',
-              color: generating ? 'var(--text-muted)' : 'var(--bg-elevated)',
-              border: 'none',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: generating ? 'not-allowed' : 'pointer',
-              fontFamily: 'var(--font-body)',
-              transition: 'all 0.15s ease',
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-            }}
-            onClick={handleGenerate}
-            disabled={generating}
-            onMouseEnter={(e) => { if (!generating) e.currentTarget.style.background = 'var(--accent)'; }}
-            onMouseLeave={(e) => { if (!generating) e.currentTarget.style.background = 'var(--text-primary)'; }}
-          >
-            {generating ? <SpinnerSmall /> : (
+        {inference.status !== 'generating' ? (
+          <div style={{
+            display: 'flex',
+            gap: '16px',
+            alignItems: 'center',
+            marginBottom: audioBlob ? '28px' : '0',
+          }}>
+            <button
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '12px 36px',
+                background: 'var(--text-primary)',
+                color: 'var(--bg-elevated)',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'var(--font-body)',
+                transition: 'all 0.15s ease',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+              }}
+              onClick={() => { inference.reset(); handleGenerate(); }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--accent)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--text-primary)'; }}
+            >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" stroke="none">
                 <polygon points="3,1 11,6 3,11" />
               </svg>
-            )}
-            {generating ? 'Generating...' : 'Generate Speech'}
-          </button>
+              Generate Speech
+            </button>
 
-          {inferError && (
-            <span style={{
-              color: 'var(--accent)',
-              fontSize: '12px',
-              paddingLeft: '8px',
-              borderLeft: '2px solid var(--accent)',
+            {inferError && (
+              <span style={{
+                color: 'var(--accent)',
+                fontSize: '12px',
+                paddingLeft: '8px',
+                borderLeft: '2px solid var(--accent)',
+              }}>
+                {inferError}
+              </span>
+            )}
+          </div>
+        ) : (
+          /* ── Progress UI ── */
+          <div style={{ marginBottom: audioBlob ? '28px' : '0' }}>
+            {/* Progress bar */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              marginBottom: '16px',
             }}>
-              {inferError}
-            </span>
-          )}
-        </div>
+              <div style={{
+                flex: 1,
+                height: '4px',
+                background: 'var(--border-default)',
+                borderRadius: '2px',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: inference.totalChunks > 0 ? `${(inference.completedChunks / inference.totalChunks) * 100}%` : '0%',
+                  background: 'var(--text-primary)',
+                  borderRadius: '2px',
+                  transition: 'width 0.4s ease',
+                }} />
+              </div>
+              <span style={{
+                fontSize: '12px',
+                color: 'var(--text-secondary)',
+                fontFamily: 'var(--font-mono)',
+                fontVariantNumeric: 'tabular-nums',
+                flexShrink: 0,
+              }}>
+                {inference.completedChunks} / {inference.totalChunks}
+              </span>
+            </div>
+
+            {/* Current chunk text */}
+            {inference.currentChunkText && (
+              <div style={{
+                padding: '10px 14px',
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border-hairline)',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: '16px',
+              }}>
+                <span style={{
+                  fontSize: '10px',
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  fontWeight: 500,
+                  display: 'block',
+                  marginBottom: '6px',
+                }}>
+                  Synthesizing chunk {inference.completedChunks + 1}
+                </span>
+                <p style={{
+                  fontSize: '13px',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.5,
+                  margin: 0,
+                  fontStyle: 'italic',
+                }}>
+                  {inference.currentChunkText}
+                </p>
+              </div>
+            )}
+
+            {/* Cancel button */}
+            <button
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 24px',
+                background: 'transparent',
+                border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-secondary)',
+                fontSize: '12px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                fontFamily: 'var(--font-body)',
+                transition: 'all 0.15s ease',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+              onClick={handleCancel}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+            >
+              <SpinnerSmall />
+              Cancel Generation
+            </button>
+          </div>
+        )}
 
         <AudioPlayer audioBlob={audioBlob} />
       </div>

@@ -29,3 +29,33 @@ export function connectSSE(sessionId, { onLog, onStepStart, onStepComplete, onCo
 
   return es;
 }
+
+export function connectInferenceSSE(sessionId, { onStart, onChunkStart, onChunkComplete, onComplete, onError }) {
+  const es = new EventSource(`/api/inference/progress/${sessionId}`);
+
+  es.addEventListener('inference-start', (e) => {
+    onStart?.(JSON.parse(e.data));
+  });
+
+  es.addEventListener('chunk-start', (e) => {
+    onChunkStart?.(JSON.parse(e.data));
+  });
+
+  es.addEventListener('chunk-complete', (e) => {
+    onChunkComplete?.(JSON.parse(e.data));
+  });
+
+  es.addEventListener('inference-complete', (e) => {
+    onComplete?.(JSON.parse(e.data));
+    es.close();
+  });
+
+  es.addEventListener('error', (e) => {
+    if (e.data) {
+      onError?.(JSON.parse(e.data));
+      es.close();
+    }
+  });
+
+  return es;
+}

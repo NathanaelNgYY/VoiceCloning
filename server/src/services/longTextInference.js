@@ -1,5 +1,12 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
+import { sseManager } from './sseManager.js';
+import { TEMP_DIR } from '../config.js';
+
+// Track active streaming sessions for cancellation
+const activeSessions = new Map(); // sessionId -> { cancelled: boolean }
 
 const DEFAULTS = {
   maxChunkLength: 180,
@@ -197,6 +204,23 @@ function applyFade(data, sampleRate, numChannels, fadeMs, direction) {
   }
 }
 
+// Determine pause duration (ms) based on the trailing punctuation of a chunk
+function pauseForPunctuation(chunkText, basePauseMs) {
+  const trimmed = chunkText.trimEnd();
+  const last = trimmed[trimmed.length - 1] || '';
+
+  if ('.!?\u3002\uff01\uff1f\u2026'.includes(last)) return Math.round(basePauseMs * 2.2);   // period, !, ?, etc.
+  if (':;\uff1a\uff1b'.includes(last)) return Math.round(basePauseMs * 1.7);                  // colon, semicolon
+  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 1.0);                         // comma — baseline
+  return basePauseMs;                                                                          // fallback
+}
+
+// Build an array of per-gap pause durations from chunk texts
+export function computeChunkPauses(chunkTexts, basePauseMs = DEFAULTS.chunkJoinPauseMs) {
+  // One pause per gap (length = chunks - 1)
+  return chunkTexts.slice(0, -1).map(text => pauseForPunctuation(text, basePauseMs));
+}
+
 export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
   if (!Array.isArray(buffers) || buffers.length === 0) {
     throw new Error('No audio buffers to concatenate');
@@ -219,9 +243,9 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
 
   const fadeMs = 12;
   const isPCM16 = first.audioFormat === 1 && first.bitsPerSample === 16;
+  const pauses = Array.isArray(pauseMs) ? pauseMs : Array(parsed.length - 1).fill(pauseMs);
 
   const joinedChunks = [];
-  const silence = createSilenceBytes(pauseMs, first);
   parsed.forEach((wav, index) => {
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
@@ -229,7 +253,10 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
       if (index < parsed.length - 1) applyFade(chunk, first.sampleRate, first.numChannels, fadeMs, 'out');
     }
     joinedChunks.push(chunk);
-    if (index < parsed.length - 1 && silence.length > 0) joinedChunks.push(silence);
+    if (index < parsed.length - 1) {
+      const gap = pauses[index] ?? DEFAULTS.chunkJoinPauseMs;
+      if (gap > 0) joinedChunks.push(createSilenceBytes(gap, first));
+    }
   });
 
   return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
@@ -310,6 +337,52 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   const clippedRatio = sampleCount > 0 ? clippedCount / sampleCount : 0;
   const longestQuietSec = longestQuietRun / wav.sampleRate;
 
+  // Detect repetitive looping patterns by comparing short windows of audio.
+  // A looping stutter repeats the same waveform segment many times, yielding
+  // high autocorrelation at a short lag.
+  let loopScore = 0;
+  if (wav.audioFormat === 1 && wav.bitsPerSample === 16 && sampleCount > 0) {
+    // Use a window of ~30ms (typical phoneme length) and check correlation
+    const windowFrames = Math.round(0.03 * wav.sampleRate);
+    const stepFrames = windowFrames;
+    const totalWindows = Math.floor(sampleCount / windowFrames);
+
+    if (totalWindows >= 6) {
+      let matchingPairs = 0;
+      let totalPairs = 0;
+
+      for (let w = 0; w < totalWindows - 1; w++) {
+        const offsetA = w * windowFrames * 2; // 2 bytes per sample (PCM16)
+        const offsetB = (w + 1) * windowFrames * 2;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+
+        for (let i = 0; i < windowFrames; i++) {
+          const posA = offsetA + i * 2;
+          const posB = offsetB + i * 2;
+          if (posA + 1 >= bytes.length || posB + 1 >= bytes.length) break;
+          const a = bytes.readInt16LE(posA);
+          const b = bytes.readInt16LE(posB);
+          dotProduct += a * b;
+          normA += a * a;
+          normB += b * b;
+        }
+
+        const denom = Math.sqrt(normA) * Math.sqrt(normB);
+        if (denom > 0) {
+          const correlation = dotProduct / denom;
+          if (correlation > 0.85) matchingPairs++;
+          totalPairs++;
+        }
+      }
+
+      if (totalPairs > 0) {
+        loopScore = matchingPairs / totalPairs;
+      }
+    }
+  }
+
   let reason = null;
   if (durationSec < expectedMinDurationSec * 0.45) {
     reason = `Audio duration too short for text (${durationSec.toFixed(2)}s)`;
@@ -319,15 +392,17 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
     reason = 'Generated audio contains almost no speech energy';
   } else if (clippedRatio > 0.2) {
     reason = 'Generated audio appears heavily clipped or corrupted';
-  } else if (durationSec > 1.2 && longestQuietSec > 0.7) {
+  } else if (durationSec > 1.2 && longestQuietSec > 2.0) {
     reason = `Generated audio contains a long internal pause (${longestQuietSec.toFixed(2)}s)`;
+  } else if (loopScore > 0.6) {
+    reason = `Audio appears to contain repetitive looping (score: ${loopScore.toFixed(2)})`;
   }
 
   return {
     ok: !reason,
     durationSec,
     reason,
-    metrics: { rms, absPeak, zeroishRatio, clippedRatio, longestQuietSec },
+    metrics: { rms, absPeak, zeroishRatio, clippedRatio, longestQuietSec, loopScore },
   };
 }
 
@@ -339,6 +414,8 @@ function buildAttemptVariants(baseParams, attemptIndex) {
 
   const baseSeed = baseParams.seed ?? Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16);
 
+  const safeRepPenalty = clampNumber(baseParams.repetition_penalty, 1.35);
+
   const base = {
     ...baseParams,
     seed: baseSeed,
@@ -348,7 +425,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     split_bucket: true,
     parallel_infer: false,
     fragment_interval: 0.18,
-    repetition_penalty: 1.15,
+    repetition_penalty: safeRepPenalty,
     speed_factor: speed,
   };
 
@@ -360,6 +437,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     return {
       ...base,
       seed: (baseSeed + 17) >>> 0,
+      repetition_penalty: Math.max(safeRepPenalty, 1.4),
     };
   }
 
@@ -368,9 +446,9 @@ function buildAttemptVariants(baseParams, attemptIndex) {
       ...base,
       temperature: Math.max(0.6, safeTemperature * 0.82),
       top_p: Math.min(0.92, safeTopP),
-      top_k: Math.max(3, Math.min(safeTopK, 8)),
+      top_k: Math.max(8, Math.min(safeTopK, 15)),
       fragment_interval: 0.22,
-      repetition_penalty: 1.2,
+      repetition_penalty: Math.max(safeRepPenalty, 1.45),
       seed: (baseSeed + 31) >>> 0,
     };
   }
@@ -379,9 +457,9 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     ...base,
     temperature: 0.6,
     top_p: 0.88,
-    top_k: 5,
+    top_k: 12,
     fragment_interval: 0.25,
-    repetition_penalty: 1.25,
+    repetition_penalty: Math.max(safeRepPenalty, 1.5),
     seed: (baseSeed + 47) >>> 0,
     text_split_method: 'cut0',
     split_bucket: false,
@@ -410,6 +488,103 @@ const params = buildAttemptVariants({ ...baseParams, text: paddedText }, attempt
   throw lastError || new Error('Chunk synthesis failed');
 }
 
+export function cancelSession(sessionId) {
+  const session = activeSessions.get(sessionId);
+  if (session) {
+    session.cancelled = true;
+    return true;
+  }
+  return false;
+}
+
+function getSessionDir(sessionId) {
+  return path.join(TEMP_DIR, 'inference', sessionId);
+}
+
+export function getSessionFinalPath(sessionId) {
+  return path.join(getSessionDir(sessionId), 'final.wav');
+}
+
+export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
+  const chunks = splitTextIntoChunks(params.text, options);
+  if (chunks.length === 0) {
+    sseManager.send(sessionId, 'error', { message: 'No text to synthesize' });
+    return;
+  }
+
+  const sessionDir = getSessionDir(sessionId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const session = { cancelled: false };
+  activeSessions.set(sessionId, session);
+  const startTime = Date.now();
+
+  sseManager.send(sessionId, 'inference-start', {
+    totalChunks: chunks.length,
+    chunks: chunks.map((text, index) => ({ index, text })),
+  });
+
+  const chunkPaths = [];
+
+  try {
+    for (let index = 0; index < chunks.length; index++) {
+      if (session.cancelled) {
+        sseManager.send(sessionId, 'error', { message: 'Generation cancelled by user' });
+        return;
+      }
+
+      const chunkText = chunks[index];
+      sseManager.send(sessionId, 'chunk-start', {
+        index,
+        text: chunkText,
+        totalChunks: chunks.length,
+      });
+
+      const chunkStart = Date.now();
+      const result = await synthesizeChunkWithRetry(chunkText, { ...params, text: chunkText }, options);
+
+      // Write chunk WAV to disk
+      const chunkPath = path.join(sessionDir, `chunk_${String(index).padStart(3, '0')}.wav`);
+      fs.writeFileSync(chunkPath, result.audioBuffer);
+      chunkPaths.push(chunkPath);
+
+      const chunkDuration = (Date.now() - chunkStart) / 1000;
+      sseManager.send(sessionId, 'chunk-complete', {
+        index,
+        totalChunks: chunks.length,
+        attempts: result.attempts,
+        durationSec: parseFloat(chunkDuration.toFixed(2)),
+      });
+    }
+
+    // Concatenate all chunk WAVs from disk
+    const chunkBuffers = chunkPaths.map(p => fs.readFileSync(p));
+    const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+    const pauses = computeChunkPauses(chunks, basePause);
+    const finalBuffer = chunkBuffers.length === 1
+      ? chunkBuffers[0]
+      : concatWavs(chunkBuffers, pauses);
+
+    const finalPath = path.join(sessionDir, 'final.wav');
+    fs.writeFileSync(finalPath, finalBuffer);
+
+    // Clean up individual chunk files
+    for (const p of chunkPaths) {
+      try { fs.unlinkSync(p); } catch { /* ignore */ }
+    }
+
+    const totalDuration = (Date.now() - startTime) / 1000;
+    sseManager.send(sessionId, 'inference-complete', {
+      totalChunks: chunks.length,
+      totalDurationSec: parseFloat(totalDuration.toFixed(2)),
+    });
+  } catch (err) {
+    sseManager.send(sessionId, 'error', { message: err.message });
+  } finally {
+    activeSessions.delete(sessionId);
+  }
+}
+
 export async function synthesizeLongText(params, options = {}) {
   const chunks = splitTextIntoChunks(params.text, options);
   if (chunks.length === 0) {
@@ -431,9 +606,11 @@ export async function synthesizeLongText(params, options = {}) {
     });
   }
 
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const pauses = computeChunkPauses(chunks, basePause);
   const finalBuffer = buffers.length === 1
     ? buffers[0]
-    : concatWavs(buffers, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs));
+    : concatWavs(buffers, pauses);
 
   return { audioBuffer: finalBuffer, chunks: metadata };
 }
