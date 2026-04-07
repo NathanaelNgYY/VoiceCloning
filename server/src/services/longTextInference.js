@@ -25,6 +25,7 @@ function normalizeWhitespace(text) {
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/(\w)-(\w)/g, '$1 $2')   // "real-time" → "real time" so TTS won't say "minus"
     .trim();
 }
 
@@ -33,7 +34,7 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…])\s+|\n+/u)
+    .split(/(?<=[.!?。！？…])\s+|\n+|—+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
@@ -209,7 +210,7 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   const trimmed = chunkText.trimEnd();
   const last = trimmed[trimmed.length - 1] || '';
 
-  if ('.!?\u3002\uff01\uff1f\u2026'.includes(last)) return Math.round(basePauseMs * 2.2);   // period, !, ?, etc.
+  if ('.!?\u3002\uff01\uff1f\u2026'.includes(last)) return Math.round(basePauseMs * 1.5);   // period, !, ?, etc.
   if (':;\uff1a\uff1b'.includes(last)) return Math.round(basePauseMs * 1.7);                  // colon, semicolon
   if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 1.0);                         // comma — baseline
   return basePauseMs;                                                                          // fallback
