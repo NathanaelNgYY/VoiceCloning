@@ -9,9 +9,9 @@ import { TEMP_DIR } from '../config.js';
 const activeSessions = new Map(); // sessionId -> { cancelled: boolean }
 
 const DEFAULTS = {
-  maxChunkLength: 180,
-  maxSentencesPerChunk: 2,
-  chunkJoinPauseMs: 180,
+  maxChunkLength: 280,
+  maxSentencesPerChunk: 3,
+  chunkJoinPauseMs: 120,
   retryCount: 2,
 };
 
@@ -27,6 +27,32 @@ function normalizeWhitespace(text) {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/(\w)-(\w)/g, '$1 $2')   // "real-time" → "real time" so TTS won't say "minus"
     .trim();
+}
+
+// Common multi-word phrases that should not be split across chunks
+const SEMANTIC_UNITS = [
+  'of the', 'in the', 'to the', 'for the', 'on the', 'at the', 'by the',
+  'to a', 'of a', 'in a', 'for a', 'on a',
+  'it is', 'that is', 'there is', 'this is', 'it was', 'that was', 'there was',
+  'as well', 'such as', 'due to', 'in order', 'as a',
+  'would be', 'could be', 'should be', 'will be', 'has been', 'have been',
+  'do not', 'does not', 'did not', 'is not', 'was not', 'are not',
+];
+
+const NBSP = '\u00A0'; // non-breaking space used as internal sentinel
+
+function protectSemanticUnits(text) {
+  let result = text;
+  for (const phrase of SEMANTIC_UNITS) {
+    // Replace normal spaces within the phrase with NBSP (case-insensitive)
+    const pattern = new RegExp(phrase.replace(/ /g, ' '), 'gi');
+    result = result.replace(pattern, (match) => match.replace(/ /g, NBSP));
+  }
+  return result;
+}
+
+function restoreSemanticUnits(text) {
+  return text.replace(/\u00A0/g, ' ');
 }
 
 function splitIntoSentences(text) {
@@ -45,29 +71,51 @@ function splitIntoSentences(text) {
 function splitLongSentence(sentence, maxChunkLength) {
   if (sentence.length <= maxChunkLength) return [sentence];
 
+  // Protect semantic units before splitting
+  const protected_ = protectSemanticUnits(sentence);
+
   const parts = [];
-  let remaining = sentence.trim();
-  const separators = [',', ';', ':', '，', '；', '：'];
+  let remaining = protected_.trim();
+  const minCut = Math.floor(maxChunkLength * 0.6);
+
+  // Priority tiers for split points
+  const clauseSeparators = [';', ':', '；', '：'];      // clause boundaries (preferred)
+  const commaSeparators = [',', '，'];                   // comma breaks (fallback)
 
   while (remaining.length > maxChunkLength) {
-    let cut = -1;
     const searchWindow = remaining.slice(0, maxChunkLength + 1);
-    for (const sep of separators) {
+    let cut = -1;
+
+    // Tier 1: prefer clause-level separators
+    for (const sep of clauseSeparators) {
       const idx = searchWindow.lastIndexOf(sep);
       if (idx > cut) cut = idx;
     }
-    if (cut < Math.floor(maxChunkLength * 0.5)) {
+
+    // Tier 2: fall back to comma if clause separator was too early
+    if (cut < minCut) {
+      for (const sep of commaSeparators) {
+        const idx = searchWindow.lastIndexOf(sep);
+        if (idx > cut) cut = idx;
+      }
+    }
+
+    // Tier 3: break at a normal space (never at NBSP — that's a protected unit)
+    if (cut < minCut) {
       cut = searchWindow.lastIndexOf(' ');
     }
-    if (cut < Math.floor(maxChunkLength * 0.5)) {
+
+    // Tier 4: hard cut at max length
+    if (cut < minCut) {
       cut = maxChunkLength;
     }
 
-    parts.push(remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim());
+    const slice = remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    parts.push(restoreSemanticUnits(slice));
     remaining = remaining.slice(cut + (cut === maxChunkLength ? 0 : 1)).trim();
   }
 
-  if (remaining) parts.push(remaining);
+  if (remaining) parts.push(restoreSemanticUnits(remaining));
   return parts.filter(Boolean);
 }
 
@@ -205,24 +253,53 @@ function applyFade(data, sampleRate, numChannels, fadeMs, direction) {
   }
 }
 
-// Determine pause duration (ms) based on the trailing punctuation of a chunk
+// Determine pause duration (ms) based on trailing punctuation of a chunk
 function pauseForPunctuation(chunkText, basePauseMs) {
   const trimmed = chunkText.trimEnd();
+  const tail = trimmed.slice(-3); // check last few chars for multi-char punctuation
   const last = trimmed[trimmed.length - 1] || '';
 
-  if ('.!?\u3002\uff01\uff1f\u2026'.includes(last)) return Math.round(basePauseMs * 1.5);   // period, !, ?, etc.
-  if (':;\uff1a\uff1b'.includes(last)) return Math.round(basePauseMs * 1.7);                  // colon, semicolon
-  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 1.0);                         // comma — baseline
-  return basePauseMs;                                                                          // fallback
+  // Ellipsis — trailing thought, long pause
+  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 2.0);
+  // Em dash / double dash — brief dramatic pause
+  if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 0.8);
+  // Period, question mark, exclamation
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.5);
+  // Colon
+  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.4);
+  // Semicolon
+  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.3);
+  // Comma — should be brief, not a full pause
+  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.7);
+  // No terminal punctuation — flow directly into next chunk
+  return Math.round(basePauseMs * 0.4);
+}
+
+// Determine crossfade duration (ms) based on trailing punctuation
+function fadeForPunctuation(chunkText) {
+  const trimmed = chunkText.trimEnd();
+  const tail = trimmed.slice(-3);
+  const last = trimmed[trimmed.length - 1] || '';
+
+  if (tail.includes('...') || tail.includes('\u2026')) return 60;
+  if (last === '\u2014' || tail.includes('--')) return 40;
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return 30;
+  if (':;\uff1a\uff1b'.includes(last)) return 30;
+  if (',\uff0c'.includes(last)) return 20;
+  return 20; // no punctuation — almost seamless
 }
 
 // Build an array of per-gap pause durations from chunk texts
 export function computeChunkPauses(chunkTexts, basePauseMs = DEFAULTS.chunkJoinPauseMs) {
-  // One pause per gap (length = chunks - 1)
   return chunkTexts.slice(0, -1).map(text => pauseForPunctuation(text, basePauseMs));
 }
 
-export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
+// Build an array of per-gap crossfade durations from chunk texts
+export function computeChunkFades(chunkTexts) {
+  return chunkTexts.slice(0, -1).map(text => fadeForPunctuation(text));
+}
+
+export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDurations = null) {
   if (!Array.isArray(buffers) || buffers.length === 0) {
     throw new Error('No audio buffers to concatenate');
   }
@@ -242,16 +319,19 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs) {
     }
   }
 
-  const fadeMs = 12;
+  const defaultFadeMs = 25;
   const isPCM16 = first.audioFormat === 1 && first.bitsPerSample === 16;
   const pauses = Array.isArray(pauseMs) ? pauseMs : Array(parsed.length - 1).fill(pauseMs);
+  const fades = Array.isArray(fadeDurations) ? fadeDurations : Array(parsed.length - 1).fill(defaultFadeMs);
 
   const joinedChunks = [];
   parsed.forEach((wav, index) => {
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
-      if (index > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeMs, 'in');
-      if (index < parsed.length - 1) applyFade(chunk, first.sampleRate, first.numChannels, fadeMs, 'out');
+      const fadeIn = index > 0 ? (fades[index - 1] ?? defaultFadeMs) : 0;
+      const fadeOut = index < parsed.length - 1 ? (fades[index] ?? defaultFadeMs) : 0;
+      if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
+      if (fadeOut > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeOut, 'out');
     }
     joinedChunks.push(chunk);
     if (index < parsed.length - 1) {
@@ -407,6 +487,41 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   };
 }
 
+/**
+ * Analyze chunk text complexity and return a temperature adjustment.
+ * Filler/conversational text gets a small boost for natural variance;
+ * technical/precise text gets a small reduction for clearer articulation.
+ */
+function analyzeChunkComplexity(text) {
+  const words = text.split(/\s+/);
+  const wordCount = words.length || 1;
+
+  // Filler / conversational indicators → increase temperature
+  const fillerPatterns = /\b(well|you know|i mean|like|just|so|really|actually|basically|right|okay)\b/gi;
+  const fillerMatches = (text.match(fillerPatterns) || []).length;
+  const shortWordRatio = words.filter(w => w.length <= 3).length / wordCount;
+
+  // Technical indicators → decrease temperature
+  const technicalPatterns = /\b[A-Z]{2,}\b/g; // acronyms
+  const technicalMatches = (text.match(technicalPatterns) || []).length;
+  const longWords = words.filter(w => w.replace(/[^a-zA-Z]/g, '').length > 10).length;
+  const hasNumbers = /\d/.test(text);
+
+  let adjustment = 0;
+
+  // Filler boost: more conversational → slightly higher temp
+  if (fillerMatches / wordCount > 0.08 || shortWordRatio > 0.55) {
+    adjustment += 0.05;
+  }
+
+  // Technical reduction: precision content → slightly lower temp
+  if (technicalMatches > 0 || longWords / wordCount > 0.15 || hasNumbers) {
+    adjustment -= 0.03;
+  }
+
+  return adjustment;
+}
+
 function buildAttemptVariants(baseParams, attemptIndex) {
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
@@ -419,13 +534,14 @@ function buildAttemptVariants(baseParams, attemptIndex) {
 
   const base = {
     ...baseParams,
+    aux_ref_audio_paths: baseParams.aux_ref_audio_paths || [],
     seed: baseSeed,
-    text_split_method: baseParams.text_split_method || 'cut5',
+    text_split_method: baseParams.text_split_method || 'cut0',
     batch_size: 1,
     streaming_mode: false,
     split_bucket: true,
     parallel_infer: false,
-    fragment_interval: 0.18,
+    fragment_interval: 0.06,
     repetition_penalty: safeRepPenalty,
     speed_factor: speed,
   };
@@ -448,7 +564,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
       temperature: Math.max(0.6, safeTemperature * 0.82),
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(8, Math.min(safeTopK, 15)),
-      fragment_interval: 0.22,
+      fragment_interval: 0.1,
       repetition_penalty: Math.max(safeRepPenalty, 1.45),
       seed: (baseSeed + 31) >>> 0,
     };
@@ -459,7 +575,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     temperature: 0.6,
     top_p: 0.88,
     top_k: 12,
-    fragment_interval: 0.25,
+    fragment_interval: 0.15,
     repetition_penalty: Math.max(safeRepPenalty, 1.5),
     seed: (baseSeed + 47) >>> 0,
     text_split_method: 'cut0',
@@ -471,9 +587,14 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   let lastError = null;
 
+  // Dynamic temperature: adjust based on chunk content complexity
+  const tempAdjustment = analyzeChunkComplexity(chunkText);
+  const adjustedTemp = Math.min(0.95, Math.max(0.4,
+    clampNumber(baseParams.temperature, 0.65) + tempAdjustment));
+
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const paddedText = `${chunkText.trim()} `;
-const params = buildAttemptVariants({ ...baseParams, text: paddedText }, attempt);
+    const params = buildAttemptVariants({ ...baseParams, text: paddedText, temperature: adjustedTemp }, attempt);
     try {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);
@@ -562,9 +683,10 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     const chunkBuffers = chunkPaths.map(p => fs.readFileSync(p));
     const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
     const pauses = computeChunkPauses(chunks, basePause);
+    const fades = computeChunkFades(chunks);
     const finalBuffer = chunkBuffers.length === 1
       ? chunkBuffers[0]
-      : concatWavs(chunkBuffers, pauses);
+      : concatWavs(chunkBuffers, pauses, fades);
 
     const finalPath = path.join(sessionDir, 'final.wav');
     fs.writeFileSync(finalPath, finalBuffer);
@@ -609,9 +731,10 @@ export async function synthesizeLongText(params, options = {}) {
 
   const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
   const pauses = computeChunkPauses(chunks, basePause);
+  const fades = computeChunkFades(chunks);
   const finalBuffer = buffers.length === 1
     ? buffers[0]
-    : concatWavs(buffers, pauses);
+    : concatWavs(buffers, pauses, fades);
 
   return { audioBuffer: finalBuffer, chunks: metadata };
 }

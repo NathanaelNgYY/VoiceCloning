@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from '../components/ModelSelector.jsx';
 import AudioPlayer from '../components/AudioPlayer.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 
 /* ── Editorial shared styles ── */
@@ -217,6 +217,15 @@ export default function InferencePage() {
   const [promptLang, setPromptLang] = useState('en');
   const [transcribing, setTranscribing] = useState(false);
 
+  // Multi-upload: array of { name, serverPath, localUrl }
+  const [uploadedRefFiles, setUploadedRefFiles] = useState([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+
+  const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
+  const [auxRefAudios, setAuxRefAudios] = useState([]);
+  const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
+  const [refLocked, setRefLocked] = useState(false);
+
   const [text, setText] = useState('');
   const [textLang, setTextLang] = useState('en');
 
@@ -253,6 +262,51 @@ export default function InferencePage() {
     } catch { /* ignore */ }
   }
 
+  function extractExpName(modelPath) {
+    if (!modelPath) return null;
+    const basename = modelPath.replace(/\\/g, '/').split('/').pop();
+    // SoVITS: {expName}_e{N}_s{N}.pth
+    let match = basename.match(/^(.+?)_e\d+_s\d+\.pth$/);
+    if (match) return match[1];
+    // GPT: {expName}-e{N}.ckpt
+    match = basename.match(/^(.+?)-e\d+\.ckpt$/);
+    if (match) return match[1];
+    return null;
+  }
+
+  const currentExpName = extractExpName(selectedSoVITS) || extractExpName(selectedGPT);
+
+  useEffect(() => {
+    if (!currentExpName) return;
+    setRefLocked(false);
+    setLoadingTrainingAudio(true);
+    getTrainingAudioFiles(currentExpName)
+      .then(res => setTrainingAudioFiles(res.data.files || []))
+      .catch(() => setTrainingAudioFiles([]))
+      .finally(() => setLoadingTrainingAudio(false));
+  }, [currentExpName]);
+
+  function handleSelectTrainingAudio(file) {
+    setRefAudioPath(file.path);
+    setRefAudioFile({ name: file.filename });
+    setRefAudioUrl(getTrainingAudioUrl(currentExpName, file.filename));
+    setPromptText(file.transcript);
+    if (file.lang) {
+      const langMap = { ZH: 'zh', EN: 'en', JA: 'ja', KO: 'ko', zh: 'zh', en: 'en', ja: 'ja', ko: 'ko' };
+      setPromptLang(langMap[file.lang] || 'en');
+    }
+    // Remove from aux if it was there
+    setAuxRefAudios(prev => prev.filter(f => f.filename !== file.filename));
+  }
+
+  function handleToggleAuxRef(file) {
+    setAuxRefAudios(prev => {
+      const exists = prev.some(f => f.filename === file.filename);
+      if (exists) return prev.filter(f => f.filename !== file.filename);
+      return [...prev, file];
+    });
+  }
+
   async function handleLoadModels() {
     if (!selectedGPT || !selectedSoVITS) {
       return alert('Select both GPT and SoVITS models');
@@ -270,17 +324,70 @@ export default function InferencePage() {
   }
 
   async function handleRefUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setRefAudioFile(file);
-    if (refAudioUrl) URL.revokeObjectURL(refAudioUrl);
-    setRefAudioUrl(URL.createObjectURL(file));
-    try {
-      const res = await uploadRefAudio(file);
-      setRefAudioPath(res.data.path);
-    } catch (err) {
-      alert('Failed to upload reference audio: ' + (err.response?.data?.error || err.message));
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    setUploadingFiles(true);
+
+    const newEntries = [];
+    for (const file of files) {
+      try {
+        const res = await uploadRefAudio(file);
+        newEntries.push({
+          name: file.name,
+          serverPath: res.data.path,
+          localUrl: URL.createObjectURL(file),
+        });
+      } catch (err) {
+        alert('Failed to upload ' + file.name + ': ' + (err.response?.data?.error || err.message));
+      }
     }
+
+    if (newEntries.length > 0) {
+      setUploadedRefFiles(prev => {
+        const merged = [...prev, ...newEntries];
+        // If no primary yet, set the first one as primary
+        if (!refAudioPath || prev.length === 0) {
+          setRefAudioFile({ name: merged[0].name });
+          if (refAudioUrl) URL.revokeObjectURL(refAudioUrl);
+          setRefAudioUrl(merged[0].localUrl);
+          setRefAudioPath(merged[0].serverPath);
+        }
+        return merged;
+      });
+    }
+    setUploadingFiles(false);
+    e.target.value = '';
+  }
+
+  function handleSetUploadedPrimary(entry) {
+    setRefAudioFile({ name: entry.name });
+    if (refAudioUrl && !uploadedRefFiles.some(f => f.localUrl === refAudioUrl)) {
+      URL.revokeObjectURL(refAudioUrl);
+    }
+    setRefAudioUrl(entry.localUrl);
+    setRefAudioPath(entry.serverPath);
+    setPromptText('');
+  }
+
+  function handleRemoveUploadedFile(entry) {
+    setUploadedRefFiles(prev => {
+      const remaining = prev.filter(f => f.serverPath !== entry.serverPath);
+      // If we removed the primary, promote the first remaining
+      if (entry.serverPath === refAudioPath) {
+        if (remaining.length > 0) {
+          setRefAudioFile({ name: remaining[0].name });
+          setRefAudioUrl(remaining[0].localUrl);
+          setRefAudioPath(remaining[0].serverPath);
+        } else {
+          setRefAudioFile(null);
+          setRefAudioUrl(null);
+          setRefAudioPath('');
+        }
+        setPromptText('');
+      }
+      URL.revokeObjectURL(entry.localUrl);
+      return remaining;
+    });
   }
 
   async function handleTranscribe() {
@@ -299,7 +406,8 @@ export default function InferencePage() {
 
   async function handleGenerate() {
     if (!text.trim()) return alert('Enter text to synthesize');
-    if (!refAudioPath) return alert('Upload reference audio first');
+    if (!refAudioPath) return alert('Select a reference audio first');
+    if (!refLocked) return alert('Confirm your reference audio selection first');
     if (!serverReady) return alert('Load models first');
 
     setInferError(null);
@@ -312,6 +420,10 @@ export default function InferencePage() {
         ref_audio_path: refAudioPath,
         prompt_text: promptText,
         prompt_lang: promptLang,
+        aux_ref_audio_paths: [
+          ...auxRefAudios.map(f => f.path),
+          ...uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).map(f => f.serverPath),
+        ],
         top_k: topK,
         top_p: topP,
         temperature,
@@ -477,107 +589,467 @@ export default function InferencePage() {
       <div style={section}>
         <div style={sectionHeader}>
           <span style={sectionNumber}>02</span>
-          <div>
-            <h2 style={sectionTitle}>Reference Audio</h2>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <h2 style={sectionTitle}>Reference Audio</h2>
+              {refLocked && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-primary)' }} />
+                  <span style={{ fontSize: '10px', color: 'var(--text-primary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 500 }}>
+                    Confirmed
+                  </span>
+                </div>
+              )}
+            </div>
             <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-              Upload a sample of the voice you want to clone
+              {refLocked ? 'Selection locked for generation' : 'Select a primary reference and optional auxiliary audio'}
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+        {refLocked ? (
+          /* ── Locked summary ── */
           <div>
-            <label style={labelStyle}>Audio File</label>
             <div style={{
-              padding: '16px',
+              padding: '16px 20px',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)',
               background: 'var(--bg-elevated)',
             }}>
-              <input
-                type="file"
-                accept=".wav,.mp3,.ogg,.flac"
-                onChange={handleRefUpload}
-                style={{ fontSize: '13px', color: 'var(--text-tertiary)', width: '100%' }}
-              />
-            </div>
-            {refAudioFile && (
-              <div style={{
-                marginTop: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-              }}>
-                <div style={{
-                  width: '5px', height: '5px', borderRadius: '50%',
-                  background: 'var(--text-primary)',
-                }} />
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  {refAudioFile.name}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--text-primary)' }} />
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                  {refAudioFile?.name || 'Unknown'}
+                </span>
+                <span style={{ fontSize: '10px', color: 'var(--text-primary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Primary
                 </span>
               </div>
-            )}
+              {promptText && (
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 8px 15px', fontStyle: 'italic' }}>
+                  "{promptText}"
+                </p>
+              )}
+              {(() => {
+                const auxCount = auxRefAudios.length + uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).length;
+                return auxCount > 0 ? (
+                  <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginLeft: '15px' }}>
+                    + {auxCount} auxiliary reference{auxCount !== 1 ? 's' : ''}
+                  </div>
+                ) : null;
+              })()}
+            </div>
+
             {refAudioUrl && (
               <RefAudioPlayer src={refAudioUrl} />
             )}
+
+            <button
+              onClick={() => setRefLocked(false)}
+              style={{
+                marginTop: '16px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                background: 'transparent',
+                border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-tertiary)',
+                fontSize: '11px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                fontFamily: 'var(--font-body)',
+                transition: 'all 0.15s ease',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--text-primary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M7 1L1 7" />
+                <path d="M5 1h2v2" />
+              </svg>
+              Edit Selection
+            </button>
           </div>
+        ) : (
+          /* ── Unlocked selection UI ── */
           <div>
-            <label style={labelStyle}>Reference Transcript</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                style={{ ...inputStyle, flex: 1 }}
-                placeholder="What the reference audio says..."
-                value={promptText}
-                onChange={(e) => setPromptText(e.target.value)}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
-                onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+              {/* Left: audio file list */}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>Audio Files</label>
+                  {(() => {
+                    const auxCount = auxRefAudios.length + uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).length;
+                    return auxCount > 0 ? (
+                      <span style={{
+                        fontSize: '10px',
+                        color: 'var(--text-primary)',
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-strong)',
+                        borderRadius: '10px',
+                        padding: '2px 8px',
+                        fontWeight: 600,
+                        fontFamily: 'var(--font-mono)',
+                      }}>
+                        {auxCount} aux
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+
+                {/* Training audio list */}
+                {loadingTrainingAudio ? (
+                  <div style={{
+                    padding: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    color: 'var(--text-tertiary)',
+                    fontSize: '13px',
+                  }}>
+                    <SpinnerSmall /> Loading training audio...
+                  </div>
+                ) : trainingAudioFiles.length > 0 ? (
+                  <>
+                    <div style={{
+                      maxHeight: '280px',
+                      overflowY: 'auto',
+                      border: '1px solid var(--border-default)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--bg-elevated)',
+                    }}>
+                      {trainingAudioFiles.map((file) => {
+                        const isPrimary = file.path === refAudioPath;
+                        const isAux = auxRefAudios.some(f => f.filename === file.filename);
+                        return (
+                          <div
+                            key={file.filename}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              padding: '8px 12px',
+                              borderBottom: '1px solid var(--border-hairline)',
+                              background: isPrimary ? 'var(--bg-surface)' : 'transparent',
+                              transition: 'background 0.1s ease',
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name="primary-ref"
+                              checked={isPrimary}
+                              onChange={() => handleSelectTrainingAudio(file)}
+                              title="Set as primary reference"
+                              style={{ accentColor: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0 }}
+                            />
+                            <input
+                              type="checkbox"
+                              checked={isAux}
+                              disabled={isPrimary}
+                              onChange={() => handleToggleAuxRef(file)}
+                              title={isPrimary ? 'Primary ref cannot also be auxiliary' : 'Toggle as auxiliary reference'}
+                              style={{
+                                accentColor: 'var(--text-primary)',
+                                cursor: isPrimary ? 'not-allowed' : 'pointer',
+                                opacity: isPrimary ? 0.3 : 1,
+                                flexShrink: 0,
+                              }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{
+                                fontSize: '12px',
+                                color: 'var(--text-secondary)',
+                                fontFamily: 'var(--font-mono)',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                {file.filename}
+                              </div>
+                              {file.transcript && (
+                                <div style={{
+                                  fontSize: '11px',
+                                  color: 'var(--text-muted)',
+                                  marginTop: '2px',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}>
+                                  {file.transcript}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{
+                      marginTop: '6px',
+                      fontSize: '10px',
+                      color: 'var(--text-muted)',
+                      display: 'flex',
+                      gap: '12px',
+                    }}>
+                      <span>Radio = primary ref</span>
+                      <span>Checkbox = auxiliary ref</span>
+                    </div>
+                    {auxRefAudios.length > 0 && (
+                      <button
+                        onClick={() => setAuxRefAudios([])}
+                        style={{
+                          marginTop: '4px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          fontSize: '10px',
+                          fontFamily: 'var(--font-body)',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.04em',
+                          padding: 0,
+                        }}
+                      >
+                        Clear auxiliary selections
+                      </button>
+                    )}
+                  </>
+                ) : currentExpName ? (
+                  <div style={{
+                    padding: '16px',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-elevated)',
+                    textAlign: 'center',
+                  }}>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
+                      No training audio found for "{currentExpName}"
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{
+                    padding: '16px',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-elevated)',
+                    textAlign: 'center',
+                  }}>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
+                      Load a model to browse its training audio
+                    </p>
+                  </div>
+                )}
+
+                {/* Upload custom files */}
+                <div style={{ marginTop: '16px' }}>
+                  <label style={labelStyle}>Or Upload Custom Audio</label>
+                  <div style={{
+                    padding: '12px 16px',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-elevated)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                  }}>
+                    <input
+                      type="file"
+                      accept=".wav,.mp3,.ogg,.flac"
+                      multiple
+                      onChange={handleRefUpload}
+                      style={{ fontSize: '13px', color: 'var(--text-tertiary)', flex: 1 }}
+                    />
+                    {uploadingFiles && <SpinnerSmall />}
+                  </div>
+                </div>
+
+                {/* Uploaded file list */}
+                {uploadedRefFiles.length > 0 && (
+                  <div style={{
+                    marginTop: '8px',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-elevated)',
+                    maxHeight: '160px',
+                    overflowY: 'auto',
+                  }}>
+                    {uploadedRefFiles.map((entry) => {
+                      const isPrimary = entry.serverPath === refAudioPath;
+                      return (
+                        <div
+                          key={entry.serverPath}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '8px 12px',
+                            borderBottom: '1px solid var(--border-hairline)',
+                            background: isPrimary ? 'var(--bg-surface)' : 'transparent',
+                            transition: 'background 0.1s ease',
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="primary-ref"
+                            checked={isPrimary}
+                            onChange={() => handleSetUploadedPrimary(entry)}
+                            title="Set as primary reference"
+                            style={{ accentColor: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0 }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontSize: '12px',
+                              color: 'var(--text-secondary)',
+                              fontFamily: 'var(--font-mono)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {entry.name}
+                            </div>
+                            <div style={{
+                              fontSize: '10px',
+                              color: isPrimary ? 'var(--text-primary)' : 'var(--text-muted)',
+                              marginTop: '1px',
+                              fontWeight: isPrimary ? 600 : 400,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.04em',
+                            }}>
+                              {isPrimary ? 'Primary (uploaded)' : 'Auxiliary (uploaded)'}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveUploadedFile(entry)}
+                            title="Remove"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexShrink: 0,
+                              transition: 'color 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                              <path d="M3 3l6 6M9 3l-6 6" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: transcript + language + player */}
+              <div>
+                <label style={labelStyle}>Reference Transcript</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    style={{ ...inputStyle, flex: 1 }}
+                    placeholder="What the primary reference audio says..."
+                    value={promptText}
+                    onChange={(e) => setPromptText(e.target.value)}
+                    onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+                    onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
+                  />
+                  <button
+                    style={{
+                      padding: '8px 16px',
+                      background: 'var(--bg-elevated)',
+                      border: '1px solid var(--border-default)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: transcribing ? 'var(--text-muted)' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      cursor: transcribing ? 'not-allowed' : 'pointer',
+                      fontFamily: 'var(--font-body)',
+                      transition: 'all 0.15s ease',
+                      whiteSpace: 'nowrap',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                    }}
+                    onClick={handleTranscribe}
+                    disabled={transcribing || !refAudioPath}
+                    onMouseEnter={(e) => { if (!transcribing && refAudioPath) { e.currentTarget.style.borderColor = 'var(--text-primary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                  >
+                    {transcribing ? <SpinnerSmall /> : null}
+                    {transcribing ? 'Working...' : 'Transcribe'}
+                  </button>
+                </div>
+                <div style={{ marginTop: '16px' }}>
+                  <label style={labelStyle}>Reference Language</label>
+                  <select
+                    style={inputStyle}
+                    value={promptLang}
+                    onChange={e => setPromptLang(e.target.value)}
+                    onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
+                    onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
+                  >
+                    <option value="en">English</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                    <option value="auto">Auto Detect</option>
+                  </select>
+                </div>
+                {refAudioUrl && (
+                  <div style={{ marginTop: '16px' }}>
+                    <label style={labelStyle}>Preview</label>
+                    <RefAudioPlayer src={refAudioUrl} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Confirm button */}
+            <div style={{ marginTop: '24px' }}>
               <button
+                onClick={() => {
+                  if (!refAudioPath) return alert('Select a primary reference audio first');
+                  setRefLocked(true);
+                }}
+                disabled={!refAudioPath}
                 style={{
-                  padding: '8px 16px',
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border-default)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 24px',
+                  background: refAudioPath ? 'var(--text-primary)' : 'var(--bg-elevated)',
+                  color: refAudioPath ? 'var(--bg-elevated)' : 'var(--text-muted)',
+                  border: refAudioPath ? 'none' : '1px solid var(--border-default)',
                   borderRadius: 'var(--radius-sm)',
-                  color: transcribing ? 'var(--text-muted)' : 'var(--text-secondary)',
-                  fontSize: '11px',
-                  fontWeight: 500,
-                  cursor: transcribing ? 'not-allowed' : 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: refAudioPath ? 'pointer' : 'not-allowed',
                   fontFamily: 'var(--font-body)',
                   transition: 'all 0.15s ease',
-                  whiteSpace: 'nowrap',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
                   letterSpacing: '0.04em',
                   textTransform: 'uppercase',
                 }}
-                onClick={handleTranscribe}
-                disabled={transcribing || !refAudioPath}
-                onMouseEnter={(e) => { if (!transcribing && refAudioPath) { e.currentTarget.style.borderColor = 'var(--text-primary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                onMouseEnter={(e) => { if (refAudioPath) e.currentTarget.style.opacity = '0.85'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
               >
-                {transcribing ? <SpinnerSmall /> : null}
-                {transcribing ? 'Working...' : 'Transcribe'}
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="2 6 5 9 10 3" />
+                </svg>
+                Confirm Selection
               </button>
             </div>
-            <div style={{ marginTop: '16px' }}>
-              <label style={labelStyle}>Reference Language</label>
-              <select
-                style={inputStyle}
-                value={promptLang}
-                onChange={e => setPromptLang(e.target.value)}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
-                onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
-              >
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="auto">Auto Detect</option>
-              </select>
-            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* ── 03 Text Input ── */}

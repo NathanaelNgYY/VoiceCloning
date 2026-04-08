@@ -94,3 +94,13 @@ export function cancelGeneration(sessionId) {
 export function getInferenceStatus() {
   return api.get('/inference/status');
 }
+
+// Get training audio files for an experiment
+export function getTrainingAudioFiles(expName) {
+  return api.get(`/training-audio/${encodeURIComponent(expName)}`);
+}
+
+// Get URL for streaming a training audio file
+export function getTrainingAudioUrl(expName, filename) {
+  return `/api/training-audio/file/${encodeURIComponent(expName)}/${encodeURIComponent(filename)}`;
+}

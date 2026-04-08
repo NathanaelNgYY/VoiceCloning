@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { WEIGHT_DIRS, GPT_SOVITS_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
+import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
 import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
@@ -71,6 +71,7 @@ router.post('/inference', async (req, res) => {
     ref_audio_path,
     prompt_text = '',
     prompt_lang = 'en',
+    aux_ref_audio_paths = [],
     top_k = 12,
     top_p = 0.85,
     temperature = 0.65,
@@ -97,6 +98,7 @@ router.post('/inference', async (req, res) => {
       ref_audio_path,
       prompt_text,
       prompt_lang,
+      aux_ref_audio_paths,
       top_k,
       top_p,
       temperature,
@@ -104,9 +106,9 @@ router.post('/inference', async (req, res) => {
       speed_factor,
       seed,
     }, {
-      maxChunkLength: 180,
-      maxSentencesPerChunk: 2,
-      chunkJoinPauseMs: 180,
+      maxChunkLength: 280,
+      maxSentencesPerChunk: 3,
+      chunkJoinPauseMs: 120,
       retryCount: 2,
     });
 
@@ -136,6 +138,7 @@ router.post('/inference/generate', async (req, res) => {
     ref_audio_path,
     prompt_text = '',
     prompt_lang = 'en',
+    aux_ref_audio_paths = [],
     top_k = 12,
     top_p = 0.85,
     temperature = 0.65,
@@ -167,6 +170,7 @@ router.post('/inference/generate', async (req, res) => {
       ref_audio_path,
       prompt_text,
       prompt_lang,
+      aux_ref_audio_paths,
       top_k,
       top_p,
       temperature,
@@ -174,9 +178,9 @@ router.post('/inference/generate', async (req, res) => {
       speed_factor,
       seed,
     }, {
-      maxChunkLength: 180,
-      maxSentencesPerChunk: 2,
-      chunkJoinPauseMs: 180,
+      maxChunkLength: 280,
+      maxSentencesPerChunk: 3,
+      chunkJoinPauseMs: 120,
       retryCount: 2,
     });
   }).catch((err) => {
@@ -297,6 +301,73 @@ router.post('/transcribe', async (req, res) => {
 router.get('/inference/status', (_req, res) => {
   const configError = getConfigError({ requirePython: true });
   res.json({ ready: !configError && inferenceServer.isReady(), error: configError });
+});
+
+// ── Training audio browser endpoints ──
+
+router.get('/training-audio/file/:expName/:filename', (req, res) => {
+  const { expName, filename } = req.params;
+  if (expName.includes('..') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+
+  const filePath = path.join(DATA_ROOT, expName, 'denoised', filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+
+  const stat = fs.statSync(filePath);
+  res.set({
+    'Content-Type': 'audio/wav',
+    'Content-Length': stat.size,
+  });
+  fs.createReadStream(filePath).pipe(res);
+});
+
+router.get('/training-audio/:expName', (req, res) => {
+  const { expName } = req.params;
+  if (expName.includes('..')) {
+    return res.status(400).json({ error: 'Invalid experiment name' });
+  }
+
+  const denoisedDir = path.join(DATA_ROOT, expName, 'denoised');
+  if (!fs.existsSync(denoisedDir)) {
+    return res.json({ expName, files: [] });
+  }
+
+  // Parse ASR transcripts from denoised.list
+  const asrPath = path.join(DATA_ROOT, expName, 'asr', 'denoised.list');
+  const transcriptMap = new Map();
+  if (fs.existsSync(asrPath)) {
+    const lines = fs.readFileSync(asrPath, 'utf-8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      // Format: abs_path|label|LANG|transcript
+      const parts = line.split('|');
+      if (parts.length >= 4) {
+        const absPath = parts[0];
+        const lang = parts[2];
+        const transcript = parts.slice(3).join('|');
+        const fname = path.basename(absPath);
+        transcriptMap.set(fname, { transcript, lang });
+      }
+    }
+  }
+
+  try {
+    const wavFiles = fs.readdirSync(denoisedDir).filter(f => f.endsWith('.wav')).sort();
+    const files = wavFiles.map(filename => {
+      const info = transcriptMap.get(filename) || {};
+      return {
+        filename,
+        path: path.join(denoisedDir, filename),
+        transcript: info.transcript || '',
+        lang: info.lang || '',
+      };
+    });
+    res.json({ expName, files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;
