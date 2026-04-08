@@ -226,14 +226,126 @@ function buildWav(fmtChunk, dataChunk) {
   return output;
 }
 
-function createSilenceBytes(durationMs, parsedWav) {
-  const frameCount = Math.max(0, Math.round((durationMs / 1000) * parsedWav.sampleRate));
-  const byteLength = frameCount * parsedWav.blockAlign;
-  return Buffer.alloc(byteLength, 0);
+/**
+ * Normalize PCM16 chunk data so peak amplitude hits targetPeak (~-3dB at 0.7).
+ * Prevents volume jumps between chunks. Skips if already close or silent.
+ */
+function normalizeChunkPeak(data, targetPeak = 0.7) {
+  const bytesPerSample = 2;
+  const sampleCount = Math.floor(data.length / bytesPerSample);
+  if (sampleCount === 0) return;
+
+  let absPeak = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = Math.abs(data.readInt16LE(i * bytesPerSample));
+    if (sample > absPeak) absPeak = sample;
+  }
+
+  // Skip if effectively silent or already within 2% of target
+  if (absPeak < 100) return;
+  const currentPeak = absPeak / 32767;
+  if (Math.abs(currentPeak - targetPeak) / targetPeak < 0.02) return;
+
+  const scale = targetPeak / currentPeak;
+  for (let i = 0; i < sampleCount; i++) {
+    const offset = i * bytesPerSample;
+    const sample = data.readInt16LE(offset);
+    data.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sample * scale))), offset);
+  }
 }
 
 /**
- * Apply a linear fade to PCM16 audio data in-place.
+ * Find the nearest zero crossing within searchRange samples from a chunk edge.
+ * Returns the sample index of the crossing, or the edge itself if none found.
+ * @param {Buffer} data - PCM16 data
+ * @param {'start'|'end'} edge - which end to search from
+ * @param {number} searchRange - max samples to scan (~1.3ms at 48kHz for 64)
+ */
+function findZeroCrossing(data, edge, searchRange = 64) {
+  const bytesPerSample = 2;
+  const totalSamples = Math.floor(data.length / bytesPerSample);
+  if (totalSamples < 2) return 0;
+
+  const range = Math.min(searchRange, totalSamples - 1);
+
+  if (edge === 'start') {
+    for (let i = 0; i < range; i++) {
+      const s0 = data.readInt16LE(i * bytesPerSample);
+      const s1 = data.readInt16LE((i + 1) * bytesPerSample);
+      if ((s0 >= 0 && s1 < 0) || (s0 < 0 && s1 >= 0)) return i + 1;
+    }
+    return 0;
+  }
+
+  // edge === 'end'
+  for (let i = totalSamples - 1; i > totalSamples - 1 - range; i--) {
+    const s0 = data.readInt16LE((i - 1) * bytesPerSample);
+    const s1 = data.readInt16LE(i * bytesPerSample);
+    if ((s0 >= 0 && s1 < 0) || (s0 < 0 && s1 >= 0)) return i;
+  }
+  return totalSamples;
+}
+
+/**
+ * Trim a PCM16 chunk buffer to nearest zero crossings at both edges.
+ */
+function trimToZeroCrossings(data, blockAlign) {
+  const bytesPerSample = 2;
+  const totalSamples = Math.floor(data.length / bytesPerSample);
+  if (totalSamples < 128) return data; // too short to trim
+
+  const startSample = findZeroCrossing(data, 'start');
+  const endSample = findZeroCrossing(data, 'end');
+
+  if (startSample === 0 && endSample === totalSamples) return data;
+
+  const startByte = startSample * blockAlign;
+  const endByte = endSample * blockAlign;
+  if (endByte <= startByte) return data;
+
+  return data.subarray(startByte, endByte);
+}
+
+/**
+ * Create shaped silence with micro-ramp edges to prevent the "dead zone"
+ * perception of digital silence. Adds inaudible noise (amplitude +/-2)
+ * in 3ms ramps at both edges.
+ */
+function createSilenceBytes(durationMs, parsedWav) {
+  const frameCount = Math.max(0, Math.round((durationMs / 1000) * parsedWav.sampleRate));
+  const byteLength = frameCount * parsedWav.blockAlign;
+  const buf = Buffer.alloc(byteLength, 0);
+
+  if (parsedWav.audioFormat !== 1 || parsedWav.bitsPerSample !== 16 || frameCount < 2) return buf;
+
+  const rampFrames = Math.min(frameCount >> 1, Math.round(0.003 * parsedWav.sampleRate)); // 3ms
+  const maxAmp = 2; // inaudible
+
+  for (let i = 0; i < rampFrames; i++) {
+    const amp = Math.round(maxAmp * (i / rampFrames));
+    const val = (i % 2 === 0) ? amp : -amp;
+    for (let ch = 0; ch < parsedWav.numChannels; ch++) {
+      const offset = i * parsedWav.blockAlign + ch * 2;
+      if (offset + 1 < buf.length) buf.writeInt16LE(val, offset);
+    }
+  }
+
+  for (let i = 0; i < rampFrames; i++) {
+    const frameIdx = frameCount - 1 - i;
+    const amp = Math.round(maxAmp * (i / rampFrames));
+    const val = (i % 2 === 0) ? amp : -amp;
+    for (let ch = 0; ch < parsedWav.numChannels; ch++) {
+      const offset = frameIdx * parsedWav.blockAlign + ch * 2;
+      if (offset + 1 < buf.length) buf.writeInt16LE(val, offset);
+    }
+  }
+
+  return buf;
+}
+
+/**
+ * Apply a raised-cosine (Hann window) fade to PCM16 audio data in-place.
+ * S-curve fades eliminate the sharp "corner" at boundaries that causes clicks.
  * @param {Buffer} data - raw PCM16 data (modified in-place)
  * @param {number} sampleRate
  * @param {number} numChannels
@@ -248,8 +360,10 @@ function applyFade(data, sampleRate, numChannels, fadeMs, direction) {
   if (fadeFrames <= 0) return;
 
   for (let frame = 0; frame < fadeFrames; frame++) {
-    const gain = frame / fadeFrames;
-    const appliedGain = direction === 'in' ? gain : 1 - gain;
+    const t = frame / fadeFrames;
+    const appliedGain = direction === 'in'
+      ? 0.5 * (1 - Math.cos(Math.PI * t))
+      : 0.5 * (1 + Math.cos(Math.PI * t));
     const frameOffset = direction === 'in'
       ? frame * blockAlign
       : (totalFrames - 1 - frame) * blockAlign;
@@ -269,20 +383,20 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   const tail = trimmed.slice(-3); // check last few chars for multi-char punctuation
   const last = trimmed[trimmed.length - 1] || '';
 
-  // Ellipsis — trailing thought, long pause
-  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 2.0);
+  // Ellipsis — trailing thought, moderate pause
+  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 1.5);
   // Em dash / double dash — brief dramatic pause
   if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 0.8);
   // Period, question mark, exclamation
-  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.5);
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.2);
   // Colon
-  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.7);
+  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.3);
   // Semicolon
-  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.5);
+  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.1);
   // Comma — should be brief, not a full pause
   if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.7);
-  // No terminal punctuation — flow directly into next chunk
-  return Math.round(basePauseMs * 0.4);
+  // No terminal punctuation — gentle transition
+  return Math.round(basePauseMs * 0.6);
 }
 
 // Determine crossfade duration (ms) based on trailing punctuation
@@ -338,12 +452,14 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
   parsed.forEach((wav, index) => {
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
+      normalizeChunkPeak(chunk);
       const fadeIn = index > 0 ? (fades[index - 1] ?? defaultFadeMs) : 0;
       const fadeOut = index < parsed.length - 1 ? (fades[index] ?? defaultFadeMs) : 0;
       if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
       if (fadeOut > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeOut, 'out');
     }
-    joinedChunks.push(chunk);
+    const trimmed = isPCM16 ? trimToZeroCrossings(chunk, first.blockAlign) : chunk;
+    joinedChunks.push(trimmed);
     if (index < parsed.length - 1) {
       const gap = pauses[index] ?? DEFAULTS.chunkJoinPauseMs;
       if (gap > 0) joinedChunks.push(createSilenceBytes(gap, first));
@@ -497,41 +613,6 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   };
 }
 
-/**
- * Analyze chunk text complexity and return a temperature adjustment.
- * Filler/conversational text gets a small boost for natural variance;
- * technical/precise text gets a small reduction for clearer articulation.
- */
-function analyzeChunkComplexity(text) {
-  const words = text.split(/\s+/);
-  const wordCount = words.length || 1;
-
-  // Filler / conversational indicators → increase temperature
-  const fillerPatterns = /\b(well|you know|i mean|like|just|so|really|actually|basically|right|okay)\b/gi;
-  const fillerMatches = (text.match(fillerPatterns) || []).length;
-  const shortWordRatio = words.filter(w => w.length <= 3).length / wordCount;
-
-  // Technical indicators → decrease temperature
-  const technicalPatterns = /\b[A-Z]{2,}\b/g; // acronyms
-  const technicalMatches = (text.match(technicalPatterns) || []).length;
-  const longWords = words.filter(w => w.replace(/[^a-zA-Z]/g, '').length > 10).length;
-  const hasNumbers = /\d/.test(text);
-
-  let adjustment = 0;
-
-  // Filler boost: more conversational → slightly higher temp
-  if (fillerMatches / wordCount > 0.08 || shortWordRatio > 0.55) {
-    adjustment += 0.05;
-  }
-
-  // Technical reduction: precision content → slightly lower temp
-  if (technicalMatches > 0 || longWords / wordCount > 0.15 || hasNumbers) {
-    adjustment -= 0.03;
-  }
-
-  return adjustment;
-}
-
 function buildAttemptVariants(baseParams, attemptIndex) {
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
@@ -551,7 +632,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     streaming_mode: false,
     split_bucket: true,
     parallel_infer: false,
-    fragment_interval: 0.06,
+    fragment_interval: 0.1,
     repetition_penalty: safeRepPenalty,
     speed_factor: speed,
   };
@@ -564,31 +645,34 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     return {
       ...base,
       seed: (baseSeed + 17) >>> 0,
-      repetition_penalty: Math.max(safeRepPenalty, 1.4),
+      repetition_penalty: safeRepPenalty + 0.1,
+      temperature: Math.max(0.5, safeTemperature * 0.88),
+      fragment_interval: 0.12,
     };
   }
 
   if (attemptIndex === 2) {
     return {
       ...base,
-      temperature: Math.max(0.6, safeTemperature * 0.82),
+      temperature: Math.max(0.5, safeTemperature * 0.75),
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(8, Math.min(safeTopK, 15)),
-      fragment_interval: 0.1,
-      repetition_penalty: Math.max(safeRepPenalty, 1.45),
+      fragment_interval: 0.15,
+      repetition_penalty: safeRepPenalty + 0.15,
       seed: (baseSeed + 31) >>> 0,
+      text_split_method: 'cut4',
     };
   }
 
   return {
     ...base,
-    temperature: 0.6,
+    temperature: 0.5,
     top_p: 0.88,
     top_k: 12,
-    fragment_interval: 0.15,
-    repetition_penalty: Math.max(safeRepPenalty, 1.5),
+    fragment_interval: 0.2,
+    repetition_penalty: safeRepPenalty + 0.2,
     seed: (baseSeed + 47) >>> 0,
-    text_split_method: 'cut0',
+    text_split_method: 'cut1',
     split_bucket: false,
   };
 }
@@ -597,14 +681,9 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   let lastError = null;
 
-  // Dynamic temperature: adjust based on chunk content complexity
-  const tempAdjustment = analyzeChunkComplexity(chunkText);
-  const adjustedTemp = Math.min(0.95, Math.max(0.4,
-    clampNumber(baseParams.temperature, 0.65) + tempAdjustment));
-
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const paddedText = `${chunkText.trim()} `;
-    const params = buildAttemptVariants({ ...baseParams, text: paddedText, temperature: adjustedTemp }, attempt);
+    const params = buildAttemptVariants({ ...baseParams, text: paddedText }, attempt);
     try {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);

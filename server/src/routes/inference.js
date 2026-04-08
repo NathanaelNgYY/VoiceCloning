@@ -72,12 +72,12 @@ router.post('/inference', async (req, res) => {
     prompt_text = '',
     prompt_lang = 'en',
     aux_ref_audio_paths = [],
-    top_k = 12,
-    top_p = 0.85,
-    temperature = 0.65,
+    top_k = 5,
+    top_p = 1,
+    temperature = 1,
     repetition_penalty = 1.35,
     speed_factor = 1.0,
-    seed = 1234,
+    seed = -1,
   } = req.body;
 
   if (!text) {
@@ -139,12 +139,12 @@ router.post('/inference/generate', async (req, res) => {
     prompt_text = '',
     prompt_lang = 'en',
     aux_ref_audio_paths = [],
-    top_k = 12,
-    top_p = 0.85,
-    temperature = 0.65,
+    top_k = 5,
+    top_p = 1,
+    temperature = 1,
     repetition_penalty = 1.35,
     speed_factor = 1.0,
-    seed = 1234,
+    seed = -1,
   } = req.body;
 
   if (!text) {
