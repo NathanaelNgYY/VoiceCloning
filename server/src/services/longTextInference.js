@@ -60,7 +60,7 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…])\s+|\n+|—+/u)
+    .split(/(?<=[.!?。！？…:：;；,，])\s+|(?<=—)\s*(?=\S)|\n+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
@@ -140,6 +140,16 @@ export function splitTextIntoChunks(text, options = {}) {
     } else {
       current = candidate;
       sentenceCount += 1;
+    }
+
+    // Force a chunk boundary after any pause-worthy punctuation so silence is inserted between chunks
+    const trimmed = current.trimEnd();
+    const lastChar = trimmed.slice(-1);
+    const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
+    if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
+      chunks.push(trimmed);
+      current = '';
+      sentenceCount = 0;
     }
   }
 
@@ -266,9 +276,9 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   // Period, question mark, exclamation
   if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.5);
   // Colon
-  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.4);
+  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.7);
   // Semicolon
-  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.3);
+  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.5);
   // Comma — should be brief, not a full pause
   if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.7);
   // No terminal punctuation — flow directly into next chunk
