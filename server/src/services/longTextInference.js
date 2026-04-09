@@ -20,13 +20,147 @@ function clampNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+// Compound words that the TTS model mispronounces as a single token.
+// Each entry maps a word (case-insensitive) to its split form.
+// Add new entries here as you discover mispronounced words.
+const COMPOUND_WORD_SPLITS = {
+  // General academic
+  audiobook: 'audio book',
+  audiobooks: 'audio books',
+  textbook: 'text book',
+  textbooks: 'text books',
+  notebook: 'note book',
+  notebooks: 'note books',
+  handbook: 'hand book',
+  handbooks: 'hand books',
+  coursework: 'course work',
+  framework: 'frame work',
+  frameworks: 'frame works',
+  workflow: 'work flow',
+  workflows: 'work flows',
+  feedback: 'feed back',
+  outcome: 'out come',
+  outcomes: 'out comes',
+  overview: 'over view',
+  throughout: 'through out',
+  widespread: 'wide spread',
+  breakthrough: 'break through',
+  breakthroughs: 'break throughs',
+  underlying: 'under lying',
+  overlapping: 'over lapping',
+  mainstream: 'main stream',
+  standalone: 'stand alone',
+  // Medical — anatomy & body
+  bloodstream: 'blood stream',
+  bloodwork: 'blood work',
+  heartbeat: 'heart beat',
+  heartburn: 'heart burn',
+  breastbone: 'breast bone',
+  backbone: 'back bone',
+  kneecap: 'knee cap',
+  eardrum: 'ear drum',
+  eyeball: 'eye ball',
+  eyelid: 'eye lid',
+  fingertip: 'finger tip',
+  footprint: 'foot print',
+  windpipe: 'wind pipe',
+  birthmark: 'birth mark',
+  // Medical — conditions & symptoms
+  headache: 'head ache',
+  headaches: 'head aches',
+  backache: 'back ache',
+  toothache: 'tooth ache',
+  stomachache: 'stomach ache',
+  nosebleed: 'nose bleed',
+  sunburn: 'sun burn',
+  heatstroke: 'heat stroke',
+  frostbite: 'frost bite',
+  outbreak: 'out break',
+  outbreaks: 'out breaks',
+  onset: 'on set',
+  setback: 'set back',
+  setbacks: 'set backs',
+  fallout: 'fall out',
+  flareup: 'flare up',
+  burnout: 'burn out',
+  // Medical — procedures & treatment
+  healthcare: 'health care',
+  aftercare: 'after care',
+  bloodtest: 'blood test',
+  checkup: 'check up',
+  checkups: 'check ups',
+  followup: 'follow up',
+  followups: 'follow ups',
+  bypass: 'by pass',
+  cutoff: 'cut off',
+  cutoffs: 'cut offs',
+  dosage: 'dose age',
+  intake: 'in take',
+  output: 'out put',
+  uptake: 'up take',
+  lifespan: 'life span',
+  timeframe: 'time frame',
+  timeframes: 'time frames',
+  guideline: 'guide line',
+  guidelines: 'guide lines',
+  baseline: 'base line',
+  // Medical — pharmacology & research
+  drugstore: 'drug store',
+  painkiller: 'pain killer',
+  painkillers: 'pain killers',
+  antibiotic: 'anti biotic',
+  antibiotics: 'anti biotics',
+  underdose: 'under dose',
+  overdose: 'over dose',
+  overdoses: 'over doses',
+  sideeffect: 'side effect',
+  // Laboratory & research
+  benchmark: 'bench mark',
+  benchmarks: 'bench marks',
+  counterpart: 'counter part',
+  counterparts: 'counter parts',
+  dataset: 'data set',
+  datasets: 'data sets',
+  database: 'data base',
+  databases: 'data bases',
+  screenshot: 'screen shot',
+  screenshots: 'screen shots',
+  // Lecture / education
+  classroom: 'class room',
+  classrooms: 'class rooms',
+  homework: 'home work',
+  bookshelf: 'book shelf',
+  whiteboard: 'white board',
+  whiteboards: 'white boards',
+  blackboard: 'black board',
+  slideshow: 'slide show',
+  powerpoint: 'power point',
+  worksheet: 'work sheet',
+  worksheets: 'work sheets',
+  undergraduate: 'under graduate',
+  undergraduates: 'under graduates',
+  postgraduate: 'post graduate',
+  postgraduates: 'post graduates',
+};
+
+function splitCompoundWords(text) {
+  const pattern = new RegExp(
+    `\\b(${Object.keys(COMPOUND_WORD_SPLITS).join('|')})\\b`,
+    'gi',
+  );
+  return text.replace(pattern, (match) => {
+    return COMPOUND_WORD_SPLITS[match.toLowerCase()] || match;
+  });
+}
+
 function normalizeWhitespace(text) {
-  return String(text || '')
+  const cleaned = String(text || '')
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/(\w)-(\w)/g, '$1 $2')   // "real-time" → "real time" so TTS won't say "minus"
     .trim();
+  return splitCompoundWords(cleaned);
 }
 
 // Common multi-word phrases that should not be split across chunks
