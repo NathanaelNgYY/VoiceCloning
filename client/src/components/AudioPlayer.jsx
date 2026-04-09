@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Download, Volume2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 export default function AudioPlayer({ audioBlob }) {
   const [audioUrl, setAudioUrl] = useState(null);
@@ -23,83 +25,26 @@ export default function AudioPlayer({ audioBlob }) {
   }
 
   return (
-    <div style={{
-      borderTop: '1px solid var(--border-hairline)',
-      paddingTop: '20px',
-      animation: 'slide-in 0.4s ease',
-    }}>
-      {/* Label */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        marginBottom: '16px',
-      }}>
-        <div style={{
-          width: '6px',
-          height: '6px',
-          borderRadius: '50%',
-          background: 'var(--text-primary)',
-        }} />
-        <span style={{
-          fontSize: '13px',
-          fontWeight: 500,
-          color: 'var(--text-primary)',
-          letterSpacing: '0.02em',
-          fontFamily: 'var(--font-body)',
-        }}>
+    <div className="animate-slide-in border-t pt-5">
+      <div className="mb-4 flex items-center gap-2.5">
+        <div className="h-2 w-2 rounded-full bg-success" />
+        <span className="text-sm font-medium text-foreground">
           Generated Audio
         </span>
       </div>
 
-      {/* Audio element */}
       <audio
         controls
         src={audioUrl}
         autoPlay
-        style={{
-          width: '100%',
-          height: '42px',
-          borderRadius: 'var(--radius-sm)',
-        }}
+        className="w-full"
       />
 
-      {/* Download */}
-      <div style={{ marginTop: '14px' }}>
-        <button
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '9px 20px',
-            background: 'transparent',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--text-primary)',
-            cursor: 'pointer',
-            fontSize: '12px',
-            fontFamily: 'var(--font-body)',
-            fontWeight: 500,
-            transition: 'all 0.15s ease',
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-          }}
-          onClick={handleDownload}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--text-primary)';
-            e.currentTarget.style.color = 'var(--bg-elevated)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent';
-            e.currentTarget.style.color = 'var(--text-primary)';
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 2v6M4 6l2 2 2-2" />
-            <path d="M2 9v1.5h8V9" />
-          </svg>
+      <div className="mt-3.5">
+        <Button variant="outline" size="sm" onClick={handleDownload}>
+          <Download size={14} />
           Download WAV
-        </button>
+        </Button>
       </div>
     </div>
   );

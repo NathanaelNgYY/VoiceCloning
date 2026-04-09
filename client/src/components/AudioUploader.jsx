@@ -1,4 +1,8 @@
 import React, { useState, useRef } from 'react';
+import { Upload, X } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 
 const ACCEPT = '.wav,.mp3,.ogg,.flac,.m4a';
 
@@ -36,40 +40,34 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
 
   return (
     <div>
-      {/* Drop zone — brutalist dashed border, oversized type */}
+      {/* Drop zone */}
       <div
-        style={{
-          border: dragOver ? '2px solid var(--text-primary)' : '2px dashed var(--border-default)',
-          borderRadius: 'var(--radius-sm)',
-          padding: '48px 32px',
-          textAlign: 'center',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          transition: 'all 0.15s ease',
-          background: dragOver ? 'var(--bg-surface)' : 'transparent',
-          opacity: disabled ? 0.4 : 1,
-        }}
+        className={cn(
+          "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-8 py-12 text-center transition-all",
+          dragOver
+            ? "border-primary/50 bg-primary/5"
+            : "border-border hover:border-primary/30 hover:bg-muted/50",
+          disabled && "cursor-not-allowed opacity-40"
+        )}
         onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
         onClick={() => !disabled && inputRef.current?.click()}
       >
-        <p style={{
-          fontSize: '20px',
-          fontFamily: 'var(--font-display)',
-          color: dragOver ? 'var(--text-primary)' : 'var(--text-secondary)',
-          fontWeight: 400,
-          transition: 'color 0.15s ease',
-          fontStyle: 'italic',
-        }}>
+        <Upload
+          className={cn(
+            "mb-3 transition-colors",
+            dragOver ? "text-primary" : "text-muted-foreground"
+          )}
+          size={28}
+        />
+        <p className={cn(
+          "text-sm font-medium transition-colors",
+          dragOver ? "text-primary" : "text-muted-foreground"
+        )}>
           {dragOver ? 'Drop files here' : 'Drop audio files, or click to browse'}
         </p>
-        <p style={{
-          fontSize: '11px',
-          color: 'var(--text-muted)',
-          marginTop: '10px',
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-        }}>
+        <p className="mt-2 text-xs uppercase tracking-wider text-muted-foreground">
           WAV, MP3, OGG, FLAC, M4A
         </p>
         <input
@@ -78,114 +76,60 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
           accept={ACCEPT}
           multiple
           onChange={handleSelect}
-          style={{ display: 'none' }}
+          className="hidden"
           disabled={disabled}
         />
       </div>
 
       {/* File list */}
       {files.length > 0 && (
-        <div style={{
-          marginTop: '16px',
-          animation: 'fade-in 0.3s ease',
-        }}>
+        <div className="mt-4 animate-fade-in">
           {/* File count header */}
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '10px',
-            paddingBottom: '8px',
-            borderBottom: '1px solid var(--border-hairline)',
-          }}>
-            <span style={{
-              fontSize: '12px',
-              color: 'var(--text-secondary)',
-              fontWeight: 500,
-              letterSpacing: '0.02em',
-            }}>
-              {files.length} file{files.length !== 1 ? 's' : ''}
-            </span>
-            <span style={{
-              fontSize: '11px',
-              color: 'var(--text-muted)',
-              letterSpacing: '0.02em',
-            }}>
+          <div className="mb-2.5 flex items-center justify-between border-b pb-2">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="text-xs">
+                {files.length} file{files.length !== 1 ? 's' : ''}
+              </Badge>
+            </div>
+            <span className="font-mono text-xs text-muted-foreground">
               {formatSize(totalSize)}
             </span>
           </div>
 
           {/* File items */}
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0',
-            maxHeight: '200px',
-            overflowY: 'auto',
-          }}>
-            {files.map((f, i) => (
-              <div key={`${f.name}-${i}`} style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '10px 0',
-                borderBottom: '1px solid var(--border-hairline)',
-                transition: 'background 0.1s ease',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                  <span style={{
-                    fontSize: '10px',
-                    color: 'var(--text-muted)',
-                    fontFamily: 'var(--font-mono)',
-                    width: '20px',
-                    textAlign: 'right',
-                    flexShrink: 0,
-                  }}>
-                    {String(i + 1).padStart(2, '0')}
-                  </span>
-                  <span style={{
-                    fontSize: '13px',
-                    color: 'var(--text-primary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}>
-                    {f.name}
-                  </span>
-                  <span style={{
-                    fontSize: '11px',
-                    color: 'var(--text-muted)',
-                    flexShrink: 0,
-                    fontFamily: 'var(--font-mono)',
-                  }}>
-                    {formatSize(f.size || 0)}
-                  </span>
-                </div>
-                <button
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--text-muted)',
-                    cursor: disabled ? 'not-allowed' : 'pointer',
-                    fontSize: '13px',
-                    padding: '2px 6px',
-                    lineHeight: 1,
-                    transition: 'color 0.1s ease',
-                    fontFamily: 'var(--font-body)',
-                    letterSpacing: '0.05em',
-                    textTransform: 'uppercase',
-                  }}
-                  onClick={(e) => { e.stopPropagation(); removeFile(i); }}
-                  disabled={disabled}
-                  title="Remove file"
-                  onMouseEnter={(e) => { if (!disabled) e.target.style.color = 'var(--accent)'; }}
-                  onMouseLeave={(e) => { e.target.style.color = 'var(--text-muted)'; }}
+          <ScrollArea className="max-h-[200px]">
+            <div className="flex flex-col">
+              {files.map((f, i) => (
+                <div
+                  key={`${f.name}-${i}`}
+                  className="flex items-center justify-between border-b py-2.5 last:border-0"
                 >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="w-5 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span className="truncate text-sm text-foreground">
+                      {f.name}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {formatSize(f.size || 0)}
+                    </span>
+                  </div>
+                  <button
+                    className={cn(
+                      "ml-2 shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
+                      disabled && "cursor-not-allowed"
+                    )}
+                    onClick={(e) => { e.stopPropagation(); removeFile(i); }}
+                    disabled={disabled}
+                    title="Remove file"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
         </div>
       )}
     </div>

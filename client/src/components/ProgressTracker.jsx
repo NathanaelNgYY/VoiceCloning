@@ -1,143 +1,72 @@
 import React from 'react';
-
-const statusConfig = {
-  pending:  { dotBg: 'transparent', dotBorder: 'var(--border-default)', textColor: 'var(--text-muted)', lineColor: 'var(--border-hairline)' },
-  running:  { dotBg: 'var(--accent)', dotBorder: 'var(--accent)', textColor: 'var(--accent)', lineColor: 'var(--border-hairline)' },
-  done:     { dotBg: 'var(--text-primary)', dotBorder: 'var(--text-primary)', textColor: 'var(--text-primary)', lineColor: 'var(--text-primary)' },
-  error:    { dotBg: 'var(--accent)', dotBorder: 'var(--accent)', textColor: 'var(--accent)', lineColor: 'var(--border-hairline)' },
-  skipped:  { dotBg: 'transparent', dotBorder: 'var(--border-default)', textColor: 'var(--text-muted)', lineColor: 'var(--border-hairline)' },
-};
+import { Check, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 function StepDot({ status }) {
-  const config = statusConfig[status];
-
   if (status === 'done') {
     return (
-      <div style={{
-        width: '20px',
-        height: '20px',
-        borderRadius: '50%',
-        background: config.dotBg,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        transition: 'all 0.3s ease',
-      }}>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M2 5l2.5 2.5L8 3" />
-        </svg>
+      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-success transition-all">
+        <Check size={14} className="text-white" strokeWidth={2.5} />
       </div>
     );
   }
 
   if (status === 'error') {
     return (
-      <div style={{
-        width: '20px',
-        height: '20px',
-        borderRadius: '50%',
-        background: config.dotBg,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round">
-          <path d="M2 2l4 4M6 2l-4 4" />
-        </svg>
+      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-destructive">
+        <X size={12} className="text-white" strokeWidth={2.5} />
       </div>
     );
   }
 
   if (status === 'running') {
     return (
-      <div style={{
-        width: '20px',
-        height: '20px',
-        borderRadius: '50%',
-        background: config.dotBg,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        animation: 'pulse-dot 1.5s ease-in-out infinite',
-      }}>
-        <div style={{
-          width: '6px',
-          height: '6px',
-          borderRadius: '50%',
-          background: 'white',
-        }} />
+      <div className="flex h-6 w-6 animate-pulse-dot items-center justify-center rounded-full bg-primary">
+        <div className="h-2 w-2 rounded-full bg-white" />
       </div>
     );
   }
 
   // pending / skipped
   return (
-    <div style={{
-      width: '20px',
-      height: '20px',
-      borderRadius: '50%',
-      background: config.dotBg,
-      border: `1.5px solid ${config.dotBorder}`,
-      transition: 'all 0.3s ease',
-    }} />
+    <div className="h-6 w-6 rounded-full border-2 border-border bg-transparent transition-all" />
   );
 }
 
 export default function ProgressTracker({ steps }) {
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: '0',
-      overflowX: 'auto',
-      padding: '4px 0',
-    }}>
+    <div className="flex items-start overflow-x-auto py-1">
       {steps.map((step, i) => {
-        const config = statusConfig[step.status];
         const isActive = step.status === 'running';
         const isDone = step.status === 'done';
 
         return (
           <React.Fragment key={step.index}>
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              minWidth: '80px',
-              flex: 1,
-              position: 'relative',
-            }}>
+            <div className="relative flex min-w-[80px] flex-1 flex-col items-center">
               <StepDot status={step.status} />
 
-              {/* Step label */}
-              <span style={{
-                marginTop: '10px',
-                fontSize: '10px',
-                fontWeight: isActive ? 600 : 400,
-                textAlign: 'center',
-                color: config.textColor,
-                lineHeight: '1.3',
-                maxWidth: '76px',
-                transition: 'color 0.3s ease',
-                letterSpacing: '0.03em',
-                textTransform: 'uppercase',
-                fontFamily: 'var(--font-body)',
-              }}>
+              <span
+                className={cn(
+                  "mt-2.5 max-w-[76px] text-center text-[10px] uppercase tracking-wide transition-colors",
+                  isActive && "font-semibold text-primary",
+                  isDone && "font-medium text-success",
+                  step.status === 'error' && "font-medium text-destructive",
+                  step.status === 'pending' && "text-muted-foreground",
+                  step.status === 'skipped' && "text-muted-foreground"
+                )}
+              >
                 {step.name}
               </span>
             </div>
 
             {/* Connector line */}
             {i < steps.length - 1 && (
-              <div style={{
-                flex: 1,
-                height: '1px',
-                alignSelf: 'center',
-                marginTop: '-20px',
-                minWidth: '8px',
-                background: isDone ? 'var(--text-primary)' : 'var(--border-hairline)',
-                transition: 'background 0.4s ease',
-              }} />
+              <div
+                className={cn(
+                  "mt-3 min-w-[8px] flex-1 self-start transition-colors",
+                  isDone ? "h-0.5 bg-success" : "h-px bg-border"
+                )}
+              />
             )}
           </React.Fragment>
         );

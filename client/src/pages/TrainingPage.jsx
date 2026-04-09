@@ -4,62 +4,17 @@ import ProgressTracker from '../components/ProgressTracker.jsx';
 import LogViewer from '../components/LogViewer.jsx';
 import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
-
-/* ── Editorial shared styles ── */
-
-const section = {
-  marginBottom: '56px',
-};
-
-const sectionHeader = {
-  display: 'flex',
-  alignItems: 'baseline',
-  gap: '16px',
-  marginBottom: '24px',
-  paddingBottom: '16px',
-  borderBottom: '1px solid var(--border-hairline)',
-};
-
-const sectionNumber = {
-  fontSize: '48px',
-  fontFamily: 'var(--font-display)',
-  color: 'var(--border-default)',
-  lineHeight: 0.85,
-  fontWeight: 400,
-  userSelect: 'none',
-};
-
-const sectionTitle = {
-  fontSize: '18px',
-  fontWeight: 400,
-  color: 'var(--text-primary)',
-  fontFamily: 'var(--font-display)',
-  letterSpacing: '-0.01em',
-};
-
-const labelStyle = {
-  display: 'block',
-  fontSize: '10px',
-  color: 'var(--text-tertiary)',
-  marginBottom: '8px',
-  fontWeight: 500,
-  letterSpacing: '0.1em',
-  textTransform: 'uppercase',
-  fontFamily: 'var(--font-body)',
-};
-
-const inputStyle = {
-  width: '100%',
-  padding: '10px 14px',
-  background: 'var(--bg-elevated)',
-  border: '1px solid var(--border-default)',
-  borderRadius: 'var(--radius-sm)',
-  color: 'var(--text-primary)',
-  fontSize: '14px',
-  outline: 'none',
-  fontFamily: 'var(--font-body)',
-  transition: 'border-color 0.15s ease',
-};
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ChevronRight, Play, Square, AlertCircle } from 'lucide-react';
+import Spinner from '../components/Spinner.jsx';
+import { cn } from '@/lib/utils';
 
 export default function TrainingPage() {
   const [expName, setExpName] = useState('');
@@ -168,314 +123,249 @@ export default function TrainingPage() {
   }
 
   return (
-    <div style={{ animation: 'fade-in 0.4s ease' }}>
+    <div className="animate-fade-in space-y-8">
 
-      {/* ── 01 Setup ── */}
-      <div style={section}>
-        <div style={sectionHeader}>
-          <span style={sectionNumber}>01</span>
-          <div>
-            <h2 style={sectionTitle}>Setup</h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-              Name your experiment and upload training audio
-            </p>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: '28px' }}>
-          <label style={labelStyle}>Experiment Name</label>
-          <input
-            style={inputStyle}
-            placeholder="e.g. my_voice_model"
-            value={expName}
-            onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-            disabled={isRunning}
-            onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
-            onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
-          />
-          {expName && (
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', fontFamily: 'var(--font-mono)' }}>
-              Letters, numbers, hyphens, underscores only
-            </p>
-          )}
-        </div>
-
-        <div>
-          <label style={labelStyle}>Training Audio</label>
-          <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
-        </div>
-
-        {uploadError && (
-          <div style={{
-            marginTop: '16px',
-            padding: '12px 16px',
-            background: 'var(--error-soft)',
-            borderLeft: '3px solid var(--accent)',
-            color: 'var(--accent)',
-            fontSize: '13px',
-            fontFamily: 'var(--font-body)',
-          }}>
-            {uploadError}
-          </div>
-        )}
-      </div>
-
-      {/* ── 02 Configuration ── */}
-      <div style={section}>
-        <div style={sectionHeader}>
-          <span style={sectionNumber}>02</span>
-          <div>
-            <h2 style={sectionTitle}>Configuration</h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-              Training parameters and settings
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setShowSettings(!showSettings)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            background: 'none',
-            border: 'none',
-            color: 'var(--text-secondary)',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: 500,
-            padding: 0,
-            fontFamily: 'var(--font-body)',
-            transition: 'color 0.15s ease',
-            letterSpacing: '0.02em',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-            style={{ transition: 'transform 0.2s ease', transform: showSettings ? 'rotate(90deg)' : 'rotate(0)' }}>
-            <path d="M3 1l4 4-4 4" />
-          </svg>
-          {showSettings ? 'Hide' : 'Show'} advanced settings
-        </button>
-
-        {showSettings && (
-          <div style={{
-            marginTop: '28px',
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: '28px 40px',
-            animation: 'fade-in 0.25s ease',
-          }}>
-            {/* Batch Size */}
+      {/* 01 Setup */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              1
+            </Badge>
             <div>
-              <label style={labelStyle}>
-                Batch Size
-                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{batchSize}</span>
-              </label>
-              <input type="range" min="1" max="4" value={batchSize}
-                onChange={e => setBatchSize(Number(e.target.value))} disabled={isRunning} />
+              <CardTitle>Setup</CardTitle>
+              <CardDescription>Name your experiment and upload training audio</CardDescription>
             </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Experiment Name
+            </Label>
+            <Input
+              placeholder="e.g. my_voice_model"
+              value={expName}
+              onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+              disabled={isRunning}
+            />
+            {expName && (
+              <p className="font-mono text-xs text-muted-foreground">
+                Letters, numbers, hyphens, underscores only
+              </p>
+            )}
+          </div>
 
-            {/* ASR Language */}
+          <div className="space-y-2">
+            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Training Audio
+            </Label>
+            <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
+          </div>
+
+          {uploadError && (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              <AlertCircle size={16} />
+              {uploadError}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 02 Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              2
+            </Badge>
             <div>
-              <label style={labelStyle}>ASR Language</label>
-              <select
-                style={inputStyle}
-                value={asrLanguage}
-                onChange={e => setAsrLanguage(e.target.value)}
-                disabled={isRunning}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--text-primary)'; }}
-                onBlur={(e) => { e.target.style.borderColor = 'var(--border-default)'; }}
+              <CardTitle>Configuration</CardTitle>
+              <CardDescription>Training parameters and settings</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Collapsible open={showSettings} onOpenChange={setShowSettings}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground">
+                <ChevronRight
+                  size={14}
+                  className={cn("transition-transform", showSettings && "rotate-90")}
+                />
+                {showSettings ? 'Hide' : 'Show'} advanced settings
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-x-10">
+                {/* Batch Size */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Batch Size</Label>
+                    <span className="font-mono text-sm font-semibold">{batchSize}</span>
+                  </div>
+                  <Slider
+                    min={1} max={4} step={1}
+                    value={[batchSize]}
+                    onValueChange={([v]) => setBatchSize(v)}
+                    disabled={isRunning}
+                  />
+                </div>
+
+                {/* ASR Language */}
+                <div className="space-y-3">
+                  <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">ASR Language</Label>
+                  <Select value={asrLanguage} onValueChange={setAsrLanguage} disabled={isRunning}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="en">English</SelectItem>
+                      <SelectItem value="zh">Chinese</SelectItem>
+                      <SelectItem value="ja">Japanese</SelectItem>
+                      <SelectItem value="ko">Korean</SelectItem>
+                      <SelectItem value="auto">Auto Detect</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* SoVITS Epochs */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SoVITS Epochs</Label>
+                    <span className="font-mono text-sm font-semibold">{sovitsEpochs}</span>
+                  </div>
+                  <Slider
+                    min={1} max={50} step={1}
+                    value={[sovitsEpochs]}
+                    onValueChange={([v]) => setSovitsEpochs(v)}
+                    disabled={isRunning}
+                  />
+                </div>
+
+                {/* GPT Epochs */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">GPT Epochs</Label>
+                    <span className="font-mono text-sm font-semibold">{gptEpochs}</span>
+                  </div>
+                  <Slider
+                    min={1} max={50} step={1}
+                    value={[gptEpochs]}
+                    onValueChange={([v]) => setGptEpochs(v)}
+                    disabled={isRunning}
+                  />
+                </div>
+
+                {/* SoVITS Save Interval */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SoVITS Save Interval</Label>
+                    <span className="font-mono text-sm font-semibold">every {sovitsSaveEvery}ep</span>
+                  </div>
+                  <Slider
+                    min={1} max={10} step={1}
+                    value={[sovitsSaveEvery]}
+                    onValueChange={([v]) => setSovitsSaveEvery(v)}
+                    disabled={isRunning}
+                  />
+                </div>
+
+                {/* GPT Save Interval */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">GPT Save Interval</Label>
+                    <span className="font-mono text-sm font-semibold">every {gptSaveEvery}ep</span>
+                  </div>
+                  <Slider
+                    min={1} max={10} step={1}
+                    value={[gptSaveEvery]}
+                    onValueChange={([v]) => setGptSaveEvery(v)}
+                    disabled={isRunning}
+                  />
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </CardContent>
+      </Card>
+
+      {/* 03 Pipeline */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              3
+            </Badge>
+            <div className="flex-1">
+              <div className="flex items-center gap-3">
+                <CardTitle>Pipeline</CardTitle>
+                {pipelineStatus === 'running' && (
+                  <Badge className="animate-pulse-dot">Running</Badge>
+                )}
+                {pipelineStatus === 'complete' && (
+                  <Badge variant="success">Complete</Badge>
+                )}
+                {pipelineStatus === 'error' && (
+                  <Badge variant="destructive">Error</Badge>
+                )}
+              </div>
+              <CardDescription>8-step training pipeline progress</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <ProgressTracker steps={steps} />
+
+          <div className="flex items-center gap-4">
+            {!isRunning ? (
+              <Button
+                onClick={handleStart}
+                disabled={uploading || isRunning}
               >
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="auto">Auto Detect</option>
-              </select>
-            </div>
+                {uploading ? (
+                  <>
+                    <Spinner size={14} className="text-primary-foreground" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Play size={14} />
+                    Start Training
+                  </>
+                )}
+              </Button>
+            ) : (
+              <Button variant="destructive" onClick={handleStop}>
+                <Square size={14} />
+                Stop Training
+              </Button>
+            )}
 
-            {/* SoVITS Epochs */}
-            <div>
-              <label style={labelStyle}>
-                SoVITS Epochs
-                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{sovitsEpochs}</span>
-              </label>
-              <input type="range" min="1" max="50" value={sovitsEpochs}
-                onChange={e => setSovitsEpochs(Number(e.target.value))} disabled={isRunning} />
-            </div>
+            {error && (
+              <span className="border-l-2 border-destructive pl-3 text-sm text-destructive">
+                {error}
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-            {/* GPT Epochs */}
+      {/* 04 Logs */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              4
+            </Badge>
             <div>
-              <label style={labelStyle}>
-                GPT Epochs
-                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{gptEpochs}</span>
-              </label>
-              <input type="range" min="1" max="50" value={gptEpochs}
-                onChange={e => setGptEpochs(Number(e.target.value))} disabled={isRunning} />
-            </div>
-
-            {/* SoVITS Save Every */}
-            <div>
-              <label style={labelStyle}>
-                SoVITS Save Interval
-                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>every {sovitsSaveEvery}ep</span>
-              </label>
-              <input type="range" min="1" max="10" value={sovitsSaveEvery}
-                onChange={e => setSovitsSaveEvery(Number(e.target.value))} disabled={isRunning} />
-            </div>
-
-            {/* GPT Save Every */}
-            <div>
-              <label style={labelStyle}>
-                GPT Save Interval
-                <span style={{ float: 'right', color: 'var(--text-primary)', textTransform: 'none', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>every {gptSaveEvery}ep</span>
-              </label>
-              <input type="range" min="1" max="10" value={gptSaveEvery}
-                onChange={e => setGptSaveEvery(Number(e.target.value))} disabled={isRunning} />
+              <CardTitle>Logs</CardTitle>
+              <CardDescription>Real-time training output</CardDescription>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* ── 03 Pipeline ── */}
-      <div style={section}>
-        <div style={sectionHeader}>
-          <span style={sectionNumber}>03</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <h2 style={sectionTitle}>Pipeline</h2>
-              {pipelineStatus === 'running' && (
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 500,
-                  color: 'var(--accent)',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  fontFamily: 'var(--font-body)',
-                }}>
-                  Running
-                </span>
-              )}
-              {pipelineStatus === 'complete' && (
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 500,
-                  color: 'var(--text-primary)',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  fontFamily: 'var(--font-body)',
-                }}>
-                  Complete
-                </span>
-              )}
-              {pipelineStatus === 'error' && (
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 500,
-                  color: 'var(--accent)',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  fontFamily: 'var(--font-body)',
-                }}>
-                  Error
-                </span>
-              )}
-            </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-              8-step training pipeline progress
-            </p>
-          </div>
-        </div>
-
-        <ProgressTracker steps={steps} />
-
-        <div style={{
-          marginTop: '28px',
-          display: 'flex',
-          gap: '16px',
-          alignItems: 'center',
-        }}>
-          {!isRunning ? (
-            <button
-              style={{
-                padding: '11px 32px',
-                background: uploading ? 'var(--bg-surface)' : 'var(--text-primary)',
-                color: uploading ? 'var(--text-muted)' : 'var(--bg-elevated)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: uploading ? 'not-allowed' : 'pointer',
-                fontFamily: 'var(--font-body)',
-                transition: 'all 0.15s ease',
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-              }}
-              onClick={handleStart}
-              disabled={uploading || isRunning}
-              onMouseEnter={(e) => { if (!uploading) e.currentTarget.style.background = 'var(--accent)'; }}
-              onMouseLeave={(e) => { if (!uploading) e.currentTarget.style.background = 'var(--text-primary)'; }}
-            >
-              {uploading ? 'Uploading...' : 'Start Training'}
-            </button>
-          ) : (
-            <button
-              style={{
-                padding: '11px 32px',
-                background: 'transparent',
-                color: 'var(--accent)',
-                border: '1px solid var(--accent)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontFamily: 'var(--font-body)',
-                transition: 'all 0.15s ease',
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-              }}
-              onClick={handleStop}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--accent)';
-                e.currentTarget.style.color = 'white';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.color = 'var(--accent)';
-              }}
-            >
-              Stop Training
-            </button>
-          )}
-
-          {error && (
-            <span style={{
-              color: 'var(--accent)',
-              fontSize: '13px',
-              paddingLeft: '8px',
-              borderLeft: '2px solid var(--accent)',
-            }}>
-              {error}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* ── 04 Logs ── */}
-      <div style={section}>
-        <div style={sectionHeader}>
-          <span style={sectionNumber}>04</span>
-          <div>
-            <h2 style={sectionTitle}>Logs</h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-              Real-time training output
-            </p>
-          </div>
-        </div>
-        <LogViewer logs={logs} />
-      </div>
+        </CardHeader>
+        <CardContent>
+          <LogViewer logs={logs} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

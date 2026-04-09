@@ -1,157 +1,88 @@
 import React from 'react';
-import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { Routes, Route, NavLink } from 'react-router-dom';
+import { Activity } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import TrainingPage from './pages/TrainingPage.jsx';
 import InferencePage from './pages/InferencePage.jsx';
 
 export default function App() {
-  const location = useLocation();
-
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-base)' }}>
-      {/* Masthead */}
-      <header style={{
-        borderBottom: '1px solid var(--border-strong)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-        background: 'var(--bg-base)',
-      }}>
-        <div style={{
-          maxWidth: '960px',
-          margin: '0 auto',
-          padding: '0 40px',
-        }}>
-          {/* Title row */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            padding: '28px 0 0',
-          }}>
-            <div>
-              <h1 style={{
-                fontSize: '28px',
-                fontWeight: 400,
-                color: 'var(--text-primary)',
-                letterSpacing: '-0.02em',
-                lineHeight: 1.1,
-                fontFamily: 'var(--font-display)',
-              }}>
-                Voice Cloning Studio
-              </h1>
-              <p style={{
-                fontSize: '12px',
-                color: 'var(--text-tertiary)',
-                fontWeight: 400,
-                letterSpacing: '0.08em',
-                marginTop: '6px',
-                textTransform: 'uppercase',
-                fontFamily: 'var(--font-body)',
-              }}>
-                GPT-SoVITS Training & Inference
-              </p>
+    <TooltipProvider>
+      <div className="flex min-h-screen flex-col bg-background">
+        {/* Header */}
+        <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur-sm">
+          <div className="mx-auto max-w-5xl px-6">
+            {/* Title row */}
+            <div className="flex items-center justify-between pt-5">
+              <div className="flex items-center gap-3">
+                <Activity className="h-6 w-6 text-primary" />
+                <div>
+                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                    Voice Cloning Studio
+                  </h1>
+                  <p className="text-xs text-muted-foreground">
+                    GPT-SoVITS Training & Inference
+                  </p>
+                </div>
+              </div>
             </div>
-            {/* Red dot — a subtle brand mark */}
-            <div style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: 'var(--accent)',
-              flexShrink: 0,
-            }} />
+
+            {/* Navigation */}
+            <nav className="mt-4 flex gap-0">
+              <NavLink
+                to="/"
+                end
+                className={({ isActive }) =>
+                  cn(
+                    "inline-block border-b-2 px-1 pb-3 mr-8 text-sm font-medium transition-colors",
+                    isActive
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  )
+                }
+              >
+                Training
+              </NavLink>
+              <NavLink
+                to="/inference"
+                className={({ isActive }) =>
+                  cn(
+                    "inline-block border-b-2 px-1 pb-3 text-sm font-medium transition-colors",
+                    isActive
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  )
+                }
+              >
+                Inference
+              </NavLink>
+            </nav>
           </div>
+        </header>
 
-          {/* Navigation */}
-          <nav style={{
-            display: 'flex',
-            gap: '0',
-            marginTop: '20px',
-          }}>
-            <NavLink
-              to="/"
-              end
-              style={({ isActive }) => ({
-                display: 'inline-block',
-                padding: '10px 0',
-                marginRight: '32px',
-                textDecoration: 'none',
-                fontSize: '13px',
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-                transition: 'all 0.15s ease',
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                fontFamily: 'var(--font-body)',
-              })}
-            >
-              Training
-            </NavLink>
-            <NavLink
-              to="/inference"
-              style={({ isActive }) => ({
-                display: 'inline-block',
-                padding: '10px 0',
-                textDecoration: 'none',
-                fontSize: '13px',
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-                transition: 'all 0.15s ease',
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-                fontFamily: 'var(--font-body)',
-              })}
-            >
-              Inference
-            </NavLink>
-          </nav>
-        </div>
-      </header>
+        {/* Main content */}
+        <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+          <Routes>
+            <Route path="/" element={<TrainingPage />} />
+            <Route path="/inference" element={<InferencePage />} />
+          </Routes>
+        </main>
 
-      {/* Main content */}
-      <main style={{
-        flex: 1,
-        padding: '48px 40px 80px',
-        maxWidth: '960px',
-        width: '100%',
-        margin: '0 auto',
-      }}>
-        <Routes>
-          <Route path="/" element={<TrainingPage />} />
-          <Route path="/inference" element={<InferencePage />} />
-        </Routes>
-      </main>
-
-      {/* Footer — a single hairline and quiet credit */}
-      <footer style={{
-        borderTop: '1px solid var(--border-hairline)',
-        padding: '20px 40px',
-        maxWidth: '960px',
-        width: '100%',
-        margin: '0 auto',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-      }}>
-        <span style={{
-          fontSize: '11px',
-          color: 'var(--text-muted)',
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
-          fontFamily: 'var(--font-body)',
-        }}>
-          Voice Cloning Studio
-        </span>
-        <span style={{
-          fontSize: '11px',
-          color: 'var(--text-muted)',
-          letterSpacing: '0.02em',
-          fontFamily: 'var(--font-body)',
-        }}>
-          Built with GPT-SoVITS
-        </span>
-      </footer>
-    </div>
+        {/* Footer */}
+        <footer className="mx-auto w-full max-w-5xl px-6">
+          <Separator />
+          <div className="flex items-center justify-between py-5">
+            <span className="text-xs text-muted-foreground">
+              Voice Cloning Studio
+            </span>
+            <span className="text-xs text-muted-foreground">
+              Built with GPT-SoVITS
+            </span>
+          </div>
+        </footer>
+      </div>
+    </TooltipProvider>
   );
 }

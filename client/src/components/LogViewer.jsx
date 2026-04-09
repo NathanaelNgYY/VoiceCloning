@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export default function LogViewer({ logs }) {
   const contentRef = useRef(null);
@@ -18,102 +20,50 @@ export default function LogViewer({ logs }) {
   }
 
   return (
-    <div style={{
-      background: '#1A1A1A',
-      border: '1px solid #2A2A2A',
-      borderRadius: 'var(--radius-md)',
-      overflow: 'hidden',
-    }}>
-      {/* Terminal header — minimal */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '10px 16px',
-        borderBottom: '1px solid #2A2A2A',
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-        }}>
-          <span style={{
-            fontSize: '11px',
-            color: '#666',
-            fontWeight: 500,
-            fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.05em',
-            textTransform: 'uppercase',
-          }}>
+    <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
+      {/* Terminal header */}
+      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <span className="font-mono text-[11px] font-medium uppercase tracking-wider text-slate-500">
             Output
           </span>
           {logs.length > 0 && (
-            <span style={{
-              fontSize: '10px',
-              color: '#555',
-              fontFamily: 'var(--font-mono)',
-            }}>
+            <span className="font-mono text-[10px] text-slate-600">
               {logs.length} lines
             </span>
           )}
         </div>
-        <button
-          style={{
-            background: autoScroll ? 'rgba(230, 57, 70, 0.1)' : '#2A2A2A',
-            border: 'none',
-            color: autoScroll ? '#E63946' : '#555',
-            cursor: 'pointer',
-            padding: '3px 10px',
-            borderRadius: '2px',
-            fontSize: '10px',
-            fontFamily: 'var(--font-mono)',
-            fontWeight: 500,
-            transition: 'all 0.1s ease',
-            letterSpacing: '0.05em',
-            textTransform: 'uppercase',
-          }}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "h-6 px-2.5 font-mono text-[10px] uppercase tracking-wider",
+            autoScroll
+              ? "bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary"
+              : "text-slate-500 hover:bg-slate-800 hover:text-slate-400"
+          )}
           onClick={() => setAutoScroll(!autoScroll)}
         >
           Auto-scroll {autoScroll ? 'on' : 'off'}
-        </button>
+        </Button>
       </div>
 
       {/* Log content */}
       <div
         ref={contentRef}
-        style={{
-          height: '300px',
-          overflowY: 'auto',
-          padding: '14px 18px',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '12px',
-          lineHeight: '1.8',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-        }}
+        className="h-[300px] overflow-y-auto whitespace-pre-wrap break-all px-4 py-3.5 font-mono text-xs leading-relaxed"
         onScroll={handleScroll}
       >
         {logs.map((log, i) => (
-          <div key={i} style={{
-            color: log.stream === 'stderr' ? '#E63946' : '#888',
-            padding: '0',
-          }}>
+          <div
+            key={i}
+            className={log.stream === 'stderr' ? 'text-red-400' : 'text-slate-400'}
+          >
             {log.data}
           </div>
         ))}
         {logs.length === 0 && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            color: '#333',
-            fontSize: '13px',
-            gap: '8px',
-            fontFamily: 'var(--font-display)',
-            fontStyle: 'italic',
-          }}>
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-slate-600">
             <span>Waiting for output...</span>
           </div>
         )}
