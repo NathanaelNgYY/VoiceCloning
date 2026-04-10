@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { WEIGHT_DIRS, GPT_SOVITS_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
+import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
-import { synthesizeLongText } from '../services/longTextInference.js';
+import { sseManager } from '../services/sseManager.js';
+import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
 
 const router = Router();
 
@@ -69,11 +71,13 @@ router.post('/inference', async (req, res) => {
     ref_audio_path,
     prompt_text = '',
     prompt_lang = 'en',
-    top_k = 4,
-    top_p = 0.85,
-    temperature = 0.8,
+    aux_ref_audio_paths = [],
+    top_k = 5,
+    top_p = 1,
+    temperature = 1,
+    repetition_penalty = 1.35,
     speed_factor = 1.0,
-    seed = 1234,
+    seed = -1,
   } = req.body;
 
   if (!text) {
@@ -94,15 +98,17 @@ router.post('/inference', async (req, res) => {
       ref_audio_path,
       prompt_text,
       prompt_lang,
+      aux_ref_audio_paths,
       top_k,
       top_p,
       temperature,
+      repetition_penalty,
       speed_factor,
       seed,
     }, {
-      maxChunkLength: 180,
-      maxSentencesPerChunk: 2,
-      chunkJoinPauseMs: 180,
+      maxChunkLength: 280,
+      maxSentencesPerChunk: 3,
+      chunkJoinPauseMs: 120,
       retryCount: 2,
     });
 
@@ -116,6 +122,97 @@ router.post('/inference', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Streaming inference endpoints ──
+
+router.post('/inference/generate', async (req, res) => {
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(500).json({ error: configError });
+  }
+
+  const {
+    text,
+    text_lang = 'en',
+    ref_audio_path,
+    prompt_text = '',
+    prompt_lang = 'en',
+    aux_ref_audio_paths = [],
+    top_k = 5,
+    top_p = 1,
+    temperature = 1,
+    repetition_penalty = 1.35,
+    speed_factor = 1.0,
+    seed = -1,
+  } = req.body;
+
+  if (!text) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  if (!ref_audio_path) {
+    return res.status(400).json({ error: 'ref_audio_path is required' });
+  }
+
+  if (!inferenceServer.isReady()) {
+    return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
+  }
+
+  const sessionId = crypto.randomUUID();
+  sseManager.prepareSession(sessionId);
+  res.json({ sessionId });
+
+  // Wait for the SSE client to connect, then start streaming synthesis
+  sseManager.waitForClient(sessionId).then(() => {
+    synthesizeLongTextStreaming(sessionId, {
+      text,
+      text_lang,
+      ref_audio_path,
+      prompt_text,
+      prompt_lang,
+      aux_ref_audio_paths,
+      top_k,
+      top_p,
+      temperature,
+      repetition_penalty,
+      speed_factor,
+      seed,
+    }, {
+      maxChunkLength: 280,
+      maxSentencesPerChunk: 3,
+      chunkJoinPauseMs: 120,
+      retryCount: 2,
+    });
+  }).catch((err) => {
+    console.error(`[inference/generate] SSE client timeout for ${sessionId}:`, err.message);
+  });
+});
+
+router.get('/inference/progress/:sessionId', (req, res) => {
+  sseManager.addClient(req.params.sessionId, res);
+});
+
+router.get('/inference/result/:sessionId', (req, res) => {
+  const finalPath = getSessionFinalPath(req.params.sessionId);
+  if (!fs.existsSync(finalPath)) {
+    return res.status(404).json({ error: 'Result not ready or session not found' });
+  }
+
+  const stat = fs.statSync(finalPath);
+  res.set({
+    'Content-Type': 'audio/wav',
+    'Content-Length': stat.size,
+  });
+  fs.createReadStream(finalPath).pipe(res);
+});
+
+router.post('/inference/cancel', (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId is required' });
+  }
+  const cancelled = cancelSession(sessionId);
+  res.json({ cancelled });
 });
 
 router.post('/inference/stop', (_req, res) => {
@@ -204,6 +301,73 @@ router.post('/transcribe', async (req, res) => {
 router.get('/inference/status', (_req, res) => {
   const configError = getConfigError({ requirePython: true });
   res.json({ ready: !configError && inferenceServer.isReady(), error: configError });
+});
+
+// ── Training audio browser endpoints ──
+
+router.get('/training-audio/file/:expName/:filename', (req, res) => {
+  const { expName, filename } = req.params;
+  if (expName.includes('..') || filename.includes('..')) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+
+  const filePath = path.join(DATA_ROOT, expName, 'denoised', filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+
+  const stat = fs.statSync(filePath);
+  res.set({
+    'Content-Type': 'audio/wav',
+    'Content-Length': stat.size,
+  });
+  fs.createReadStream(filePath).pipe(res);
+});
+
+router.get('/training-audio/:expName', (req, res) => {
+  const { expName } = req.params;
+  if (expName.includes('..')) {
+    return res.status(400).json({ error: 'Invalid experiment name' });
+  }
+
+  const denoisedDir = path.join(DATA_ROOT, expName, 'denoised');
+  if (!fs.existsSync(denoisedDir)) {
+    return res.json({ expName, files: [] });
+  }
+
+  // Parse ASR transcripts from denoised.list
+  const asrPath = path.join(DATA_ROOT, expName, 'asr', 'denoised.list');
+  const transcriptMap = new Map();
+  if (fs.existsSync(asrPath)) {
+    const lines = fs.readFileSync(asrPath, 'utf-8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      // Format: abs_path|label|LANG|transcript
+      const parts = line.split('|');
+      if (parts.length >= 4) {
+        const absPath = parts[0];
+        const lang = parts[2];
+        const transcript = parts.slice(3).join('|');
+        const fname = path.basename(absPath);
+        transcriptMap.set(fname, { transcript, lang });
+      }
+    }
+  }
+
+  try {
+    const wavFiles = fs.readdirSync(denoisedDir).filter(f => f.endsWith('.wav')).sort();
+    const files = wavFiles.map(filename => {
+      const info = transcriptMap.get(filename) || {};
+      return {
+        filename,
+        path: path.join(denoisedDir, filename),
+        transcript: info.transcript || '',
+        lang: info.lang || '',
+      };
+    });
+    res.json({ expName, files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

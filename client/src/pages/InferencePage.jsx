@@ -1,240 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from '../components/ModelSelector.jsx';
 import AudioPlayer from '../components/AudioPlayer.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus } from '../services/api.js';
-
-/* ── Shared styles ── */
-
-const card = {
-  background: '#FFFFFF',
-  border: '1px solid #E8E4DE',
-  borderRadius: '16px',
-  padding: '24px',
-  marginBottom: '16px',
-  boxShadow: '0 1px 3px rgba(26, 22, 20, 0.04), 0 1px 2px rgba(26, 22, 20, 0.02)',
-};
-
-const label = {
-  display: 'block',
-  fontSize: '12px',
-  color: '#9B938A',
-  marginBottom: '6px',
-  fontWeight: 500,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
-};
-
-const input = {
-  width: '100%',
-  padding: '10px 14px',
-  background: '#F8F6F3',
-  border: '1px solid #E8E4DE',
-  borderRadius: '10px',
-  color: '#1A1614',
-  fontSize: '14px',
-  outline: 'none',
-  fontFamily: '"DM Sans", sans-serif',
-  transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-};
-
-const heading = {
-  fontSize: '15px',
-  fontWeight: 600,
-  color: '#1A1614',
-  letterSpacing: '-0.01em',
-  marginBottom: '18px',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  fontFamily: '"Space Grotesk", sans-serif',
-};
-
-/* ── Icons ── */
-
-const ModelIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="1" y="4" width="14" height="8" rx="2" />
-    <circle cx="5" cy="8" r="1" fill="#E8654A" stroke="none" />
-    <circle cx="8" cy="8" r="1" fill="#E8654A" stroke="none" />
-    <circle cx="11" cy="8" r="1" fill="#E8654A" stroke="none" />
-  </svg>
-);
-
-const RefIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M8 2v9" />
-    <circle cx="8" cy="12" r="2" />
-    <path d="M12 5a4 4 0 0 0-8 0" />
-  </svg>
-);
-
-const TextIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#E8654A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 3h10M8 3v10M5 13h6" />
-  </svg>
-);
-
-const SettingsIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="7" cy="7" r="2" />
-    <path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8l-1.4 1.4M4.2 9.8l-1.4 1.4" />
-  </svg>
-);
-
-const ChevronIcon = ({ open }) => (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-    style={{ transition: 'transform 0.2s ease', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>
-    <path d="M3 4.5l3 3 3-3" />
-  </svg>
-);
-
-const RefreshIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M1 2v4h4" />
-    <path d="M13 12V8H9" />
-    <path d="M2.5 9a5 5 0 008.2 1.8L13 8M1 6l2.3-2.8A5 5 0 0111.5 5" />
-  </svg>
-);
-
-const GenerateIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <polygon points="4,2 14,8 4,14" fill="currentColor" stroke="none" />
-  </svg>
-);
-
-const SpinnerSmall = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
-    <circle cx="8" cy="8" r="6" stroke="rgba(232, 101, 74, 0.15)" strokeWidth="2" />
-    <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-function formatTime(s) {
-  if (!s || !isFinite(s)) return '0:00';
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
-
-const PlayIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="#E8654A" stroke="none">
-    <polygon points="4,2 14,8 4,14" />
-  </svg>
-);
-
-const PauseIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="#E8654A" stroke="none">
-    <rect x="3" y="2" width="3.5" height="12" rx="1" />
-    <rect x="9.5" y="2" width="3.5" height="12" rx="1" />
-  </svg>
-);
-
-function RefAudioPlayer({ src }) {
-  const audioRef = useRef(null);
-  const progressRef = useRef(null);
-  const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-
-  useEffect(() => {
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-  }, [src]);
-
-  const togglePlay = useCallback(() => {
-    const a = audioRef.current;
-    if (!a) return;
-    if (a.paused) { a.play(); setPlaying(true); }
-    else { a.pause(); setPlaying(false); }
-  }, []);
-
-  const handleSeek = useCallback((e) => {
-    const bar = progressRef.current;
-    const a = audioRef.current;
-    if (!bar || !a || !a.duration) return;
-    const rect = bar.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    a.currentTime = ratio * a.duration;
-  }, []);
-
-  const progress = duration ? (currentTime / duration) * 100 : 0;
-
-  return (
-    <div style={{
-      marginTop: '10px',
-      padding: '10px 14px',
-      background: '#F8F6F3',
-      border: '1px solid #E8E4DE',
-      borderRadius: '12px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px',
-    }}>
-      <audio
-        ref={audioRef}
-        src={src}
-        onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
-        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
-        onEnded={() => setPlaying(false)}
-      />
-
-      <button
-        onClick={togglePlay}
-        style={{
-          width: '34px',
-          height: '34px',
-          borderRadius: '50%',
-          border: 'none',
-          background: 'rgba(232, 101, 74, 0.1)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          transition: 'background 0.15s ease',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(232, 101, 74, 0.18)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(232, 101, 74, 0.1)'; }}
-      >
-        {playing ? <PauseIcon /> : <PlayIcon />}
-      </button>
-
-      <span style={{ fontSize: '11px', color: '#9B938A', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-        {formatTime(currentTime)}
-      </span>
-
-      <div
-        ref={progressRef}
-        onClick={handleSeek}
-        style={{
-          flex: 1,
-          height: '6px',
-          background: '#EDE9E3',
-          borderRadius: '3px',
-          cursor: 'pointer',
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          height: '100%',
-          width: `${progress}%`,
-          background: 'linear-gradient(90deg, #E8654A, #D94E7A)',
-          borderRadius: '3px',
-          transition: 'width 0.1s linear',
-        }} />
-      </div>
-
-      <span style={{ fontSize: '11px', color: '#9B938A', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-        {formatTime(duration)}
-      </span>
-    </div>
-  );
-}
+import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
+import Spinner from '../components/Spinner.jsx';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl } from '../services/api.js';
+import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { ChevronRight, RefreshCw, Upload, Play, X, Check, Pencil, Mic } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export default function InferencePage() {
   const [gptModels, setGptModels] = useState([]);
@@ -252,6 +35,14 @@ export default function InferencePage() {
   const [promptLang, setPromptLang] = useState('en');
   const [transcribing, setTranscribing] = useState(false);
 
+  const [uploadedRefFiles, setUploadedRefFiles] = useState([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+
+  const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
+  const [auxRefAudios, setAuxRefAudios] = useState([]);
+  const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
+  const [refLocked, setRefLocked] = useState(false);
+
   const [text, setText] = useState('');
   const [textLang, setTextLang] = useState('en');
 
@@ -260,10 +51,13 @@ export default function InferencePage() {
   const [topK, setTopK] = useState(5);
   const [topP, setTopP] = useState(1);
   const [temperature, setTemperature] = useState(1);
+  const [repPenalty, setRepPenalty] = useState(1.35);
 
-  const [generating, setGenerating] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
+  const sessionIdRef = useRef(null);
+
+  const inference = useInferenceSSE();
 
   useEffect(() => {
     fetchModels();
@@ -285,6 +79,48 @@ export default function InferencePage() {
     } catch { /* ignore */ }
   }
 
+  function extractExpName(modelPath) {
+    if (!modelPath) return null;
+    const basename = modelPath.replace(/\\/g, '/').split('/').pop();
+    let match = basename.match(/^(.+?)_e\d+_s\d+\.pth$/);
+    if (match) return match[1];
+    match = basename.match(/^(.+?)-e\d+\.ckpt$/);
+    if (match) return match[1];
+    return null;
+  }
+
+  const currentExpName = extractExpName(selectedSoVITS) || extractExpName(selectedGPT);
+
+  useEffect(() => {
+    if (!currentExpName) return;
+    setRefLocked(false);
+    setLoadingTrainingAudio(true);
+    getTrainingAudioFiles(currentExpName)
+      .then(res => setTrainingAudioFiles(res.data.files || []))
+      .catch(() => setTrainingAudioFiles([]))
+      .finally(() => setLoadingTrainingAudio(false));
+  }, [currentExpName]);
+
+  function handleSelectTrainingAudio(file) {
+    setRefAudioPath(file.path);
+    setRefAudioFile({ name: file.filename });
+    setRefAudioUrl(getTrainingAudioUrl(currentExpName, file.filename));
+    setPromptText(file.transcript);
+    if (file.lang) {
+      const langMap = { ZH: 'zh', EN: 'en', JA: 'ja', KO: 'ko', zh: 'zh', en: 'en', ja: 'ja', ko: 'ko' };
+      setPromptLang(langMap[file.lang] || 'en');
+    }
+    setAuxRefAudios(prev => prev.filter(f => f.filename !== file.filename));
+  }
+
+  function handleToggleAuxRef(file) {
+    setAuxRefAudios(prev => {
+      const exists = prev.some(f => f.filename === file.filename);
+      if (exists) return prev.filter(f => f.filename !== file.filename);
+      return [...prev, file];
+    });
+  }
+
   async function handleLoadModels() {
     if (!selectedGPT || !selectedSoVITS) {
       return alert('Select both GPT and SoVITS models');
@@ -302,17 +138,68 @@ export default function InferencePage() {
   }
 
   async function handleRefUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    setRefAudioFile(file);
-    if (refAudioUrl) URL.revokeObjectURL(refAudioUrl);
-    setRefAudioUrl(URL.createObjectURL(file));
-    try {
-      const res = await uploadRefAudio(file);
-      setRefAudioPath(res.data.path);
-    } catch (err) {
-      alert('Failed to upload reference audio: ' + (err.response?.data?.error || err.message));
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    setUploadingFiles(true);
+
+    const newEntries = [];
+    for (const file of files) {
+      try {
+        const res = await uploadRefAudio(file);
+        newEntries.push({
+          name: file.name,
+          serverPath: res.data.path,
+          localUrl: URL.createObjectURL(file),
+        });
+      } catch (err) {
+        alert('Failed to upload ' + file.name + ': ' + (err.response?.data?.error || err.message));
+      }
     }
+
+    if (newEntries.length > 0) {
+      setUploadedRefFiles(prev => {
+        const merged = [...prev, ...newEntries];
+        if (!refAudioPath || prev.length === 0) {
+          setRefAudioFile({ name: merged[0].name });
+          if (refAudioUrl) URL.revokeObjectURL(refAudioUrl);
+          setRefAudioUrl(merged[0].localUrl);
+          setRefAudioPath(merged[0].serverPath);
+        }
+        return merged;
+      });
+    }
+    setUploadingFiles(false);
+    e.target.value = '';
+  }
+
+  function handleSetUploadedPrimary(entry) {
+    setRefAudioFile({ name: entry.name });
+    if (refAudioUrl && !uploadedRefFiles.some(f => f.localUrl === refAudioUrl)) {
+      URL.revokeObjectURL(refAudioUrl);
+    }
+    setRefAudioUrl(entry.localUrl);
+    setRefAudioPath(entry.serverPath);
+    setPromptText('');
+  }
+
+  function handleRemoveUploadedFile(entry) {
+    setUploadedRefFiles(prev => {
+      const remaining = prev.filter(f => f.serverPath !== entry.serverPath);
+      if (entry.serverPath === refAudioPath) {
+        if (remaining.length > 0) {
+          setRefAudioFile({ name: remaining[0].name });
+          setRefAudioUrl(remaining[0].localUrl);
+          setRefAudioPath(remaining[0].serverPath);
+        } else {
+          setRefAudioFile(null);
+          setRefAudioUrl(null);
+          setRefAudioPath('');
+        }
+        setPromptText('');
+      }
+      URL.revokeObjectURL(entry.localUrl);
+      return remaining;
+    });
   }
 
   async function handleTranscribe() {
@@ -331,418 +218,609 @@ export default function InferencePage() {
 
   async function handleGenerate() {
     if (!text.trim()) return alert('Enter text to synthesize');
-    if (!refAudioPath) return alert('Upload reference audio first');
+    if (!refAudioPath) return alert('Select a reference audio first');
+    if (!refLocked) return alert('Confirm your reference audio selection first');
     if (!serverReady) return alert('Load models first');
 
-    setGenerating(true);
     setInferError(null);
     setAudioBlob(null);
 
     try {
-      const blob = await synthesize({
+      const res = await startGeneration({
         text,
         text_lang: textLang,
         ref_audio_path: refAudioPath,
         prompt_text: promptText,
         prompt_lang: promptLang,
+        aux_ref_audio_paths: [
+          ...auxRefAudios.map(f => f.path),
+          ...uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).map(f => f.serverPath),
+        ],
         top_k: topK,
         top_p: topP,
         temperature,
+        repetition_penalty: repPenalty,
         speed_factor: speed,
       });
-      setAudioBlob(blob);
+      const { sessionId } = res.data;
+      sessionIdRef.current = sessionId;
+      inference.connect(sessionId);
     } catch (err) {
       setInferError(err.response?.data?.error || err.message);
-    } finally {
-      setGenerating(false);
     }
   }
 
+  async function handleCancel() {
+    if (sessionIdRef.current) {
+      try {
+        await cancelGeneration(sessionIdRef.current);
+      } catch { /* ignore */ }
+    }
+  }
+
+  useEffect(() => {
+    if (inference.status === 'complete' && sessionIdRef.current) {
+      getGenerationResult(sessionIdRef.current)
+        .then(blob => setAudioBlob(blob))
+        .catch(err => setInferError(err.message));
+    }
+    if (inference.status === 'error' || inference.status === 'cancelled') {
+      setInferError(inference.error);
+    }
+  }, [inference.status]);
+
+  const auxCount = auxRefAudios.length + uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).length;
+
   return (
-    <div style={{ animation: 'fade-in 0.4s ease' }}>
-      {/* Model Selection */}
-      <div style={card}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '18px',
-        }}>
-          <h2 style={{ ...heading, marginBottom: 0 }}>
-            <ModelIcon />
-            Model Selection
-          </h2>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '12px',
-            fontWeight: 500,
-          }}>
-            <div style={{
-              width: '7px',
-              height: '7px',
-              borderRadius: '50%',
-              background: serverReady ? '#2D9D6F' : '#C8C2B8',
-              boxShadow: serverReady ? '0 0 6px rgba(45, 157, 111, 0.4)' : 'none',
-              transition: 'all 0.3s ease',
-            }} />
-            <span style={{ color: serverReady ? '#2D9D6F' : '#B8B0A6' }}>
-              {serverReady ? 'Server ready' : 'Server offline'}
-            </span>
-          </div>
-        </div>
+    <div className="animate-fade-in space-y-8">
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-          <ModelSelector
-            label="GPT Model"
-            models={gptModels}
-            value={selectedGPT}
-            onChange={setSelectedGPT}
-            disabled={loading}
-          />
-          <ModelSelector
-            label="SoVITS Model"
-            models={sovitsModels}
-            value={selectedSoVITS}
-            onChange={setSelectedSoVITS}
-            disabled={loading}
-          />
-        </div>
-
-        <div style={{ marginTop: '16px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <button
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '7px',
-              padding: '9px 20px',
-              background: '#F8F6F3',
-              border: '1px solid #E8E4DE',
-              borderRadius: '10px',
-              color: loading ? '#B8B0A6' : '#6B635A',
-              fontSize: '13px',
-              fontWeight: 500,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontFamily: '"DM Sans", sans-serif',
-              transition: 'all 0.15s ease',
-            }}
-            onClick={handleLoadModels}
-            disabled={loading}
-            onMouseEnter={(e) => { if (!loading) { e.currentTarget.style.borderColor = '#E8654A'; e.currentTarget.style.color = '#E8654A'; }}}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E8E4DE'; e.currentTarget.style.color = '#6B635A'; }}
-          >
-            {loading ? <SpinnerSmall /> : null}
-            {loading ? 'Loading...' : 'Load Models'}
-          </button>
-
-          <button
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '9px 14px',
-              background: 'transparent',
-              border: '1px solid #E8E4DE',
-              borderRadius: '10px',
-              color: '#9B938A',
-              fontSize: '12px',
-              fontWeight: 500,
-              cursor: 'pointer',
-              fontFamily: '"DM Sans", sans-serif',
-              transition: 'all 0.15s ease',
-            }}
-            onClick={fetchModels}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#C8C2B8'; e.currentTarget.style.color = '#6B635A'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E8E4DE'; e.currentTarget.style.color = '#9B938A'; }}
-          >
-            <RefreshIcon />
-            Refresh
-          </button>
-
-          {modelError && (
-            <span style={{
-              color: '#D94545',
-              fontSize: '12px',
-              padding: '5px 10px',
-              background: 'rgba(217, 69, 69, 0.06)',
-              borderRadius: '8px',
-            }}>
-              {modelError}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Reference Audio */}
-      <div style={card}>
-        <h2 style={heading}>
-          <RefIcon />
-          Reference Audio
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-          <div>
-            <label style={label}>Audio File</label>
-            <div style={{
-              padding: '14px',
-              background: '#F8F6F3',
-              border: '1px solid #E8E4DE',
-              borderRadius: '10px',
-            }}>
-              <input
-                type="file"
-                accept=".wav,.mp3,.ogg,.flac"
-                onChange={handleRefUpload}
-                style={{ fontSize: '13px', color: '#9B938A', width: '100%' }}
-              />
+      {/* 01 Models */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              1
+            </Badge>
+            <div className="flex-1">
+              <div className="flex items-center gap-3">
+                <CardTitle>Model Selection</CardTitle>
+                <Badge variant={serverReady ? 'success' : 'outline'} className="text-[10px]">
+                  <div className={cn(
+                    "mr-1.5 h-1.5 w-1.5 rounded-full",
+                    serverReady ? "bg-success-foreground" : "bg-muted-foreground"
+                  )} />
+                  {serverReady ? 'Ready' : 'Offline'}
+                </Badge>
+              </div>
+              <CardDescription>Select and load your trained voice models</CardDescription>
             </div>
-            {refAudioFile && (
-              <div style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                background: 'rgba(45, 157, 111, 0.06)',
-                border: '1px solid rgba(45, 157, 111, 0.12)',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}>
-                <div style={{
-                  width: '6px', height: '6px', borderRadius: '50%',
-                  background: '#2D9D6F',
-                }} />
-                <span style={{ fontSize: '12px', color: '#2D9D6F' }}>
-                  {refAudioFile.name}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <ModelSelector
+              label="GPT Model"
+              models={gptModels}
+              value={selectedGPT}
+              onChange={setSelectedGPT}
+              disabled={loading}
+            />
+            <ModelSelector
+              label="SoVITS Model"
+              models={sovitsModels}
+              value={selectedSoVITS}
+              onChange={setSelectedSoVITS}
+              disabled={loading}
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button onClick={handleLoadModels} disabled={loading} variant="outline">
+              {loading ? <Spinner size={14} /> : null}
+              {loading ? 'Loading...' : 'Load Models'}
+            </Button>
+
+            <Button variant="ghost" size="sm" onClick={fetchModels}>
+              <RefreshCw size={14} />
+              Refresh
+            </Button>
+
+            {modelError && (
+              <span className="border-l-2 border-destructive pl-3 text-sm text-destructive">
+                {modelError}
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 02 Reference Audio */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              2
+            </Badge>
+            <div className="flex-1">
+              <div className="flex items-center gap-3">
+                <CardTitle>Reference Audio</CardTitle>
+                {refLocked && (
+                  <Badge variant="success" className="text-[10px]">
+                    <Check size={10} className="mr-1" />
+                    Confirmed
+                  </Badge>
+                )}
+              </div>
+              <CardDescription>
+                {refLocked ? 'Selection locked for generation' : 'Select a primary reference and optional auxiliary audio'}
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {refLocked ? (
+            /* Locked summary */
+            <div>
+              <div className="rounded-lg border bg-background p-4">
+                <div className="mb-2 flex items-center gap-2.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  <span className="font-mono text-sm text-foreground">
+                    {refAudioFile?.name || 'Unknown'}
+                  </span>
+                  <Badge variant="default" className="text-[10px]">Primary</Badge>
+                </div>
+                {promptText && (
+                  <p className="ml-4 text-sm italic text-muted-foreground">
+                    &ldquo;{promptText}&rdquo;
+                  </p>
+                )}
+                {auxCount > 0 && (
+                  <div className="ml-4 mt-1 text-sm text-muted-foreground">
+                    + {auxCount} auxiliary reference{auxCount !== 1 ? 's' : ''}
+                  </div>
+                )}
+              </div>
+
+              {refAudioUrl && <RefAudioPlayer src={refAudioUrl} />}
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={() => setRefLocked(false)}
+              >
+                <Pencil size={12} />
+                Edit Selection
+              </Button>
+            </div>
+          ) : (
+            /* Unlocked selection UI */
+            <div>
+              <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+                {/* Left: audio file list */}
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Audio Files</Label>
+                    {auxCount > 0 && (
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {auxCount} aux
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Training audio list */}
+                  {loadingTrainingAudio ? (
+                    <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                      <Spinner /> Loading training audio...
+                    </div>
+                  ) : trainingAudioFiles.length > 0 ? (
+                    <>
+                      <div className="max-h-[280px] overflow-y-auto rounded-md border bg-background">
+                        {trainingAudioFiles.map((file) => {
+                          const isPrimary = file.path === refAudioPath;
+                          const isAux = auxRefAudios.some(f => f.filename === file.filename);
+                          return (
+                            <div
+                              key={file.filename}
+                              className={cn(
+                                "flex items-center gap-2.5 border-b px-3 py-2 transition-colors last:border-0",
+                                isPrimary && "bg-primary/5"
+                              )}
+                            >
+                              <input
+                                type="radio"
+                                name="primary-ref"
+                                checked={isPrimary}
+                                onChange={() => handleSelectTrainingAudio(file)}
+                                title="Set as primary reference"
+                                className="h-4 w-4 shrink-0 cursor-pointer accent-[hsl(var(--primary))]"
+                              />
+                              <input
+                                type="checkbox"
+                                checked={isAux}
+                                disabled={isPrimary}
+                                onChange={() => handleToggleAuxRef(file)}
+                                title={isPrimary ? 'Primary ref cannot also be auxiliary' : 'Toggle as auxiliary reference'}
+                                className={cn(
+                                  "h-4 w-4 shrink-0 accent-[hsl(var(--primary))]",
+                                  isPrimary ? "cursor-not-allowed opacity-30" : "cursor-pointer"
+                                )}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="break-all font-mono text-xs text-foreground">
+                                  {file.filename}
+                                </div>
+                                {file.transcript && (
+                                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                    {file.transcript}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-1.5 flex gap-3 text-[10px] text-muted-foreground">
+                        <span>Radio = primary ref</span>
+                        <span>Checkbox = auxiliary ref</span>
+                      </div>
+                      {auxRefAudios.length > 0 && (
+                        <button
+                          onClick={() => setAuxRefAudios([])}
+                          className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                        >
+                          Clear auxiliary selections
+                        </button>
+                      )}
+                    </>
+                  ) : currentExpName ? (
+                    <div className="rounded-md border bg-background p-4 text-center text-sm text-muted-foreground">
+                      No training audio found for &ldquo;{currentExpName}&rdquo;
+                    </div>
+                  ) : (
+                    <div className="rounded-md border bg-background p-4 text-center text-sm text-muted-foreground">
+                      Load a model to browse its training audio
+                    </div>
+                  )}
+
+                  {/* Upload custom files */}
+                  <div className="mt-4">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Or Upload Custom Audio</Label>
+                    <div className="mt-2 flex items-center gap-2.5 rounded-md border bg-background px-3 py-2.5">
+                      <input
+                        type="file"
+                        accept=".wav,.mp3,.ogg,.flac"
+                        multiple
+                        onChange={handleRefUpload}
+                        className="flex-1 text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-primary hover:file:bg-primary/20"
+                      />
+                      {uploadingFiles && <Spinner />}
+                    </div>
+                  </div>
+
+                  {/* Uploaded file list */}
+                  {uploadedRefFiles.length > 0 && (
+                    <ScrollArea className="mt-2 max-h-[160px] rounded-md border bg-background">
+                      {uploadedRefFiles.map((entry) => {
+                        const isPrimary = entry.serverPath === refAudioPath;
+                        return (
+                          <div
+                            key={entry.serverPath}
+                            className={cn(
+                              "flex items-center gap-2.5 border-b px-3 py-2 transition-colors last:border-0",
+                              isPrimary && "bg-primary/5"
+                            )}
+                          >
+                            <input
+                              type="radio"
+                              name="primary-ref"
+                              checked={isPrimary}
+                              onChange={() => handleSetUploadedPrimary(entry)}
+                              title="Set as primary reference"
+                              className="h-4 w-4 shrink-0 cursor-pointer accent-[hsl(var(--primary))]"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-mono text-xs text-foreground">
+                                {entry.name}
+                              </div>
+                              <div className={cn(
+                                "mt-0.5 text-[10px] uppercase tracking-wider",
+                                isPrimary ? "font-semibold text-primary" : "text-muted-foreground"
+                              )}>
+                                {isPrimary ? 'Primary (uploaded)' : 'Auxiliary (uploaded)'}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleRemoveUploadedFile(entry)}
+                              title="Remove"
+                              className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </ScrollArea>
+                  )}
+                </div>
+
+                {/* Right: transcript + language + player */}
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reference Transcript</Label>
+                    <div className="mt-2 flex gap-2">
+                      <Input
+                        className="flex-1"
+                        placeholder="What the primary reference audio says..."
+                        value={promptText}
+                        onChange={(e) => setPromptText(e.target.value)}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleTranscribe}
+                        disabled={transcribing || !refAudioPath}
+                      >
+                        {transcribing ? <Spinner size={14} /> : <Mic size={14} />}
+                        {transcribing ? 'Working...' : 'Transcribe'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reference Language</Label>
+                    <Select value={promptLang} onValueChange={setPromptLang}>
+                      <SelectTrigger className="mt-2">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="en">English</SelectItem>
+                        <SelectItem value="zh">Chinese</SelectItem>
+                        <SelectItem value="ja">Japanese</SelectItem>
+                        <SelectItem value="ko">Korean</SelectItem>
+                        <SelectItem value="auto">Auto Detect</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {refAudioUrl && (
+                    <div>
+                      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Preview</Label>
+                      <RefAudioPlayer src={refAudioUrl} />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Confirm button */}
+              <div className="mt-6">
+                <Button
+                  onClick={() => {
+                    if (!refAudioPath) return alert('Select a primary reference audio first');
+                    setRefLocked(true);
+                  }}
+                  disabled={!refAudioPath}
+                >
+                  <Check size={14} />
+                  Confirm Selection
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 03 Text Input */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              3
+            </Badge>
+            <div>
+              <CardTitle>Text to Synthesize</CardTitle>
+              <CardDescription>Enter the text you want spoken in the cloned voice</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-[3fr_1fr] gap-6">
+            <div>
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Text</Label>
+              <Textarea
+                className="mt-2 min-h-[140px] leading-relaxed"
+                placeholder="Enter the text you want to synthesize..."
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+              {text && (
+                <p className="mt-1.5 text-right font-mono text-xs text-muted-foreground">
+                  {text.length} chars
+                </p>
+              )}
+            </div>
+            <div>
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Language</Label>
+              <Select value={textLang} onValueChange={setTextLang}>
+                <SelectTrigger className="mt-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="en">English</SelectItem>
+                  <SelectItem value="zh">Chinese</SelectItem>
+                  <SelectItem value="ja">Japanese</SelectItem>
+                  <SelectItem value="ko">Korean</SelectItem>
+                  <SelectItem value="auto">Auto Detect</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 04 Settings */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              4
+            </Badge>
+            <div>
+              <CardTitle>Generation Settings</CardTitle>
+              <CardDescription>Fine-tune the synthesis parameters</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Collapsible open={showSettings} onOpenChange={setShowSettings}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground">
+                <ChevronRight
+                  size={14}
+                  className={cn("transition-transform", showSettings && "rotate-90")}
+                />
+                {showSettings ? 'Hide' : 'Show'} parameters
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-x-10">
+                {/* Speed */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Speed</Label>
+                    <span className="font-mono text-sm font-semibold">{speed.toFixed(1)}x</span>
+                  </div>
+                  <Slider
+                    min={0.5} max={2.0} step={0.1}
+                    value={[speed]}
+                    onValueChange={([v]) => setSpeed(v)}
+                  />
+                </div>
+
+                {/* Top K */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Top K</Label>
+                    <span className="font-mono text-sm font-semibold">{topK}</span>
+                  </div>
+                  <Slider
+                    min={1} max={50} step={1}
+                    value={[topK]}
+                    onValueChange={([v]) => setTopK(v)}
+                  />
+                </div>
+
+                {/* Top P */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Top P</Label>
+                    <span className="font-mono text-sm font-semibold">{topP.toFixed(2)}</span>
+                  </div>
+                  <Slider
+                    min={0} max={1} step={0.05}
+                    value={[topP]}
+                    onValueChange={([v]) => setTopP(v)}
+                  />
+                </div>
+
+                {/* Temperature */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Temperature</Label>
+                    <span className="font-mono text-sm font-semibold">{temperature.toFixed(2)}</span>
+                  </div>
+                  <Slider
+                    min={0} max={1} step={0.05}
+                    value={[temperature]}
+                    onValueChange={([v]) => setTemperature(v)}
+                  />
+                </div>
+
+                {/* Repetition Penalty */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Repetition Penalty</Label>
+                    <span className="font-mono text-sm font-semibold">{repPenalty.toFixed(2)}</span>
+                  </div>
+                  <Slider
+                    min={1.0} max={2.0} step={0.05}
+                    value={[repPenalty]}
+                    onValueChange={([v]) => setRepPenalty(v)}
+                  />
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </CardContent>
+      </Card>
+
+      {/* 05 Generate */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+              5
+            </Badge>
+            <div>
+              <CardTitle>Generate</CardTitle>
+              <CardDescription>Synthesize speech from your text</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {inference.status !== 'generating' ? (
+            <div className={cn("flex items-center gap-4", audioBlob && "mb-6")}>
+              <Button
+                size="lg"
+                onClick={() => { inference.reset(); handleGenerate(); }}
+              >
+                <Play size={14} />
+                Generate Speech
+              </Button>
+
+              {inferError && (
+                <span className="border-l-2 border-destructive pl-3 text-sm text-destructive">
+                  {inferError}
+                </span>
+              )}
+            </div>
+          ) : (
+            /* Progress UI */
+            <div className={cn(audioBlob && "mb-6")}>
+              {/* Progress bar */}
+              <div className="mb-4 flex items-center gap-4">
+                <Progress
+                  value={inference.totalChunks > 0 ? (inference.completedChunks / inference.totalChunks) * 100 : 0}
+                  className="h-2 flex-1"
+                />
+                <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">
+                  {inference.completedChunks} / {inference.totalChunks}
                 </span>
               </div>
-            )}
-            {refAudioUrl && (
-              <RefAudioPlayer src={refAudioUrl} />
-            )}
-          </div>
-          <div>
-            <label style={label}>Reference Transcript</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                style={{ ...input, flex: 1 }}
-                placeholder="What the reference audio says..."
-                value={promptText}
-                onChange={(e) => setPromptText(e.target.value)}
-                onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-                onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
-              />
-              <button
-                style={{
-                  padding: '8px 14px',
-                  background: '#F8F6F3',
-                  border: '1px solid #E8E4DE',
-                  borderRadius: '10px',
-                  color: transcribing ? '#B8B0A6' : '#6B635A',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  cursor: transcribing ? 'not-allowed' : 'pointer',
-                  fontFamily: '"DM Sans", sans-serif',
-                  transition: 'all 0.15s ease',
-                  whiteSpace: 'nowrap',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                }}
-                onClick={handleTranscribe}
-                disabled={transcribing || !refAudioPath}
-                onMouseEnter={(e) => { if (!transcribing && refAudioPath) { e.currentTarget.style.borderColor = '#E8654A'; e.currentTarget.style.color = '#E8654A'; }}}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E8E4DE'; e.currentTarget.style.color = '#6B635A'; }}
-              >
-                {transcribing ? <SpinnerSmall /> : null}
-                {transcribing ? 'Transcribing...' : 'Auto Transcribe'}
-              </button>
-            </div>
-            <div style={{ marginTop: '12px' }}>
-              <label style={label}>Reference Language</label>
-              <select
-                style={input}
-                value={promptLang}
-                onChange={e => setPromptLang(e.target.value)}
-                onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-                onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
-              >
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="auto">Auto Detect</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Text Input */}
-      <div style={card}>
-        <h2 style={heading}>
-          <TextIcon />
-          Text to Synthesize
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: '20px' }}>
-          <div>
-            <label style={label}>Text</label>
-            <textarea
-              style={{
-                ...input,
-                minHeight: '120px',
-                resize: 'vertical',
-                lineHeight: '1.6',
-              }}
-              placeholder="Enter the text you want to synthesize..."
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-              onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
-            />
-            {text && (
-              <p style={{ fontSize: '11px', color: '#B8B0A6', marginTop: '4px', textAlign: 'right' }}>
-                {text.length} characters
-              </p>
-            )}
-          </div>
-          <div>
-            <label style={label}>Language</label>
-            <select
-              style={input}
-              value={textLang}
-              onChange={e => setTextLang(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = '#E8654A'; e.target.style.boxShadow = '0 0 0 3px rgba(232, 101, 74, 0.1)'; }}
-              onBlur={(e) => { e.target.style.borderColor = '#E8E4DE'; e.target.style.boxShadow = 'none'; }}
-            >
-              <option value="en">English</option>
-              <option value="zh">Chinese</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="auto">Auto Detect</option>
-            </select>
-          </div>
-        </div>
-      </div>
+              {/* Current chunk text */}
+              {inference.currentChunkText && (
+                <div className="mb-4 rounded-md border bg-muted/50 px-4 py-3">
+                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Synthesizing chunk {inference.completedChunks + 1}
+                  </span>
+                  <p className="text-sm italic text-muted-foreground">
+                    {inference.currentChunkText}
+                  </p>
+                </div>
+              )}
 
-      {/* Advanced Settings */}
-      <div style={card}>
-        <button
-          onClick={() => setShowSettings(!showSettings)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            background: 'none',
-            border: 'none',
-            color: '#9B938A',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: 500,
-            padding: 0,
-            fontFamily: '"DM Sans", sans-serif',
-            transition: 'color 0.2s ease',
-            width: '100%',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#E8654A'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = '#9B938A'; }}
-        >
-          <SettingsIcon />
-          Advanced Settings
-          <ChevronIcon open={showSettings} />
-        </button>
-
-        {showSettings && (
-          <div style={{
-            marginTop: '20px',
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: '20px',
-            animation: 'fade-in 0.25s ease',
-          }}>
-            <div>
-              <label style={label}>
-                Speed
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{speed.toFixed(1)}x</span>
-              </label>
-              <input type="range" min="0.5" max="2.0" step="0.1" value={speed}
-                onChange={e => setSpeed(Number(e.target.value))} style={{ width: '100%' }} />
+              {/* Cancel button */}
+              <Button variant="outline" onClick={handleCancel}>
+                <Spinner size={14} />
+                Cancel Generation
+              </Button>
             </div>
-            <div>
-              <label style={label}>
-                Top K
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{topK}</span>
-              </label>
-              <input type="range" min="1" max="50" value={topK}
-                onChange={e => setTopK(Number(e.target.value))} style={{ width: '100%' }} />
-            </div>
-            <div>
-              <label style={label}>
-                Top P
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{topP.toFixed(2)}</span>
-              </label>
-              <input type="range" min="0" max="1" step="0.05" value={topP}
-                onChange={e => setTopP(Number(e.target.value))} style={{ width: '100%' }} />
-            </div>
-            <div>
-              <label style={label}>
-                Temperature
-                <span style={{ float: 'right', color: '#E8654A', textTransform: 'none', fontWeight: 600 }}>{temperature.toFixed(2)}</span>
-              </label>
-              <input type="range" min="0" max="1" step="0.05" value={temperature}
-                onChange={e => setTemperature(Number(e.target.value))} style={{ width: '100%' }} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Generate */}
-      <div style={card}>
-        <div style={{
-          display: 'flex',
-          gap: '12px',
-          alignItems: 'center',
-          marginBottom: audioBlob ? '20px' : '0',
-        }}>
-          <button
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '12px 32px',
-              background: generating ? '#F1EEE9' : 'linear-gradient(135deg, #E8654A, #D94E7A)',
-              color: generating ? '#9B938A' : '#FFFFFF',
-              border: 'none',
-              borderRadius: '12px',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: generating ? 'not-allowed' : 'pointer',
-              fontFamily: '"DM Sans", sans-serif',
-              transition: 'all 0.2s ease',
-              boxShadow: generating ? 'none' : '0 4px 20px rgba(232, 101, 74, 0.25)',
-              letterSpacing: '0.01em',
-            }}
-            onClick={handleGenerate}
-            disabled={generating}
-          >
-            {generating ? <SpinnerSmall /> : <GenerateIcon />}
-            {generating ? 'Generating...' : 'Generate Speech'}
-          </button>
-
-          {inferError && (
-            <span style={{
-              color: '#D94545',
-              fontSize: '12px',
-              padding: '6px 12px',
-              background: 'rgba(217, 69, 69, 0.06)',
-              borderRadius: '8px',
-            }}>
-              {inferError}
-            </span>
           )}
-        </div>
 
-        <AudioPlayer audioBlob={audioBlob} />
-      </div>
+          <AudioPlayer audioBlob={audioBlob} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

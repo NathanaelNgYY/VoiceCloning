@@ -74,7 +74,33 @@ export async function synthesize(params) {
   return new Blob([res.data], { type: 'audio/wav' });
 }
 
+// Start streaming generation (returns sessionId)
+export function startGeneration(params) {
+  return api.post('/inference/generate', params);
+}
+
+// Download final WAV from streaming generation
+export async function getGenerationResult(sessionId) {
+  const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
+  return new Blob([res.data], { type: 'audio/wav' });
+}
+
+// Cancel an in-progress streaming generation
+export function cancelGeneration(sessionId) {
+  return api.post('/inference/cancel', { sessionId });
+}
+
 // Check inference server status
 export function getInferenceStatus() {
   return api.get('/inference/status');
+}
+
+// Get training audio files for an experiment
+export function getTrainingAudioFiles(expName) {
+  return api.get(`/training-audio/${encodeURIComponent(expName)}`);
+}
+
+// Get URL for streaming a training audio file
+export function getTrainingAudioUrl(expName, filename) {
+  return `/api/training-audio/file/${encodeURIComponent(expName)}/${encodeURIComponent(filename)}`;
 }
