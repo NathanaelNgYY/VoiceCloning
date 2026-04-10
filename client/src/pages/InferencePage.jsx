@@ -415,7 +415,7 @@ export default function InferencePage() {
                     </div>
                   ) : trainingAudioFiles.length > 0 ? (
                     <>
-                      <ScrollArea className="max-h-[280px] rounded-md border bg-background">
+                      <div className="max-h-[280px] overflow-y-auto rounded-md border bg-background">
                         {trainingAudioFiles.map((file) => {
                           const isPrimary = file.path === refAudioPath;
                           const isAux = auxRefAudios.some(f => f.filename === file.filename);
@@ -447,11 +447,11 @@ export default function InferencePage() {
                                 )}
                               />
                               <div className="min-w-0 flex-1">
-                                <div className="truncate font-mono text-xs text-foreground">
+                                <div className="break-all font-mono text-xs text-foreground">
                                   {file.filename}
                                 </div>
                                 {file.transcript && (
-                                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                  <div className="mt-0.5 text-[11px] text-muted-foreground">
                                     {file.transcript}
                                   </div>
                                 )}
@@ -459,7 +459,7 @@ export default function InferencePage() {
                             </div>
                           );
                         })}
-                      </ScrollArea>
+                      </div>
                       <div className="mt-1.5 flex gap-3 text-[10px] text-muted-foreground">
                         <span>Radio = primary ref</span>
                         <span>Checkbox = auxiliary ref</span>
