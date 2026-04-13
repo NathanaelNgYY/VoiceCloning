@@ -20,8 +20,8 @@ export default function TrainingPage() {
   const [expName, setExpName] = useState('');
   const [files, setFiles] = useState([]);
   const [batchSize, setBatchSize] = useState(2);
-  const [sovitsEpochs, setSovitsEpochs] = useState(8);
-  const [gptEpochs, setGptEpochs] = useState(15);
+  const [sovitsEpochs, setSovitsEpochs] = useState(20);
+  const [gptEpochs, setGptEpochs] = useState(25);
   const [sovitsSaveEvery, setSovitsSaveEvery] = useState(4);
   const [gptSaveEvery, setGptSaveEvery] = useState(5);
   const [asrLanguage, setAsrLanguage] = useState('en');

@@ -49,8 +49,8 @@ export default function InferencePage() {
   const [showSettings, setShowSettings] = useState(false);
   const [speed, setSpeed] = useState(1.0);
   const [topK, setTopK] = useState(5);
-  const [topP, setTopP] = useState(1);
-  const [temperature, setTemperature] = useState(1);
+  const [topP, setTopP] = useState(0.85);
+  const [temperature, setTemperature] = useState(0.7);
   const [repPenalty, setRepPenalty] = useState(1.35);
 
   const [audioBlob, setAudioBlob] = useState(null);

@@ -153,6 +153,83 @@ function splitCompoundWords(text) {
   });
 }
 
+// ── Text preprocessing: abbreviations, acronyms, symbols ──
+
+const ABBREVIATIONS = {
+  'Dr.': 'Doctor',
+  'Mr.': 'Mister',
+  'Mrs.': 'Misses',
+  'Prof.': 'Professor',
+  'Sr.': 'Senior',
+  'Jr.': 'Junior',
+  'vs.': 'versus',
+  'etc.': 'etcetera',
+  'approx.': 'approximately',
+  'dept.': 'department',
+  'govt.': 'government',
+  'no.': 'number',
+  'nos.': 'numbers',
+  'vol.': 'volume',
+  'esp.': 'especially',
+};
+
+// Build a single regex that matches any abbreviation at a word boundary.
+// We escape the dots and sort longest-first so "nos." doesn't shadow "no.".
+const abbrPattern = new RegExp(
+  '(?<=^|\\s)(' +
+  Object.keys(ABBREVIATIONS)
+    .sort((a, b) => b.length - a.length)
+    .map(k => k.replace(/\./g, '\\.'))
+    .join('|') +
+  ')(?=\\s|$)',
+  'gi',
+);
+
+// Words that happen to be all-caps but should NOT be letter-spaced
+const ACRONYM_SKIP = new Set([
+  'I', 'A', 'AM', 'PM', 'OK', 'OH', 'OR', 'IF', 'IN', 'IT', 'IS',
+  'AT', 'AN', 'AS', 'BE', 'BY', 'DO', 'GO', 'HE', 'ME', 'MY', 'NO',
+  'OF', 'ON', 'SO', 'TO', 'UP', 'US', 'WE',
+]);
+
+const SYMBOL_MAP = {
+  '@': 'at',
+  '&': 'and',
+  '#': 'number',
+  '%': 'percent',
+  '+': 'plus',
+  '=': 'equals',
+};
+
+const symbolPattern = new RegExp(
+  '(?<=\\s|^)([' + Object.keys(SYMBOL_MAP).map(s => '\\' + s).join('') + '])(?=\\s|$)',
+  'g',
+);
+
+function preprocessText(text) {
+  let result = text;
+
+  // 1) Abbreviation expansion
+  result = result.replace(abbrPattern, (match) => {
+    // Lookup is case-insensitive — normalise the key to title case for the map
+    for (const [abbr, expansion] of Object.entries(ABBREVIATIONS)) {
+      if (abbr.toLowerCase() === match.toLowerCase()) return expansion;
+    }
+    return match;
+  });
+
+  // 2) Acronym / initialism spacing (2-5 uppercase letters at word boundaries)
+  result = result.replace(/\b([A-Z]{2,5})\b/g, (match) => {
+    if (ACRONYM_SKIP.has(match)) return match;
+    return match.split('').join(' ');
+  });
+
+  // 3) Symbol expansion
+  result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
+
+  return result;
+}
+
 function normalizeWhitespace(text) {
   const cleaned = String(text || '')
     .replace(/\r\n/g, '\n')
@@ -190,7 +267,8 @@ function restoreSemanticUnits(text) {
 }
 
 function splitIntoSentences(text) {
-  const normalized = normalizeWhitespace(text);
+  const preprocessed = preprocessText(String(text || ''));
+  const normalized = normalizeWhitespace(preprocessed);
   if (!normalized) return [];
 
   const sentences = normalized
@@ -811,6 +889,48 @@ function buildAttemptVariants(baseParams, attemptIndex) {
   };
 }
 
+/**
+ * Split a chunk roughly in half at the nearest sentence/clause boundary.
+ * Returns [firstHalf, secondHalf]. If no good split point is found,
+ * falls back to splitting at the nearest space.
+ */
+function splitChunkInHalf(text) {
+  const mid = Math.floor(text.length / 2);
+  const searchRange = Math.floor(text.length * 0.3);
+
+  // Look for clause/sentence boundaries near the midpoint
+  const separators = ['. ', '? ', '! ', '; ', ': ', ', '];
+  let bestIdx = -1;
+  let bestDist = Infinity;
+
+  for (const sep of separators) {
+    let idx = text.indexOf(sep, mid - searchRange);
+    while (idx !== -1 && idx <= mid + searchRange) {
+      const splitAt = idx + sep.length - 1; // keep punctuation with left half
+      const dist = Math.abs(splitAt - mid);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = splitAt;
+      }
+      idx = text.indexOf(sep, idx + 1);
+    }
+  }
+
+  // Fallback: split at nearest space
+  if (bestIdx < 1 || bestIdx >= text.length - 1) {
+    const spaceLeft = text.lastIndexOf(' ', mid);
+    const spaceRight = text.indexOf(' ', mid);
+    if (spaceLeft > 0) bestIdx = spaceLeft;
+    else if (spaceRight > 0) bestIdx = spaceRight;
+    else return [text]; // can't split
+  }
+
+  const left = text.slice(0, bestIdx + 1).trim();
+  const right = text.slice(bestIdx + 1).trim();
+  if (!left || !right) return [text];
+  return [left, right];
+}
+
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   let lastError = null;
@@ -886,18 +1006,46 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       });
 
       const chunkStart = Date.now();
-      const result = await synthesizeChunkWithRetry(chunkText, { ...params, text: chunkText }, options);
+      let chunkBuffers;
+      let totalAttempts;
 
-      // Write chunk WAV to disk
+      try {
+        const result = await synthesizeChunkWithRetry(chunkText, { ...params, text: chunkText }, options);
+        chunkBuffers = [result.audioBuffer];
+        totalAttempts = result.attempts;
+      } catch (retryErr) {
+        // Adaptive retry: split the failed chunk in half and retry sub-chunks
+        const subChunks = splitChunkInHalf(chunkText);
+        if (subChunks.length < 2) throw retryErr; // can't split further
+
+        sseManager.send(sessionId, 'chunk-split', {
+          index,
+          originalText: chunkText,
+          subChunks,
+        });
+
+        chunkBuffers = [];
+        totalAttempts = 0;
+        for (const sub of subChunks) {
+          const subResult = await synthesizeChunkWithRetry(sub, { ...params, text: sub }, options);
+          chunkBuffers.push(subResult.audioBuffer);
+          totalAttempts += subResult.attempts;
+        }
+      }
+
+      // Write chunk WAV(s) to disk — concatenate sub-chunks if split occurred
+      const chunkBuffer = chunkBuffers.length === 1
+        ? chunkBuffers[0]
+        : concatWavs(chunkBuffers, DEFAULTS.chunkJoinPauseMs);
       const chunkPath = path.join(sessionDir, `chunk_${String(index).padStart(3, '0')}.wav`);
-      fs.writeFileSync(chunkPath, result.audioBuffer);
+      fs.writeFileSync(chunkPath, chunkBuffer);
       chunkPaths.push(chunkPath);
 
       const chunkDuration = (Date.now() - chunkStart) / 1000;
       sseManager.send(sessionId, 'chunk-complete', {
         index,
         totalChunks: chunks.length,
-        attempts: result.attempts,
+        attempts: totalAttempts,
         durationSec: parseFloat(chunkDuration.toFixed(2)),
       });
     }
@@ -941,14 +1089,39 @@ export async function synthesizeLongText(params, options = {}) {
   const metadata = [];
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    const result = await synthesizeChunkWithRetry(chunk, { ...params, text: chunk }, options);
-    buffers.push(result.audioBuffer);
+    let chunkBuffers;
+    let totalAttempts;
+    let lastAnalysis;
+
+    try {
+      const result = await synthesizeChunkWithRetry(chunk, { ...params, text: chunk }, options);
+      chunkBuffers = [result.audioBuffer];
+      totalAttempts = result.attempts;
+      lastAnalysis = result.analysis;
+    } catch (retryErr) {
+      const subChunks = splitChunkInHalf(chunk);
+      if (subChunks.length < 2) throw retryErr;
+
+      chunkBuffers = [];
+      totalAttempts = 0;
+      for (const sub of subChunks) {
+        const subResult = await synthesizeChunkWithRetry(sub, { ...params, text: sub }, options);
+        chunkBuffers.push(subResult.audioBuffer);
+        totalAttempts += subResult.attempts;
+        lastAnalysis = subResult.analysis;
+      }
+    }
+
+    const chunkBuffer = chunkBuffers.length === 1
+      ? chunkBuffers[0]
+      : concatWavs(chunkBuffers, DEFAULTS.chunkJoinPauseMs);
+    buffers.push(chunkBuffer);
     metadata.push({
       index,
       text: chunk,
-      attempts: result.attempts,
-      durationSec: result.analysis.durationSec,
-      metrics: result.analysis.metrics,
+      attempts: totalAttempts,
+      durationSec: lastAnalysis?.durationSec ?? 0,
+      metrics: lastAnalysis?.metrics ?? {},
     });
   }
 

@@ -9,7 +9,7 @@ import {
   TEMP_DIR,
 } from '../config.js';
 
-export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 8, saveEveryEpoch = 4 }) {
+export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 20, saveEveryEpoch = 4 }) {
   const template = JSON.parse(fs.readFileSync(CONFIG_TEMPLATES.sovits, 'utf-8'));
 
   // Use relative paths (relative to GPT_SOVITS_ROOT cwd), matching webui.py
@@ -48,7 +48,7 @@ export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 8, saveE
   return configPath;
 }
 
-export function generateGPTConfig({ expName, batchSize = 2, epochs = 15, saveEveryEpoch = 5 }) {
+export function generateGPTConfig({ expName, batchSize = 2, epochs = 25, saveEveryEpoch = 5 }) {
   const templateStr = fs.readFileSync(CONFIG_TEMPLATES.gpt, 'utf-8');
   const template = yaml.load(templateStr);
 
