@@ -1,115 +1,121 @@
 import React from 'react';
-import { Check, X } from 'lucide-react';
+import {
+  AudioLines,
+  Bot,
+  Check,
+  Cpu,
+  FileText,
+  Fingerprint,
+  Mic,
+  ScissorsLineDashed,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-function StepDot({ status }) {
-  if (status === 'done') {
-    return (
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-success shadow-[0_12px_30px_-18px_rgba(16,185,129,0.85)] transition-all">
-        <Check size={15} className="text-white" strokeWidth={2.5} />
-      </div>
-    );
-  }
+const STEP_ICONS = [
+  ScissorsLineDashed,
+  Sparkles,
+  Mic,
+  FileText,
+  Fingerprint,
+  Cpu,
+  AudioLines,
+  Bot,
+];
 
-  if (status === 'error') {
-    return (
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-destructive shadow-[0_12px_30px_-18px_rgba(239,68,68,0.85)]">
-        <X size={13} className="text-white" strokeWidth={2.5} />
-      </div>
-    );
+function getStatusMeta(status) {
+  if (status === 'done') {
+    return {
+      label: 'Done',
+      circleClass: 'border-emerald-200 bg-emerald-500 text-white shadow-[0_18px_40px_-24px_rgba(16,185,129,0.8)]',
+      textClass: 'text-emerald-700',
+      connectorClass: 'bg-emerald-300',
+    };
   }
 
   if (status === 'running') {
-    return (
-      <div className="flex h-8 w-8 animate-pulse-dot items-center justify-center rounded-full bg-primary shadow-[0_12px_30px_-18px_rgba(14,165,233,0.9)]">
-        <div className="h-2.5 w-2.5 rounded-full bg-white" />
-      </div>
-    );
+    return {
+      label: 'Running',
+      circleClass: 'border-sky-200 bg-sky-500 text-white shadow-[0_18px_40px_-24px_rgba(14,165,233,0.9)]',
+      textClass: 'text-sky-700',
+      connectorClass: 'bg-sky-300',
+    };
   }
 
-  return (
-    <div className="h-8 w-8 rounded-full border-2 border-border bg-white/70 transition-all" />
-  );
+  if (status === 'error') {
+    return {
+      label: 'Error',
+      circleClass: 'border-rose-200 bg-rose-500 text-white shadow-[0_18px_40px_-24px_rgba(239,68,68,0.85)]',
+      textClass: 'text-rose-700',
+      connectorClass: 'bg-rose-300',
+    };
+  }
+
+  return {
+    label: status === 'skipped' ? 'Skipped' : 'Pending',
+    circleClass: 'border-slate-200 bg-white text-slate-400',
+    textClass: 'text-slate-500',
+    connectorClass: 'bg-slate-200',
+  };
 }
 
 export default function ProgressTracker({ steps }) {
   return (
-    <div className="overflow-x-auto pb-2">
-      <div className="flex min-w-max items-start gap-3">
-        {steps.map((step, i) => {
-          const isActive = step.status === 'running';
+    <div className="w-full">
+      <div className="flex items-start gap-1 py-2 lg:gap-2">
+        {steps.map((step, index) => {
+          const Icon = STEP_ICONS[index] || AudioLines;
+          const meta = getStatusMeta(step.status);
           const isDone = step.status === 'done';
-          const statusText = isActive
-            ? 'Running'
-            : isDone
-              ? 'Done'
-              : step.status === 'error'
-                ? 'Error'
-                : 'Pending';
+          const isRunning = step.status === 'running';
+          const isError = step.status === 'error';
 
           return (
             <React.Fragment key={step.index}>
-              <div
-                className={cn(
-                  'w-[215px] shrink-0 rounded-[22px] border p-4 transition-all',
-                  isDone && 'border-emerald-200 bg-emerald-50/80',
-                  isActive && 'border-sky-200 bg-sky-50/85 shadow-[0_18px_35px_-28px_rgba(14,165,233,0.75)]',
-                  step.status === 'error' && 'border-rose-200 bg-rose-50/85',
-                  step.status === 'pending' && 'border-slate-200 bg-white',
-                  step.status === 'skipped' && 'border-slate-200 bg-slate-50/80',
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-slate-400">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
-                    <StepDot status={step.status} />
-                  </div>
-                  <span
+              <div className="min-w-0 flex-1 text-center">
+                <div className="flex items-center justify-center">
+                  <div
                     className={cn(
-                      'rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]',
-                      isDone && 'bg-emerald-100 text-emerald-700',
-                      isActive && 'bg-sky-100 text-sky-700',
-                      step.status === 'error' && 'bg-rose-100 text-rose-700',
-                      (step.status === 'pending' || step.status === 'skipped') && 'bg-slate-100 text-slate-500',
+                      'mx-auto flex h-10 w-10 items-center justify-center rounded-full border transition-all lg:h-11 lg:w-11',
+                      meta.circleClass,
+                      isRunning && 'animate-pulse-dot'
                     )}
                   >
-                    {statusText}
-                  </span>
+                    {isDone ? (
+                      <Check size={16} strokeWidth={2.4} />
+                    ) : isError ? (
+                      <X size={15} strokeWidth={2.4} />
+                    ) : (
+                      <Icon size={16} strokeWidth={2.2} />
+                    )}
+                  </div>
                 </div>
 
-                <div className="mt-4">
+                <div className="mt-3">
+                  <p className="font-mono text-[9px] uppercase tracking-[0.24em] text-slate-400 lg:text-[10px] lg:tracking-[0.28em]">
+                    {String(index + 1).padStart(2, '0')}
+                  </p>
                   <p
                     className={cn(
-                      'text-sm font-semibold leading-6 transition-colors',
-                      isActive && 'text-primary',
-                      isDone && 'text-success',
-                      step.status === 'error' && 'text-destructive',
-                      (step.status === 'pending' || step.status === 'skipped') && 'text-foreground',
+                      'mt-2 text-[9px] font-semibold uppercase leading-4 tracking-[0.14em] sm:text-[10px] lg:text-[11px] lg:leading-5 lg:tracking-[0.16em]',
+                      isDone && 'text-emerald-700',
+                      isRunning && 'text-sky-700',
+                      isError && 'text-rose-700',
+                      !isDone && !isRunning && !isError && 'text-slate-600'
                     )}
                   >
                     {step.name}
                   </p>
-
-                  <p className="mt-2 min-h-[2.75rem] text-sm leading-6 text-slate-500">
-                    {step.detail || (isActive
-                      ? 'Currently processing this stage.'
-                      : isDone
-                        ? 'Completed successfully.'
-                        : step.status === 'error'
-                          ? 'This stage needs attention.'
-                          : 'Waiting for earlier stages to finish.')}
+                  <p className={cn('mt-1.5 text-[8px] font-medium uppercase tracking-[0.16em] sm:text-[9px] lg:text-[10px] lg:tracking-[0.18em]', meta.textClass)}>
+                    {meta.label}
                   </p>
                 </div>
               </div>
 
-              {i < steps.length - 1 && (
-                <div className="flex h-[118px] w-8 shrink-0 items-center justify-center">
-                  <div className={cn(
-                    'h-0.5 w-full rounded-full',
-                    isDone ? 'bg-emerald-300' : 'bg-slate-200',
-                  )} />
+              {index < steps.length - 1 && (
+                <div className="flex h-10 w-4 shrink-0 items-center justify-center lg:h-11 lg:w-6">
+                  <div className={cn('h-0.5 w-full rounded-full', meta.connectorClass)} />
                 </div>
               )}
             </React.Fragment>

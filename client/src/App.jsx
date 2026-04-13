@@ -32,33 +32,53 @@ export default function App() {
             </div>
 
             {/* Navigation */}
-            <nav className="mt-4 flex w-fit gap-1 rounded-full border border-slate-200/80 bg-white/85 p-1 shadow-sm">
+            <nav className="mt-4 flex items-center gap-7 border-b border-slate-200/80">
               <NavLink
                 to="/"
                 end
                 className={({ isActive }) =>
                   cn(
-                    "inline-block rounded-full px-4 py-2.5 text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-muted-foreground hover:bg-slate-50 hover:text-foreground"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   )
                 }
               >
-                Training
+                {({ isActive }) => (
+                  <>
+                    <span>Training</span>
+                    <span
+                      className={cn(
+                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
+                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
+                      )}
+                    />
+                  </>
+                )}
               </NavLink>
               <NavLink
                 to="/inference"
                 className={({ isActive }) =>
                   cn(
-                    "inline-block rounded-full px-4 py-2.5 text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-muted-foreground hover:bg-slate-50 hover:text-foreground"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   )
                 }
               >
-                Inference
+                {({ isActive }) => (
+                  <>
+                    <span>Inference</span>
+                    <span
+                      className={cn(
+                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
+                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
+                      )}
+                    />
+                  </>
+                )}
               </NavLink>
             </nav>
           </div>

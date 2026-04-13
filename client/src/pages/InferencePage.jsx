@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import AudioPlayer from '../components/AudioPlayer.jsx';
+import FloatingNotice from '../components/FloatingNotice.jsx';
+import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
@@ -17,14 +19,26 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Activity, ChevronRight, RefreshCw, Upload, Play, X, Check, Pencil, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  INFERENCE_REFERENCE_PRESETS_KEY,
+  buildReferencePreset,
+  createReferencePresetName,
+  createReferencePresetSignature,
+  parseStoredReferencePresets,
+} from '@/lib/referencePresets';
 import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
+const NOTICE_TIMEOUT_MS = 4200;
 
 function revokeIfBlobUrl(url) {
   if (url?.startsWith('blob:')) {
     URL.revokeObjectURL(url);
   }
+}
+
+function getFallbackReferenceName(filePath) {
+  return (filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
 }
 
 export default function InferencePage() {
@@ -72,8 +86,14 @@ export default function InferencePage() {
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [referencePresets, setReferencePresets] = useState([]);
+  const [activeReferencePresetId, setActiveReferencePresetId] = useState('');
+  const [notice, setNotice] = useState(null);
+  const [referencePresetsRestored, setReferencePresetsRestored] = useState(false);
   const sessionIdRef = useRef(null);
   const restoredSessionRef = useRef(null);
+  const noticeTimeoutRef = useRef(null);
+  const skipNextCompletionToastRef = useRef(false);
 
   const inference = useInferenceSSE();
   const voiceProfiles = buildVoiceProfiles(gptModels, sovitsModels);
@@ -96,12 +116,50 @@ export default function InferencePage() {
   );
   const availableProfiles = voiceProfiles.filter(profile => profile.complete);
   const loadedProfileName = extractExpName(loadedSoVITSPath) || extractExpName(loadedGPTPath);
+  const uploadedAuxRefFiles = uploadedRefFiles.filter(file => file.serverPath !== refAudioPath);
+  const selectedAuxReferences = [
+    ...auxRefAudios.map((file) => ({
+      path: file.path,
+      name: file.filename,
+      source: 'training',
+    })),
+    ...uploadedAuxRefFiles.map((file) => ({
+      path: file.serverPath,
+      name: file.name,
+      source: 'uploaded',
+    })),
+  ];
+  const currentPrimaryReference = refAudioPath
+    ? {
+        path: refAudioPath,
+        name: refAudioFile?.name || getFallbackReferenceName(refAudioPath),
+        source: uploadedRefFiles.some((file) => file.serverPath === refAudioPath) ? 'uploaded' : 'training',
+      }
+    : null;
+  const currentReferenceSignature = currentPrimaryReference
+    ? createReferencePresetSignature({
+        selectedPersonKey,
+        selectedGPTPath,
+        selectedSoVITSPath,
+        primary: currentPrimaryReference,
+        aux: selectedAuxReferences,
+        promptText,
+        promptLang,
+      })
+    : '';
 
   useEffect(() => {
     restoreDraft();
+    restoreReferencePresets();
     fetchModels();
     checkStatus();
     restoreInferenceState();
+
+    return () => {
+      if (noticeTimeoutRef.current) {
+        window.clearTimeout(noticeTimeoutRef.current);
+      }
+    };
   }, []);
 
   async function fetchModels() {
@@ -128,6 +186,24 @@ export default function InferencePage() {
       setLoadedGPTPath('');
       setLoadedSoVITSPath('');
     }
+  }
+
+  function restoreReferencePresets() {
+    const raw = window.localStorage.getItem(INFERENCE_REFERENCE_PRESETS_KEY);
+    setReferencePresets(parseStoredReferencePresets(raw));
+    setReferencePresetsRestored(true);
+  }
+
+  function showNotice({ title, message = '', tone = 'success' }) {
+    if (noticeTimeoutRef.current) {
+      window.clearTimeout(noticeTimeoutRef.current);
+    }
+
+    const id = Date.now();
+    setNotice({ id, title, message, tone });
+    noticeTimeoutRef.current = window.setTimeout(() => {
+      setNotice((current) => (current?.id === id ? null : current));
+    }, NOTICE_TIMEOUT_MS);
   }
 
   function restoreDraft() {
@@ -219,6 +295,7 @@ export default function InferencePage() {
       }
 
       if (current.status === 'complete' && current.resultReady) {
+        skipNextCompletionToastRef.current = true;
         const blob = await getGenerationResult(current.sessionId);
         setAudioBlob(blob);
       }
@@ -416,11 +493,170 @@ export default function InferencePage() {
     previewAudioRole,
   ]);
 
+  useEffect(() => {
+    if (!referencePresetsRestored) return;
+    window.localStorage.setItem(INFERENCE_REFERENCE_PRESETS_KEY, JSON.stringify(referencePresets));
+  }, [referencePresets, referencePresetsRestored]);
+
+  useEffect(() => {
+    const matchingPreset = referencePresets.find((preset) => preset.signature === currentReferenceSignature);
+    const nextId = matchingPreset?.id || '';
+    setActiveReferencePresetId((current) => (current === nextId ? current : nextId));
+  }, [referencePresets, currentReferenceSignature]);
+
   function setPreview({ path, url, name, role = 'primary' }) {
     setPreviewAudioPath(path || '');
     setPreviewAudioUrl(url || null);
     setPreviewAudioName(name || '');
     setPreviewAudioRole(role);
+  }
+
+  function getReferenceUrl(reference, fallbackExpName = currentExpName) {
+    if (!reference?.path) return null;
+    if (reference.source === 'uploaded') {
+      return getUploadedRefAudioUrl(reference.path);
+    }
+
+    const expName = fallbackExpName || extractExpName(reference.path);
+    if (!expName) return null;
+    return getTrainingAudioUrl(expName, reference.name || getFallbackReferenceName(reference.path));
+  }
+
+  function ensureUploadedReferences(entries) {
+    if (!entries.length) return;
+
+    setUploadedRefFiles((prev) => {
+      const next = [...prev];
+      const existingPaths = new Set(prev.map((file) => file.serverPath));
+
+      for (const entry of entries) {
+        if (!entry?.path || existingPaths.has(entry.path)) continue;
+        next.push({
+          name: entry.name || getFallbackReferenceName(entry.path),
+          serverPath: entry.path,
+          localUrl: getUploadedRefAudioUrl(entry.path),
+        });
+        existingPaths.add(entry.path);
+      }
+
+      return next;
+    });
+  }
+
+  function applyReferencePreset(preset) {
+    if (!preset?.primary?.path) return;
+
+    const uploadedEntries = [preset.primary, ...(preset.aux || [])].filter((entry) => entry.source === 'uploaded');
+    ensureUploadedReferences(uploadedEntries);
+
+    if (preset.selectedPersonKey) {
+      setSelectedPersonKey(preset.selectedPersonKey);
+    }
+    setSelectedGPTPath(preset.selectedGPTPath || '');
+    setSelectedSoVITSPath(preset.selectedSoVITSPath || '');
+
+    revokeIfBlobUrl(refAudioUrl);
+    setRefAudioPath(preset.primary.path);
+    setRefAudioFile({ name: preset.primary.name || getFallbackReferenceName(preset.primary.path) });
+    setRefAudioUrl(getReferenceUrl(preset.primary, preset.expName));
+    setPromptText(preset.promptText || '');
+    setPromptLang(preset.promptLang || 'en');
+    setAuxRefAudios(
+      (preset.aux || [])
+        .filter((entry) => entry.source !== 'uploaded')
+        .map((entry) => ({
+          filename: entry.name || getFallbackReferenceName(entry.path),
+          path: entry.path,
+        }))
+    );
+    setPreview({
+      path: preset.primary.path,
+      url: getReferenceUrl(preset.primary, preset.expName),
+      name: preset.primary.name || getFallbackReferenceName(preset.primary.path),
+      role: 'primary',
+    });
+    setRefLocked(true);
+    setActiveReferencePresetId(preset.id);
+    showNotice({
+      title: 'Reference set loaded',
+      message: `Using ${preset.name} for the current inference setup.`,
+      tone: 'success',
+    });
+  }
+
+  function saveCurrentReferencePreset() {
+    if (!currentPrimaryReference) return;
+
+    const presetBase = buildReferencePreset({
+      selectedPersonKey,
+      selectedGPTPath,
+      selectedSoVITSPath,
+      voiceLabel: selectedProfile?.displayName || '',
+      expName: currentExpName || '',
+      primary: currentPrimaryReference,
+      aux: selectedAuxReferences,
+      promptText,
+      promptLang,
+    });
+
+    if (!presetBase) return;
+
+    let savedPreset = presetBase;
+
+    setReferencePresets((prev) => {
+      const existing = prev.find((preset) => preset.signature === presetBase.signature);
+      if (existing) {
+        savedPreset = {
+          ...presetBase,
+          id: existing.id,
+          name: existing.name,
+          createdAt: existing.createdAt,
+          updatedAt: Date.now(),
+        };
+
+        return [savedPreset, ...prev.filter((preset) => preset.id !== existing.id)]
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      }
+
+      savedPreset = {
+        ...presetBase,
+        name: createReferencePresetName(currentPrimaryReference.name, prev.length + 1),
+      };
+
+      return [savedPreset, ...prev]
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    });
+
+    setActiveReferencePresetId(savedPreset.id);
+    showNotice({
+      title: 'Reference set saved',
+      message: `Saved ${savedPreset.name} locally for quick reuse.`,
+      tone: 'success',
+    });
+  }
+
+  function handleRenameReferencePreset(presetId, nextName) {
+    setReferencePresets((prev) => prev.map((preset) => (
+      preset.id === presetId
+        ? { ...preset, name: nextName, updatedAt: Date.now() }
+        : preset
+    )).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+
+    showNotice({
+      title: 'Reference set renamed',
+      message: `Updated the saved label to ${nextName}.`,
+      tone: 'success',
+    });
+  }
+
+  function handleDeleteReferencePreset(presetId) {
+    setReferencePresets((prev) => prev.filter((preset) => preset.id !== presetId));
+    setActiveReferencePresetId((current) => (current === presetId ? '' : current));
+    showNotice({
+      title: 'Reference set removed',
+      message: 'The saved local version has been deleted.',
+      tone: 'success',
+    });
   }
 
   function handleSelectPerson(nextKey) {
@@ -603,10 +839,7 @@ export default function InferencePage() {
         ref_audio_path: refAudioPath,
         prompt_text: promptText,
         prompt_lang: promptLang,
-        aux_ref_audio_paths: [
-          ...auxRefAudios.map(f => f.path),
-          ...uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).map(f => f.serverPath),
-        ],
+        aux_ref_audio_paths: selectedAuxReferences.map((reference) => reference.path),
         top_k: topK,
         top_p: topP,
         temperature,
@@ -633,7 +866,18 @@ export default function InferencePage() {
   useEffect(() => {
     if (inference.status === 'complete' && sessionIdRef.current) {
       getGenerationResult(sessionIdRef.current)
-        .then(blob => setAudioBlob(blob))
+        .then((blob) => {
+          setAudioBlob(blob);
+          if (skipNextCompletionToastRef.current) {
+            skipNextCompletionToastRef.current = false;
+            return;
+          }
+          showNotice({
+            title: 'Audio synthesized',
+            message: 'Your generated voice clip is ready to preview and download.',
+            tone: 'success',
+          });
+        })
         .catch(err => setInferError(err.message));
     }
     if (inference.status === 'error' || inference.status === 'cancelled') {
@@ -641,11 +885,13 @@ export default function InferencePage() {
     }
   }, [inference.status, inference.error]);
 
-  const auxCount = auxRefAudios.length + uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).length;
+  const auxCount = selectedAuxReferences.length;
   const isGenerationActive = inference.status === 'waiting' || inference.status === 'generating';
 
   return (
     <div className="animate-fade-in space-y-8">
+      <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
+
       <section className="relative overflow-hidden rounded-[32px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#082f49_42%,#115e59_100%)] px-6 py-7 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:px-8 lg:px-10">
         <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_55%)]" />
         <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
@@ -657,10 +903,10 @@ export default function InferencePage() {
               Inference Studio
             </Badge>
             <h2 className="mt-5 max-w-3xl font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Pick the person you want, then let the app use their highest checkpoints automatically.
+              Use this page to choose a voice, confirm the right references, and turn your text into speech.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
-              The model picker is now speaker-based. Choose the voice, confirm a strong reference clip, and generate with a cleaner, more guided workflow.
+              Start by choosing the speaker and the checkpoints you want, then confirm one main reference clip, add any supporting clips you need, and generate the final voice from your text.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-3">
@@ -669,28 +915,28 @@ export default function InferencePage() {
                 {selectionLoaded ? 'Selected voice is loaded' : serverReady ? 'Server online, reload needed' : 'Server offline'}
               </Badge>
               <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                {availableProfiles.length} voice {availableProfiles.length === 1 ? 'profile' : 'profiles'} available
+                Step 1: choose the voice and checkpoints
               </Badge>
               <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                Long text is chunked automatically
+                Step 2: confirm your reference set, then generate
               </Badge>
             </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
             <div className="rounded-[24px] border border-white/12 bg-white/10 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Selected Person</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Voice You’re Preparing</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight">{selectedProfile?.displayName || 'No profile selected'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {selectedProfile ? 'GPT and SoVITS are resolved behind the scenes.' : 'Refresh the library if you are missing a voice.'}
+                {selectedProfile ? 'Choose the exact GPT and SoVITS pair you want before you load this voice on the server.' : 'Pick a speaker here before you move on to references and text.'}
               </p>
             </div>
 
             <div className="rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Loaded On Server</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Ready On Server</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight">{loadedProfileName || 'Nothing loaded'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {selectionLoaded ? 'Ready for generation.' : 'Loading only happens when you click the load button.'}
+                {selectionLoaded ? 'You can move straight to references, text, and generation.' : 'Load the voice you want here before you generate anything.'}
               </p>
             </div>
           </div>
@@ -715,7 +961,7 @@ export default function InferencePage() {
                   {selectionLoaded ? 'Loaded' : serverReady ? 'Needs reload' : 'Offline'}
                 </Badge>
               </div>
-              <CardDescription>Select a person and the highest GPT and SoVITS checkpoints will be chosen automatically.</CardDescription>
+              <CardDescription>Start by choosing the speaker, then keep the default checkpoints or switch to a different GPT or SoVITS model if you prefer.</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -736,8 +982,8 @@ export default function InferencePage() {
 
           <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
             {selectedProfile
-              ? `Loading ${selectedProfile.displayName} will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'}.`
-              : 'Refresh the library or select a person to continue.'}
+              ? `When you load this voice, the server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'}.`
+              : 'Choose a speaker first, then load the voice you want to use for generation.'}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -784,22 +1030,35 @@ export default function InferencePage() {
                 )}
               </div>
               <CardDescription>
-                {refLocked ? 'Selection locked for generation' : 'Select a primary reference and optional auxiliary audio'}
+                {refLocked ? 'This reference set is ready to use for generation.' : 'Choose one primary reference, add any supporting clips you want, then confirm the set.'}
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="space-y-6 p-6">
+          <ReferencePresetLibrary
+            presets={referencePresets}
+            activePresetId={activeReferencePresetId}
+            onApply={applyReferencePreset}
+            onRename={handleRenameReferencePreset}
+            onDelete={handleDeleteReferencePreset}
+          />
+
           {refLocked ? (
             /* Locked summary */
             <div>
               <div className="rounded-[24px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(239,246,255,0.9))] p-5 shadow-sm">
-                <div className="mb-2 flex items-center gap-2.5">
+                <div className="mb-2 flex flex-wrap items-center gap-2.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                   <span className="font-mono text-sm text-foreground">
                     {refAudioFile?.name || 'Unknown'}
                   </span>
                   <Badge variant="default" className="text-[10px] uppercase tracking-[0.2em]">Primary</Badge>
+                  {activeReferencePresetId && (
+                    <Badge variant="outline" className="bg-white text-[10px] uppercase tracking-[0.18em]">
+                      {referencePresets.find((preset) => preset.id === activeReferencePresetId)?.name || 'Saved set'}
+                    </Badge>
+                  )}
                 </div>
                 {promptText && (
                   <p className="ml-4 text-sm italic leading-7 text-muted-foreground">
@@ -1068,6 +1327,7 @@ export default function InferencePage() {
                   onClick={() => {
                     if (!refAudioPath) return alert('Select a primary reference audio first');
                     setRefLocked(true);
+                    saveCurrentReferencePreset();
                   }}
                   disabled={!refAudioPath}
                 >
