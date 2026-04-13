@@ -7,6 +7,7 @@ import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, getConfi
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
 import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
+import { inferenceState } from '../services/inferenceState.js';
 
 const router = Router();
 
@@ -53,7 +54,10 @@ router.post('/models/select', async (req, res) => {
       await inferenceServer.setGPTWeights(gptPath);
     }
 
-    res.json({ message: 'Models loaded successfully' });
+    res.json({
+      message: 'Models loaded successfully',
+      loaded: inferenceServer.getLoadedWeights(),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -159,6 +163,23 @@ router.post('/inference/generate', async (req, res) => {
   }
 
   const sessionId = crypto.randomUUID();
+  inferenceState.resetForNewSession({
+    sessionId,
+    params: {
+      text,
+      text_lang,
+      ref_audio_path,
+      prompt_text,
+      prompt_lang,
+      aux_ref_audio_paths,
+      top_k,
+      top_p,
+      temperature,
+      repetition_penalty,
+      speed_factor,
+      seed,
+    },
+  });
   sseManager.prepareSession(sessionId);
   res.json({ sessionId });
 
@@ -206,12 +227,19 @@ router.get('/inference/result/:sessionId', (req, res) => {
   fs.createReadStream(finalPath).pipe(res);
 });
 
+router.get('/inference/current', (_req, res) => {
+  res.json(inferenceState.getState());
+});
+
 router.post('/inference/cancel', (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId is required' });
   }
   const cancelled = cancelSession(sessionId);
+  if (cancelled) {
+    inferenceState.setError('Generation cancelled by user', 'cancelled');
+  }
   res.json({ cancelled });
 });
 
@@ -300,7 +328,11 @@ router.post('/transcribe', async (req, res) => {
 
 router.get('/inference/status', (_req, res) => {
   const configError = getConfigError({ requirePython: true });
-  res.json({ ready: !configError && inferenceServer.isReady(), error: configError });
+  res.json({
+    ready: !configError && inferenceServer.isReady(),
+    error: configError,
+    loaded: inferenceServer.getLoadedWeights(),
+  });
 });
 
 // ── Training audio browser endpoints ──
@@ -322,6 +354,29 @@ router.get('/training-audio/file/:expName/:filename', (req, res) => {
     'Content-Length': stat.size,
   });
   fs.createReadStream(filePath).pipe(res);
+});
+
+router.get('/ref-audio', (req, res) => {
+  const filePath = String(req.query.filePath || '');
+  if (!filePath) {
+    return res.status(400).json({ error: 'filePath is required' });
+  }
+
+  const resolvedPath = path.resolve(GPT_SOVITS_ROOT, filePath);
+  const allowedDir = path.resolve(GPT_SOVITS_ROOT, 'TEMP', 'ref_audio');
+  if (!resolvedPath.startsWith(allowedDir)) {
+    return res.status(400).json({ error: 'Invalid reference audio path' });
+  }
+  if (!fs.existsSync(resolvedPath)) {
+    return res.status(404).json({ error: 'Reference audio not found' });
+  }
+
+  const stat = fs.statSync(resolvedPath);
+  res.type(path.extname(resolvedPath));
+  res.set({
+    'Content-Length': stat.size,
+  });
+  fs.createReadStream(resolvedPath).pipe(res);
 });
 
 router.get('/training-audio/:expName', (req, res) => {

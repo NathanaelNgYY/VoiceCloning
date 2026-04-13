@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
+import { inferenceState } from './inferenceState.js';
 import { TEMP_DIR } from '../config.js';
 
 // Track active streaming sessions for cancellation
@@ -973,6 +974,7 @@ export function getSessionFinalPath(sessionId) {
 export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
   const chunks = splitTextIntoChunks(params.text, options);
   if (chunks.length === 0) {
+    inferenceState.setError('No text to synthesize');
     sseManager.send(sessionId, 'error', { message: 'No text to synthesize' });
     return;
   }
@@ -988,6 +990,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     totalChunks: chunks.length,
     chunks: chunks.map((text, index) => ({ index, text })),
   });
+  inferenceState.setGenerating({ totalChunks: chunks.length });
 
   const chunkPaths = [];
 
@@ -1000,6 +1003,11 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
       const chunkText = chunks[index];
       sseManager.send(sessionId, 'chunk-start', {
+        index,
+        text: chunkText,
+        totalChunks: chunks.length,
+      });
+      inferenceState.setChunkStart({
         index,
         text: chunkText,
         totalChunks: chunks.length,
@@ -1048,6 +1056,10 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
         attempts: totalAttempts,
         durationSec: parseFloat(chunkDuration.toFixed(2)),
       });
+      inferenceState.setChunkComplete({
+        index,
+        totalChunks: chunks.length,
+      });
     }
 
     // Concatenate all chunk WAVs from disk
@@ -1072,7 +1084,10 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       totalChunks: chunks.length,
       totalDurationSec: parseFloat(totalDuration.toFixed(2)),
     });
+    inferenceState.setComplete();
   } catch (err) {
+    const status = err.message?.includes('cancelled') ? 'cancelled' : 'error';
+    inferenceState.setError(err.message, status);
     sseManager.send(sessionId, 'error', { message: err.message });
   } finally {
     activeSessions.delete(sessionId);

@@ -28,6 +28,8 @@ class InferenceServer {
   constructor() {
     this.process = null;
     this.ready = false;
+    this.currentGPTWeights = '';
+    this.currentSoVITSWeights = '';
   }
 
   async start() {
@@ -117,6 +119,8 @@ class InferenceServer {
     }
     this.process = null;
     this.ready = false;
+    this.currentGPTWeights = '';
+    this.currentSoVITSWeights = '';
   }
 
   async setGPTWeights(weightsPath) {
@@ -124,6 +128,7 @@ class InferenceServer {
       params: { weights_path: weightsPath },
       timeout: 120000,
     });
+    this.currentGPTWeights = weightsPath;
     return res.data;
   }
 
@@ -132,6 +137,7 @@ class InferenceServer {
       params: { weights_path: weightsPath },
       timeout: 120000,
     });
+    this.currentSoVITSWeights = weightsPath;
     return res.data;
   }
 
@@ -163,6 +169,13 @@ class InferenceServer {
 
   isReady() {
     return this.ready && this.process !== null;
+  }
+
+  getLoadedWeights() {
+    return {
+      gptPath: this.currentGPTWeights,
+      sovitsPath: this.currentSoVITSWeights,
+    };
   }
 }
 

@@ -1,11 +1,13 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 210 20% 98%;
-    --foreground: 222 47% 11%;
+    --background: 205 45% 98%;
+    --foreground: 221 44% 12%;
 
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -13,13 +15,13 @@
     --primary: 199 89% 48%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96%;
+    --secondary: 204 38% 95%;
     --secondary-foreground: 222 47% 11%;
 
-    --muted: 210 40% 96%;
+    --muted: 206 30% 95%;
     --muted-foreground: 215 16% 47%;
 
-    --accent: 210 40% 96%;
+    --accent: 198 52% 94%;
     --accent-foreground: 222 47% 11%;
 
     --destructive: 0 84% 60%;
@@ -28,11 +30,11 @@
     --success: 168 76% 42%;
     --success-foreground: 0 0% 100%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
+    --border: 205 28% 88%;
+    --input: 205 28% 88%;
     --ring: 199 89% 48%;
 
-    --radius: 0.5rem;
+    --radius: 1rem;
   }
 
   * {
@@ -42,10 +44,18 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     line-height: 1.6;
+    background-image:
+      radial-gradient(circle at top left, rgba(14, 165, 233, 0.12), transparent 28%),
+      radial-gradient(circle at top right, rgba(20, 184, 166, 0.08), transparent 24%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(240, 249, 255, 0.78));
   }
 
   #root {
     min-height: 100vh;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display;
   }
 }
 
@@ -68,7 +78,7 @@
 /* Audio element */
 audio {
   width: 100%;
-  height: 42px;
+  height: 46px;
   border-radius: calc(var(--radius) - 2px);
   outline: none;
 }
