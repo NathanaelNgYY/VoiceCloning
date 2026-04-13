@@ -12,12 +12,14 @@ export default function App() {
     <TooltipProvider>
       <div className="flex min-h-screen flex-col bg-background">
         {/* Header */}
-        <header className="sticky top-0 z-50 border-b bg-white/95 backdrop-blur-sm">
-          <div className="mx-auto max-w-5xl px-6">
+        <header className="sticky top-0 z-50 border-b border-white/60 bg-white/75 backdrop-blur-xl">
+          <div className="mx-auto max-w-6xl px-6">
             {/* Title row */}
             <div className="flex items-center justify-between pt-5">
               <div className="flex items-center gap-3">
-                <Activity className="h-6 w-6 text-primary" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-primary shadow-[0_18px_35px_-24px_rgba(14,165,233,0.85)]">
+                  <Activity className="h-6 w-6 text-primary" />
+                </div>
                 <div>
                   <h1 className="text-xl font-semibold tracking-tight text-foreground">
                     Voice Cloning Studio
@@ -30,40 +32,60 @@ export default function App() {
             </div>
 
             {/* Navigation */}
-            <nav className="mt-4 flex gap-0">
+            <nav className="mt-4 flex items-center gap-7 border-b border-slate-200/80">
               <NavLink
                 to="/"
                 end
                 className={({ isActive }) =>
                   cn(
-                    "inline-block border-b-2 px-1 pb-3 mr-8 text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
                     isActive
-                      ? "border-primary text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   )
                 }
               >
-                Training
+                {({ isActive }) => (
+                  <>
+                    <span>Training</span>
+                    <span
+                      className={cn(
+                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
+                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
+                      )}
+                    />
+                  </>
+                )}
               </NavLink>
               <NavLink
                 to="/inference"
                 className={({ isActive }) =>
                   cn(
-                    "inline-block border-b-2 px-1 pb-3 text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
                     isActive
-                      ? "border-primary text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   )
                 }
               >
-                Inference
+                {({ isActive }) => (
+                  <>
+                    <span>Inference</span>
+                    <span
+                      className={cn(
+                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
+                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
+                      )}
+                    />
+                  </>
+                )}
               </NavLink>
             </nav>
           </div>
         </header>
 
         {/* Main content */}
-        <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
           <Routes>
             <Route path="/" element={<TrainingPage />} />
             <Route path="/inference" element={<InferencePage />} />
@@ -71,7 +93,7 @@ export default function App() {
         </main>
 
         {/* Footer */}
-        <footer className="mx-auto w-full max-w-5xl px-6">
+        <footer className="mx-auto w-full max-w-6xl px-6">
           <Separator />
           <div className="flex items-center justify-between py-5">
             <span className="text-xs text-muted-foreground">

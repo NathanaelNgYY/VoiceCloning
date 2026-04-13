@@ -41,7 +41,7 @@ export default function RefAudioPlayer({ src }) {
   const progress = duration ? (currentTime / duration) * 100 : 0;
 
   return (
-    <div className="mt-3 flex items-center gap-3 rounded-lg border bg-muted/50 p-3">
+    <div className="mt-3 flex items-center gap-3 rounded-[20px] border border-slate-200 bg-slate-50/80 p-3.5 shadow-sm">
       <audio
         ref={audioRef}
         src={src}
@@ -52,7 +52,7 @@ export default function RefAudioPlayer({ src }) {
 
       <button
         onClick={togglePlay}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-background transition-colors hover:bg-primary hover:text-primary-foreground hover:border-primary"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white transition-colors hover:border-primary hover:bg-primary hover:text-primary-foreground"
       >
         {playing ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
       </button>
@@ -64,7 +64,7 @@ export default function RefAudioPlayer({ src }) {
       <div
         ref={progressRef}
         onClick={handleSeek}
-        className="relative flex-1 h-1.5 cursor-pointer rounded-full bg-border"
+        className="relative flex-1 h-1.5 cursor-pointer rounded-full bg-slate-200"
       >
         <div
           className="absolute top-0 left-0 h-full rounded-full bg-primary transition-[width] duration-100"

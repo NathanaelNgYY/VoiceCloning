@@ -47,7 +47,8 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        sans: ["Manrope", "Inter", "system-ui", "-apple-system", "sans-serif"],
+        display: ["Space Grotesk", "Manrope", "system-ui", "sans-serif"],
         mono: ["Geist Mono", "Consolas", "monospace"],
       },
       keyframes: {

@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import ModelSelector from '../components/ModelSelector.jsx';
+import React, { useState, useEffect, useRef } from 'react';
 import AudioPlayer from '../components/AudioPlayer.jsx';
+import FloatingNotice from '../components/FloatingNotice.jsx';
+import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, synthesize, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl } from '../services/api.js';
+import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
@@ -16,14 +17,39 @@ import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChevronRight, RefreshCw, Upload, Play, X, Check, Pencil, Mic } from 'lucide-react';
+import { Activity, ChevronRight, RefreshCw, Upload, Play, X, Check, Pencil, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  INFERENCE_REFERENCE_PRESETS_KEY,
+  buildReferencePreset,
+  createReferencePresetName,
+  createReferencePresetSignature,
+  parseStoredReferencePresets,
+} from '@/lib/referencePresets';
+import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
+
+const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
+const NOTICE_TIMEOUT_MS = 4200;
+
+function revokeIfBlobUrl(url) {
+  if (url?.startsWith('blob:')) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function getFallbackReferenceName(filePath) {
+  return (filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
+}
 
 export default function InferencePage() {
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
-  const [selectedGPT, setSelectedGPT] = useState('');
-  const [selectedSoVITS, setSelectedSoVITS] = useState('');
+  const [selectedPersonKey, setSelectedPersonKey] = useState('');
+  const [selectedGPTPath, setSelectedGPTPath] = useState('');
+  const [selectedSoVITSPath, setSelectedSoVITSPath] = useState('');
+  const [modelsFetched, setModelsFetched] = useState(false);
+  const [loadedGPTPath, setLoadedGPTPath] = useState('');
+  const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
   const [serverReady, setServerReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [modelError, setModelError] = useState(null);
@@ -42,6 +68,10 @@ export default function InferencePage() {
   const [auxRefAudios, setAuxRefAudios] = useState([]);
   const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
   const [refLocked, setRefLocked] = useState(false);
+  const [previewAudioPath, setPreviewAudioPath] = useState('');
+  const [previewAudioUrl, setPreviewAudioUrl] = useState(null);
+  const [previewAudioName, setPreviewAudioName] = useState('');
+  const [previewAudioRole, setPreviewAudioRole] = useState('primary');
 
   const [text, setText] = useState('');
   const [textLang, setTextLang] = useState('en');
@@ -55,45 +85,293 @@ export default function InferencePage() {
 
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [referencePresets, setReferencePresets] = useState([]);
+  const [activeReferencePresetId, setActiveReferencePresetId] = useState('');
+  const [notice, setNotice] = useState(null);
+  const [referencePresetsRestored, setReferencePresetsRestored] = useState(false);
   const sessionIdRef = useRef(null);
+  const restoredSessionRef = useRef(null);
+  const noticeTimeoutRef = useRef(null);
+  const skipNextCompletionToastRef = useRef(false);
 
   const inference = useInferenceSSE();
+  const voiceProfiles = buildVoiceProfiles(gptModels, sovitsModels);
+  const selectedProfile = voiceProfiles.find(profile => profile.key === selectedPersonKey) || null;
+  const selectedGPTCandidate = selectedProfile?.gptCandidates?.find(candidate => candidate.model.path === selectedGPTPath)
+    || selectedProfile?.gptCandidates?.[0]
+    || null;
+  const selectedSoVITSCandidate = selectedProfile?.sovitsCandidates?.find(candidate => candidate.model.path === selectedSoVITSPath)
+    || selectedProfile?.sovitsCandidates?.[0]
+    || null;
+  const selectedGPT = selectedGPTCandidate?.model?.path || '';
+  const selectedSoVITS = selectedSoVITSCandidate?.model?.path || '';
+  const currentExpName = selectedProfile?.expName || null;
+  const selectionLoaded = Boolean(
+    serverReady
+      && selectedGPT
+      && selectedSoVITS
+      && loadedGPTPath === selectedGPT
+      && loadedSoVITSPath === selectedSoVITS
+  );
+  const availableProfiles = voiceProfiles.filter(profile => profile.complete);
+  const loadedProfileName = extractExpName(loadedSoVITSPath) || extractExpName(loadedGPTPath);
+  const uploadedAuxRefFiles = uploadedRefFiles.filter(file => file.serverPath !== refAudioPath);
+  const selectedAuxReferences = [
+    ...auxRefAudios.map((file) => ({
+      path: file.path,
+      name: file.filename,
+      source: 'training',
+    })),
+    ...uploadedAuxRefFiles.map((file) => ({
+      path: file.serverPath,
+      name: file.name,
+      source: 'uploaded',
+    })),
+  ];
+  const currentPrimaryReference = refAudioPath
+    ? {
+        path: refAudioPath,
+        name: refAudioFile?.name || getFallbackReferenceName(refAudioPath),
+        source: uploadedRefFiles.some((file) => file.serverPath === refAudioPath) ? 'uploaded' : 'training',
+      }
+    : null;
+  const currentReferenceSignature = currentPrimaryReference
+    ? createReferencePresetSignature({
+        selectedPersonKey,
+        selectedGPTPath,
+        selectedSoVITSPath,
+        primary: currentPrimaryReference,
+        aux: selectedAuxReferences,
+        promptText,
+        promptLang,
+      })
+    : '';
 
   useEffect(() => {
+    restoreDraft();
+    restoreReferencePresets();
     fetchModels();
     checkStatus();
+    restoreInferenceState();
+
+    return () => {
+      if (noticeTimeoutRef.current) {
+        window.clearTimeout(noticeTimeoutRef.current);
+      }
+    };
   }, []);
 
   async function fetchModels() {
     try {
       const res = await getModels();
-      setGptModels(res.data.gpt);
-      setSovitsModels(res.data.sovits);
-    } catch { /* ignore */ }
+      setGptModels(res.data.gpt || []);
+      setSovitsModels(res.data.sovits || []);
+      setModelError(null);
+    } catch (err) {
+      setModelError(err.response?.data?.error || err.message || 'Failed to load model library');
+    } finally {
+      setModelsFetched(true);
+    }
   }
 
   async function checkStatus() {
     try {
       const res = await getInferenceStatus();
-      setServerReady(res.data.ready);
-    } catch { /* ignore */ }
+      setServerReady(Boolean(res.data.ready));
+      setLoadedGPTPath(res.data.loaded?.gptPath || '');
+      setLoadedSoVITSPath(res.data.loaded?.sovitsPath || '');
+    } catch {
+      setServerReady(false);
+      setLoadedGPTPath('');
+      setLoadedSoVITSPath('');
+    }
   }
 
-  function extractExpName(modelPath) {
-    if (!modelPath) return null;
-    const basename = modelPath.replace(/\\/g, '/').split('/').pop();
-    let match = basename.match(/^(.+?)_e\d+_s\d+\.pth$/);
-    if (match) return match[1];
-    match = basename.match(/^(.+?)-e\d+\.ckpt$/);
-    if (match) return match[1];
-    return null;
+  function restoreReferencePresets() {
+    const raw = window.localStorage.getItem(INFERENCE_REFERENCE_PRESETS_KEY);
+    setReferencePresets(parseStoredReferencePresets(raw));
+    setReferencePresetsRestored(true);
   }
 
-  const currentExpName = extractExpName(selectedSoVITS) || extractExpName(selectedGPT);
+  function showNotice({ title, message = '', tone = 'success' }) {
+    if (noticeTimeoutRef.current) {
+      window.clearTimeout(noticeTimeoutRef.current);
+    }
+
+    const id = Date.now();
+    setNotice({ id, title, message, tone });
+    noticeTimeoutRef.current = window.setTimeout(() => {
+      setNotice((current) => (current?.id === id ? null : current));
+    }, NOTICE_TIMEOUT_MS);
+  }
+
+  function restoreDraft() {
+    try {
+      const raw = window.localStorage.getItem(INFERENCE_DRAFT_KEY);
+      if (!raw) return;
+
+      const draft = JSON.parse(raw);
+      setSelectedPersonKey(draft.selectedPersonKey || '');
+      setSelectedGPTPath(draft.selectedGPTPath || '');
+      setSelectedSoVITSPath(draft.selectedSoVITSPath || '');
+      setRefAudioPath(draft.refAudioPath || '');
+      setRefAudioFile(draft.refAudioFile || null);
+      setPromptText(draft.promptText || '');
+      setPromptLang(draft.promptLang || 'en');
+      setUploadedRefFiles(
+        Array.isArray(draft.uploadedRefFiles)
+          ? draft.uploadedRefFiles.map((file) => ({
+              ...file,
+              localUrl: getUploadedRefAudioUrl(file.serverPath),
+            }))
+          : []
+      );
+      setAuxRefAudios(Array.isArray(draft.auxRefAudios) ? draft.auxRefAudios : []);
+      setRefLocked(Boolean(draft.refLocked));
+      setText(draft.text || '');
+      setTextLang(draft.textLang || 'en');
+      setSpeed(Number.isFinite(draft.speed) ? draft.speed : 1.0);
+      setTopK(Number.isFinite(draft.topK) ? draft.topK : 5);
+      setTopP(Number.isFinite(draft.topP) ? draft.topP : 0.85);
+      setTemperature(Number.isFinite(draft.temperature) ? draft.temperature : 0.7);
+      setRepPenalty(Number.isFinite(draft.repPenalty) ? draft.repPenalty : 1.35);
+      setShowSettings(Boolean(draft.showSettings));
+      setPreviewAudioPath(draft.previewAudioPath || '');
+      setPreviewAudioName(draft.previewAudioName || '');
+      setPreviewAudioRole(draft.previewAudioRole || 'primary');
+    } catch {
+      /* ignore invalid draft */
+    } finally {
+      setDraftRestored(true);
+    }
+  }
+
+  async function restoreInferenceState() {
+    try {
+      const res = await getCurrentInference();
+      const current = res.data;
+      if (!current?.sessionId) return;
+
+      sessionIdRef.current = current.sessionId;
+
+      if (current.params) {
+        const primaryRefPath = current.params.ref_audio_path || '';
+        setText(current.params.text || '');
+        setTextLang(current.params.text_lang || 'en');
+        setRefAudioPath(primaryRefPath);
+        if (primaryRefPath) {
+          const fallbackName = primaryRefPath.replace(/\\/g, '/').split('/').pop();
+          setRefAudioFile({ name: fallbackName });
+          if (/TEMP[\\/]+ref_audio/i.test(primaryRefPath)) {
+            setRefAudioUrl(getUploadedRefAudioUrl(primaryRefPath));
+          }
+        }
+        setPromptText(current.params.prompt_text || '');
+        setPromptLang(current.params.prompt_lang || 'en');
+        setSpeed(Number.isFinite(current.params.speed_factor) ? current.params.speed_factor : 1.0);
+        setTopK(Number.isFinite(current.params.top_k) ? current.params.top_k : 5);
+        setTopP(Number.isFinite(current.params.top_p) ? current.params.top_p : 0.85);
+        setTemperature(Number.isFinite(current.params.temperature) ? current.params.temperature : 0.7);
+        setRepPenalty(Number.isFinite(current.params.repetition_penalty) ? current.params.repetition_penalty : 1.35);
+        setRefLocked(Boolean(current.params.ref_audio_path));
+      }
+
+      if (current.sessionId === restoredSessionRef.current) return;
+
+      const nextState = {
+        initialStatus: current.status || 'idle',
+        initialTotalChunks: current.totalChunks || 0,
+        initialCompletedChunks: current.completedChunks || 0,
+        initialCurrentChunkText: current.currentChunkText || '',
+        initialError: current.error || null,
+      };
+
+      if (current.status === 'waiting' || current.status === 'generating') {
+        inference.connect(current.sessionId, nextState);
+      } else {
+        inference.disconnect();
+        inference.hydrate(nextState);
+      }
+
+      if (current.status === 'complete' && current.resultReady) {
+        skipNextCompletionToastRef.current = true;
+        const blob = await getGenerationResult(current.sessionId);
+        setAudioBlob(blob);
+      }
+
+      restoredSessionRef.current = current.sessionId;
+    } catch (err) {
+      console.error('Failed to restore inference state:', err);
+    }
+  }
 
   useEffect(() => {
-    if (!currentExpName) return;
-    setRefLocked(false);
+    if (!modelsFetched) return;
+
+    const profiles = buildVoiceProfiles(gptModels, sovitsModels);
+
+    if (profiles.length === 0) {
+      if (selectedPersonKey) {
+        setSelectedPersonKey('');
+      }
+      return;
+    }
+
+    const selectionStillValid = profiles.some(
+      profile => profile.key === selectedPersonKey && profile.complete
+    );
+
+    if (!selectionStillValid) {
+      const loadedMatch = profiles.find(
+        profile => profile.complete
+          && profile.gptModel?.path === loadedGPTPath
+          && profile.sovitsModel?.path === loadedSoVITSPath
+      );
+      const fallback = loadedMatch || profiles.find(profile => profile.complete) || profiles[0];
+      if (fallback?.key && fallback.key !== selectedPersonKey) {
+        setSelectedPersonKey(fallback.key);
+      }
+    }
+  }, [modelsFetched, gptModels, sovitsModels, selectedPersonKey, loadedGPTPath, loadedSoVITSPath]);
+
+  useEffect(() => {
+    if (!modelsFetched) return;
+
+    if (!selectedProfile) {
+      setSelectedGPTPath('');
+      setSelectedSoVITSPath('');
+      return;
+    }
+
+    const gptPathIsValid = selectedProfile.gptCandidates?.some(candidate => candidate.model.path === selectedGPTPath);
+    const sovitsPathIsValid = selectedProfile.sovitsCandidates?.some(candidate => candidate.model.path === selectedSoVITSPath);
+
+    const nextGPTPath = gptPathIsValid
+      ? selectedGPTPath
+      : (selectedProfile.gptCandidates?.find(candidate => candidate.model.path === loadedGPTPath)?.model.path
+        || selectedProfile.gptCandidates?.[0]?.model.path
+        || '');
+    const nextSoVITSPath = sovitsPathIsValid
+      ? selectedSoVITSPath
+      : (selectedProfile.sovitsCandidates?.find(candidate => candidate.model.path === loadedSoVITSPath)?.model.path
+        || selectedProfile.sovitsCandidates?.[0]?.model.path
+        || '');
+
+    if (nextGPTPath !== selectedGPTPath) {
+      setSelectedGPTPath(nextGPTPath);
+    }
+    if (nextSoVITSPath !== selectedSoVITSPath) {
+      setSelectedSoVITSPath(nextSoVITSPath);
+    }
+  }, [modelsFetched, selectedProfile, selectedGPTPath, selectedSoVITSPath, loadedGPTPath, loadedSoVITSPath]);
+
+  useEffect(() => {
+    if (!currentExpName) {
+      setTrainingAudioFiles([]);
+      setLoadingTrainingAudio(false);
+      return;
+    }
     setLoadingTrainingAudio(true);
     getTrainingAudioFiles(currentExpName)
       .then(res => setTrainingAudioFiles(res.data.files || []))
@@ -101,11 +379,317 @@ export default function InferencePage() {
       .finally(() => setLoadingTrainingAudio(false));
   }, [currentExpName]);
 
+  useEffect(() => {
+    if (!refAudioPath) return;
+
+    const uploadedMatch = uploadedRefFiles.find(file => file.serverPath === refAudioPath);
+    if (uploadedMatch) {
+      setRefAudioFile(prev => prev?.name ? prev : { name: uploadedMatch.name });
+      setRefAudioUrl(prev => prev || getUploadedRefAudioUrl(uploadedMatch.serverPath));
+      if (!previewAudioPath) {
+        setPreview({
+          path: uploadedMatch.serverPath,
+          url: uploadedMatch.localUrl || getUploadedRefAudioUrl(uploadedMatch.serverPath),
+          name: uploadedMatch.name,
+          role: 'primary',
+        });
+      }
+      return;
+    }
+
+    const trainingMatch = trainingAudioFiles.find(file => file.path === refAudioPath);
+    if (trainingMatch && currentExpName) {
+      setRefAudioFile(prev => prev?.name ? prev : { name: trainingMatch.filename });
+      setRefAudioUrl(prev => prev || getTrainingAudioUrl(currentExpName, trainingMatch.filename));
+      if (!previewAudioPath) {
+        setPreview({
+          path: trainingMatch.path,
+          url: getTrainingAudioUrl(currentExpName, trainingMatch.filename),
+          name: trainingMatch.filename,
+          role: 'primary',
+        });
+      }
+    }
+  }, [refAudioPath, uploadedRefFiles, trainingAudioFiles, currentExpName, previewAudioPath]);
+
+  useEffect(() => {
+    if (!previewAudioPath) return;
+
+    const uploadedMatch = uploadedRefFiles.find(file => file.serverPath === previewAudioPath);
+    if (uploadedMatch) {
+      setPreview({
+        path: uploadedMatch.serverPath,
+        url: uploadedMatch.localUrl || getUploadedRefAudioUrl(uploadedMatch.serverPath),
+        name: uploadedMatch.name,
+        role: previewAudioPath === refAudioPath ? 'primary' : 'auxiliary',
+      });
+      return;
+    }
+
+    const trainingMatch = trainingAudioFiles.find(file => file.path === previewAudioPath);
+    if (trainingMatch && currentExpName) {
+      setPreview({
+        path: trainingMatch.path,
+        url: getTrainingAudioUrl(currentExpName, trainingMatch.filename),
+        name: trainingMatch.filename,
+        role: trainingMatch.path === refAudioPath ? 'primary' : 'auxiliary',
+      });
+    }
+  }, [previewAudioPath, uploadedRefFiles, trainingAudioFiles, currentExpName, refAudioPath]);
+
+  useEffect(() => {
+    if (!draftRestored) return;
+
+    const draft = {
+      selectedPersonKey,
+      selectedGPTPath,
+      selectedSoVITSPath,
+      refAudioPath,
+      refAudioFile,
+      promptText,
+      promptLang,
+      uploadedRefFiles: uploadedRefFiles.map(file => ({
+        name: file.name,
+        serverPath: file.serverPath,
+      })),
+      auxRefAudios,
+      refLocked,
+      text,
+      textLang,
+      speed,
+      topK,
+      topP,
+      temperature,
+      repPenalty,
+      showSettings,
+      previewAudioPath,
+      previewAudioName,
+      previewAudioRole,
+    };
+
+    window.localStorage.setItem(INFERENCE_DRAFT_KEY, JSON.stringify(draft));
+  }, [
+    draftRestored,
+    selectedPersonKey,
+    selectedGPTPath,
+    selectedSoVITSPath,
+    refAudioPath,
+    refAudioFile,
+    promptText,
+    promptLang,
+    uploadedRefFiles,
+    auxRefAudios,
+    refLocked,
+    text,
+    textLang,
+    speed,
+    topK,
+    topP,
+    temperature,
+    repPenalty,
+    showSettings,
+    previewAudioPath,
+    previewAudioName,
+    previewAudioRole,
+  ]);
+
+  useEffect(() => {
+    if (!referencePresetsRestored) return;
+    window.localStorage.setItem(INFERENCE_REFERENCE_PRESETS_KEY, JSON.stringify(referencePresets));
+  }, [referencePresets, referencePresetsRestored]);
+
+  useEffect(() => {
+    const matchingPreset = referencePresets.find((preset) => preset.signature === currentReferenceSignature);
+    const nextId = matchingPreset?.id || '';
+    setActiveReferencePresetId((current) => (current === nextId ? current : nextId));
+  }, [referencePresets, currentReferenceSignature]);
+
+  function setPreview({ path, url, name, role = 'primary' }) {
+    setPreviewAudioPath(path || '');
+    setPreviewAudioUrl(url || null);
+    setPreviewAudioName(name || '');
+    setPreviewAudioRole(role);
+  }
+
+  function getReferenceUrl(reference, fallbackExpName = currentExpName) {
+    if (!reference?.path) return null;
+    if (reference.source === 'uploaded') {
+      return getUploadedRefAudioUrl(reference.path);
+    }
+
+    const expName = fallbackExpName || extractExpName(reference.path);
+    if (!expName) return null;
+    return getTrainingAudioUrl(expName, reference.name || getFallbackReferenceName(reference.path));
+  }
+
+  function ensureUploadedReferences(entries) {
+    if (!entries.length) return;
+
+    setUploadedRefFiles((prev) => {
+      const next = [...prev];
+      const existingPaths = new Set(prev.map((file) => file.serverPath));
+
+      for (const entry of entries) {
+        if (!entry?.path || existingPaths.has(entry.path)) continue;
+        next.push({
+          name: entry.name || getFallbackReferenceName(entry.path),
+          serverPath: entry.path,
+          localUrl: getUploadedRefAudioUrl(entry.path),
+        });
+        existingPaths.add(entry.path);
+      }
+
+      return next;
+    });
+  }
+
+  function applyReferencePreset(preset) {
+    if (!preset?.primary?.path) return;
+
+    const uploadedEntries = [preset.primary, ...(preset.aux || [])].filter((entry) => entry.source === 'uploaded');
+    ensureUploadedReferences(uploadedEntries);
+
+    if (preset.selectedPersonKey) {
+      setSelectedPersonKey(preset.selectedPersonKey);
+    }
+    setSelectedGPTPath(preset.selectedGPTPath || '');
+    setSelectedSoVITSPath(preset.selectedSoVITSPath || '');
+
+    revokeIfBlobUrl(refAudioUrl);
+    setRefAudioPath(preset.primary.path);
+    setRefAudioFile({ name: preset.primary.name || getFallbackReferenceName(preset.primary.path) });
+    setRefAudioUrl(getReferenceUrl(preset.primary, preset.expName));
+    setPromptText(preset.promptText || '');
+    setPromptLang(preset.promptLang || 'en');
+    setAuxRefAudios(
+      (preset.aux || [])
+        .filter((entry) => entry.source !== 'uploaded')
+        .map((entry) => ({
+          filename: entry.name || getFallbackReferenceName(entry.path),
+          path: entry.path,
+        }))
+    );
+    setPreview({
+      path: preset.primary.path,
+      url: getReferenceUrl(preset.primary, preset.expName),
+      name: preset.primary.name || getFallbackReferenceName(preset.primary.path),
+      role: 'primary',
+    });
+    setRefLocked(true);
+    setActiveReferencePresetId(preset.id);
+    showNotice({
+      title: 'Reference set loaded',
+      message: `Using ${preset.name} for the current inference setup.`,
+      tone: 'success',
+    });
+  }
+
+  function saveCurrentReferencePreset() {
+    if (!currentPrimaryReference) return;
+
+    const presetBase = buildReferencePreset({
+      selectedPersonKey,
+      selectedGPTPath,
+      selectedSoVITSPath,
+      voiceLabel: selectedProfile?.displayName || '',
+      expName: currentExpName || '',
+      primary: currentPrimaryReference,
+      aux: selectedAuxReferences,
+      promptText,
+      promptLang,
+    });
+
+    if (!presetBase) return;
+
+    let savedPreset = presetBase;
+
+    setReferencePresets((prev) => {
+      const existing = prev.find((preset) => preset.signature === presetBase.signature);
+      if (existing) {
+        savedPreset = {
+          ...presetBase,
+          id: existing.id,
+          name: existing.name,
+          createdAt: existing.createdAt,
+          updatedAt: Date.now(),
+        };
+
+        return [savedPreset, ...prev.filter((preset) => preset.id !== existing.id)]
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      }
+
+      savedPreset = {
+        ...presetBase,
+        name: createReferencePresetName(currentPrimaryReference.name, prev.length + 1),
+      };
+
+      return [savedPreset, ...prev]
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    });
+
+    setActiveReferencePresetId(savedPreset.id);
+    showNotice({
+      title: 'Reference set saved',
+      message: `Saved ${savedPreset.name} locally for quick reuse.`,
+      tone: 'success',
+    });
+  }
+
+  function handleRenameReferencePreset(presetId, nextName) {
+    setReferencePresets((prev) => prev.map((preset) => (
+      preset.id === presetId
+        ? { ...preset, name: nextName, updatedAt: Date.now() }
+        : preset
+    )).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+
+    showNotice({
+      title: 'Reference set renamed',
+      message: `Updated the saved label to ${nextName}.`,
+      tone: 'success',
+    });
+  }
+
+  function handleDeleteReferencePreset(presetId) {
+    setReferencePresets((prev) => prev.filter((preset) => preset.id !== presetId));
+    setActiveReferencePresetId((current) => (current === presetId ? '' : current));
+    showNotice({
+      title: 'Reference set removed',
+      message: 'The saved local version has been deleted.',
+      tone: 'success',
+    });
+  }
+
+  function handleSelectPerson(nextKey) {
+    const primaryIsUploaded = uploadedRefFiles.some(file => file.serverPath === refAudioPath);
+
+    setSelectedPersonKey(nextKey);
+    setSelectedGPTPath('');
+    setSelectedSoVITSPath('');
+    setModelError(null);
+    setRefLocked(false);
+    setAuxRefAudios([]);
+
+    if (!primaryIsUploaded) {
+      revokeIfBlobUrl(refAudioUrl);
+      setRefAudioPath('');
+      setRefAudioFile(null);
+      setRefAudioUrl(null);
+      setPromptText('');
+      setPreview({ path: '', url: null, name: '', role: 'primary' });
+    }
+  }
+
   function handleSelectTrainingAudio(file) {
     setRefAudioPath(file.path);
     setRefAudioFile({ name: file.filename });
     setRefAudioUrl(getTrainingAudioUrl(currentExpName, file.filename));
     setPromptText(file.transcript);
+    setPreview({
+      path: file.path,
+      url: getTrainingAudioUrl(currentExpName, file.filename),
+      name: file.filename,
+      role: 'primary',
+    });
     if (file.lang) {
       const langMap = { ZH: 'zh', EN: 'en', JA: 'ja', KO: 'ko', zh: 'zh', en: 'en', ja: 'ja', ko: 'ko' };
       setPromptLang(langMap[file.lang] || 'en');
@@ -119,16 +703,24 @@ export default function InferencePage() {
       if (exists) return prev.filter(f => f.filename !== file.filename);
       return [...prev, file];
     });
+    setPreview({
+      path: file.path,
+      url: getTrainingAudioUrl(currentExpName, file.filename),
+      name: file.filename,
+      role: 'auxiliary',
+    });
   }
 
   async function handleLoadModels() {
     if (!selectedGPT || !selectedSoVITS) {
-      return alert('Select both GPT and SoVITS models');
+      return alert('Select a person with both GPT and SoVITS checkpoints');
     }
     setLoading(true);
     setModelError(null);
     try {
-      await selectModels(selectedGPT, selectedSoVITS);
+      const res = await selectModels(selectedGPT, selectedSoVITS);
+      setLoadedGPTPath(res.data.loaded?.gptPath || selectedGPT);
+      setLoadedSoVITSPath(res.data.loaded?.sovitsPath || selectedSoVITS);
       setServerReady(true);
     } catch (err) {
       setModelError(err.response?.data?.error || err.message);
@@ -161,7 +753,7 @@ export default function InferencePage() {
         const merged = [...prev, ...newEntries];
         if (!refAudioPath || prev.length === 0) {
           setRefAudioFile({ name: merged[0].name });
-          if (refAudioUrl) URL.revokeObjectURL(refAudioUrl);
+          revokeIfBlobUrl(refAudioUrl);
           setRefAudioUrl(merged[0].localUrl);
           setRefAudioPath(merged[0].serverPath);
         }
@@ -174,30 +766,45 @@ export default function InferencePage() {
 
   function handleSetUploadedPrimary(entry) {
     setRefAudioFile({ name: entry.name });
-    if (refAudioUrl && !uploadedRefFiles.some(f => f.localUrl === refAudioUrl)) {
-      URL.revokeObjectURL(refAudioUrl);
-    }
+    revokeIfBlobUrl(refAudioUrl);
     setRefAudioUrl(entry.localUrl);
     setRefAudioPath(entry.serverPath);
     setPromptText('');
+    setPreview({
+      path: entry.serverPath,
+      url: entry.localUrl,
+      name: entry.name,
+      role: 'primary',
+    });
   }
 
   function handleRemoveUploadedFile(entry) {
     setUploadedRefFiles(prev => {
       const remaining = prev.filter(f => f.serverPath !== entry.serverPath);
+      if (entry.serverPath === previewAudioPath && entry.serverPath !== refAudioPath) {
+        setPreview({ path: '', url: null, name: '', role: 'primary' });
+      }
       if (entry.serverPath === refAudioPath) {
         if (remaining.length > 0) {
           setRefAudioFile({ name: remaining[0].name });
           setRefAudioUrl(remaining[0].localUrl);
           setRefAudioPath(remaining[0].serverPath);
+          setPreview({
+            path: remaining[0].serverPath,
+            url: remaining[0].localUrl,
+            name: remaining[0].name,
+            role: 'primary',
+          });
         } else {
           setRefAudioFile(null);
+          revokeIfBlobUrl(refAudioUrl);
           setRefAudioUrl(null);
           setRefAudioPath('');
+          setPreview({ path: '', url: null, name: '', role: 'primary' });
         }
         setPromptText('');
       }
-      URL.revokeObjectURL(entry.localUrl);
+      revokeIfBlobUrl(entry.localUrl);
       return remaining;
     });
   }
@@ -220,7 +827,7 @@ export default function InferencePage() {
     if (!text.trim()) return alert('Enter text to synthesize');
     if (!refAudioPath) return alert('Select a reference audio first');
     if (!refLocked) return alert('Confirm your reference audio selection first');
-    if (!serverReady) return alert('Load models first');
+    if (!selectionLoaded) return alert('Load the selected voice profile first');
 
     setInferError(null);
     setAudioBlob(null);
@@ -232,10 +839,7 @@ export default function InferencePage() {
         ref_audio_path: refAudioPath,
         prompt_text: promptText,
         prompt_lang: promptLang,
-        aux_ref_audio_paths: [
-          ...auxRefAudios.map(f => f.path),
-          ...uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).map(f => f.serverPath),
-        ],
+        aux_ref_audio_paths: selectedAuxReferences.map((reference) => reference.path),
         top_k: topK,
         top_p: topP,
         temperature,
@@ -244,7 +848,8 @@ export default function InferencePage() {
       });
       const { sessionId } = res.data;
       sessionIdRef.current = sessionId;
-      inference.connect(sessionId);
+      restoredSessionRef.current = sessionId;
+      inference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
       setInferError(err.response?.data?.error || err.message);
     }
@@ -261,72 +866,145 @@ export default function InferencePage() {
   useEffect(() => {
     if (inference.status === 'complete' && sessionIdRef.current) {
       getGenerationResult(sessionIdRef.current)
-        .then(blob => setAudioBlob(blob))
+        .then((blob) => {
+          setAudioBlob(blob);
+          if (skipNextCompletionToastRef.current) {
+            skipNextCompletionToastRef.current = false;
+            return;
+          }
+          showNotice({
+            title: 'Audio synthesized',
+            message: 'Your generated voice clip is ready to preview and download.',
+            tone: 'success',
+          });
+        })
         .catch(err => setInferError(err.message));
     }
     if (inference.status === 'error' || inference.status === 'cancelled') {
       setInferError(inference.error);
     }
-  }, [inference.status]);
+  }, [inference.status, inference.error]);
 
-  const auxCount = auxRefAudios.length + uploadedRefFiles.filter(f => f.serverPath !== refAudioPath).length;
+  const auxCount = selectedAuxReferences.length;
+  const isGenerationActive = inference.status === 'waiting' || inference.status === 'generating';
 
   return (
     <div className="animate-fade-in space-y-8">
+      <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
+
+      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#082f49_42%,#115e59_100%)] px-6 py-7 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:px-8 lg:px-10">
+        <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_55%)]" />
+        <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
+        <div className="absolute bottom-0 right-8 h-48 w-48 rounded-full bg-emerald-300/15 blur-3xl" />
+
+        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.85fr)] lg:items-end">
+          <div>
+            <Badge className="border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white shadow-none">
+              Inference Studio
+            </Badge>
+            <h2 className="mt-5 max-w-3xl font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+              Use this page to choose a voice, confirm the right references, and turn your text into speech.
+            </h2>
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
+              Start by choosing the speaker and the checkpoints you want, then confirm one main reference clip, add any supporting clips you need, and generate the final voice from your text.
+            </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
+                <Activity size={12} className="mr-1.5" />
+                {selectionLoaded ? 'Selected voice is loaded' : serverReady ? 'Server online, reload needed' : 'Server offline'}
+              </Badge>
+              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
+                Step 1: choose the voice and checkpoints
+              </Badge>
+              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
+                Step 2: confirm your reference set, then generate
+              </Badge>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div className="rounded-[24px] border border-white/12 bg-white/10 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Voice You’re Preparing</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight">{selectedProfile?.displayName || 'No profile selected'}</p>
+              <p className="mt-2 text-sm leading-6 text-white/72">
+                {selectedProfile ? 'Choose the exact GPT and SoVITS pair you want before you load this voice on the server.' : 'Pick a speaker here before you move on to references and text.'}
+              </p>
+            </div>
+
+            <div className="rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Ready On Server</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight">{loadedProfileName || 'Nothing loaded'}</p>
+              <p className="mt-2 text-sm leading-6 text-white/72">
+                {selectionLoaded ? 'You can move straight to references, text, and generation.' : 'Load the voice you want here before you generate anything.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* 01 Models */}
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
           <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
               1
             </Badge>
             <div className="flex-1">
               <div className="flex items-center gap-3">
-                <CardTitle>Model Selection</CardTitle>
-                <Badge variant={serverReady ? 'success' : 'outline'} className="text-[10px]">
+                <CardTitle className="font-display text-2xl">Voice Profile</CardTitle>
+                <Badge variant={selectionLoaded ? 'success' : serverReady ? 'outline' : 'secondary'} className="text-[10px] uppercase tracking-[0.2em]">
                   <div className={cn(
                     "mr-1.5 h-1.5 w-1.5 rounded-full",
-                    serverReady ? "bg-success-foreground" : "bg-muted-foreground"
+                    selectionLoaded ? "bg-success-foreground" : serverReady ? "bg-muted-foreground" : "bg-muted-foreground"
                   )} />
-                  {serverReady ? 'Ready' : 'Offline'}
+                  {selectionLoaded ? 'Loaded' : serverReady ? 'Needs reload' : 'Offline'}
                 </Badge>
               </div>
-              <CardDescription>Select and load your trained voice models</CardDescription>
+              <CardDescription>Start by choosing the speaker, then keep the default checkpoints or switch to a different GPT or SoVITS model if you prefer.</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <ModelSelector
-              label="GPT Model"
-              models={gptModels}
-              value={selectedGPT}
-              onChange={setSelectedGPT}
-              disabled={loading}
-            />
-            <ModelSelector
-              label="SoVITS Model"
-              models={sovitsModels}
-              value={selectedSoVITS}
-              onChange={setSelectedSoVITS}
-              disabled={loading}
-            />
+        <CardContent className="space-y-5 p-6">
+          <VoiceProfileSelector
+            profiles={voiceProfiles}
+            value={selectedPersonKey}
+            onChange={handleSelectPerson}
+            disabled={loading}
+            selectedProfile={selectedProfile}
+            selectedGPTPath={selectedGPTPath}
+            selectedSoVITSPath={selectedSoVITSPath}
+            onGPTChange={setSelectedGPTPath}
+            onSoVITSChange={setSelectedSoVITSPath}
+            selectedGPTCandidate={selectedGPTCandidate}
+            selectedSoVITSCandidate={selectedSoVITSCandidate}
+          />
+
+          <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
+            {selectedProfile
+              ? `When you load this voice, the server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'}.`
+              : 'Choose a speaker first, then load the voice you want to use for generation.'}
           </div>
 
-          <div className="flex items-center gap-3">
-            <Button onClick={handleLoadModels} disabled={loading} variant="outline">
-              {loading ? <Spinner size={14} /> : null}
-              {loading ? 'Loading...' : 'Load Models'}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={handleLoadModels} disabled={loading || !selectedProfile?.complete} size="lg" className="rounded-2xl px-6 shadow-[0_18px_45px_-25px_rgba(14,165,233,0.7)]">
+              {loading ? <Spinner size={14} className="text-primary-foreground" /> : null}
+              {loading ? 'Loading...' : selectionLoaded ? 'Loaded On Server' : 'Load Voice Profile'}
             </Button>
 
-            <Button variant="ghost" size="sm" onClick={fetchModels}>
+            <Button variant="outline" size="lg" onClick={fetchModels} className="rounded-2xl border-slate-200 px-5">
               <RefreshCw size={14} />
-              Refresh
+              Refresh Library
             </Button>
+
+            {loadedProfileName && !selectionLoaded && (
+              <span className="text-sm text-slate-500">
+                Currently loaded: <span className="font-semibold text-slate-700">{loadedProfileName}</span>
+              </span>
+            )}
 
             {modelError && (
-              <span className="border-l-2 border-destructive pl-3 text-sm text-destructive">
+              <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
                 {modelError}
               </span>
             )}
@@ -335,42 +1013,55 @@ export default function InferencePage() {
       </Card>
 
       {/* 02 Reference Audio */}
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
           <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
               2
             </Badge>
             <div className="flex-1">
               <div className="flex items-center gap-3">
-                <CardTitle>Reference Audio</CardTitle>
+                <CardTitle className="font-display text-2xl">Reference Audio</CardTitle>
                 {refLocked && (
-                  <Badge variant="success" className="text-[10px]">
+                  <Badge variant="success" className="text-[10px] uppercase tracking-[0.2em]">
                     <Check size={10} className="mr-1" />
                     Confirmed
                   </Badge>
                 )}
               </div>
               <CardDescription>
-                {refLocked ? 'Selection locked for generation' : 'Select a primary reference and optional auxiliary audio'}
+                {refLocked ? 'This reference set is ready to use for generation.' : 'Choose one primary reference, add any supporting clips you want, then confirm the set.'}
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6 p-6">
+          <ReferencePresetLibrary
+            presets={referencePresets}
+            activePresetId={activeReferencePresetId}
+            onApply={applyReferencePreset}
+            onRename={handleRenameReferencePreset}
+            onDelete={handleDeleteReferencePreset}
+          />
+
           {refLocked ? (
             /* Locked summary */
             <div>
-              <div className="rounded-lg border bg-background p-4">
-                <div className="mb-2 flex items-center gap-2.5">
+              <div className="rounded-[24px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(239,246,255,0.9))] p-5 shadow-sm">
+                <div className="mb-2 flex flex-wrap items-center gap-2.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                   <span className="font-mono text-sm text-foreground">
                     {refAudioFile?.name || 'Unknown'}
                   </span>
-                  <Badge variant="default" className="text-[10px]">Primary</Badge>
+                  <Badge variant="default" className="text-[10px] uppercase tracking-[0.2em]">Primary</Badge>
+                  {activeReferencePresetId && (
+                    <Badge variant="outline" className="bg-white text-[10px] uppercase tracking-[0.18em]">
+                      {referencePresets.find((preset) => preset.id === activeReferencePresetId)?.name || 'Saved set'}
+                    </Badge>
+                  )}
                 </div>
                 {promptText && (
-                  <p className="ml-4 text-sm italic text-muted-foreground">
+                  <p className="ml-4 text-sm italic leading-7 text-muted-foreground">
                     &ldquo;{promptText}&rdquo;
                   </p>
                 )}
@@ -386,19 +1077,19 @@ export default function InferencePage() {
               <Button
                 variant="outline"
                 size="sm"
-                className="mt-4"
+                className="mt-4 rounded-xl"
                 onClick={() => setRefLocked(false)}
               >
                 <Pencil size={12} />
-                Edit Selection
+                Edit Reference
               </Button>
             </div>
           ) : (
             /* Unlocked selection UI */
             <div>
-              <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1.08fr)_minmax(300px,0.92fr)]">
                 {/* Left: audio file list */}
-                <div>
+                <div className="space-y-4">
                   <div className="mb-2 flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Audio Files</Label>
                     {auxCount > 0 && (
@@ -410,21 +1101,23 @@ export default function InferencePage() {
 
                   {/* Training audio list */}
                   {loadingTrainingAudio ? (
-                    <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2 rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground">
                       <Spinner /> Loading training audio...
                     </div>
                   ) : trainingAudioFiles.length > 0 ? (
                     <>
-                      <div className="max-h-[280px] overflow-y-auto rounded-md border bg-background">
+                      <div className="max-h-[300px] overflow-y-auto rounded-[22px] border border-slate-200 bg-slate-50/70">
                         {trainingAudioFiles.map((file) => {
                           const isPrimary = file.path === refAudioPath;
                           const isAux = auxRefAudios.some(f => f.filename === file.filename);
+                          const isPreviewed = file.path === previewAudioPath;
                           return (
                             <div
                               key={file.filename}
                               className={cn(
-                                "flex items-center gap-2.5 border-b px-3 py-2 transition-colors last:border-0",
-                                isPrimary && "bg-primary/5"
+                                "flex items-start gap-2.5 border-b px-4 py-3 transition-colors last:border-0",
+                                isPrimary && "bg-primary/5",
+                                isPreviewed && "ring-1 ring-inset ring-sky-200"
                               )}
                             >
                               <input
@@ -446,16 +1139,25 @@ export default function InferencePage() {
                                   isPrimary ? "cursor-not-allowed opacity-30" : "cursor-pointer"
                                 )}
                               />
-                              <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => setPreview({
+                                  path: file.path,
+                                  url: getTrainingAudioUrl(currentExpName, file.filename),
+                                  name: file.filename,
+                                  role: isPrimary ? 'primary' : isAux ? 'auxiliary' : 'preview',
+                                })}
+                                className="min-w-0 flex-1 text-left"
+                              >
                                 <div className="break-all font-mono text-xs text-foreground">
                                   {file.filename}
                                 </div>
                                 {file.transcript && (
-                                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  <div className="mt-1 text-sm leading-6 text-muted-foreground">
                                     {file.transcript}
                                   </div>
                                 )}
-                              </div>
+                              </button>
                             </div>
                           );
                         })}
@@ -474,25 +1176,28 @@ export default function InferencePage() {
                       )}
                     </>
                   ) : currentExpName ? (
-                    <div className="rounded-md border bg-background p-4 text-center text-sm text-muted-foreground">
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-center text-sm text-muted-foreground">
                       No training audio found for &ldquo;{currentExpName}&rdquo;
                     </div>
                   ) : (
-                    <div className="rounded-md border bg-background p-4 text-center text-sm text-muted-foreground">
-                      Load a model to browse its training audio
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-center text-sm text-muted-foreground">
+                      Load a voice profile to browse matching training audio
                     </div>
                   )}
 
                   {/* Upload custom files */}
                   <div className="mt-4">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Or Upload Custom Audio</Label>
-                    <div className="mt-2 flex items-center gap-2.5 rounded-md border bg-background px-3 py-2.5">
+                    <div className="mt-2 flex items-center gap-2.5 rounded-[22px] border border-dashed border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.95),rgba(248,250,252,0.95))] px-4 py-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
+                        <Upload size={16} />
+                      </div>
                       <input
                         type="file"
                         accept=".wav,.mp3,.ogg,.flac"
                         multiple
                         onChange={handleRefUpload}
-                        className="flex-1 text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-primary hover:file:bg-primary/20"
+                        className="flex-1 text-sm text-muted-foreground file:mr-3 file:rounded-xl file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-primary hover:file:bg-primary/20"
                       />
                       {uploadingFiles && <Spinner />}
                     </div>
@@ -500,15 +1205,17 @@ export default function InferencePage() {
 
                   {/* Uploaded file list */}
                   {uploadedRefFiles.length > 0 && (
-                    <ScrollArea className="mt-2 max-h-[160px] rounded-md border bg-background">
+                    <ScrollArea className="mt-2 max-h-[180px] rounded-[22px] border border-slate-200 bg-white">
                       {uploadedRefFiles.map((entry) => {
                         const isPrimary = entry.serverPath === refAudioPath;
+                        const isPreviewed = entry.serverPath === previewAudioPath;
                         return (
                           <div
                             key={entry.serverPath}
                             className={cn(
-                              "flex items-center gap-2.5 border-b px-3 py-2 transition-colors last:border-0",
-                              isPrimary && "bg-primary/5"
+                              "flex items-center gap-2.5 border-b px-4 py-3 transition-colors last:border-0",
+                              isPrimary && "bg-primary/5",
+                              isPreviewed && "ring-1 ring-inset ring-sky-200"
                             )}
                           >
                             <input
@@ -519,21 +1226,30 @@ export default function InferencePage() {
                               title="Set as primary reference"
                               className="h-4 w-4 shrink-0 cursor-pointer accent-[hsl(var(--primary))]"
                             />
-                            <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => setPreview({
+                                path: entry.serverPath,
+                                url: entry.localUrl || getUploadedRefAudioUrl(entry.serverPath),
+                                name: entry.name,
+                                role: isPrimary ? 'primary' : 'auxiliary',
+                              })}
+                              className="min-w-0 flex-1 text-left"
+                            >
                               <div className="truncate font-mono text-xs text-foreground">
                                 {entry.name}
                               </div>
                               <div className={cn(
-                                "mt-0.5 text-[10px] uppercase tracking-wider",
+                                "mt-1 text-[10px] uppercase tracking-[0.18em]",
                                 isPrimary ? "font-semibold text-primary" : "text-muted-foreground"
                               )}>
                                 {isPrimary ? 'Primary (uploaded)' : 'Auxiliary (uploaded)'}
                               </div>
-                            </div>
+                            </button>
                             <button
                               onClick={() => handleRemoveUploadedFile(entry)}
                               title="Remove"
-                              className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                              className="shrink-0 rounded-xl p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                             >
                               <X size={12} />
                             </button>
@@ -546,31 +1262,29 @@ export default function InferencePage() {
 
                 {/* Right: transcript + language + player */}
                 <div className="space-y-4">
-                  <div>
-                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reference Transcript</Label>
-                    <div className="mt-2 flex gap-2">
-                      <Input
-                        className="flex-1"
+                  <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-5">
+                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Primary Reference Transcript</Label>
+                    <Textarea
+                      className="mt-3 min-h-[120px] rounded-2xl border-slate-200 bg-white leading-7 shadow-sm"
                         placeholder="What the primary reference audio says..."
                         value={promptText}
                         onChange={(e) => setPromptText(e.target.value)}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleTranscribe}
-                        disabled={transcribing || !refAudioPath}
-                      >
-                        {transcribing ? <Spinner size={14} /> : <Mic size={14} />}
-                        {transcribing ? 'Working...' : 'Transcribe'}
-                      </Button>
-                    </div>
+                    />
+                    <Button
+                      variant="outline"
+                      className="mt-3 w-full rounded-2xl border-slate-200"
+                      onClick={handleTranscribe}
+                      disabled={transcribing || !refAudioPath}
+                    >
+                      {transcribing ? <Spinner size={14} /> : <Mic size={14} />}
+                      {transcribing ? 'Working...' : 'Auto-Transcribe'}
+                    </Button>
                   </div>
 
-                  <div>
+                  <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reference Language</Label>
                     <Select value={promptLang} onValueChange={setPromptLang}>
-                      <SelectTrigger className="mt-2">
+                      <SelectTrigger className="mt-3 h-12 rounded-2xl border-slate-200 bg-slate-50">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -583,21 +1297,37 @@ export default function InferencePage() {
                     </Select>
                   </div>
 
-                  {refAudioUrl && (
-                    <div>
+                  <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
                       <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Preview</Label>
-                      <RefAudioPlayer src={refAudioUrl} />
+                      <Badge variant="outline" className="text-[10px] uppercase tracking-[0.18em]">
+                        {previewAudioRole || 'primary'}
+                      </Badge>
                     </div>
-                  )}
+                    {previewAudioUrl ? (
+                      <>
+                        <p className="mt-3 truncate font-mono text-xs text-slate-500">
+                          {previewAudioName || 'Selected audio'}
+                        </p>
+                        <RefAudioPlayer src={previewAudioUrl} />
+                      </>
+                    ) : (
+                      <div className="mt-3 rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                        Choose any primary or auxiliary clip to preview it here.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* Confirm button */}
               <div className="mt-6">
                 <Button
+                  className="rounded-2xl px-6"
                   onClick={() => {
                     if (!refAudioPath) return alert('Select a primary reference audio first');
                     setRefLocked(true);
+                    saveCurrentReferencePreset();
                   }}
                   disabled={!refAudioPath}
                 >
@@ -611,24 +1341,24 @@ export default function InferencePage() {
       </Card>
 
       {/* 03 Text Input */}
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
           <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
               3
             </Badge>
             <div>
-              <CardTitle>Text to Synthesize</CardTitle>
+              <CardTitle className="font-display text-2xl">Text to Synthesize</CardTitle>
               <CardDescription>Enter the text you want spoken in the cloned voice</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-[3fr_1fr] gap-6">
-            <div>
+        <CardContent className="p-6">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.75fr)]">
+            <div className="rounded-[22px] border border-slate-200 bg-slate-50/80 p-5">
               <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Text</Label>
               <Textarea
-                className="mt-2 min-h-[140px] leading-relaxed"
+                className="mt-3 min-h-[180px] rounded-2xl border-slate-200 bg-white text-[15px] leading-7 shadow-sm"
                 placeholder="Enter the text you want to synthesize..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -639,42 +1369,62 @@ export default function InferencePage() {
                 </p>
               )}
             </div>
-            <div>
-              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Language</Label>
-              <Select value={textLang} onValueChange={setTextLang}>
-                <SelectTrigger className="mt-2">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="zh">Chinese</SelectItem>
-                  <SelectItem value="ja">Japanese</SelectItem>
-                  <SelectItem value="ko">Korean</SelectItem>
-                  <SelectItem value="auto">Auto Detect</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="space-y-4">
+              <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
+                <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Language</Label>
+                <Select value={textLang} onValueChange={setTextLang}>
+                  <SelectTrigger className="mt-3 h-12 rounded-2xl border-slate-200 bg-slate-50">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="zh">Chinese</SelectItem>
+                    <SelectItem value="ja">Japanese</SelectItem>
+                    <SelectItem value="ko">Korean</SelectItem>
+                    <SelectItem value="auto">Auto Detect</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-[linear-gradient(135deg,rgba(248,250,252,0.95),rgba(240,249,255,0.9))] p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Current Setup</p>
+                <div className="mt-4 space-y-3 text-sm text-slate-600">
+                  <div className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3">
+                    <span>Voice</span>
+                    <span className="min-w-0 text-right font-semibold text-slate-800">{selectedProfile?.displayName || 'None selected'}</span>
+                  </div>
+                  <div className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3">
+                    <span>Reference</span>
+                    <span className="min-w-0 break-words text-right font-semibold leading-6 text-slate-800">{refAudioFile?.name || 'Not selected'}</span>
+                  </div>
+                  <div className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3">
+                    <span>Status</span>
+                    <span className="min-w-0 text-right font-semibold text-slate-800">{selectionLoaded ? 'Ready' : 'Load voice first'}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* 04 Settings */}
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
           <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
               4
             </Badge>
             <div>
-              <CardTitle>Generation Settings</CardTitle>
+              <CardTitle className="font-display text-2xl">Generation Settings</CardTitle>
               <CardDescription>Fine-tune the synthesis parameters</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-6">
           <Collapsible open={showSettings} onOpenChange={setShowSettings}>
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground">
+              <Button variant="outline" size="sm" className="gap-2 rounded-2xl border-slate-200 text-muted-foreground">
                 <ChevronRight
                   size={14}
                   className={cn("transition-transform", showSettings && "rotate-90")}
@@ -685,7 +1435,7 @@ export default function InferencePage() {
             <CollapsibleContent>
               <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-x-10">
                 {/* Speed */}
-                <div className="space-y-3">
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Speed</Label>
                     <span className="font-mono text-sm font-semibold">{speed.toFixed(1)}x</span>
@@ -698,7 +1448,7 @@ export default function InferencePage() {
                 </div>
 
                 {/* Top K */}
-                <div className="space-y-3">
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Top K</Label>
                     <span className="font-mono text-sm font-semibold">{topK}</span>
@@ -711,7 +1461,7 @@ export default function InferencePage() {
                 </div>
 
                 {/* Top P */}
-                <div className="space-y-3">
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Top P</Label>
                     <span className="font-mono text-sm font-semibold">{topP.toFixed(2)}</span>
@@ -724,7 +1474,7 @@ export default function InferencePage() {
                 </div>
 
                 {/* Temperature */}
-                <div className="space-y-3">
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Temperature</Label>
                     <span className="font-mono text-sm font-semibold">{temperature.toFixed(2)}</span>
@@ -737,7 +1487,7 @@ export default function InferencePage() {
                 </div>
 
                 {/* Repetition Penalty */}
-                <div className="space-y-3">
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Repetition Penalty</Label>
                     <span className="font-mono text-sm font-semibold">{repPenalty.toFixed(2)}</span>
@@ -755,23 +1505,25 @@ export default function InferencePage() {
       </Card>
 
       {/* 05 Generate */}
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
           <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-6 w-6 shrink-0 items-center justify-center rounded-full p-0 text-xs font-semibold">
+            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
               5
             </Badge>
             <div>
-              <CardTitle>Generate</CardTitle>
+              <CardTitle className="font-display text-2xl">Generate</CardTitle>
               <CardDescription>Synthesize speech from your text</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          {inference.status !== 'generating' ? (
-            <div className={cn("flex items-center gap-4", audioBlob && "mb-6")}>
+        <CardContent className="p-6">
+          {!isGenerationActive ? (
+            <div className={cn("flex flex-wrap items-center gap-4", audioBlob && "mb-6")}>
               <Button
                 size="lg"
+                className="rounded-2xl shadow-[0_20px_50px_-28px_rgba(14,165,233,0.75)]"
+                disabled={!selectionLoaded || !refLocked || !refAudioPath || !text.trim()}
                 onClick={() => { inference.reset(); handleGenerate(); }}
               >
                 <Play size={14} />
@@ -779,7 +1531,7 @@ export default function InferencePage() {
               </Button>
 
               {inferError && (
-                <span className="border-l-2 border-destructive pl-3 text-sm text-destructive">
+                <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
                   {inferError}
                 </span>
               )}
@@ -788,7 +1540,7 @@ export default function InferencePage() {
             /* Progress UI */
             <div className={cn(audioBlob && "mb-6")}>
               {/* Progress bar */}
-              <div className="mb-4 flex items-center gap-4">
+              <div className="mb-4 flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-4">
                 <Progress
                   value={inference.totalChunks > 0 ? (inference.completedChunks / inference.totalChunks) * 100 : 0}
                   className="h-2 flex-1"
@@ -798,9 +1550,20 @@ export default function InferencePage() {
                 </span>
               </div>
 
+              {inference.status === 'waiting' && !inference.currentChunkText && (
+                <div className="mb-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3">
+                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Preparing session
+                  </span>
+                  <p className="text-sm italic text-muted-foreground">
+                    Reconnecting the stream and preparing chunk generation...
+                  </p>
+                </div>
+              )}
+
               {/* Current chunk text */}
               {inference.currentChunkText && (
-                <div className="mb-4 rounded-md border bg-muted/50 px-4 py-3">
+                <div className="mb-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3">
                   <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                     Synthesizing chunk {inference.completedChunks + 1}
                   </span>
@@ -811,7 +1574,7 @@ export default function InferencePage() {
               )}
 
               {/* Cancel button */}
-              <Button variant="outline" onClick={handleCancel}>
+              <Button variant="outline" className="rounded-2xl border-slate-200" onClick={handleCancel}>
                 <Spinner size={14} />
                 Cancel Generation
               </Button>

@@ -79,6 +79,10 @@ export function startGeneration(params) {
   return api.post('/inference/generate', params);
 }
 
+export function getCurrentInference() {
+  return api.get('/inference/current');
+}
+
 // Download final WAV from streaming generation
 export async function getGenerationResult(sessionId) {
   const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
@@ -103,4 +107,8 @@ export function getTrainingAudioFiles(expName) {
 // Get URL for streaming a training audio file
 export function getTrainingAudioUrl(expName, filename) {
   return `/api/training-audio/file/${encodeURIComponent(expName)}/${encodeURIComponent(filename)}`;
+}
+
+export function getUploadedRefAudioUrl(filePath) {
+  return `/api/ref-audio?filePath=${encodeURIComponent(filePath)}`;
 }

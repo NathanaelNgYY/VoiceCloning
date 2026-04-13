@@ -1,76 +1,127 @@
 import React from 'react';
-import { Check, X } from 'lucide-react';
+import {
+  AudioLines,
+  Bot,
+  Check,
+  Cpu,
+  FileText,
+  Fingerprint,
+  Mic,
+  ScissorsLineDashed,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-function StepDot({ status }) {
-  if (status === 'done') {
-    return (
-      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-success transition-all">
-        <Check size={14} className="text-white" strokeWidth={2.5} />
-      </div>
-    );
-  }
+const STEP_ICONS = [
+  ScissorsLineDashed,
+  Sparkles,
+  Mic,
+  FileText,
+  Fingerprint,
+  Cpu,
+  AudioLines,
+  Bot,
+];
 
-  if (status === 'error') {
-    return (
-      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-destructive">
-        <X size={12} className="text-white" strokeWidth={2.5} />
-      </div>
-    );
+function getStatusMeta(status) {
+  if (status === 'done') {
+    return {
+      label: 'Done',
+      circleClass: 'border-emerald-200 bg-emerald-500 text-white shadow-[0_18px_40px_-24px_rgba(16,185,129,0.8)]',
+      textClass: 'text-emerald-700',
+      connectorClass: 'bg-emerald-300',
+    };
   }
 
   if (status === 'running') {
-    return (
-      <div className="flex h-6 w-6 animate-pulse-dot items-center justify-center rounded-full bg-primary">
-        <div className="h-2 w-2 rounded-full bg-white" />
-      </div>
-    );
+    return {
+      label: 'Running',
+      circleClass: 'border-sky-200 bg-sky-500 text-white shadow-[0_18px_40px_-24px_rgba(14,165,233,0.9)]',
+      textClass: 'text-sky-700',
+      connectorClass: 'bg-sky-300',
+    };
   }
 
-  // pending / skipped
-  return (
-    <div className="h-6 w-6 rounded-full border-2 border-border bg-transparent transition-all" />
-  );
+  if (status === 'error') {
+    return {
+      label: 'Error',
+      circleClass: 'border-rose-200 bg-rose-500 text-white shadow-[0_18px_40px_-24px_rgba(239,68,68,0.85)]',
+      textClass: 'text-rose-700',
+      connectorClass: 'bg-rose-300',
+    };
+  }
+
+  return {
+    label: status === 'skipped' ? 'Skipped' : 'Pending',
+    circleClass: 'border-slate-200 bg-white text-slate-400',
+    textClass: 'text-slate-500',
+    connectorClass: 'bg-slate-200',
+  };
 }
 
 export default function ProgressTracker({ steps }) {
   return (
-    <div className="flex items-start overflow-x-auto py-1">
-      {steps.map((step, i) => {
-        const isActive = step.status === 'running';
-        const isDone = step.status === 'done';
+    <div className="w-full">
+      <div className="flex items-start gap-1 py-2 lg:gap-2">
+        {steps.map((step, index) => {
+          const Icon = STEP_ICONS[index] || AudioLines;
+          const meta = getStatusMeta(step.status);
+          const isDone = step.status === 'done';
+          const isRunning = step.status === 'running';
+          const isError = step.status === 'error';
 
-        return (
-          <React.Fragment key={step.index}>
-            <div className="relative flex min-w-[80px] flex-1 flex-col items-center">
-              <StepDot status={step.status} />
+          return (
+            <React.Fragment key={step.index}>
+              <div className="min-w-0 flex-1 text-center">
+                <div className="flex items-center justify-center">
+                  <div
+                    className={cn(
+                      'mx-auto flex h-10 w-10 items-center justify-center rounded-full border transition-all lg:h-11 lg:w-11',
+                      meta.circleClass,
+                      isRunning && 'animate-pulse-dot'
+                    )}
+                  >
+                    {isDone ? (
+                      <Check size={16} strokeWidth={2.4} />
+                    ) : isError ? (
+                      <X size={15} strokeWidth={2.4} />
+                    ) : (
+                      <Icon size={16} strokeWidth={2.2} />
+                    )}
+                  </div>
+                </div>
 
-              <span
-                className={cn(
-                  "mt-2.5 max-w-[76px] text-center text-[10px] uppercase tracking-wide transition-colors",
-                  isActive && "font-semibold text-primary",
-                  isDone && "font-medium text-success",
-                  step.status === 'error' && "font-medium text-destructive",
-                  step.status === 'pending' && "text-muted-foreground",
-                  step.status === 'skipped' && "text-muted-foreground"
-                )}
-              >
-                {step.name}
-              </span>
-            </div>
+                <div className="mt-3">
+                  <p className="font-mono text-[9px] uppercase tracking-[0.24em] text-slate-400 lg:text-[10px] lg:tracking-[0.28em]">
+                    {String(index + 1).padStart(2, '0')}
+                  </p>
+                  <p
+                    className={cn(
+                      'mt-2 text-[9px] font-semibold uppercase leading-4 tracking-[0.14em] sm:text-[10px] lg:text-[11px] lg:leading-5 lg:tracking-[0.16em]',
+                      isDone && 'text-emerald-700',
+                      isRunning && 'text-sky-700',
+                      isError && 'text-rose-700',
+                      !isDone && !isRunning && !isError && 'text-slate-600'
+                    )}
+                  >
+                    {step.name}
+                  </p>
+                  <p className={cn('mt-1.5 text-[8px] font-medium uppercase tracking-[0.16em] sm:text-[9px] lg:text-[10px] lg:tracking-[0.18em]', meta.textClass)}>
+                    {meta.label}
+                  </p>
+                </div>
+              </div>
 
-            {/* Connector line */}
-            {i < steps.length - 1 && (
-              <div
-                className={cn(
-                  "mt-3 min-w-[8px] flex-1 self-start transition-colors",
-                  isDone ? "h-0.5 bg-success" : "h-px bg-border"
-                )}
-              />
-            )}
-          </React.Fragment>
-        );
-      })}
+              {index < steps.length - 1 && (
+                <div className="flex h-10 w-4 shrink-0 items-center justify-center lg:h-11 lg:w-6">
+                  <div className={cn('h-0.5 w-full rounded-full', meta.connectorClass)} />
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
     </div>
   );
 }
