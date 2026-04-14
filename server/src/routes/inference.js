@@ -1,15 +1,137 @@
 import { Router } from 'express';
-import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
+import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, getConfigError } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
 import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
+import { transcribeReferenceAudio } from '../services/transcriptionService.js';
 
 const router = Router();
+
+const SUPPORTED_TEXT_SPLIT_METHODS = new Set(['cut0', 'cut1', 'cut2', 'cut3', 'cut4', 'cut5']);
+const QUALITY_PRESETS = {
+  studio: {
+    maxChunkLength: 240,
+    maxSentencesPerChunk: 2,
+    chunkJoinPauseMs: 100,
+    retryCount: 3,
+    textSplitMethod: 'cut0',
+    fragmentInterval: 0.22,
+    batchSize: 1,
+    splitBucket: true,
+    parallelInfer: false,
+  },
+  balanced: {
+    maxChunkLength: 300,
+    maxSentencesPerChunk: 3,
+    chunkJoinPauseMs: 90,
+    retryCount: 2,
+    textSplitMethod: 'cut0',
+    fragmentInterval: 0.18,
+    batchSize: 1,
+    splitBucket: true,
+    parallelInfer: false,
+  },
+  flow: {
+    maxChunkLength: 360,
+    maxSentencesPerChunk: 4,
+    chunkJoinPauseMs: 70,
+    retryCount: 2,
+    textSplitMethod: 'cut0',
+    fragmentInterval: 0.15,
+    batchSize: 1,
+    splitBucket: true,
+    parallelInfer: false,
+  },
+};
+const TRANSCRIPTION_LANGUAGE_MAP = {
+  zh: 'zh',
+  en: 'en',
+  ja: 'ja',
+  ko: 'ko',
+  ZH: 'zh',
+  EN: 'en',
+  JA: 'ja',
+  KO: 'ko',
+};
+
+function clampNumber(value, fallback, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function clampInteger(value, fallback, min, max) {
+  return Math.round(clampNumber(value, fallback, min, max));
+}
+
+function readBoolean(value, fallback) {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
+}
+
+function normalizeTextSplitMethod(value, fallback) {
+  const next = String(value || '').trim().toLowerCase();
+  return SUPPORTED_TEXT_SPLIT_METHODS.has(next) ? next : fallback;
+}
+
+function resolveInferenceOptions(body = {}) {
+  const requestedPreset = String(body.quality_preset || '').trim().toLowerCase();
+  const presetKey = QUALITY_PRESETS[requestedPreset] ? requestedPreset : 'studio';
+  const preset = QUALITY_PRESETS[presetKey];
+
+  return {
+    qualityPreset: presetKey,
+    synthParams: {
+      text_split_method: normalizeTextSplitMethod(body.text_split_method, preset.textSplitMethod),
+      fragment_interval: clampNumber(body.fragment_interval, preset.fragmentInterval, 0.05, 0.5),
+      batch_size: clampInteger(body.batch_size, preset.batchSize, 1, 4),
+      split_bucket: readBoolean(body.split_bucket, preset.splitBucket),
+      parallel_infer: readBoolean(body.parallel_infer, preset.parallelInfer),
+    },
+    chunkOptions: {
+      maxChunkLength: clampInteger(body.max_chunk_length, preset.maxChunkLength, 120, 480),
+      maxSentencesPerChunk: clampInteger(body.max_sentences_per_chunk, preset.maxSentencesPerChunk, 1, 6),
+      chunkJoinPauseMs: clampInteger(body.chunk_join_pause_ms, preset.chunkJoinPauseMs, 0, 240),
+      retryCount: clampInteger(body.retry_count, preset.retryCount, 0, 5),
+    },
+  };
+}
+
+async function resolvePromptContext({ refAudioPath, promptText, promptLang }) {
+  const trimmedPromptText = String(promptText || '').trim();
+  const normalizedPromptLang = String(promptLang || 'en').trim() || 'en';
+
+  if (trimmedPromptText) {
+    return {
+      promptText: trimmedPromptText,
+      promptLang: normalizedPromptLang,
+      autoFilled: false,
+    };
+  }
+
+  const transcription = await transcribeReferenceAudio(refAudioPath, {
+    language: normalizedPromptLang || 'auto',
+    model: 'medium',
+  });
+  const detectedPromptText = String(transcription?.text || '').trim();
+  if (!detectedPromptText) {
+    throw new Error('Reference audio transcription was empty. Enter the transcript manually and try again.');
+  }
+
+  return {
+    promptText: detectedPromptText,
+    promptLang: normalizedPromptLang === 'auto'
+      ? (TRANSCRIPTION_LANGUAGE_MAP[transcription?.language] || 'en')
+      : normalizedPromptLang,
+    autoFilled: true,
+  };
+}
 
 router.get('/models', (_req, res) => {
   const configError = getConfigError();
@@ -96,12 +218,19 @@ router.post('/inference', async (req, res) => {
       return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
     }
 
+    const inferenceOptions = resolveInferenceOptions(req.body);
+    const promptContext = await resolvePromptContext({
+      refAudioPath: ref_audio_path,
+      promptText: prompt_text,
+      promptLang: prompt_lang,
+    });
+
     const { audioBuffer, chunks } = await synthesizeLongText({
       text,
       text_lang,
       ref_audio_path,
-      prompt_text,
-      prompt_lang,
+      prompt_text: promptContext.promptText,
+      prompt_lang: promptContext.promptLang,
       aux_ref_audio_paths,
       top_k,
       top_p,
@@ -109,18 +238,16 @@ router.post('/inference', async (req, res) => {
       repetition_penalty,
       speed_factor,
       seed,
-    }, {
-      maxChunkLength: 280,
-      maxSentencesPerChunk: 3,
-      chunkJoinPauseMs: 120,
-      retryCount: 2,
-    });
+      ...inferenceOptions.synthParams,
+    }, inferenceOptions.chunkOptions);
 
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': audioBuffer.length,
       'X-Chunk-Count': String(chunks.length),
       'X-Chunk-Retries': String(chunks.reduce((sum, chunk) => sum + Math.max(0, chunk.attempts - 1), 0)),
+      'X-Quality-Preset': inferenceOptions.qualityPreset,
+      'X-Auto-Transcribed-Prompt': promptContext.autoFilled ? 'true' : 'false',
     });
     res.send(audioBuffer);
   } catch (err) {
@@ -162,6 +289,19 @@ router.post('/inference/generate', async (req, res) => {
     return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
   }
 
+  let promptContext;
+  let inferenceOptions;
+  try {
+    inferenceOptions = resolveInferenceOptions(req.body);
+    promptContext = await resolvePromptContext({
+      refAudioPath: ref_audio_path,
+      promptText: prompt_text,
+      promptLang: prompt_lang,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+
   const sessionId = crypto.randomUUID();
   inferenceState.resetForNewSession({
     sessionId,
@@ -169,8 +309,8 @@ router.post('/inference/generate', async (req, res) => {
       text,
       text_lang,
       ref_audio_path,
-      prompt_text,
-      prompt_lang,
+      prompt_text: promptContext.promptText,
+      prompt_lang: promptContext.promptLang,
       aux_ref_audio_paths,
       top_k,
       top_p,
@@ -178,6 +318,13 @@ router.post('/inference/generate', async (req, res) => {
       repetition_penalty,
       speed_factor,
       seed,
+      quality_preset: inferenceOptions.qualityPreset,
+      ...inferenceOptions.synthParams,
+      max_chunk_length: inferenceOptions.chunkOptions.maxChunkLength,
+      max_sentences_per_chunk: inferenceOptions.chunkOptions.maxSentencesPerChunk,
+      chunk_join_pause_ms: inferenceOptions.chunkOptions.chunkJoinPauseMs,
+      retry_count: inferenceOptions.chunkOptions.retryCount,
+      auto_transcribed_prompt: promptContext.autoFilled,
     },
   });
   sseManager.prepareSession(sessionId);
@@ -189,8 +336,8 @@ router.post('/inference/generate', async (req, res) => {
       text,
       text_lang,
       ref_audio_path,
-      prompt_text,
-      prompt_lang,
+      prompt_text: promptContext.promptText,
+      prompt_lang: promptContext.promptLang,
       aux_ref_audio_paths,
       top_k,
       top_p,
@@ -198,12 +345,8 @@ router.post('/inference/generate', async (req, res) => {
       repetition_penalty,
       speed_factor,
       seed,
-    }, {
-      maxChunkLength: 280,
-      maxSentencesPerChunk: 3,
-      chunkJoinPauseMs: 120,
-      retryCount: 2,
-    });
+      ...inferenceOptions.synthParams,
+    }, inferenceOptions.chunkOptions);
   }).catch((err) => {
     console.error(`[inference/generate] SSE client timeout for ${sessionId}:`, err.message);
   });
@@ -266,60 +409,7 @@ router.post('/transcribe', async (req, res) => {
   }
 
   try {
-    const result = await new Promise((resolve, reject) => {
-      const args = [
-        '-c',
-        [
-          'import runpy, sys',
-          `ROOT = ${JSON.stringify(GPT_SOVITS_ROOT)}`,
-          `TOOLS = ROOT + "/tools"`,
-          `GPT = ROOT + "/GPT_SoVITS"`,
-          `SCRIPT = ${JSON.stringify(SCRIPTS.transcribeSingle)}`,
-          'sys.path[:0] = [path for path in (GPT, TOOLS, ROOT) if path and path not in sys.path]',
-          'sys.argv = [SCRIPT, *sys.argv[1:]]',
-          'runpy.run_path(SCRIPT, run_name="__main__")',
-        ].join('; '),
-        '-i', absolutePath,
-        '-l', language,
-        '-s', 'medium',
-        '-p', 'int8',
-      ];
-
-      const proc = spawn(PYTHON_EXEC, args, {
-        cwd: GPT_SOVITS_ROOT,
-        env: {
-          ...process.env,
-          PYTHONUNBUFFERED: '1',
-          PYTHONIOENCODING: 'utf-8',
-          PATH: `${GPT_SOVITS_ROOT};${process.env.PATH}`,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-      let stderr = '';
-      proc.stdout.on('data', (d) => { stdout += d.toString(); });
-      proc.stderr.on('data', (d) => {
-        stderr += d.toString();
-        console.log('[transcribe]', d.toString().trim());
-      });
-
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          return reject(new Error(stderr || `Transcription exited with code ${code}`));
-        }
-        const lines = stdout.trim().split('\n');
-        const lastLine = lines[lines.length - 1];
-        try {
-          resolve(JSON.parse(lastLine));
-        } catch {
-          reject(new Error('Failed to parse transcription output'));
-        }
-      });
-
-      proc.on('error', reject);
-    });
-
+    const result = await transcribeReferenceAudio(filePath, { language, model: 'medium' });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

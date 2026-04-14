@@ -10,10 +10,11 @@ import { TEMP_DIR } from '../config.js';
 const activeSessions = new Map(); // sessionId -> { cancelled: boolean }
 
 const DEFAULTS = {
-  maxChunkLength: 280,
+  maxChunkLength: 300,
   maxSentencesPerChunk: 3,
-  chunkJoinPauseMs: 120,
-  retryCount: 2,
+  chunkJoinPauseMs: 90,
+  retryCount: 3,
+  minChunkLength: 72,
 };
 
 function clampNumber(value, fallback) {
@@ -332,9 +333,72 @@ function splitLongSentence(sentence, maxChunkLength) {
   return parts.filter(Boolean);
 }
 
+function endsWithEllipsis(text) {
+  const trimmed = text.trimEnd();
+  return trimmed.endsWith('...') || trimmed.endsWith('\u2026');
+}
+
+function isStrongBoundary(text) {
+  const trimmed = text.trimEnd();
+  const lastChar = trimmed.slice(-1);
+  return endsWithEllipsis(trimmed) || '.!?\u3002\uff01\uff1f'.includes(lastChar);
+}
+
+function isMediumBoundary(text) {
+  const trimmed = text.trimEnd();
+  const lastChar = trimmed.slice(-1);
+  return ':\uff1a;\uff1b'.includes(lastChar);
+}
+
+function isWeakBoundary(text) {
+  const trimmed = text.trimEnd();
+  const lastChar = trimmed.slice(-1);
+  return ',\uff0c\u2014'.includes(lastChar) || trimmed.endsWith('--');
+}
+
+function shouldFlushChunk(text, maxChunkLength) {
+  const trimmed = text.trimEnd();
+  if (!trimmed) return false;
+  if (isStrongBoundary(trimmed)) return true;
+  if (isMediumBoundary(trimmed) && trimmed.length >= Math.floor(maxChunkLength * 0.72)) return true;
+  if (isWeakBoundary(trimmed) && trimmed.length >= Math.floor(maxChunkLength * 0.88)) return true;
+  return false;
+}
+
+function mergeShortChunks(chunks, maxChunkLength, minChunkLength = DEFAULTS.minChunkLength) {
+  const merged = [];
+
+  for (const chunk of chunks) {
+    const current = String(chunk || '').trim();
+    if (!current) continue;
+
+    const previous = merged[merged.length - 1];
+    if (!previous) {
+      merged.push(current);
+      continue;
+    }
+
+    const combined = `${previous} ${current}`.replace(/\s+/g, ' ').trim();
+    const previousHasStrongBoundary = isStrongBoundary(previous);
+    const previousHasWeakBoundary = isWeakBoundary(previous) || isMediumBoundary(previous);
+    const canMerge = combined.length <= maxChunkLength
+      && !previousHasStrongBoundary
+      && (previousHasWeakBoundary || previous.length < minChunkLength || current.length < minChunkLength);
+
+    if (canMerge) {
+      merged[merged.length - 1] = combined;
+    } else {
+      merged.push(current);
+    }
+  }
+
+  return merged;
+}
+
 export function splitTextIntoChunks(text, options = {}) {
   const maxChunkLength = Math.max(80, clampNumber(options.maxChunkLength, DEFAULTS.maxChunkLength));
   const maxSentencesPerChunk = Math.max(1, clampNumber(options.maxSentencesPerChunk, DEFAULTS.maxSentencesPerChunk));
+  const minChunkLength = Math.max(24, clampNumber(options.minChunkLength, DEFAULTS.minChunkLength));
 
   const rawSentences = splitIntoSentences(text).flatMap(sentence => splitLongSentence(sentence, maxChunkLength));
   const chunks = [];
@@ -355,8 +419,8 @@ export function splitTextIntoChunks(text, options = {}) {
       sentenceCount += 1;
     }
 
-    // Force a chunk boundary after any pause-worthy punctuation so silence is inserted between chunks
-    const trimmed = current.trimEnd();
+    // Only flush when the boundary is strong enough or the chunk is already long.
+    const trimmed = shouldFlushChunk(current, maxChunkLength) ? current.trimEnd() : '';
     const lastChar = trimmed.slice(-1);
     const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
     if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
@@ -367,7 +431,7 @@ export function splitTextIntoChunks(text, options = {}) {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  return chunks;
+  return mergeShortChunks(chunks, maxChunkLength, minChunkLength);
 }
 
 function readChunk(buffer, offset) {
@@ -440,10 +504,9 @@ function buildWav(fmtChunk, dataChunk) {
 }
 
 /**
- * Normalize PCM16 chunk data so peak amplitude hits targetPeak (~-3dB at 0.7).
- * Prevents volume jumps between chunks. Skips if already close or silent.
+ * Only tame obvious gain extremes so we keep natural chunk-to-chunk dynamics.
  */
-function normalizeChunkPeak(data, targetPeak = 0.7) {
+function tameChunkGain(data, targetPeak = 0.82) {
   const bytesPerSample = 2;
   const sampleCount = Math.floor(data.length / bytesPerSample);
   if (sampleCount === 0) return;
@@ -454,12 +517,18 @@ function normalizeChunkPeak(data, targetPeak = 0.7) {
     if (sample > absPeak) absPeak = sample;
   }
 
-  // Skip if effectively silent or already within 2% of target
   if (absPeak < 100) return;
   const currentPeak = absPeak / 32767;
-  if (Math.abs(currentPeak - targetPeak) / targetPeak < 0.02) return;
+  let scale = 1;
 
-  const scale = targetPeak / currentPeak;
+  if (currentPeak > 0.95) {
+    scale = targetPeak / currentPeak;
+  } else if (currentPeak < 0.18) {
+    scale = Math.min(1.12, 0.24 / Math.max(currentPeak, 0.01));
+  } else {
+    return;
+  }
+
   for (let i = 0; i < sampleCount; i++) {
     const offset = i * bytesPerSample;
     const sample = data.readInt16LE(offset);
@@ -665,7 +734,7 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
   parsed.forEach((wav, index) => {
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
-      normalizeChunkPeak(chunk);
+      tameChunkGain(chunk);
       const fadeIn = index > 0 ? (fades[index - 1] ?? defaultFadeMs) : 0;
       const fadeOut = index < parsed.length - 1 ? (fades[index] ?? defaultFadeMs) : 0;
       if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
@@ -831,6 +900,8 @@ function buildAttemptVariants(baseParams, attemptIndex) {
   const safeTopP = clampNumber(baseParams.top_p, 1);
   const safeTopK = clampNumber(baseParams.top_k, 5);
   const speed = clampNumber(baseParams.speed_factor, 1);
+  const fragmentInterval = clampNumber(baseParams.fragment_interval, 0.18);
+  const batchSize = Math.max(1, Math.round(clampNumber(baseParams.batch_size, 1)));
 
   const baseSeed = baseParams.seed ?? Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16);
 
@@ -841,11 +912,11 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     aux_ref_audio_paths: baseParams.aux_ref_audio_paths || [],
     seed: baseSeed,
     text_split_method: baseParams.text_split_method || 'cut0',
-    batch_size: 1,
+    batch_size: batchSize,
     streaming_mode: false,
-    split_bucket: true,
-    parallel_infer: false,
-    fragment_interval: 0.1,
+    split_bucket: typeof baseParams.split_bucket === 'boolean' ? baseParams.split_bucket : true,
+    parallel_infer: typeof baseParams.parallel_infer === 'boolean' ? baseParams.parallel_infer : false,
+    fragment_interval: fragmentInterval,
     repetition_penalty: safeRepPenalty,
     speed_factor: speed,
   };
@@ -859,18 +930,19 @@ function buildAttemptVariants(baseParams, attemptIndex) {
       ...base,
       seed: (baseSeed + 17) >>> 0,
       repetition_penalty: safeRepPenalty + 0.1,
-      temperature: Math.max(0.5, safeTemperature * 0.88),
-      fragment_interval: 0.12,
+      temperature: Math.max(0.55, safeTemperature * 0.9),
+      top_p: Math.min(0.94, safeTopP),
+      fragment_interval: Math.max(fragmentInterval, 0.22),
     };
   }
 
   if (attemptIndex === 2) {
     return {
       ...base,
-      temperature: Math.max(0.5, safeTemperature * 0.75),
+      temperature: Math.max(0.5, safeTemperature * 0.78),
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(8, Math.min(safeTopK, 15)),
-      fragment_interval: 0.15,
+      fragment_interval: Math.max(fragmentInterval, 0.24),
       repetition_penalty: safeRepPenalty + 0.15,
       seed: (baseSeed + 31) >>> 0,
       text_split_method: 'cut4',
@@ -882,7 +954,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     temperature: 0.5,
     top_p: 0.88,
     top_k: 12,
-    fragment_interval: 0.2,
+    fragment_interval: Math.max(fragmentInterval, 0.28),
     repetition_penalty: safeRepPenalty + 0.2,
     seed: (baseSeed + 47) >>> 0,
     text_split_method: 'cut1',
@@ -1016,6 +1088,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       const chunkStart = Date.now();
       let chunkBuffers;
       let totalAttempts;
+      let effectiveChunkTexts = [chunkText];
 
       try {
         const result = await synthesizeChunkWithRetry(chunkText, { ...params, text: chunkText }, options);
@@ -1032,6 +1105,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
           subChunks,
         });
 
+        effectiveChunkTexts = subChunks;
         chunkBuffers = [];
         totalAttempts = 0;
         for (const sub of subChunks) {
@@ -1042,9 +1116,12 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       }
 
       // Write chunk WAV(s) to disk — concatenate sub-chunks if split occurred
+      const intraChunkPause = Math.max(40, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs) - 25);
+      const intraChunkPauses = computeChunkPauses(effectiveChunkTexts, intraChunkPause);
+      const intraChunkFades = computeChunkFades(effectiveChunkTexts);
       const chunkBuffer = chunkBuffers.length === 1
         ? chunkBuffers[0]
-        : concatWavs(chunkBuffers, DEFAULTS.chunkJoinPauseMs);
+        : concatWavs(chunkBuffers, intraChunkPauses, intraChunkFades);
       const chunkPath = path.join(sessionDir, `chunk_${String(index).padStart(3, '0')}.wav`);
       fs.writeFileSync(chunkPath, chunkBuffer);
       chunkPaths.push(chunkPath);
@@ -1107,6 +1184,7 @@ export async function synthesizeLongText(params, options = {}) {
     let chunkBuffers;
     let totalAttempts;
     let lastAnalysis;
+    let effectiveChunkTexts = [chunk];
 
     try {
       const result = await synthesizeChunkWithRetry(chunk, { ...params, text: chunk }, options);
@@ -1117,6 +1195,7 @@ export async function synthesizeLongText(params, options = {}) {
       const subChunks = splitChunkInHalf(chunk);
       if (subChunks.length < 2) throw retryErr;
 
+      effectiveChunkTexts = subChunks;
       chunkBuffers = [];
       totalAttempts = 0;
       for (const sub of subChunks) {
@@ -1127,9 +1206,12 @@ export async function synthesizeLongText(params, options = {}) {
       }
     }
 
+    const intraChunkPause = Math.max(40, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs) - 25);
+    const intraChunkPauses = computeChunkPauses(effectiveChunkTexts, intraChunkPause);
+    const intraChunkFades = computeChunkFades(effectiveChunkTexts);
     const chunkBuffer = chunkBuffers.length === 1
       ? chunkBuffers[0]
-      : concatWavs(chunkBuffers, DEFAULTS.chunkJoinPauseMs);
+      : concatWavs(chunkBuffers, intraChunkPauses, intraChunkFades);
     buffers.push(chunkBuffer);
     metadata.push({
       index,

@@ -82,6 +82,7 @@ export default function InferencePage() {
   const [topP, setTopP] = useState(0.85);
   const [temperature, setTemperature] = useState(0.7);
   const [repPenalty, setRepPenalty] = useState(1.35);
+  const [qualityPreset, setQualityPreset] = useState('studio');
 
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
@@ -236,6 +237,7 @@ export default function InferencePage() {
       setTopP(Number.isFinite(draft.topP) ? draft.topP : 0.85);
       setTemperature(Number.isFinite(draft.temperature) ? draft.temperature : 0.7);
       setRepPenalty(Number.isFinite(draft.repPenalty) ? draft.repPenalty : 1.35);
+      setQualityPreset(typeof draft.qualityPreset === 'string' ? draft.qualityPreset : 'studio');
       setShowSettings(Boolean(draft.showSettings));
       setPreviewAudioPath(draft.previewAudioPath || '');
       setPreviewAudioName(draft.previewAudioName || '');
@@ -274,6 +276,7 @@ export default function InferencePage() {
         setTopP(Number.isFinite(current.params.top_p) ? current.params.top_p : 0.85);
         setTemperature(Number.isFinite(current.params.temperature) ? current.params.temperature : 0.7);
         setRepPenalty(Number.isFinite(current.params.repetition_penalty) ? current.params.repetition_penalty : 1.35);
+        setQualityPreset(typeof current.params.quality_preset === 'string' ? current.params.quality_preset : 'studio');
         setRefLocked(Boolean(current.params.ref_audio_path));
       }
 
@@ -350,11 +353,13 @@ export default function InferencePage() {
     const nextGPTPath = gptPathIsValid
       ? selectedGPTPath
       : (selectedProfile.gptCandidates?.find(candidate => candidate.model.path === loadedGPTPath)?.model.path
+        || selectedProfile.gptModel?.path
         || selectedProfile.gptCandidates?.[0]?.model.path
         || '');
     const nextSoVITSPath = sovitsPathIsValid
       ? selectedSoVITSPath
       : (selectedProfile.sovitsCandidates?.find(candidate => candidate.model.path === loadedSoVITSPath)?.model.path
+        || selectedProfile.sovitsModel?.path
         || selectedProfile.sovitsCandidates?.[0]?.model.path
         || '');
 
@@ -461,6 +466,7 @@ export default function InferencePage() {
       topP,
       temperature,
       repPenalty,
+      qualityPreset,
       showSettings,
       previewAudioPath,
       previewAudioName,
@@ -487,6 +493,7 @@ export default function InferencePage() {
     topP,
     temperature,
     repPenalty,
+    qualityPreset,
     showSettings,
     previewAudioPath,
     previewAudioName,
@@ -845,6 +852,7 @@ export default function InferencePage() {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        quality_preset: qualityPreset,
       });
       const { sessionId } = res.data;
       sessionIdRef.current = sessionId;
@@ -1270,6 +1278,9 @@ export default function InferencePage() {
                         value={promptText}
                         onChange={(e) => setPromptText(e.target.value)}
                     />
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      Leave this empty only if you want the app to auto-transcribe the primary reference clip before generation.
+                    </p>
                     <Button
                       variant="outline"
                       className="mt-3 w-full rounded-2xl border-slate-200"
@@ -1434,6 +1445,27 @@ export default function InferencePage() {
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-x-10">
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                  <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Generation Profile</Label>
+                  <Select value={qualityPreset} onValueChange={setQualityPreset}>
+                    <SelectTrigger className="rounded-2xl border-slate-200 bg-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="studio">Studio</SelectItem>
+                      <SelectItem value="balanced">Balanced</SelectItem>
+                      <SelectItem value="flow">Flow</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs leading-5 text-slate-500">
+                    {qualityPreset === 'studio'
+                      ? 'Shorter chunks and extra retries for stronger cloning accuracy.'
+                      : qualityPreset === 'flow'
+                        ? 'Longer chunks with lighter joins for more continuous delivery.'
+                        : 'A middle ground between cloning accuracy and natural pacing.'}
+                  </p>
+                </div>
+
                 {/* Speed */}
                 <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">

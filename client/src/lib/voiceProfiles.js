@@ -45,6 +45,38 @@ function compareModelCandidates(a, b) {
   return (a?.basename || '').localeCompare(b?.basename || '');
 }
 
+function selectRecommendedPair(sortedGPTCandidates, sortedSoVITSCandidates) {
+  const bestGPT = sortedGPTCandidates[0] || null;
+  const bestSoVITS = sortedSoVITSCandidates[0] || null;
+
+  if (!bestGPT || !bestSoVITS) {
+    return {
+      gpt: bestGPT,
+      sovits: bestSoVITS,
+      matchedEpoch: null,
+    };
+  }
+
+  const highestSharedEpoch = sortedSoVITSCandidates
+    .map(candidate => candidate.epoch)
+    .filter(epoch => epoch >= 0)
+    .find(epoch => sortedGPTCandidates.some(candidate => candidate.epoch === epoch));
+
+  if (typeof highestSharedEpoch === 'number') {
+    return {
+      gpt: sortedGPTCandidates.find(candidate => candidate.epoch === highestSharedEpoch) || bestGPT,
+      sovits: sortedSoVITSCandidates.find(candidate => candidate.epoch === highestSharedEpoch) || bestSoVITS,
+      matchedEpoch: highestSharedEpoch,
+    };
+  }
+
+  return {
+    gpt: bestGPT,
+    sovits: bestSoVITS,
+    matchedEpoch: null,
+  };
+}
+
 export function buildVoiceProfiles(gptModels, sovitsModels) {
   const profiles = new Map();
 
@@ -78,8 +110,9 @@ export function buildVoiceProfiles(gptModels, sovitsModels) {
     .map((profile) => {
       const sortedGPTCandidates = [...profile.gptCandidates].sort(compareModelCandidates);
       const sortedSoVITSCandidates = [...profile.sovitsCandidates].sort(compareModelCandidates);
-      const bestGPT = sortedGPTCandidates[0] || null;
-      const bestSoVITS = sortedSoVITSCandidates[0] || null;
+      const recommendedPair = selectRecommendedPair(sortedGPTCandidates, sortedSoVITSCandidates);
+      const bestGPT = recommendedPair.gpt;
+      const bestSoVITS = recommendedPair.sovits;
 
       return {
         key: profile.key,
@@ -89,6 +122,7 @@ export function buildVoiceProfiles(gptModels, sovitsModels) {
         gptEpoch: bestGPT?.epoch ?? null,
         sovitsModel: bestSoVITS?.model || null,
         sovitsEpoch: bestSoVITS?.epoch ?? null,
+        matchedEpoch: recommendedPair.matchedEpoch,
         gptCandidates: sortedGPTCandidates,
         sovitsCandidates: sortedSoVITSCandidates,
         complete: Boolean(bestGPT?.model && bestSoVITS?.model),
