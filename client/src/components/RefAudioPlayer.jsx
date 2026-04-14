@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { Play, Pause, Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 function formatTime(s) {
@@ -9,7 +9,7 @@ function formatTime(s) {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-export default function RefAudioPlayer({ src }) {
+export default function RefAudioPlayer({ src, filename }) {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -37,6 +37,24 @@ export default function RefAudioPlayer({ src }) {
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     a.currentTime = ratio * a.duration;
   }, []);
+
+  const handleDownload = useCallback(async () => {
+    if (!src) return;
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'reference-audio.wav';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  }, [src, filename]);
 
   const progress = duration ? (currentTime / duration) * 100 : 0;
 
@@ -75,6 +93,14 @@ export default function RefAudioPlayer({ src }) {
       <span className="shrink-0 text-xs tabular-nums text-muted-foreground font-mono">
         {formatTime(duration)}
       </span>
+
+      <button
+        onClick={handleDownload}
+        title="Download reference audio"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white transition-colors hover:border-primary hover:bg-primary hover:text-primary-foreground"
+      >
+        <Download size={14} />
+      </button>
     </div>
   );
 }

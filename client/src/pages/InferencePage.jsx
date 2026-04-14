@@ -1072,7 +1072,7 @@ export default function InferencePage() {
                 )}
               </div>
 
-              {refAudioUrl && <RefAudioPlayer src={refAudioUrl} />}
+              {refAudioUrl && <RefAudioPlayer src={refAudioUrl} filename={refAudioFile?.name} />}
 
               <Button
                 variant="outline"
