@@ -353,13 +353,11 @@ export default function InferencePage() {
     const nextGPTPath = gptPathIsValid
       ? selectedGPTPath
       : (selectedProfile.gptCandidates?.find(candidate => candidate.model.path === loadedGPTPath)?.model.path
-        || selectedProfile.gptModel?.path
         || selectedProfile.gptCandidates?.[0]?.model.path
         || '');
     const nextSoVITSPath = sovitsPathIsValid
       ? selectedSoVITSPath
       : (selectedProfile.sovitsCandidates?.find(candidate => candidate.model.path === loadedSoVITSPath)?.model.path
-        || selectedProfile.sovitsModel?.path
         || selectedProfile.sovitsCandidates?.[0]?.model.path
         || '');
 
