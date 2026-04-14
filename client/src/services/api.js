@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { API_BASE_URL, resolveApiPath } from '@/lib/runtimeConfig';
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
 });
 
 // Upload training audio files
@@ -106,9 +107,9 @@ export function getTrainingAudioFiles(expName) {
 
 // Get URL for streaming a training audio file
 export function getTrainingAudioUrl(expName, filename) {
-  return `/api/training-audio/file/${encodeURIComponent(expName)}/${encodeURIComponent(filename)}`;
+  return resolveApiPath(`/api/training-audio/file/${encodeURIComponent(expName)}/${encodeURIComponent(filename)}`);
 }
 
 export function getUploadedRefAudioUrl(filePath) {
-  return `/api/ref-audio?filePath=${encodeURIComponent(filePath)}`;
+  return resolveApiPath(`/api/ref-audio?filePath=${encodeURIComponent(filePath)}`);
 }

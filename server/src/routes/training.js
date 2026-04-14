@@ -5,6 +5,7 @@ import { processManager } from '../services/processManager.js';
 import { runPipeline, STEPS } from '../services/pipeline.js';
 import { getConfigError } from '../config.js';
 import { trainingState } from '../services/trainingState.js';
+import { isSafePathSegment } from '../utils/paths.js';
 
 const router = Router();
 
@@ -31,6 +32,12 @@ router.post('/train', (req, res) => {
 
   if (!expName) {
     return res.status(400).json({ error: 'expName is required' });
+  }
+  if (!isSafePathSegment(expName)) {
+    return res.status(400).json({ error: 'expName may only contain letters, numbers, dots, dashes, and underscores' });
+  }
+  if (sessions.size > 0 || processManager.hasRunningProcesses()) {
+    return res.status(409).json({ error: 'A training pipeline is already running on this instance' });
   }
 
   const sessionId = uuidv4();

@@ -3,11 +3,12 @@ import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, getConfigError } from '../config.js';
+import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, REF_AUDIO_DIR, buildPythonEnv, getConfigError } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
 import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
+import { isPathInside, isSafePathSegment } from '../utils/paths.js';
 
 const router = Router();
 
@@ -161,6 +162,9 @@ router.post('/inference/generate', async (req, res) => {
   if (!inferenceServer.isReady()) {
     return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
   }
+  if (['waiting', 'generating'].includes(inferenceState.getState().status)) {
+    return res.status(409).json({ error: 'Another generation is already running on this instance' });
+  }
 
   const sessionId = crypto.randomUUID();
   inferenceState.resetForNewSession({
@@ -287,12 +291,7 @@ router.post('/transcribe', async (req, res) => {
 
       const proc = spawn(PYTHON_EXEC, args, {
         cwd: GPT_SOVITS_ROOT,
-        env: {
-          ...process.env,
-          PYTHONUNBUFFERED: '1',
-          PYTHONIOENCODING: 'utf-8',
-          PATH: `${GPT_SOVITS_ROOT};${process.env.PATH}`,
-        },
+        env: buildPythonEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -339,7 +338,10 @@ router.get('/inference/status', (_req, res) => {
 
 router.get('/training-audio/file/:expName/:filename', (req, res) => {
   const { expName, filename } = req.params;
-  if (expName.includes('..') || filename.includes('..')) {
+  if (!DATA_ROOT) {
+    return res.status(503).json({ error: 'Training data directory is not configured' });
+  }
+  if (!isSafePathSegment(expName) || !isSafePathSegment(filename)) {
     return res.status(400).json({ error: 'Invalid path' });
   }
 
@@ -358,13 +360,15 @@ router.get('/training-audio/file/:expName/:filename', (req, res) => {
 
 router.get('/ref-audio', (req, res) => {
   const filePath = String(req.query.filePath || '');
+  if (!REF_AUDIO_DIR) {
+    return res.status(503).json({ error: 'Reference audio directory is not configured' });
+  }
   if (!filePath) {
     return res.status(400).json({ error: 'filePath is required' });
   }
 
   const resolvedPath = path.resolve(GPT_SOVITS_ROOT, filePath);
-  const allowedDir = path.resolve(GPT_SOVITS_ROOT, 'TEMP', 'ref_audio');
-  if (!resolvedPath.startsWith(allowedDir)) {
+  if (!isPathInside(resolvedPath, REF_AUDIO_DIR)) {
     return res.status(400).json({ error: 'Invalid reference audio path' });
   }
   if (!fs.existsSync(resolvedPath)) {
@@ -381,7 +385,10 @@ router.get('/ref-audio', (req, res) => {
 
 router.get('/training-audio/:expName', (req, res) => {
   const { expName } = req.params;
-  if (expName.includes('..')) {
+  if (!DATA_ROOT) {
+    return res.status(503).json({ error: 'Training data directory is not configured' });
+  }
+  if (!isSafePathSegment(expName)) {
     return res.status(400).json({ error: 'Invalid experiment name' });
   }
 

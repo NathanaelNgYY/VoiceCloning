@@ -1,12 +1,11 @@
 import { spawn, execSync } from 'child_process';
 import path from 'path';
 import axios from 'axios';
-import { PYTHON_EXEC, SCRIPTS, GPT_SOVITS_ROOT, INFERENCE_HOST, INFERENCE_PORT, assertConfig } from '../config.js';
+import { PYTHON_EXEC, SCRIPTS, GPT_SOVITS_ROOT, INFERENCE_HOST, INFERENCE_PORT, assertConfig, buildPythonEnv } from '../config.js';
 
 const BASE_URL = `http://${INFERENCE_HOST}:${INFERENCE_PORT}`;
 const toolsDir = path.join(GPT_SOVITS_ROOT, 'tools');
 const gptDir = path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS');
-const pathListSeparator = process.platform === 'win32' ? ';' : ':';
 
 const PYTHON_RUNNER = [
   '-c',
@@ -67,15 +66,7 @@ class InferenceServer {
         '-p', String(INFERENCE_PORT),
       ], {
         cwd: GPT_SOVITS_ROOT,
-        env: {
-          ...process.env,
-          PYTHONUNBUFFERED: '1',
-          PYTHONIOENCODING: 'utf-8',
-          PATH: `${GPT_SOVITS_ROOT}${pathListSeparator}${process.env.PATH || ''}`,
-          PYTHONPATH: process.env.PYTHONPATH
-            ? `${GPT_SOVITS_ROOT}${pathListSeparator}${process.env.PYTHONPATH}`
-            : GPT_SOVITS_ROOT,
-        },
+        env: buildPythonEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 

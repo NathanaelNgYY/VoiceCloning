@@ -1,0 +1,10 @@
+.git
+.gitignore
+README.md
+reference.txt
+client/node_modules
+client/dist
+server/node_modules
+server/.env
+server/.env.local
+*.wav

@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import { EventEmitter } from 'events';
-import { PYTHON_EXEC, GPT_SOVITS_ROOT, assertConfig } from '../config.js';
+import path from 'path';
+import { PYTHON_EXEC, GPT_SOVITS_ROOT, assertConfig, buildPythonEnv } from '../config.js';
 
 const PYTHON_RUNNER = [
   '-c',
@@ -16,6 +17,9 @@ const PYTHON_RUNNER = [
     'runpy.run_path(SCRIPT, run_name="__main__")',
   ].join('; '),
 ];
+
+const toolsDir = path.join(GPT_SOVITS_ROOT, 'tools');
+const gptDir = path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS');
 
 class ProcessManager extends EventEmitter {
   constructor() {
@@ -37,20 +41,9 @@ class ProcessManager extends EventEmitter {
         return;
       }
 
-      const mergedEnv = {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-        PYTHONIOENCODING: 'utf-8',
-        PATH: `${GPT_SOVITS_ROOT};${process.env.PATH}`,
-        PYTHONPATH: process.env.PYTHONPATH
-          ? `${GPT_SOVITS_ROOT};${process.env.PYTHONPATH}`
-          : GPT_SOVITS_ROOT,
-        ...env,
-      };
-
-      const child = spawn(PYTHON_EXEC, [...PYTHON_RUNNER, GPT_SOVITS_ROOT, `${GPT_SOVITS_ROOT}\\tools`, `${GPT_SOVITS_ROOT}\\GPT_SoVITS`, scriptPath, ...args], {
+      const child = spawn(PYTHON_EXEC, [...PYTHON_RUNNER, GPT_SOVITS_ROOT, toolsDir, gptDir, scriptPath, ...args], {
         cwd: GPT_SOVITS_ROOT,
-        env: mergedEnv,
+        env: buildPythonEnv(env),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -89,7 +82,11 @@ class ProcessManager extends EventEmitter {
     if (!entry) return false;
 
     try {
-      execSync(`taskkill /t /f /pid ${entry.process.pid}`, { stdio: 'ignore' });
+      if (process.platform === 'win32') {
+        execSync(`taskkill /t /f /pid ${entry.process.pid}`, { stdio: 'ignore' });
+      } else {
+        entry.process.kill('SIGKILL');
+      }
     } catch {
       // Process may have already exited
       try {
@@ -103,6 +100,17 @@ class ProcessManager extends EventEmitter {
 
   isRunning(sessionId) {
     return this.processes.has(sessionId);
+  }
+
+  hasRunningProcesses() {
+    return this.processes.size > 0;
+  }
+
+  killAll() {
+    const sessionIds = [...this.processes.keys()];
+    for (const sessionId of sessionIds) {
+      this.kill(sessionId);
+    }
   }
 }
 

@@ -1,5 +1,7 @@
+import { resolveApiPath } from '@/lib/runtimeConfig';
+
 export function connectSSE(sessionId, { onLog, onStepStart, onStepComplete, onComplete, onError }) {
-  const es = new EventSource(`/api/train/status/${sessionId}`);
+  const es = new EventSource(resolveApiPath(`/api/train/status/${sessionId}`));
 
   es.addEventListener('log', (e) => {
     onLog?.(JSON.parse(e.data));
@@ -31,7 +33,7 @@ export function connectSSE(sessionId, { onLog, onStepStart, onStepComplete, onCo
 }
 
 export function connectInferenceSSE(sessionId, { onStart, onChunkStart, onChunkComplete, onComplete, onError }) {
-  const es = new EventSource(`/api/inference/progress/${sessionId}`);
+  const es = new EventSource(resolveApiPath(`/api/inference/progress/${sessionId}`));
 
   es.addEventListener('inference-start', (e) => {
     onStart?.(JSON.parse(e.data));

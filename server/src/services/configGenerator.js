@@ -1,12 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import yaml from 'js-yaml';
 import {
   CONFIG_TEMPLATES,
   PRETRAINED,
   GPT_SOVITS_ROOT,
-  EXP_ROOT,
   TEMP_DIR,
+  WEIGHT_DIRS,
 } from '../config.js';
 
 export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 20, saveEveryEpoch = 4 }) {
@@ -33,7 +34,7 @@ export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 20, save
   template.data.exp_dir = s2Dir;
 
   template.s2_ckpt_dir = s2Dir;
-  template.save_weight_dir = 'SoVITS_weights_v2';
+  template.save_weight_dir = WEIGHT_DIRS.sovits;
   template.name = expName;
   template.version = 'v2';
 
@@ -42,7 +43,8 @@ export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 20, save
   fs.mkdirSync(logsS2Dir, { recursive: true });
 
   fs.mkdirSync(TEMP_DIR, { recursive: true });
-  const configPath = path.join(TEMP_DIR, 'tmp_s2.json');
+  fs.mkdirSync(WEIGHT_DIRS.sovits, { recursive: true });
+  const configPath = path.join(TEMP_DIR, `tmp_s2_${expName}_${crypto.randomUUID()}.json`);
   fs.writeFileSync(configPath, JSON.stringify(template, null, 2));
 
   return configPath;
@@ -59,7 +61,7 @@ export function generateGPTConfig({ expName, batchSize = 2, epochs = 25, saveEve
   template.train.if_save_every_weights = true;
   template.train.if_save_latest = true;
   template.train.if_dpo = false;
-  template.train.half_weights_save_dir = 'GPT_weights_v2';
+  template.train.half_weights_save_dir = WEIGHT_DIRS.gpt;
   template.train.exp_name = expName;
 
   template.pretrained_s1 = PRETRAINED.gpt;
@@ -68,7 +70,8 @@ export function generateGPTConfig({ expName, batchSize = 2, epochs = 25, saveEve
   template.output_dir = `logs/${expName}/logs_s1_v2`;
 
   fs.mkdirSync(TEMP_DIR, { recursive: true });
-  const configPath = path.join(TEMP_DIR, 'tmp_s1.yaml');
+  fs.mkdirSync(WEIGHT_DIRS.gpt, { recursive: true });
+  const configPath = path.join(TEMP_DIR, `tmp_s1_${expName}_${crypto.randomUUID()}.yaml`);
   fs.writeFileSync(configPath, yaml.dump(template, { lineWidth: -1 }));
 
   return configPath;
