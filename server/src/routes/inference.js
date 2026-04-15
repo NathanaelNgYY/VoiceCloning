@@ -9,6 +9,7 @@ import { sseManager } from '../services/sseManager.js';
 import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { isPathInside, isSafePathSegment } from '../utils/paths.js';
+import { isS3Mode, generatePresignedGetUrl, listObjects, getObject } from '../services/s3Storage.js';
 
 const router = Router();
 
@@ -336,25 +337,32 @@ router.get('/inference/status', (_req, res) => {
 
 // ── Training audio browser endpoints ──
 
-router.get('/training-audio/file/:expName/:filename', (req, res) => {
+router.get('/training-audio/file/:expName/:filename', async (req, res) => {
   const { expName, filename } = req.params;
-  if (!DATA_ROOT) {
-    return res.status(503).json({ error: 'Training data directory is not configured' });
-  }
   if (!isSafePathSegment(expName) || !isSafePathSegment(filename)) {
     return res.status(400).json({ error: 'Invalid path' });
   }
 
+  if (isS3Mode()) {
+    try {
+      const key = `training/datasets/${expName}/denoised/${filename}`;
+      const url = await generatePresignedGetUrl(key);
+      return res.json({ url });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode
+  if (!DATA_ROOT) {
+    return res.status(503).json({ error: 'Training data directory is not configured' });
+  }
   const filePath = path.join(DATA_ROOT, expName, 'denoised', filename);
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'File not found' });
   }
-
   const stat = fs.statSync(filePath);
-  res.set({
-    'Content-Type': 'audio/wav',
-    'Content-Length': stat.size,
-  });
+  res.set({ 'Content-Type': 'audio/wav', 'Content-Length': stat.size });
   fs.createReadStream(filePath).pipe(res);
 });
 
@@ -383,13 +391,54 @@ router.get('/ref-audio', (req, res) => {
   fs.createReadStream(resolvedPath).pipe(res);
 });
 
-router.get('/training-audio/:expName', (req, res) => {
+router.get('/training-audio/:expName', async (req, res) => {
   const { expName } = req.params;
-  if (!DATA_ROOT) {
-    return res.status(503).json({ error: 'Training data directory is not configured' });
-  }
   if (!isSafePathSegment(expName)) {
     return res.status(400).json({ error: 'Invalid experiment name' });
+  }
+
+  if (isS3Mode()) {
+    try {
+      const denoisedPrefix = `training/datasets/${expName}/denoised/`;
+      const objects = await listObjects(denoisedPrefix);
+      const wavFiles = objects
+        .filter(o => o.key.endsWith('.wav'))
+        .map(o => path.basename(o.key))
+        .sort();
+
+      // Try to parse ASR transcript from S3
+      const transcriptMap = new Map();
+      try {
+        const asrKey = `training/datasets/${expName}/asr/denoised.list`;
+        const asrBuffer = await getObject(asrKey);
+        const lines = asrBuffer.toString('utf-8').split('\n').filter(Boolean);
+        for (const line of lines) {
+          const parts = line.split('|');
+          if (parts.length >= 4) {
+            const fname = path.basename(parts[0]);
+            transcriptMap.set(fname, { transcript: parts.slice(3).join('|'), lang: parts[2] });
+          }
+        }
+      } catch { /* ASR file may not exist yet */ }
+
+      const files = wavFiles.map(filename => {
+        const info = transcriptMap.get(filename) || {};
+        return {
+          filename,
+          key: `${denoisedPrefix}${filename}`,
+          transcript: info.transcript || '',
+          lang: info.lang || '',
+        };
+      });
+      return res.json({ expName, files });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode — original behavior
+  if (!DATA_ROOT) {
+    return res.status(503).json({ error: 'Training data directory is not configured' });
   }
 
   const denoisedDir = path.join(DATA_ROOT, expName, 'denoised');
@@ -397,20 +446,15 @@ router.get('/training-audio/:expName', (req, res) => {
     return res.json({ expName, files: [] });
   }
 
-  // Parse ASR transcripts from denoised.list
   const asrPath = path.join(DATA_ROOT, expName, 'asr', 'denoised.list');
   const transcriptMap = new Map();
   if (fs.existsSync(asrPath)) {
     const lines = fs.readFileSync(asrPath, 'utf-8').split('\n').filter(Boolean);
     for (const line of lines) {
-      // Format: abs_path|label|LANG|transcript
       const parts = line.split('|');
       if (parts.length >= 4) {
-        const absPath = parts[0];
-        const lang = parts[2];
-        const transcript = parts.slice(3).join('|');
-        const fname = path.basename(absPath);
-        transcriptMap.set(fname, { transcript, lang });
+        const fname = path.basename(parts[0]);
+        transcriptMap.set(fname, { transcript: parts.slice(3).join('|'), lang: parts[2] });
       }
     }
   }
