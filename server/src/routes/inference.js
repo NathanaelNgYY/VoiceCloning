@@ -13,21 +13,37 @@ import { isS3Mode, generatePresignedGetUrl, listObjects, getObject } from '../se
 
 const router = Router();
 
-router.get('/models', (_req, res) => {
+router.get('/models', async (_req, res) => {
+  if (isS3Mode()) {
+    try {
+      const [gptObjects, sovitsObjects] = await Promise.all([
+        listObjects('models/user-models/gpt/'),
+        listObjects('models/user-models/sovits/'),
+      ]);
+      const gpt = gptObjects
+        .filter(o => o.key.endsWith('.ckpt'))
+        .map(o => ({ name: path.basename(o.key), key: o.key }));
+      const sovits = sovitsObjects
+        .filter(o => o.key.endsWith('.pth'))
+        .map(o => ({ name: path.basename(o.key), key: o.key }));
+      return res.json({ gpt, sovits });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode
   const configError = getConfigError();
   if (configError) {
     return res.status(500).json({ error: configError });
   }
-
   try {
     const gptFiles = fs.existsSync(WEIGHT_DIRS.gpt)
       ? fs.readdirSync(WEIGHT_DIRS.gpt).filter(f => f.endsWith('.ckpt'))
       : [];
-
     const sovitsFiles = fs.existsSync(WEIGHT_DIRS.sovits)
       ? fs.readdirSync(WEIGHT_DIRS.sovits).filter(f => f.endsWith('.pth'))
       : [];
-
     res.json({
       gpt: gptFiles.map(f => ({ name: f, path: path.join(WEIGHT_DIRS.gpt, f) })),
       sovits: sovitsFiles.map(f => ({ name: f, path: path.join(WEIGHT_DIRS.sovits, f) })),
@@ -38,24 +54,53 @@ router.get('/models', (_req, res) => {
 });
 
 router.post('/models/select', async (req, res) => {
+  if (isS3Mode()) {
+    const { gptKey, sovitsKey, gptPath, sovitsPath } = req.body;
+    const resolvedGptKey = gptKey || gptPath;
+    const resolvedSovitsKey = sovitsKey || sovitsPath;
+
+    try {
+      if (!inferenceServer.isReady()) {
+        await inferenceServer.start();
+      }
+
+      // In S3 mode, download weights via GPU Worker, then load
+      const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
+
+      if (resolvedSovitsKey) {
+        const { localPath } = await gpuWorkerClient.downloadModel(resolvedSovitsKey);
+        await inferenceServer.setSoVITSWeights(localPath);
+      }
+      if (resolvedGptKey) {
+        const { localPath } = await gpuWorkerClient.downloadModel(resolvedGptKey);
+        await inferenceServer.setGPTWeights(localPath);
+      }
+
+      return res.json({
+        message: 'Models loaded successfully',
+        loaded: inferenceServer.getLoadedWeights(),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode
   const { gptPath, sovitsPath } = req.body;
   const configError = getConfigError({ requirePython: true });
   if (configError) {
     return res.status(500).json({ error: configError });
   }
-
   try {
     if (!inferenceServer.isReady()) {
       await inferenceServer.start();
     }
-
     if (sovitsPath) {
       await inferenceServer.setSoVITSWeights(sovitsPath);
     }
     if (gptPath) {
       await inferenceServer.setGPTWeights(gptPath);
     }
-
     res.json({
       message: 'Models loaded successfully',
       loaded: inferenceServer.getLoadedWeights(),
@@ -218,17 +263,24 @@ router.get('/inference/progress/:sessionId', (req, res) => {
   sseManager.addClient(req.params.sessionId, res);
 });
 
-router.get('/inference/result/:sessionId', (req, res) => {
+router.get('/inference/result/:sessionId', async (req, res) => {
+  if (isS3Mode()) {
+    try {
+      const key = `audio/output/${req.params.sessionId}/final.wav`;
+      const url = await generatePresignedGetUrl(key);
+      return res.json({ url });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode
   const finalPath = getSessionFinalPath(req.params.sessionId);
   if (!fs.existsSync(finalPath)) {
     return res.status(404).json({ error: 'Result not ready or session not found' });
   }
-
   const stat = fs.statSync(finalPath);
-  res.set({
-    'Content-Type': 'audio/wav',
-    'Content-Length': stat.size,
-  });
+  res.set({ 'Content-Type': 'audio/wav', 'Content-Length': stat.size });
   fs.createReadStream(finalPath).pipe(res);
 });
 
@@ -366,15 +418,25 @@ router.get('/training-audio/file/:expName/:filename', async (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-router.get('/ref-audio', (req, res) => {
+router.get('/ref-audio', async (req, res) => {
   const filePath = String(req.query.filePath || '');
-  if (!REF_AUDIO_DIR) {
-    return res.status(503).json({ error: 'Reference audio directory is not configured' });
-  }
   if (!filePath) {
     return res.status(400).json({ error: 'filePath is required' });
   }
 
+  if (isS3Mode()) {
+    try {
+      const url = await generatePresignedGetUrl(filePath);
+      return res.json({ url });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode
+  if (!REF_AUDIO_DIR) {
+    return res.status(503).json({ error: 'Reference audio directory is not configured' });
+  }
   const resolvedPath = path.resolve(GPT_SOVITS_ROOT, filePath);
   if (!isPathInside(resolvedPath, REF_AUDIO_DIR)) {
     return res.status(400).json({ error: 'Invalid reference audio path' });
@@ -382,12 +444,9 @@ router.get('/ref-audio', (req, res) => {
   if (!fs.existsSync(resolvedPath)) {
     return res.status(404).json({ error: 'Reference audio not found' });
   }
-
   const stat = fs.statSync(resolvedPath);
   res.type(path.extname(resolvedPath));
-  res.set({
-    'Content-Length': stat.size,
-  });
+  res.set({ 'Content-Length': stat.size });
   fs.createReadStream(resolvedPath).pipe(res);
 });
 
