@@ -5,6 +5,7 @@ import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
 import { TEMP_DIR } from '../config.js';
+import { isS3Mode, uploadBuffer } from './s3Storage.js';
 
 // Track active streaming sessions for cancellation
 const activeSessions = new Map(); // sessionId -> { cancelled: boolean }
@@ -1074,6 +1075,15 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     const finalPath = path.join(sessionDir, 'final.wav');
     fs.writeFileSync(finalPath, finalBuffer);
 
+    // Upload to S3 for persistence (non-blocking — don't fail the session on S3 error)
+    let s3Key = null;
+    if (isS3Mode()) {
+      s3Key = `audio/output/${sessionId}/final.wav`;
+      uploadBuffer(s3Key, finalBuffer, 'audio/wav').catch((err) => {
+        console.error(`[inference] Failed to upload result to S3: ${err.message}`);
+      });
+    }
+
     // Clean up individual chunk files
     for (const p of chunkPaths) {
       try { fs.unlinkSync(p); } catch { /* ignore */ }
@@ -1083,6 +1093,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     sseManager.send(sessionId, 'inference-complete', {
       totalChunks: chunks.length,
       totalDurationSec: parseFloat(totalDuration.toFixed(2)),
+      ...(s3Key ? { s3Key } : {}),
     });
     inferenceState.setComplete();
   } catch (err) {
