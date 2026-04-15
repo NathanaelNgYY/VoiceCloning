@@ -206,7 +206,7 @@ export default function InferencePage() {
     }, NOTICE_TIMEOUT_MS);
   }
 
-  function restoreDraft() {
+  async function restoreDraft() {
     try {
       const raw = window.localStorage.getItem(INFERENCE_DRAFT_KEY);
       if (!raw) return;
@@ -219,14 +219,17 @@ export default function InferencePage() {
       setRefAudioFile(draft.refAudioFile || null);
       setPromptText(draft.promptText || '');
       setPromptLang(draft.promptLang || 'en');
-      setUploadedRefFiles(
-        Array.isArray(draft.uploadedRefFiles)
-          ? draft.uploadedRefFiles.map((file) => ({
-              ...file,
-              localUrl: getUploadedRefAudioUrl(file.serverPath),
-            }))
-          : []
-      );
+
+      if (Array.isArray(draft.uploadedRefFiles)) {
+        const restoredFiles = await Promise.all(
+          draft.uploadedRefFiles.map(async (file) => ({
+            ...file,
+            localUrl: await getUploadedRefAudioUrl(file.serverPath),
+          }))
+        );
+        setUploadedRefFiles(restoredFiles);
+      }
+
       setAuxRefAudios(Array.isArray(draft.auxRefAudios) ? draft.auxRefAudios : []);
       setRefLocked(Boolean(draft.refLocked));
       setText(draft.text || '');
@@ -264,7 +267,7 @@ export default function InferencePage() {
           const fallbackName = primaryRefPath.replace(/\\/g, '/').split('/').pop();
           setRefAudioFile({ name: fallbackName });
           if (/TEMP[\\/]+ref_audio/i.test(primaryRefPath)) {
-            setRefAudioUrl(getUploadedRefAudioUrl(primaryRefPath));
+            setRefAudioUrl(await getUploadedRefAudioUrl(primaryRefPath));
           }
         }
         setPromptText(current.params.prompt_text || '');
@@ -382,59 +385,73 @@ export default function InferencePage() {
   useEffect(() => {
     if (!refAudioPath) return;
 
-    const uploadedMatch = uploadedRefFiles.find(file => file.serverPath === refAudioPath);
-    if (uploadedMatch) {
-      setRefAudioFile(prev => prev?.name ? prev : { name: uploadedMatch.name });
-      setRefAudioUrl(prev => prev || getUploadedRefAudioUrl(uploadedMatch.serverPath));
-      if (!previewAudioPath) {
-        setPreview({
-          path: uploadedMatch.serverPath,
-          url: uploadedMatch.localUrl || getUploadedRefAudioUrl(uploadedMatch.serverPath),
-          name: uploadedMatch.name,
-          role: 'primary',
-        });
+    (async () => {
+      const uploadedMatch = uploadedRefFiles.find(file => file.serverPath === refAudioPath);
+      if (uploadedMatch) {
+        setRefAudioFile(prev => prev?.name ? prev : { name: uploadedMatch.name });
+        if (!refAudioUrl) {
+          const url = await getUploadedRefAudioUrl(uploadedMatch.serverPath);
+          setRefAudioUrl(url);
+        }
+        if (!previewAudioPath) {
+          const url = uploadedMatch.localUrl || await getUploadedRefAudioUrl(uploadedMatch.serverPath);
+          setPreview({
+            path: uploadedMatch.serverPath,
+            url,
+            name: uploadedMatch.name,
+            role: 'primary',
+          });
+        }
+        return;
       }
-      return;
-    }
 
-    const trainingMatch = trainingAudioFiles.find(file => file.path === refAudioPath);
-    if (trainingMatch && currentExpName) {
-      setRefAudioFile(prev => prev?.name ? prev : { name: trainingMatch.filename });
-      setRefAudioUrl(prev => prev || getTrainingAudioUrl(currentExpName, trainingMatch.filename));
-      if (!previewAudioPath) {
-        setPreview({
-          path: trainingMatch.path,
-          url: getTrainingAudioUrl(currentExpName, trainingMatch.filename),
-          name: trainingMatch.filename,
-          role: 'primary',
-        });
+      const trainingMatch = trainingAudioFiles.find(file => file.path === refAudioPath);
+      if (trainingMatch && currentExpName) {
+        setRefAudioFile(prev => prev?.name ? prev : { name: trainingMatch.filename });
+        if (!refAudioUrl) {
+          const url = await getTrainingAudioUrl(currentExpName, trainingMatch.filename);
+          setRefAudioUrl(url);
+        }
+        if (!previewAudioPath) {
+          const url = await getTrainingAudioUrl(currentExpName, trainingMatch.filename);
+          setPreview({
+            path: trainingMatch.path,
+            url,
+            name: trainingMatch.filename,
+            role: 'primary',
+          });
+        }
       }
-    }
+    })();
   }, [refAudioPath, uploadedRefFiles, trainingAudioFiles, currentExpName, previewAudioPath]);
 
   useEffect(() => {
     if (!previewAudioPath) return;
 
-    const uploadedMatch = uploadedRefFiles.find(file => file.serverPath === previewAudioPath);
-    if (uploadedMatch) {
-      setPreview({
-        path: uploadedMatch.serverPath,
-        url: uploadedMatch.localUrl || getUploadedRefAudioUrl(uploadedMatch.serverPath),
-        name: uploadedMatch.name,
-        role: previewAudioPath === refAudioPath ? 'primary' : 'auxiliary',
-      });
-      return;
-    }
+    (async () => {
+      const uploadedMatch = uploadedRefFiles.find(file => file.serverPath === previewAudioPath);
+      if (uploadedMatch) {
+        const url = uploadedMatch.localUrl || await getUploadedRefAudioUrl(uploadedMatch.serverPath);
+        setPreview({
+          path: uploadedMatch.serverPath,
+          url,
+          name: uploadedMatch.name,
+          role: previewAudioPath === refAudioPath ? 'primary' : 'auxiliary',
+        });
+        return;
+      }
 
-    const trainingMatch = trainingAudioFiles.find(file => file.path === previewAudioPath);
-    if (trainingMatch && currentExpName) {
-      setPreview({
-        path: trainingMatch.path,
-        url: getTrainingAudioUrl(currentExpName, trainingMatch.filename),
-        name: trainingMatch.filename,
-        role: trainingMatch.path === refAudioPath ? 'primary' : 'auxiliary',
-      });
-    }
+      const trainingMatch = trainingAudioFiles.find(file => file.path === previewAudioPath);
+      if (trainingMatch && currentExpName) {
+        const url = await getTrainingAudioUrl(currentExpName, trainingMatch.filename);
+        setPreview({
+          path: trainingMatch.path,
+          url,
+          name: trainingMatch.filename,
+          role: trainingMatch.path === refAudioPath ? 'primary' : 'auxiliary',
+        });
+      }
+    })();
   }, [previewAudioPath, uploadedRefFiles, trainingAudioFiles, currentExpName, refAudioPath]);
 
   useEffect(() => {
@@ -511,7 +528,7 @@ export default function InferencePage() {
     setPreviewAudioRole(role);
   }
 
-  function getReferenceUrl(reference, fallbackExpName = currentExpName) {
+  async function getReferenceUrl(reference, fallbackExpName = currentExpName) {
     if (!reference?.path) return null;
     if (reference.source === 'uploaded') {
       return getUploadedRefAudioUrl(reference.path);
@@ -522,32 +539,29 @@ export default function InferencePage() {
     return getTrainingAudioUrl(expName, reference.name || getFallbackReferenceName(reference.path));
   }
 
-  function ensureUploadedReferences(entries) {
+  async function ensureUploadedReferences(entries) {
     if (!entries.length) return;
-
-    setUploadedRefFiles((prev) => {
-      const next = [...prev];
-      const existingPaths = new Set(prev.map((file) => file.serverPath));
-
-      for (const entry of entries) {
-        if (!entry?.path || existingPaths.has(entry.path)) continue;
-        next.push({
-          name: entry.name || getFallbackReferenceName(entry.path),
-          serverPath: entry.path,
-          localUrl: getUploadedRefAudioUrl(entry.path),
-        });
-        existingPaths.add(entry.path);
-      }
-
-      return next;
-    });
+    const newEntries = [];
+    const existingPaths = new Set(uploadedRefFiles.map(f => f.serverPath));
+    for (const entry of entries) {
+      if (!entry?.path || existingPaths.has(entry.path)) continue;
+      const localUrl = await getUploadedRefAudioUrl(entry.path);
+      newEntries.push({
+        name: entry.name || getFallbackReferenceName(entry.path),
+        serverPath: entry.path,
+        localUrl,
+      });
+    }
+    if (newEntries.length > 0) {
+      setUploadedRefFiles(prev => [...prev, ...newEntries]);
+    }
   }
 
-  function applyReferencePreset(preset) {
+  async function applyReferencePreset(preset) {
     if (!preset?.primary?.path) return;
 
     const uploadedEntries = [preset.primary, ...(preset.aux || [])].filter((entry) => entry.source === 'uploaded');
-    ensureUploadedReferences(uploadedEntries);
+    await ensureUploadedReferences(uploadedEntries);
 
     if (preset.selectedPersonKey) {
       setSelectedPersonKey(preset.selectedPersonKey);
@@ -558,7 +572,8 @@ export default function InferencePage() {
     revokeIfBlobUrl(refAudioUrl);
     setRefAudioPath(preset.primary.path);
     setRefAudioFile({ name: preset.primary.name || getFallbackReferenceName(preset.primary.path) });
-    setRefAudioUrl(getReferenceUrl(preset.primary, preset.expName));
+    const primaryUrl = await getReferenceUrl(preset.primary, preset.expName);
+    setRefAudioUrl(primaryUrl);
     setPromptText(preset.promptText || '');
     setPromptLang(preset.promptLang || 'en');
     setAuxRefAudios(
@@ -569,9 +584,10 @@ export default function InferencePage() {
           path: entry.path,
         }))
     );
+    const previewUrl = await getReferenceUrl(preset.primary, preset.expName);
     setPreview({
       path: preset.primary.path,
-      url: getReferenceUrl(preset.primary, preset.expName),
+      url: previewUrl,
       name: preset.primary.name || getFallbackReferenceName(preset.primary.path),
       role: 'primary',
     });
@@ -679,14 +695,15 @@ export default function InferencePage() {
     }
   }
 
-  function handleSelectTrainingAudio(file) {
+  async function handleSelectTrainingAudio(file) {
+    const url = await getTrainingAudioUrl(currentExpName, file.filename);
     setRefAudioPath(file.path);
     setRefAudioFile({ name: file.filename });
-    setRefAudioUrl(getTrainingAudioUrl(currentExpName, file.filename));
+    setRefAudioUrl(url);
     setPromptText(file.transcript);
     setPreview({
       path: file.path,
-      url: getTrainingAudioUrl(currentExpName, file.filename),
+      url,
       name: file.filename,
       role: 'primary',
     });
@@ -697,15 +714,16 @@ export default function InferencePage() {
     setAuxRefAudios(prev => prev.filter(f => f.filename !== file.filename));
   }
 
-  function handleToggleAuxRef(file) {
+  async function handleToggleAuxRef(file) {
     setAuxRefAudios(prev => {
       const exists = prev.some(f => f.filename === file.filename);
       if (exists) return prev.filter(f => f.filename !== file.filename);
       return [...prev, file];
     });
+    const url = await getTrainingAudioUrl(currentExpName, file.filename);
     setPreview({
       path: file.path,
-      url: getTrainingAudioUrl(currentExpName, file.filename),
+      url,
       name: file.filename,
       role: 'auxiliary',
     });
@@ -1141,12 +1159,15 @@ export default function InferencePage() {
                               />
                               <button
                                 type="button"
-                                onClick={() => setPreview({
-                                  path: file.path,
-                                  url: getTrainingAudioUrl(currentExpName, file.filename),
-                                  name: file.filename,
-                                  role: isPrimary ? 'primary' : isAux ? 'auxiliary' : 'preview',
-                                })}
+                                onClick={async () => {
+                                  const url = await getTrainingAudioUrl(currentExpName, file.filename);
+                                  setPreview({
+                                    path: file.path,
+                                    url,
+                                    name: file.filename,
+                                    role: isPrimary ? 'primary' : isAux ? 'auxiliary' : 'preview',
+                                  });
+                                }}
                                 className="min-w-0 flex-1 text-left"
                               >
                                 <div className="break-all font-mono text-xs text-foreground">
@@ -1228,12 +1249,15 @@ export default function InferencePage() {
                             />
                             <button
                               type="button"
-                              onClick={() => setPreview({
-                                path: entry.serverPath,
-                                url: entry.localUrl || getUploadedRefAudioUrl(entry.serverPath),
-                                name: entry.name,
-                                role: isPrimary ? 'primary' : 'auxiliary',
-                              })}
+                              onClick={async () => {
+                                const url = entry.localUrl || await getUploadedRefAudioUrl(entry.serverPath);
+                                setPreview({
+                                  path: entry.serverPath,
+                                  url,
+                                  name: entry.name,
+                                  role: isPrimary ? 'primary' : 'auxiliary',
+                                });
+                              }}
                               className="min-w-0 flex-1 text-left"
                             >
                               <div className="truncate font-mono text-xs text-foreground">
