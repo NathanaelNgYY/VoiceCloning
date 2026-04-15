@@ -139,6 +139,30 @@ const CLIENT_DIST_DIR = resolveEnvPath(readEnv('CLIENT_DIST_DIR'), path.resolve(
 const CORS_ORIGINS = parseListEnv(readEnv('CORS_ORIGINS'));
 const ALLOW_ALL_CORS = CORS_ORIGINS.includes('*');
 
+const STORAGE_MODE = readEnv('STORAGE_MODE') || 'local';
+const S3_BUCKET = readEnv('S3_BUCKET');
+const S3_REGION = readEnv('S3_REGION');
+const S3_PREFIX = readEnv('S3_PREFIX') || '';
+const GPU_WORKER_HOST = readEnv('GPU_WORKER_HOST') || INFERENCE_HOST;
+const GPU_WORKER_PORT = parseIntegerEnv(readEnv('GPU_WORKER_PORT'), 3001);
+
+function isS3Mode() {
+  return STORAGE_MODE === 's3';
+}
+
+if (isS3Mode()) {
+  if (!S3_BUCKET) {
+    console.warn('[config] STORAGE_MODE=s3 but S3_BUCKET is not set');
+  }
+  if (!S3_REGION) {
+    console.warn('[config] STORAGE_MODE=s3 but S3_REGION is not set');
+  }
+  console.log(`Storage mode: s3 (bucket: ${S3_BUCKET}, region: ${S3_REGION}, prefix: "${S3_PREFIX}")`);
+  console.log(`GPU Worker: ${GPU_WORKER_HOST}:${GPU_WORKER_PORT}`);
+} else {
+  console.log('Storage mode: local');
+}
+
 function buildPythonEnv(extraEnv = {}) {
   return {
     ...process.env,
@@ -180,6 +204,13 @@ export {
   CLIENT_DIST_DIR,
   CORS_ORIGINS,
   ALLOW_ALL_CORS,
+  STORAGE_MODE,
+  S3_BUCKET,
+  S3_REGION,
+  S3_PREFIX,
+  GPU_WORKER_HOST,
+  GPU_WORKER_PORT,
+  isS3Mode,
   buildPythonEnv,
   ensureRuntimeDirectories,
   getConfigError,
