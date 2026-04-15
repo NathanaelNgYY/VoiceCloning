@@ -92,4 +92,9 @@ export const gpuWorkerClient = {
     const res = await client.post(`${getBaseUrl()}/models/download`, { s3Key });
     return res.data;
   },
+
+  async downloadRefAudio(s3Key) {
+    const res = await client.post(`${getBaseUrl()}/ref-audio/download`, { s3Key });
+    return res.data;
+  },
 };

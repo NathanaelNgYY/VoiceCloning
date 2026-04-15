@@ -13,6 +13,19 @@ import { isS3Mode, generatePresignedGetUrl, listObjects, getObject } from '../se
 
 const router = Router();
 
+async function resolveRefAudioPaths(refPath, auxPaths) {
+  if (!isS3Mode()) return { refPath, auxPaths };
+  const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
+  const { localPath } = await gpuWorkerClient.downloadRefAudio(refPath);
+  const resolvedAux = await Promise.all(
+    auxPaths.map(async (p) => {
+      const { localPath: lp } = await gpuWorkerClient.downloadRefAudio(p);
+      return lp;
+    })
+  );
+  return { refPath: localPath, auxPaths: resolvedAux };
+}
+
 router.get('/models', async (_req, res) => {
   if (isS3Mode()) {
     try {
@@ -143,13 +156,15 @@ router.post('/inference', async (req, res) => {
       return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
     }
 
+    const resolved = await resolveRefAudioPaths(ref_audio_path, aux_ref_audio_paths);
+
     const { audioBuffer, chunks } = await synthesizeLongText({
       text,
       text_lang,
-      ref_audio_path,
+      ref_audio_path: resolved.refPath,
       prompt_text,
       prompt_lang,
-      aux_ref_audio_paths,
+      aux_ref_audio_paths: resolved.auxPaths,
       top_k,
       top_p,
       temperature,
@@ -212,16 +227,26 @@ router.post('/inference/generate', async (req, res) => {
     return res.status(409).json({ error: 'Another generation is already running on this instance' });
   }
 
+  let resolvedRefPath = ref_audio_path;
+  let resolvedAuxPaths = aux_ref_audio_paths;
+  try {
+    const resolved = await resolveRefAudioPaths(ref_audio_path, aux_ref_audio_paths);
+    resolvedRefPath = resolved.refPath;
+    resolvedAuxPaths = resolved.auxPaths;
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to resolve reference audio: ${err.message}` });
+  }
+
   const sessionId = crypto.randomUUID();
   inferenceState.resetForNewSession({
     sessionId,
     params: {
       text,
       text_lang,
-      ref_audio_path,
+      ref_audio_path: resolvedRefPath,
       prompt_text,
       prompt_lang,
-      aux_ref_audio_paths,
+      aux_ref_audio_paths: resolvedAuxPaths,
       top_k,
       top_p,
       temperature,
@@ -238,10 +263,10 @@ router.post('/inference/generate', async (req, res) => {
     synthesizeLongTextStreaming(sessionId, {
       text,
       text_lang,
-      ref_audio_path,
+      ref_audio_path: resolvedRefPath,
       prompt_text,
       prompt_lang,
-      aux_ref_audio_paths,
+      aux_ref_audio_paths: resolvedAuxPaths,
       top_k,
       top_p,
       temperature,
