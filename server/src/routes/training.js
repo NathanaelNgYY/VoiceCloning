@@ -35,7 +35,6 @@ router.post('/train', async (req, res) => {
       const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
 
       const sessionId = uuidv4();
-      sessions.set(sessionId, { expName, startedAt: Date.now() });
       trainingState.resetForNewSession({ sessionId, expName });
       sseManager.prepareSession(sessionId);
 
@@ -53,6 +52,12 @@ router.post('/train', async (req, res) => {
           asrLanguage,
           asrModel,
         },
+      });
+
+      sessions.set(sessionId, {
+        expName,
+        startedAt: Date.now(),
+        workerSessionId,
       });
 
       res.json({ sessionId, steps: STEPS });
@@ -132,7 +137,11 @@ router.post('/train/stop', async (req, res) => {
   if (isS3Mode()) {
     try {
       const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
-      await gpuWorkerClient.stopTraining(sessionId);
+      const session = sessions.get(sessionId);
+      if (!session?.workerSessionId) {
+        return res.status(404).json({ error: 'No running GPU worker session found for this session' });
+      }
+      await gpuWorkerClient.stopTraining(session.workerSessionId);
       trainingState.setStatus('stopped');
       sseManager.send(sessionId, 'error', { message: 'Training stopped by user' });
       sessions.delete(sessionId);

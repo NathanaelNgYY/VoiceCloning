@@ -3,7 +3,17 @@ import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { WEIGHT_DIRS, GPT_SOVITS_ROOT, DATA_ROOT, PYTHON_EXEC, SCRIPTS, REF_AUDIO_DIR, buildPythonEnv, getConfigError } from '../config.js';
+import {
+  WEIGHT_DIRS,
+  GPT_SOVITS_ROOT,
+  DATA_ROOT,
+  PYTHON_EXEC,
+  SCRIPTS,
+  REF_AUDIO_DIR,
+  buildPythonEnv,
+  getConfigError,
+  isLocalInferenceMode,
+} from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
 import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
@@ -12,6 +22,10 @@ import { isPathInside, isSafePathSegment } from '../utils/paths.js';
 import { isS3Mode, generatePresignedGetUrl, listObjects, getObject } from '../services/s3Storage.js';
 
 const router = Router();
+
+function getInferenceConfigError() {
+  return getConfigError({ requirePython: isLocalInferenceMode() });
+}
 
 async function resolveRefAudioPaths(refPath, auxPaths) {
   if (!isS3Mode()) return { refPath, auxPaths };
@@ -46,7 +60,7 @@ router.get('/models', async (_req, res) => {
   }
 
   // Local mode
-  const configError = getConfigError();
+  const configError = getConfigError({ requireLocalRuntime: true });
   if (configError) {
     return res.status(500).json({ error: configError });
   }
@@ -73,7 +87,7 @@ router.post('/models/select', async (req, res) => {
     const resolvedSovitsKey = sovitsKey || sovitsPath;
 
     try {
-      if (!inferenceServer.isReady()) {
+      if (!await inferenceServer.checkReady()) {
         await inferenceServer.start();
       }
 
@@ -105,7 +119,7 @@ router.post('/models/select', async (req, res) => {
     return res.status(500).json({ error: configError });
   }
   try {
-    if (!inferenceServer.isReady()) {
+    if (!await inferenceServer.checkReady()) {
       await inferenceServer.start();
     }
     if (sovitsPath) {
@@ -124,7 +138,7 @@ router.post('/models/select', async (req, res) => {
 });
 
 router.post('/inference', async (req, res) => {
-  const configError = getConfigError({ requirePython: true });
+  const configError = getInferenceConfigError();
   if (configError) {
     return res.status(500).json({ error: configError });
   }
@@ -152,7 +166,7 @@ router.post('/inference', async (req, res) => {
   }
 
   try {
-    if (!inferenceServer.isReady()) {
+    if (!await inferenceServer.checkReady()) {
       return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
     }
 
@@ -193,7 +207,7 @@ router.post('/inference', async (req, res) => {
 // ── Streaming inference endpoints ──
 
 router.post('/inference/generate', async (req, res) => {
-  const configError = getConfigError({ requirePython: true });
+  const configError = getInferenceConfigError();
   if (configError) {
     return res.status(500).json({ error: configError });
   }
@@ -220,7 +234,7 @@ router.post('/inference/generate', async (req, res) => {
     return res.status(400).json({ error: 'ref_audio_path is required' });
   }
 
-  if (!inferenceServer.isReady()) {
+  if (!await inferenceServer.checkReady()) {
     return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
   }
   if (['waiting', 'generating'].includes(inferenceState.getState().status)) {
@@ -325,9 +339,13 @@ router.post('/inference/cancel', (req, res) => {
   res.json({ cancelled });
 });
 
-router.post('/inference/stop', (_req, res) => {
-  inferenceServer.stop();
-  res.json({ message: 'Inference server stopped' });
+router.post('/inference/stop', async (_req, res) => {
+  try {
+    await inferenceServer.stop();
+    res.json({ message: 'Inference server stopped' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/transcribe - auto-transcribe reference audio
@@ -414,13 +432,20 @@ router.post('/transcribe', async (req, res) => {
   }
 });
 
-router.get('/inference/status', (_req, res) => {
-  const configError = getConfigError({ requirePython: true });
-  res.json({
-    ready: !configError && inferenceServer.isReady(),
-    error: configError,
-    loaded: inferenceServer.getLoadedWeights(),
-  });
+router.get('/inference/status', async (_req, res) => {
+  const configError = getInferenceConfigError();
+  if (configError) {
+    return res.json({
+      mode: isLocalInferenceMode() ? 'local' : 'remote',
+      ready: false,
+      error: configError,
+      loaded: inferenceServer.getLoadedWeights(),
+      managed: false,
+    });
+  }
+
+  const status = await inferenceServer.getStatus();
+  res.json(status);
 });
 
 // ── Training audio browser endpoints ──

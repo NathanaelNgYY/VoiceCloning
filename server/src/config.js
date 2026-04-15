@@ -41,6 +41,11 @@ function parseListEnv(value) {
     .filter(Boolean);
 }
 
+function parseModeEnv(value, fallback, allowedValues) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return allowedValues.includes(normalized) ? normalized : fallback;
+}
+
 function resolveEnvPath(value, fallback = '') {
   return value ? path.resolve(value) : fallback;
 }
@@ -49,7 +54,15 @@ const NODE_ENV = readEnv('NODE_ENV') || 'development';
 const SERVER_DIR = path.dirname(CONFIG_FILE);
 const PROJECT_ROOT = path.resolve(SERVER_DIR, '..');
 
+const STORAGE_MODE = readEnv('STORAGE_MODE') || 'local';
+const INFERENCE_MODE = parseModeEnv(
+  readEnv('INFERENCE_MODE'),
+  STORAGE_MODE === 's3' ? 'remote' : 'local',
+  ['local', 'remote'],
+);
+
 const GPT_SOVITS_ROOT = resolveEnvPath(readEnv('GPT_SOVITS_ROOT'));
+const DEFAULT_RUNTIME_ROOT = path.resolve(PROJECT_ROOT, 'server_runtime');
 
 function joinFromRoot(...segments) {
   return GPT_SOVITS_ROOT ? path.join(GPT_SOVITS_ROOT, ...segments) : '';
@@ -66,7 +79,43 @@ const PYTHON_EXEC = pythonCandidates.find(candidate => fs.existsSync(candidate))
   || process.env.PYTHON_EXEC
   || (process.platform === 'win32' ? 'python.exe' : 'python3');
 
-function getConfigError({ requirePython = false } = {}) {
+function isS3Mode() {
+  return STORAGE_MODE === 's3';
+}
+
+function isRemoteInferenceMode() {
+  return INFERENCE_MODE === 'remote';
+}
+
+function isLocalInferenceMode() {
+  return INFERENCE_MODE === 'local';
+}
+
+function getBackendConfigError() {
+  if (!['local', 'remote'].includes(INFERENCE_MODE)) {
+    return `INFERENCE_MODE must be "local" or "remote", received "${INFERENCE_MODE}"`;
+  }
+
+  if (isRemoteInferenceMode() && !isS3Mode()) {
+    return 'INFERENCE_MODE=remote requires STORAGE_MODE=s3 so the backend and GPU worker can hand off files via S3';
+  }
+
+  if (isS3Mode()) {
+    if (!S3_BUCKET) {
+      return 'STORAGE_MODE=s3 requires S3_BUCKET';
+    }
+    if (!S3_REGION) {
+      return 'STORAGE_MODE=s3 requires S3_REGION';
+    }
+    if (!GPU_WORKER_HOST) {
+      return 'STORAGE_MODE=s3 requires GPU_WORKER_HOST. Do not rely on localhost defaults for split-host deployments';
+    }
+  }
+
+  return null;
+}
+
+function getLocalRuntimeConfigError({ requirePython = false } = {}) {
   if (!GPT_SOVITS_ROOT) {
     return 'GPT_SOVITS_ROOT is not configured. Set it in the environment or server/.env';
   }
@@ -79,17 +128,22 @@ function getConfigError({ requirePython = false } = {}) {
   return null;
 }
 
+function getConfigError({ requirePython = false, requireLocalRuntime = false } = {}) {
+  const backendError = getBackendConfigError();
+  if (backendError) {
+    return backendError;
+  }
+
+  if (requireLocalRuntime || requirePython) {
+    return getLocalRuntimeConfigError({ requirePython });
+  }
+
+  return null;
+}
+
 function assertConfig(options = {}) {
   const err = getConfigError(options);
   if (err) throw new Error(err);
-}
-
-const startupError = getConfigError();
-if (startupError) {
-  console.warn(`[config] ${startupError}`);
-} else {
-  console.log(`GPT-SoVITS root: ${GPT_SOVITS_ROOT}`);
-  console.log(`Python executable: ${PYTHON_EXEC}`);
 }
 
 const PRETRAINED = {
@@ -101,8 +155,14 @@ const PRETRAINED = {
 };
 
 const WEIGHT_DIRS = {
-  sovits: resolveEnvPath(readEnv('SOVITS_WEIGHTS_DIR'), joinFromRoot('SoVITS_weights_v2')),
-  gpt: resolveEnvPath(readEnv('GPT_WEIGHTS_DIR'), joinFromRoot('GPT_weights_v2')),
+  sovits: resolveEnvPath(
+    readEnv('SOVITS_WEIGHTS_DIR'),
+    GPT_SOVITS_ROOT ? joinFromRoot('SoVITS_weights_v2') : path.join(DEFAULT_RUNTIME_ROOT, 'weights', 'sovits'),
+  ),
+  gpt: resolveEnvPath(
+    readEnv('GPT_WEIGHTS_DIR'),
+    GPT_SOVITS_ROOT ? joinFromRoot('GPT_weights_v2') : path.join(DEFAULT_RUNTIME_ROOT, 'weights', 'gpt'),
+  ),
 };
 
 const CONFIG_TEMPLATES = {
@@ -110,9 +170,18 @@ const CONFIG_TEMPLATES = {
   gpt: joinFromRoot('GPT_SoVITS', 'configs', 's1longer-v2.yaml'),
 };
 
-const EXP_ROOT = resolveEnvPath(readEnv('VOICE_CLONING_LOG_ROOT', 'EXP_ROOT'), joinFromRoot('logs'));
-const DATA_ROOT = resolveEnvPath(readEnv('VOICE_CLONING_DATA_ROOT', 'DATA_ROOT'), joinFromRoot('data'));
-const TEMP_DIR = resolveEnvPath(readEnv('VOICE_CLONING_TEMP_ROOT', 'TEMP_DIR'), joinFromRoot('TEMP'));
+const EXP_ROOT = resolveEnvPath(
+  readEnv('VOICE_CLONING_LOG_ROOT', 'EXP_ROOT'),
+  GPT_SOVITS_ROOT ? joinFromRoot('logs') : path.join(DEFAULT_RUNTIME_ROOT, 'logs'),
+);
+const DATA_ROOT = resolveEnvPath(
+  readEnv('VOICE_CLONING_DATA_ROOT', 'DATA_ROOT'),
+  GPT_SOVITS_ROOT ? joinFromRoot('data') : path.join(DEFAULT_RUNTIME_ROOT, 'data'),
+);
+const TEMP_DIR = resolveEnvPath(
+  readEnv('VOICE_CLONING_TEMP_ROOT', 'TEMP_DIR'),
+  GPT_SOVITS_ROOT ? joinFromRoot('TEMP') : path.join(DEFAULT_RUNTIME_ROOT, 'temp'),
+);
 const REF_AUDIO_DIR = TEMP_DIR ? path.join(TEMP_DIR, 'ref_audio') : '';
 
 const TOOLS_DIR = joinFromRoot('tools');
@@ -139,28 +208,29 @@ const CLIENT_DIST_DIR = resolveEnvPath(readEnv('CLIENT_DIST_DIR'), path.resolve(
 const CORS_ORIGINS = parseListEnv(readEnv('CORS_ORIGINS'));
 const ALLOW_ALL_CORS = CORS_ORIGINS.includes('*');
 
-const STORAGE_MODE = readEnv('STORAGE_MODE') || 'local';
 const S3_BUCKET = readEnv('S3_BUCKET');
 const S3_REGION = readEnv('S3_REGION');
 const S3_PREFIX = readEnv('S3_PREFIX') || '';
-const GPU_WORKER_HOST = readEnv('GPU_WORKER_HOST') || INFERENCE_HOST;
+const GPU_WORKER_HOST = readEnv('GPU_WORKER_HOST') || (isS3Mode() ? '' : INFERENCE_HOST);
 const GPU_WORKER_PORT = parseIntegerEnv(readEnv('GPU_WORKER_PORT'), 3001);
 
-function isS3Mode() {
-  return STORAGE_MODE === 's3';
+const startupError = getConfigError({ requireLocalRuntime: isLocalInferenceMode() });
+if (startupError) {
+  console.warn(`[config] ${startupError}`);
+} else if (GPT_SOVITS_ROOT) {
+  console.log(`GPT-SoVITS root: ${GPT_SOVITS_ROOT}`);
+  console.log(`Python executable: ${PYTHON_EXEC}`);
+} else {
+  console.log(`[config] No local GPT-SoVITS root configured on this backend (inference mode: ${INFERENCE_MODE})`);
 }
 
+console.log(`Inference mode: ${INFERENCE_MODE}`);
 if (isS3Mode()) {
-  if (!S3_BUCKET) {
-    console.warn('[config] STORAGE_MODE=s3 but S3_BUCKET is not set');
-  }
-  if (!S3_REGION) {
-    console.warn('[config] STORAGE_MODE=s3 but S3_REGION is not set');
-  }
   console.log(`Storage mode: s3 (bucket: ${S3_BUCKET}, region: ${S3_REGION}, prefix: "${S3_PREFIX}")`);
   console.log(`GPU Worker: ${GPU_WORKER_HOST}:${GPU_WORKER_PORT}`);
 } else {
   console.log('Storage mode: local');
+  console.log(`Inference server: ${INFERENCE_HOST}:${INFERENCE_PORT}`);
 }
 
 function buildPythonEnv(extraEnv = {}) {
@@ -197,6 +267,7 @@ export {
   SCRIPTS,
   SERVER_HOST,
   SERVER_PORT,
+  INFERENCE_MODE,
   INFERENCE_HOST,
   INFERENCE_PORT,
   TRUST_PROXY,
@@ -211,8 +282,11 @@ export {
   GPU_WORKER_HOST,
   GPU_WORKER_PORT,
   isS3Mode,
+  isLocalInferenceMode,
+  isRemoteInferenceMode,
   buildPythonEnv,
   ensureRuntimeDirectories,
+  getBackendConfigError,
   getConfigError,
   assertConfig,
 };

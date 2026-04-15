@@ -97,4 +97,38 @@ export const gpuWorkerClient = {
     const res = await client.post(`${getBaseUrl()}/ref-audio/download`, { s3Key });
     return res.data;
   },
+
+  async getInferenceStatus() {
+    const res = await client.get(`${getBaseUrl()}/inference/status`);
+    return res.data;
+  },
+
+  async startInference() {
+    const res = await client.post(`${getBaseUrl()}/inference/start`);
+    return res.data;
+  },
+
+  async stopInference() {
+    const res = await client.post(`${getBaseUrl()}/inference/stop`);
+    return res.data;
+  },
+
+  async setGPTWeights(weightsPath) {
+    const res = await client.post(`${getBaseUrl()}/inference/weights/gpt`, { weightsPath });
+    return res.data;
+  },
+
+  async setSoVITSWeights(weightsPath) {
+    const res = await client.post(`${getBaseUrl()}/inference/weights/sovits`, { weightsPath });
+    return res.data;
+  },
+
+  async synthesize(params, { timeoutMs = 180000 } = {}) {
+    const res = await client.post(`${getBaseUrl()}/inference/tts`, params, {
+      responseType: 'arraybuffer',
+      timeout: timeoutMs,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return Buffer.from(res.data);
+  },
 };

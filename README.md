@@ -16,7 +16,7 @@ This branch is set up to run as a single deployable web app instead of only as t
 
 ## Important AWS note
 
-This repository does not contain the full GPT-SoVITS runtime itself. To make training and inference work in AWS, `GPT_SOVITS_ROOT` must point to a Linux-ready GPT-SoVITS installation that already contains its Python runtime and model dependencies.
+This repository does not contain the full GPT-SoVITS runtime itself. In single-host deployments, `GPT_SOVITS_ROOT` must point to a Linux-ready GPT-SoVITS installation that already contains its Python runtime and model dependencies. In split-host deployments, the backend can run without `GPT_SOVITS_ROOT`, but the GPU worker still needs it because the worker owns `api_v2.py`, model loading, and transcription.
 
 Typical AWS layout:
 
@@ -41,8 +41,37 @@ PORT=3000
 SERVER_HOST=0.0.0.0
 SERVE_CLIENT_DIST=true
 TRUST_PROXY=true
+INFERENCE_MODE=local
 INFERENCE_HOST=127.0.0.1
 INFERENCE_PORT=9880
+```
+
+Split-host backend defaults:
+
+```env
+NODE_ENV=production
+PORT=3000
+SERVER_HOST=0.0.0.0
+SERVE_CLIENT_DIST=true
+TRUST_PROXY=true
+STORAGE_MODE=s3
+INFERENCE_MODE=remote
+S3_BUCKET=my-voice-cloning-bucket
+S3_REGION=ap-southeast-1
+GPU_WORKER_HOST=10.0.2.25
+GPU_WORKER_PORT=3001
+```
+
+Split-host GPU worker defaults:
+
+```env
+GPT_SOVITS_ROOT=/opt/gpt-sovits
+WORKER_HOST=0.0.0.0
+WORKER_PORT=3001
+INFERENCE_HOST=127.0.0.1
+INFERENCE_PORT=9880
+S3_BUCKET=my-voice-cloning-bucket
+S3_REGION=ap-southeast-1
 ```
 
 Recommended persistent storage overrides:

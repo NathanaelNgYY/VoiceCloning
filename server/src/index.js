@@ -12,6 +12,8 @@ import {
   ALLOW_ALL_CORS,
   ensureRuntimeDirectories,
   getConfigError,
+  INFERENCE_MODE,
+  isLocalInferenceMode,
   isS3Mode,
 } from './config.js';
 import { processManager } from './services/processManager.js';
@@ -59,11 +61,13 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.get('/readyz', (_req, res) => {
-  const configError = getConfigError({ requirePython: true });
+  const configError = getConfigError({ requireLocalRuntime: isLocalInferenceMode() });
   const ready = !configError;
   res.status(ready ? 200 : 503).json({
     ready,
     configError,
+    inferenceMode: INFERENCE_MODE,
+    storageMode: isS3Mode() ? 's3' : 'local',
     trainingStatus: trainingState.getState().status,
     inferenceStatus: inferenceState.getState().status,
   });
@@ -72,6 +76,7 @@ app.get('/readyz', (_req, res) => {
 app.get('/api/config', (_req, res) => {
   res.json({
     storageMode: isS3Mode() ? 's3' : 'local',
+    inferenceMode: INFERENCE_MODE,
   });
 });
 
@@ -118,7 +123,7 @@ server.headersTimeout = 0;
 
 let shuttingDown = false;
 
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) {
     return;
   }
@@ -126,7 +131,11 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`[shutdown] Received ${signal}, stopping services...`);
   processManager.killAll();
-  inferenceServer.stop();
+  try {
+    await inferenceServer.stop();
+  } catch (err) {
+    console.error('[shutdown] Failed to stop inference server cleanly:', err);
+  }
 
   server.close(() => {
     process.exit(0);

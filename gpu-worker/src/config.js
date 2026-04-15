@@ -10,12 +10,16 @@ function parseIntegerEnv(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export const GPT_SOVITS_ROOT = path.resolve(readEnv('GPT_SOVITS_ROOT'));
+const rawGptSovitsRoot = readEnv('GPT_SOVITS_ROOT');
+
+export const GPT_SOVITS_ROOT = rawGptSovitsRoot ? path.resolve(rawGptSovitsRoot) : '';
 export const S3_BUCKET = readEnv('S3_BUCKET');
 export const S3_REGION = readEnv('S3_REGION');
 export const S3_PREFIX = readEnv('S3_PREFIX') || '';
 export const WORKER_PORT = parseIntegerEnv(readEnv('WORKER_PORT'), 3001);
 export const WORKER_HOST = readEnv('WORKER_HOST') || '0.0.0.0';
+export const INFERENCE_HOST = readEnv('INFERENCE_HOST') || '127.0.0.1';
+export const INFERENCE_PORT = parseIntegerEnv(readEnv('INFERENCE_PORT'), 9880);
 
 // Local temp directory for training data
 export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVITS_ROOT, 'worker_temp');
@@ -42,6 +46,7 @@ export const SCRIPTS = {
   getSemantic: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '3-get-semantic.py'),
   trainSoVITS: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 's2_train.py'),
   trainGPT: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 's1_train.py'),
+  apiServer: path.join(GPT_SOVITS_ROOT, 'api_v2.py'),
 };
 
 export const PRETRAINED = {
@@ -77,3 +82,4 @@ if (!S3_BUCKET || !S3_REGION) {
 console.log(`[gpu-worker] GPT-SoVITS root: ${GPT_SOVITS_ROOT}`);
 console.log(`[gpu-worker] Python: ${PYTHON_EXEC}`);
 console.log(`[gpu-worker] S3: ${S3_BUCKET} (${S3_REGION}), prefix: "${S3_PREFIX}"`);
+console.log(`[gpu-worker] Inference server target: ${INFERENCE_HOST}:${INFERENCE_PORT}`);
