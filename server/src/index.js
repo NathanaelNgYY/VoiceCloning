@@ -12,6 +12,7 @@ import {
   ALLOW_ALL_CORS,
   ensureRuntimeDirectories,
   getConfigError,
+  isS3Mode,
 } from './config.js';
 import { processManager } from './services/processManager.js';
 import { sseManager } from './services/sseManager.js';
@@ -65,6 +66,12 @@ app.get('/readyz', (_req, res) => {
     configError,
     trainingStatus: trainingState.getState().status,
     inferenceStatus: inferenceState.getState().status,
+  });
+});
+
+app.get('/api/config', (_req, res) => {
+  res.json({
+    storageMode: isS3Mode() ? 's3' : 'local',
   });
 });
 
