@@ -307,14 +307,25 @@ router.post('/inference/stop', (_req, res) => {
 
 // POST /api/transcribe - auto-transcribe reference audio
 router.post('/transcribe', async (req, res) => {
-  const configError = getConfigError({ requirePython: true });
-  if (configError) {
-    return res.status(503).json({ error: configError });
-  }
-
   const { filePath, language = 'auto' } = req.body;
   if (!filePath) {
     return res.status(400).json({ error: 'filePath is required' });
+  }
+
+  if (isS3Mode()) {
+    try {
+      const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
+      const result = await gpuWorkerClient.transcribe(filePath, language);
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Local mode
+  const configError = getConfigError({ requirePython: true });
+  if (configError) {
+    return res.status(503).json({ error: configError });
   }
 
   const absolutePath = path.resolve(GPT_SOVITS_ROOT, filePath);
