@@ -737,8 +737,8 @@ export default function InferencePage() {
     setModelError(null);
     try {
       const res = await selectModels(selectedGPT, selectedSoVITS);
-      setLoadedGPTPath(res.data.loaded?.gptPath || selectedGPT);
-      setLoadedSoVITSPath(res.data.loaded?.sovitsPath || selectedSoVITS);
+      setLoadedGPTPath(selectedGPT);
+      setLoadedSoVITSPath(selectedSoVITS);
       setServerReady(true);
     } catch (err) {
       setModelError(err.response?.data?.error || err.message);
