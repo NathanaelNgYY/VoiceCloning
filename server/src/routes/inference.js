@@ -49,10 +49,10 @@ router.get('/models', async (_req, res) => {
       ]);
       const gpt = gptObjects
         .filter(o => o.key.endsWith('.ckpt'))
-        .map(o => ({ name: path.basename(o.key), key: o.key }));
+        .map(o => ({ name: path.basename(o.key), key: o.key, path: o.key }));
       const sovits = sovitsObjects
         .filter(o => o.key.endsWith('.pth'))
-        .map(o => ({ name: path.basename(o.key), key: o.key }));
+        .map(o => ({ name: path.basename(o.key), key: o.key, path: o.key }));
       return res.json({ gpt, sovits });
     } catch (err) {
       return res.status(500).json({ error: err.message });
