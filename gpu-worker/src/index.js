@@ -6,8 +6,17 @@ import modelsRoutes from './routes/models.js';
 import transcribeRoutes from './routes/transcribe.js';
 import inferenceRoutes from './routes/inference.js';
 import { inferenceServer } from './services/inferenceServer.js';
+import { processManager } from './services/processManager.js';
+import { sseManager } from './services/sseManager.js';
+import { trainingState } from './services/trainingState.js';
 
 const app = express();
+
+processManager.on('log', ({ sessionId, stream, data }) => {
+  const payload = { stream, data, timestamp: Date.now() };
+  trainingState.appendLog(payload);
+  sseManager.send(sessionId, 'log', payload);
+});
 app.use(cors());
 app.use(express.json());
 
