@@ -546,6 +546,7 @@ router.get('/training-audio/:expName', async (req, res) => {
         return {
           filename,
           key: `${denoisedPrefix}${filename}`,
+          path: `${denoisedPrefix}${filename}`,
           transcript: info.transcript || '',
           lang: info.lang || '',
         };
