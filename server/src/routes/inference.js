@@ -49,10 +49,10 @@ router.get('/models', async (_req, res) => {
       ]);
       const gpt = gptObjects
         .filter(o => o.key.endsWith('.ckpt'))
-        .map(o => ({ name: path.basename(o.key), key: o.key }));
+        .map(o => ({ name: path.basename(o.key), key: o.key, path: o.key }));
       const sovits = sovitsObjects
         .filter(o => o.key.endsWith('.pth'))
-        .map(o => ({ name: path.basename(o.key), key: o.key }));
+        .map(o => ({ name: path.basename(o.key), key: o.key, path: o.key }));
       return res.json({ gpt, sovits });
     } catch (err) {
       return res.status(500).json({ error: err.message });
@@ -535,7 +535,7 @@ router.get('/training-audio/:expName', async (req, res) => {
         for (const line of lines) {
           const parts = line.split('|');
           if (parts.length >= 4) {
-            const fname = path.basename(parts[0]);
+            const fname = parts[0].replace(/\\/g, '/').split('/').pop();
             transcriptMap.set(fname, { transcript: parts.slice(3).join('|'), lang: parts[2] });
           }
         }
@@ -546,6 +546,7 @@ router.get('/training-audio/:expName', async (req, res) => {
         return {
           filename,
           key: `${denoisedPrefix}${filename}`,
+          path: `${denoisedPrefix}${filename}`,
           transcript: info.transcript || '',
           lang: info.lang || '',
         };
