@@ -535,7 +535,7 @@ router.get('/training-audio/:expName', async (req, res) => {
         for (const line of lines) {
           const parts = line.split('|');
           if (parts.length >= 4) {
-            const fname = path.basename(parts[0]);
+            const fname = parts[0].replace(/\\/g, '/').split('/').pop();
             transcriptMap.set(fname, { transcript: parts.slice(3).join('|'), lang: parts[2] });
           }
         }
