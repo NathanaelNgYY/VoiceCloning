@@ -27,13 +27,12 @@ export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVIT
 // Python resolution (same logic as server)
 const runtimeDir = path.join(GPT_SOVITS_ROOT, 'runtime');
 const pythonCandidates = [
-  path.join(runtimeDir, 'python.exe'),
-  path.join(runtimeDir, 'bin', 'python'),
   process.env.PYTHON_EXEC || '',
+  path.join(runtimeDir, 'bin', 'python'),
+  path.join(runtimeDir, 'python.exe'),
 ].filter(Boolean);
 
 export const PYTHON_EXEC = pythonCandidates.find(c => fs.existsSync(c))
-  || process.env.PYTHON_EXEC
   || (process.platform === 'win32' ? 'python.exe' : 'python3');
 
 export const SCRIPTS = {
