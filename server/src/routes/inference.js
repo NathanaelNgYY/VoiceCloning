@@ -323,6 +323,28 @@ router.get('/inference/result/:sessionId', async (req, res) => {
   fs.createReadStream(finalPath).pipe(res);
 });
 
+router.get('/inference/chunk/:sessionId/:index', (req, res) => {
+  const { sessionId, index } = req.params;
+
+  if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'Invalid sessionId' });
+  }
+  const chunkIndex = parseInt(index, 10);
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > 999) {
+    return res.status(400).json({ error: 'Invalid chunk index' });
+  }
+
+  const chunkPath = getSessionChunkPath(sessionId, chunkIndex);
+
+  if (!fs.existsSync(chunkPath)) {
+    return res.status(404).json({ error: 'Chunk not found' });
+  }
+
+  const stat = fs.statSync(chunkPath);
+  res.set({ 'Content-Type': 'audio/wav', 'Content-Length': stat.size });
+  fs.createReadStream(chunkPath).pipe(res);
+});
+
 router.get('/inference/current', (_req, res) => {
   res.json(inferenceState.getState());
 });
