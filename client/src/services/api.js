@@ -73,6 +73,7 @@ export async function uploadRefAudio(file) {
 
 // ── Live audio upload ──
 
+// Live recording upload — local mode only. S3 mode is not supported for this pipeline.
 export async function uploadLiveAudio(blob) {
   const ext = blob.type.includes('ogg') ? '.ogg' : blob.type.includes('mp4') ? '.mp4' : '.webm';
   const formData = new FormData();

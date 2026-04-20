@@ -29,6 +29,7 @@ export default function LivePage() {
   const sessionIdRef = useRef(null);
   const audioRef = useRef(null);
   const streamRef = useRef(null);
+  const audioUrlRef = useRef(null);
 
   const inference = useInferenceSSE();
 
@@ -82,6 +83,7 @@ export default function LivePage() {
         .then((blob) => {
           const url = URL.createObjectURL(blob);
           setAudioUrl(url);
+          audioUrlRef.current = url;
           setPhase('playing');
         })
         .catch((err) => {
@@ -104,6 +106,7 @@ export default function LivePage() {
       setPhase('idle');
       URL.revokeObjectURL(audioUrl);
       setAudioUrl(null);
+      audioUrlRef.current = null;
     };
     audio.addEventListener('ended', handleEnded, { once: true });
   }, [audioUrl]);
@@ -111,8 +114,7 @@ export default function LivePage() {
   useEffect(() => {
     return () => {
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-      inference.disconnect();
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     };
   }, []);
 
@@ -165,6 +167,11 @@ export default function LivePage() {
 
   async function runPipeline(blob) {
     try {
+      if (!refParams) {
+        setError('Reference audio is no longer available. Please reconfigure on the Inference page.');
+        setPhase('idle');
+        return;
+      }
       const uploadRes = await uploadLiveAudio(blob);
       const { filePath } = uploadRes.data;
 
