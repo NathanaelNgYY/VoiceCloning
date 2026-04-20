@@ -1,14 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
-import {
-  getInferenceStatus,
-  getCurrentInference,
-  uploadLiveAudio,
-  transcribeAudio,
-  startGeneration,
-  getGenerationResult,
-} from '../services/api.js';
+import { getInferenceStatus, getCurrentInference } from '../services/api.js';
+import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
 import { Badge } from '@/components/ui/badge';
 import { Activity, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -16,22 +9,10 @@ import { cn } from '@/lib/utils';
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
 
 export default function LivePage() {
-  const [phase, setPhase] = useState('idle'); // idle | recording | processing | playing
-  const [transcript, setTranscript] = useState('');
-  const [error, setError] = useState(null);
   const [serverReady, setServerReady] = useState(false);
   const [loadedVoiceName, setLoadedVoiceName] = useState('');
   const [refParams, setRefParams] = useState(null);
-  const [audioUrl, setAudioUrl] = useState(null);
-
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-  const sessionIdRef = useRef(null);
   const audioRef = useRef(null);
-  const streamRef = useRef(null);
-  const audioUrlRef = useRef(null);
-
-  const inference = useInferenceSSE();
 
   useEffect(() => {
     async function init() {
@@ -40,7 +21,8 @@ export default function LivePage() {
         setServerReady(Boolean(statusRes.data.ready));
         const loaded = statusRes.data.loaded;
         if (loaded?.sovitsPath) {
-          const name = loaded.sovitsPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.pth$/i, '') || '';
+          const name =
+            loaded.sovitsPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.pth$/i, '') || '';
           setLoadedVoiceName(name);
         }
       } catch {
@@ -77,138 +59,32 @@ export default function LivePage() {
     init();
   }, []);
 
-  useEffect(() => {
-    if (inference.status === 'complete' && sessionIdRef.current) {
-      getGenerationResult(sessionIdRef.current)
-        .then((blob) => {
-          const url = URL.createObjectURL(blob);
-          setAudioUrl(url);
-          audioUrlRef.current = url;
-          setPhase('playing');
-        })
-        .catch((err) => {
-          setError(err.message);
-          setPhase('idle');
-        });
-    }
-    if (inference.status === 'error' || inference.status === 'cancelled') {
-      setError(inference.error || 'Generation failed');
-      setPhase('idle');
-    }
-  }, [inference.status, inference.error]);
+  const liveSpeech = useLiveSpeech({ refParams });
 
+  // Wire audio element to hook
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audioUrl || !audio) return;
-    audio.src = audioUrl;
+    if (!audio || !liveSpeech.audioSrc) return;
+    audio.src = liveSpeech.audioSrc;
     audio.play().catch(() => {});
-    const handleEnded = () => {
-      setPhase('idle');
-      URL.revokeObjectURL(audioUrl);
-      setAudioUrl(null);
-      audioUrlRef.current = null;
-    };
-    audio.addEventListener('ended', handleEnded, { once: true });
-  }, [audioUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-    };
-  }, []);
-
-  async function startRecording() {
-    if (phase !== 'idle') return;
-    setError(null);
-    setTranscript('');
-
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      setError('Microphone access denied. Please allow microphone access and try again.');
-      return;
-    }
-
-    streamRef.current = stream;
-    chunksRef.current = [];
-
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm')
-      ? 'audio/webm'
-      : '';
-
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    mediaRecorderRef.current = recorder;
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-
-    recorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-      chunksRef.current = [];
-      await runPipeline(blob);
-    };
-
-    recorder.start();
-    setPhase('recording');
-  }
-
-  function stopRecording() {
-    if (phase !== 'recording' || !mediaRecorderRef.current) return;
-    mediaRecorderRef.current.stop();
-    setPhase('processing');
-  }
-
-  async function runPipeline(blob) {
-    try {
-      if (!refParams) {
-        setError('Reference audio is no longer available. Please reconfigure on the Inference page.');
-        setPhase('idle');
-        return;
-      }
-      const uploadRes = await uploadLiveAudio(blob);
-      const { filePath } = uploadRes.data;
-
-      const transcribeRes = await transcribeAudio(filePath, 'auto');
-      const { text, language } = transcribeRes.data;
-      setTranscript(text || '');
-
-      if (!text?.trim()) {
-        setError('No speech detected. Try speaking louder or closer to the mic.');
-        setPhase('idle');
-        return;
-      }
-
-      const genRes = await startGeneration({
-        text,
-        text_lang: language || 'en',
-        ref_audio_path: refParams.ref_audio_path,
-        prompt_text: refParams.prompt_text,
-        prompt_lang: refParams.prompt_lang,
-      });
-      const { sessionId } = genRes.data;
-      sessionIdRef.current = sessionId;
-      inference.connect(sessionId, { initialStatus: 'waiting' });
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Pipeline failed');
-      setPhase('idle');
-    }
-  }
+  }, [liveSpeech.audioSrc]);
 
   const isReady = serverReady && Boolean(refParams);
 
-  const phaseLabel = {
-    idle: 'Hold to speak',
-    recording: 'Recording…',
-    processing: 'Processing…',
-    playing: 'Playing…',
-  }[phase];
+  const buttonDisabled =
+    !isReady || liveSpeech.phase === 'processing';
+
+  const phaseLabel = liveSpeech.audioSrc
+    ? 'Playing…'
+    : {
+        idle: 'Hold to speak',
+        recording: 'Recording…',
+        processing: 'Processing…',
+        done: 'Playing…',
+      }[liveSpeech.phase] || 'Hold to speak';
+
+  const displayTranscript = liveSpeech.finalTranscript || liveSpeech.interimTranscript;
+  const isInterim = !liveSpeech.finalTranscript && Boolean(liveSpeech.interimTranscript);
 
   return (
     <div className="animate-fade-in space-y-8">
@@ -244,14 +120,20 @@ export default function LivePage() {
       {!isReady && (
         <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
           {!serverReady ? (
-            <>No voice model is loaded.{' '}
-              <Link to="/inference" className="font-semibold underline">Go to Inference</Link>
-              {' '}to load one first.
+            <>
+              No voice model is loaded.{' '}
+              <Link to="/inference" className="font-semibold underline">
+                Go to Inference
+              </Link>{' '}
+              to load one first.
             </>
           ) : (
-            <>No reference audio found.{' '}
-              <Link to="/inference" className="font-semibold underline">Go to Inference</Link>
-              {' '}and generate at least once to set a reference.
+            <>
+              No reference audio found.{' '}
+              <Link to="/inference" className="font-semibold underline">
+                Go to Inference
+              </Link>{' '}
+              and generate at least once to set a reference.
             </>
           )}
         </div>
@@ -262,37 +144,59 @@ export default function LivePage() {
         <button
           className={cn(
             'flex h-36 w-36 select-none flex-col items-center justify-center gap-2 rounded-full border-4 text-sm font-semibold transition-all',
-            !isReady || phase === 'processing' || phase === 'playing'
+            buttonDisabled
               ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-              : phase === 'recording'
+              : liveSpeech.phase === 'recording'
               ? 'border-red-400 bg-red-50 text-red-600 shadow-[0_0_0_8px_rgba(239,68,68,0.15)]'
               : 'cursor-pointer border-sky-300 bg-sky-50 text-sky-700 shadow-[0_18px_50px_-20px_rgba(14,165,233,0.5)] hover:shadow-[0_18px_50px_-20px_rgba(14,165,233,0.7)] active:scale-95'
           )}
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onMouseLeave={() => { if (phase === 'recording') stopRecording(); }}
-          onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
-          onTouchEnd={(e) => { e.preventDefault(); stopRecording(); }}
-          disabled={!isReady || phase === 'processing' || phase === 'playing'}
+          onMouseDown={liveSpeech.start}
+          onMouseUp={liveSpeech.stop}
+          onMouseLeave={() => {
+            if (liveSpeech.phase === 'recording') liveSpeech.stop();
+          }}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            liveSpeech.start();
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            liveSpeech.stop();
+          }}
+          disabled={buttonDisabled}
         >
           <Mic size={32} />
           <span>{phaseLabel}</span>
         </button>
 
-        {transcript && (
+        {displayTranscript && (
           <div className="w-full max-w-lg rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4">
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Transcript</p>
-            <p className="text-sm leading-7 text-foreground">{transcript}</p>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {isInterim ? 'Listening…' : 'Transcript'}
+            </p>
+            <p
+              className={cn(
+                'text-sm leading-7',
+                isInterim ? 'text-muted-foreground italic' : 'text-foreground'
+              )}
+            >
+              {displayTranscript}
+            </p>
           </div>
         )}
 
-        {error && (
+        {liveSpeech.error && (
           <div className="w-full max-w-lg rounded-[22px] border border-destructive/20 bg-destructive/5 px-5 py-4 text-sm text-destructive">
-            {error}
+            {liveSpeech.error}
           </div>
         )}
 
-        <audio ref={audioRef} controls className={cn('w-full max-w-lg', !audioUrl && 'hidden')} />
+        <audio
+          ref={audioRef}
+          controls
+          className={cn('w-full max-w-lg', !liveSpeech.audioSrc && 'hidden')}
+          onEnded={liveSpeech.onAudioEnded}
+        />
       </div>
     </div>
   );
