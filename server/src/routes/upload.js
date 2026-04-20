@@ -77,6 +77,17 @@ router.post('/upload-ref', uploadRef.single('file'), (req, res) => {
   });
 });
 
+router.post('/live/upload', uploadRef.single('audio'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No audio file uploaded' });
+  }
+  const relativePath = GPT_SOVITS_ROOT ? path.relative(GPT_SOVITS_ROOT, req.file.path) : '';
+  const pathForClient = relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+    ? relativePath
+    : path.resolve(req.file.path);
+  res.json({ filePath: pathForClient.replace(/\\/g, '/') });
+});
+
 // ── S3 presigned upload endpoints ──
 
 const ALLOWED_AUDIO_EXTS = ['.wav', '.mp3', '.ogg', '.flac', '.m4a'];
