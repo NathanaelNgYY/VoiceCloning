@@ -972,6 +972,10 @@ export function getSessionFinalPath(sessionId) {
   return path.join(getSessionDir(sessionId), 'final.wav');
 }
 
+export function getSessionChunkPath(sessionId, index) {
+  return path.join(getSessionDir(sessionId), `chunk_${String(index).padStart(3, '0')}.wav`);
+}
+
 export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
   const chunks = splitTextIntoChunks(params.text, options);
   if (chunks.length === 0) {
