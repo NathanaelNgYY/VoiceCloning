@@ -124,9 +124,11 @@ export function useLiveSpeech({ refParams }) {
             });
         },
         onComplete() {
+          if (esRef.current) { esRef.current.close(); esRef.current = null; }
           if (!isCancelledRef.current) setPhase('done');
         },
         onError(data) {
+          if (esRef.current) { esRef.current.close(); esRef.current = null; }
           if (!isCancelledRef.current) {
             setError(data?.message || 'Generation failed');
             setPhase('idle');
@@ -182,6 +184,7 @@ export function useLiveSpeech({ refParams }) {
       return;
     }
 
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
     isCancelledRef.current = false;
     pendingTextRef.current = [];
     audioQueueRef.current = [];
@@ -236,6 +239,10 @@ export function useLiveSpeech({ refParams }) {
           }
         };
 
+        recognition.onend = () => {
+          recognitionRef.current = null;
+        };
+
         recognition.start();
         recognitionRef.current = recognition;
       } catch {
@@ -275,7 +282,6 @@ export function useLiveSpeech({ refParams }) {
 
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
-      recognitionRef.current = null;
     }
     setInterimTranscript('');
     setPhase('processing');
@@ -286,7 +292,11 @@ export function useLiveSpeech({ refParams }) {
   }
 
   function onAudioEnded() {
+    const finished = currentUrlRef.current;
     advanceAudioQueue();
+    if (finished) {
+      try { URL.revokeObjectURL(finished); } catch { /* ignore */ }
+    }
   }
 
   useEffect(() => {
