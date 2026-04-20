@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import TrainingPage from './pages/TrainingPage.jsx';
 import InferencePage from './pages/InferencePage.jsx';
+import LivePage from './pages/LivePage.jsx';
 
 export default function App() {
   return (
@@ -80,6 +81,29 @@ export default function App() {
                   </>
                 )}
               </NavLink>
+              <NavLink
+                to="/live"
+                className={({ isActive }) =>
+                  cn(
+                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                    isActive
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <span>Live</span>
+                    <span
+                      className={cn(
+                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
+                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
+                      )}
+                    />
+                  </>
+                )}
+              </NavLink>
             </nav>
           </div>
         </header>
@@ -89,6 +113,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<TrainingPage />} />
             <Route path="/inference" element={<InferencePage />} />
+            <Route path="/live" element={<LivePage />} />
           </Routes>
         </main>
 
