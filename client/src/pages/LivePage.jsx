@@ -72,7 +72,7 @@ export default function LivePage() {
   const isReady = serverReady && Boolean(refParams);
 
   const buttonDisabled =
-    !isReady || liveSpeech.phase === 'processing';
+    !isReady || liveSpeech.phase === 'processing' || Boolean(liveSpeech.audioSrc);
 
   const phaseLabel = liveSpeech.audioSrc
     ? 'Playing…'

@@ -89,7 +89,7 @@ export function useLiveSpeech({ refParams }) {
   function waitForTextDrain() {
     return new Promise((resolve) => {
       const check = () => {
-        if (pendingTextRef.current.length === 0 && !isSynthesisingRef.current) {
+        if (isCancelledRef.current || (pendingTextRef.current.length === 0 && !isSynthesisingRef.current)) {
           resolve();
         } else {
           setTimeout(check, 100);
