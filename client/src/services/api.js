@@ -71,6 +71,15 @@ export async function uploadRefAudio(file) {
   return api.post('/upload-ref', formData);
 }
 
+// ── Live audio upload ──
+
+export async function uploadLiveAudio(blob) {
+  const ext = blob.type.includes('ogg') ? '.ogg' : blob.type.includes('mp4') ? '.mp4' : '.webm';
+  const formData = new FormData();
+  formData.append('audio', blob, `live-recording${ext}`);
+  return api.post('/live/upload', formData);
+}
+
 // ── Training ──
 
 export function startTraining(params) {
