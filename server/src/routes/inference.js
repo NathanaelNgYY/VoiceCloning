@@ -16,7 +16,7 @@ import {
 } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
-import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath } from '../services/longTextInference.js';
+import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath, getSessionChunkPath } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { isPathInside, isSafePathSegment } from '../utils/paths.js';
 import { isS3Mode, generatePresignedGetUrl, listObjects, getObject } from '../services/s3Storage.js';
@@ -592,6 +592,67 @@ router.get('/training-audio/:expName', async (req, res) => {
       };
     });
     res.json({ expName, files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/live/tts-sentence', async (req, res) => {
+  const configError = getInferenceConfigError();
+  if (configError) {
+    return res.status(500).json({ error: configError });
+  }
+
+  const {
+    text,
+    text_lang = 'en',
+    ref_audio_path,
+    prompt_text = '',
+    prompt_lang = 'en',
+    aux_ref_audio_paths = [],
+    top_k = 5,
+    top_p = 0.85,
+    temperature = 0.7,
+    repetition_penalty = 1.35,
+    speed_factor = 1.0,
+    seed = -1,
+  } = req.body;
+
+  if (!text?.trim()) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  if (!ref_audio_path) {
+    return res.status(400).json({ error: 'ref_audio_path is required' });
+  }
+
+  if (!await inferenceServer.checkReady()) {
+    return res.status(503).json({ error: 'Inference server is not running. Load models first.' });
+  }
+
+  try {
+    const resolved = await resolveRefAudioPaths(ref_audio_path, aux_ref_audio_paths);
+    const audioBuffer = await inferenceServer.synthesize({
+      text: `${text.trim()} `,
+      text_lang,
+      ref_audio_path: resolved.refPath,
+      prompt_text,
+      prompt_lang,
+      aux_ref_audio_paths: resolved.auxPaths,
+      top_k,
+      top_p,
+      temperature,
+      repetition_penalty,
+      speed_factor,
+      seed,
+      text_split_method: 'cut0',
+      batch_size: 1,
+      streaming_mode: false,
+      split_bucket: true,
+      parallel_infer: false,
+      fragment_interval: 0.1,
+    });
+    res.set({ 'Content-Type': 'audio/wav', 'Content-Length': audioBuffer.length });
+    res.send(audioBuffer);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
