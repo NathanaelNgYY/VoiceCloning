@@ -136,6 +136,26 @@ export async function synthesize(params) {
   return new Blob([res.data], { type: 'audio/wav' });
 }
 
+export async function synthesizeSentence(params) {
+  const res = await api.post('/live/tts-sentence', params, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+
+  if (res.status !== 200) {
+    const text = await res.data.text();
+    let message;
+    try {
+      message = JSON.parse(text).error;
+    } catch {
+      message = text;
+    }
+    throw new Error(message || `Request failed with status ${res.status}`);
+  }
+
+  return new Blob([res.data], { type: 'audio/wav' });
+}
+
 export function startGeneration(params) {
   return api.post('/inference/generate', params);
 }
@@ -156,6 +176,17 @@ export async function getGenerationResult(sessionId) {
   }
 
   const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
+  return new Blob([res.data], { type: 'audio/wav' });
+}
+
+export async function getInferenceChunk(sessionId, index) {
+  const res = await api.get(`/inference/chunk/${sessionId}/${index}`, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+  if (res.status !== 200) {
+    throw new Error(`Chunk not available (${res.status})`);
+  }
   return new Blob([res.data], { type: 'audio/wav' });
 }
 
