@@ -323,14 +323,19 @@ router.get('/inference/result/:sessionId', async (req, res) => {
   fs.createReadStream(finalPath).pipe(res);
 });
 
+// Note: only local mode. In S3 mode, chunks are in S3 and this route returns 404.
 router.get('/inference/chunk/:sessionId/:index', (req, res) => {
   const { sessionId, index } = req.params;
 
   if (!/^[a-zA-Z0-9-]+$/.test(sessionId)) {
     return res.status(400).json({ error: 'Invalid sessionId' });
   }
+
+  if (!/^\d{1,3}$/.test(index)) {
+    return res.status(400).json({ error: 'Invalid chunk index' });
+  }
   const chunkIndex = parseInt(index, 10);
-  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > 999) {
+  if (chunkIndex > 999) {
     return res.status(400).json({ error: 'Invalid chunk index' });
   }
 
