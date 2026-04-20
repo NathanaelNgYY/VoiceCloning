@@ -61,7 +61,20 @@ const refStorage = multer.diskStorage({
   },
 });
 
-const uploadRef = multer({ storage: refStorage });
+const ALLOWED_REF_AUDIO_EXTS = ['.wav', '.mp3', '.ogg', '.flac', '.m4a', '.webm', '.mp4'];
+
+const uploadRef = multer({
+  storage: refStorage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_REF_AUDIO_EXTS.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only audio files are allowed'));
+    }
+  },
+});
 
 router.post('/upload-ref', uploadRef.single('file'), (req, res) => {
   if (!req.file) {
