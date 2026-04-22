@@ -29,13 +29,8 @@ export function useLiveSpeech({ refParams }) {
   }
 
   function onAudioEnded() {
-    const url = currentUrlRef.current;
-    currentUrlRef.current = null;
-    setAudioSrc(null);
-    if (url) {
-      try { URL.revokeObjectURL(url); } catch { /* ignore */ }
-    }
     setPhase('idle');
+    // Keep audioSrc so the player stays visible for replay/download
   }
 
   async function synthesizeAndPlay(text, textLang) {
@@ -98,7 +93,10 @@ export function useLiveSpeech({ refParams }) {
     }
 
     isCancelledRef.current = false;
-    currentUrlRef.current = null;
+    if (currentUrlRef.current) {
+      try { URL.revokeObjectURL(currentUrlRef.current); } catch { /* ignore */ }
+      currentUrlRef.current = null;
+    }
     accumulatedTextRef.current = '';
 
     setError(null);

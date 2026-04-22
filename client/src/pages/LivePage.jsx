@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { getInferenceStatus, getCurrentInference } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
 import { Badge } from '@/components/ui/badge';
-import { Activity, Mic } from 'lucide-react';
+import { Activity, Download, Mic } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
@@ -64,7 +65,11 @@ export default function LivePage() {
   // Wire audio element to hook
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !liveSpeech.audioSrc) return;
+    if (!audio) return;
+    if (!liveSpeech.audioSrc) {
+      audio.src = '';
+      return;
+    }
     audio.src = liveSpeech.audioSrc;
     audio.play().catch(() => {});
   }, [liveSpeech.audioSrc]);
@@ -72,16 +77,14 @@ export default function LivePage() {
   const isReady = serverReady && Boolean(refParams);
 
   const buttonDisabled =
-    !isReady || liveSpeech.phase === 'processing' || Boolean(liveSpeech.audioSrc);
+    !isReady || liveSpeech.phase === 'processing' || liveSpeech.phase === 'done';
 
-  const phaseLabel = liveSpeech.audioSrc
-    ? 'Playing…'
-    : {
-        idle: 'Hold to speak',
-        recording: 'Recording…',
-        processing: 'Processing…',
-        done: 'Playing…',
-      }[liveSpeech.phase] || 'Hold to speak';
+  const phaseLabel = {
+    idle: 'Hold to speak',
+    recording: 'Recording…',
+    processing: 'Processing…',
+    done: 'Playing…',
+  }[liveSpeech.phase] || 'Hold to speak';
 
   const displayTranscript = liveSpeech.finalTranscript || liveSpeech.interimTranscript;
   const isInterim = !liveSpeech.finalTranscript && Boolean(liveSpeech.interimTranscript);
@@ -191,12 +194,33 @@ export default function LivePage() {
           </div>
         )}
 
-        <audio
-          ref={audioRef}
-          controls
-          className={cn('w-full max-w-lg', !liveSpeech.audioSrc && 'hidden')}
-          onEnded={liveSpeech.onAudioEnded}
-        />
+        <div className={cn('w-full max-w-lg space-y-3', !liveSpeech.audioSrc && 'hidden')}>
+          <div className="rounded-[24px] border border-emerald-100 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(239,246,255,0.9))] p-5 shadow-sm">
+            <div className="mb-3 flex items-center gap-2.5">
+              <div className="h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-sm font-medium text-foreground">Generated Audio</span>
+            </div>
+            <audio
+              ref={audioRef}
+              controls
+              className="w-full"
+              onEnded={liveSpeech.onAudioEnded}
+            />
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl border-slate-200 bg-white/85"
+                asChild
+              >
+                <a href={liveSpeech.audioSrc || '#'} download="live_voice.wav">
+                  <Download size={14} />
+                  Download WAV
+                </a>
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

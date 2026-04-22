@@ -848,7 +848,6 @@ export default function InferencePage() {
     if (!selectionLoaded) return alert('Load the selected voice profile first');
 
     setInferError(null);
-    setAudioBlob(null);
 
     try {
       const res = await startGeneration({

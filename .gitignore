@@ -5,3 +5,4 @@ dist/
 *.wav
 nul
 CLAUDE.md
+.env.example
