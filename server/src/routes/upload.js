@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import { DATA_ROOT, REF_AUDIO_DIR, GPT_SOVITS_ROOT } from '../config.js';
 import { isSafePathSegment, sanitizeFilename } from '../utils/paths.js';
 import { isS3Mode, generatePresignedPutUrl, headObject } from '../services/s3Storage.js';
@@ -90,15 +91,39 @@ router.post('/upload-ref', uploadRef.single('file'), (req, res) => {
   });
 });
 
-router.post('/live/upload', uploadRef.single('audio'), (req, res) => {
+function toClientPath(absPath) {
+  const rel = GPT_SOVITS_ROOT ? path.relative(GPT_SOVITS_ROOT, absPath) : '';
+  const usable = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : path.resolve(absPath);
+  return usable.replace(/\\/g, '/');
+}
+
+function convertToWav(inputPath) {
+  return new Promise((resolve, reject) => {
+    const outputPath = inputPath.replace(/\.[^.]+$/, '.wav');
+    const ffmpeg = GPT_SOVITS_ROOT ? path.join(GPT_SOVITS_ROOT, 'ffmpeg.exe') : 'ffmpeg';
+    const proc = spawn(ffmpeg, ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', outputPath], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`ffmpeg exited with code ${code}`));
+      fs.unlink(inputPath, () => {});
+      resolve(outputPath);
+    });
+    proc.on('error', reject);
+  });
+}
+
+router.post('/live/upload', uploadRef.single('audio'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No audio file uploaded' });
   }
-  const relativePath = GPT_SOVITS_ROOT ? path.relative(GPT_SOVITS_ROOT, req.file.path) : '';
-  const pathForClient = relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
-    ? relativePath
-    : path.resolve(req.file.path);
-  res.json({ filePath: pathForClient.replace(/\\/g, '/') });
+  try {
+    const ext = path.extname(req.file.path).toLowerCase();
+    const finalPath = ext === '.wav' ? req.file.path : await convertToWav(req.file.path);
+    res.json({ filePath: toClientPath(finalPath) });
+  } catch (err) {
+    res.status(500).json({ error: `Audio conversion failed: ${err.message}` });
+  }
 });
 
 // ── S3 presigned upload endpoints ──
