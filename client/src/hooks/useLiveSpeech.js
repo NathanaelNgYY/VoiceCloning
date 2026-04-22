@@ -9,6 +9,7 @@ export function useLiveSpeech({ refParams }) {
   const [finalTranscript, setFinalTranscript] = useState('');
   const [audioSrc, setAudioSrc] = useState(null);
   const [error, setError] = useState(null);
+  const [audioLevel, setAudioLevel] = useState(0);
   const [speechApiAvailable, setSpeechApiAvailable] = useState(
     typeof window !== 'undefined' &&
     Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
@@ -22,6 +23,9 @@ export function useLiveSpeech({ refParams }) {
   const isCancelledRef = useRef(false);
   const currentUrlRef = useRef(null);
   const accumulatedTextRef = useRef('');
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const rafIdRef = useRef(null);
 
   function setPhase(p) {
     phaseRef.current = p;
@@ -120,6 +124,36 @@ export function useLiveSpeech({ refParams }) {
     streamRef.current = stream;
     chunksRef.current = [];
 
+    // Web Audio tap — drives the level meter
+    try {
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      audioContextRef.current = audioCtx;
+      analyserRef.current = analyser;
+
+      const buffer = new Uint8Array(analyser.frequencyBinCount);
+      let prevLevel = 0;
+
+      function tick() {
+        rafIdRef.current = requestAnimationFrame(tick);
+        analyser.getByteTimeDomainData(buffer);
+        let sumSq = 0;
+        for (let i = 0; i < buffer.length; i++) {
+          const s = (buffer[i] - 128) / 128;
+          sumSq += s * s;
+        }
+        const rms = Math.sqrt(sumSq / buffer.length);
+        prevLevel = prevLevel * 0.8 + rms * 0.2;
+        setAudioLevel(Math.min(1, prevLevel * 5));
+      }
+      tick();
+    } catch {
+      // non-blocking — meter stays flat if AudioContext is unavailable
+    }
+
     // Web Speech API is display-only — gives live feedback while speaking,
     // but Whisper always produces the final transcript used for synthesis
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -197,6 +231,17 @@ export function useLiveSpeech({ refParams }) {
   function stop() {
     if (phaseRef.current !== 'recording') return;
 
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    setAudioLevel(0);
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    }
+
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
     }
@@ -221,6 +266,10 @@ export function useLiveSpeech({ refParams }) {
       if (currentUrlRef.current) {
         try { URL.revokeObjectURL(currentUrlRef.current); } catch { /* ignore */ }
       }
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+      }
     };
   }, []);
 
@@ -231,6 +280,7 @@ export function useLiveSpeech({ refParams }) {
     audioSrc,
     error,
     speechApiAvailable,
+    audioLevel,
     start,
     stop,
     onAudioEnded,
