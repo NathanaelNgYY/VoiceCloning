@@ -1,12 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { connectInferenceSSE } from '../services/sse.js';
-import {
-  uploadLiveAudio,
-  transcribeAudio,
-  startGeneration,
-  synthesizeSentence,
-  getInferenceChunk,
-} from '../services/api.js';
+import { uploadLiveAudio, transcribeAudio, synthesizeSentence } from '../services/api.js';
+
+const V2_SUPPORTED_LANGS = new Set(['zh', 'en', 'ja', 'ko', 'yue', 'auto', 'zh_en']);
 
 export function useLiveSpeech({ refParams }) {
   const [phase, setPhaseState] = useState('idle'); // idle | recording | processing | done
@@ -24,143 +19,56 @@ export function useLiveSpeech({ refParams }) {
   const chunksRef = useRef([]);
   const streamRef = useRef(null);
   const recognitionRef = useRef(null);
-  const pendingTextRef = useRef([]);
-  const audioQueueRef = useRef([]);
-  const isSynthesisingRef = useRef(false);
   const isCancelledRef = useRef(false);
   const currentUrlRef = useRef(null);
-  const allUrlsRef = useRef([]);
-  const esRef = useRef(null);
+  const accumulatedTextRef = useRef('');
 
   function setPhase(p) {
     phaseRef.current = p;
     setPhaseState(p);
   }
 
-  function advanceAudioQueue() {
-    if (audioQueueRef.current.length === 0) {
-      currentUrlRef.current = null;
-      setAudioSrc(null);
-      if (phaseRef.current === 'done' || phaseRef.current === 'processing') {
-        setPhase('idle');
-      }
-      return;
+  function onAudioEnded() {
+    const url = currentUrlRef.current;
+    currentUrlRef.current = null;
+    setAudioSrc(null);
+    if (url) {
+      try { URL.revokeObjectURL(url); } catch { /* ignore */ }
     }
-    const url = audioQueueRef.current.shift();
-    currentUrlRef.current = url;
-    setAudioSrc(url);
+    setPhase('idle');
   }
 
-  function pushAudioUrl(url) {
-    allUrlsRef.current.push(url);
-    audioQueueRef.current.push(url);
-    if (!currentUrlRef.current) {
-      advanceAudioQueue();
-    }
-  }
-
-  async function drainTextQueue() {
-    if (isSynthesisingRef.current) return;
-    if (pendingTextRef.current.length === 0) return;
-    if (!refParams) return;
-
-    isSynthesisingRef.current = true;
-    while (pendingTextRef.current.length > 0 && !isCancelledRef.current) {
-      const text = pendingTextRef.current.shift();
-      try {
-        const blob = await synthesizeSentence({
-          text,
-          text_lang: refParams.prompt_lang || 'en',
-          ref_audio_path: refParams.ref_audio_path,
-          prompt_text: refParams.prompt_text,
-          prompt_lang: refParams.prompt_lang || 'en',
-        });
-        if (isCancelledRef.current) break;
-        pushAudioUrl(URL.createObjectURL(blob));
-      } catch (err) {
-        if (!isCancelledRef.current) {
-          setError(`Sentence synthesis failed: ${err.message}`);
-        }
-      }
-    }
-    isSynthesisingRef.current = false;
-  }
-
-  function waitForTextDrain() {
-    return new Promise((resolve) => {
-      const check = () => {
-        if (isCancelledRef.current || (pendingTextRef.current.length === 0 && !isSynthesisingRef.current)) {
-          resolve();
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
-  }
-
-  async function runFallbackStreaming(text, language) {
+  async function synthesizeAndPlay(text, textLang) {
     try {
-      const genRes = await startGeneration({
+      const blob = await synthesizeSentence({
         text,
-        text_lang: language || 'en',
+        text_lang: textLang,
         ref_audio_path: refParams.ref_audio_path,
         prompt_text: refParams.prompt_text,
         prompt_lang: refParams.prompt_lang || 'en',
       });
-      const { sessionId } = genRes.data;
-
-      esRef.current = connectInferenceSSE(sessionId, {
-        onChunkComplete(data) {
-          if (isCancelledRef.current) return;
-          getInferenceChunk(sessionId, data.index)
-            .then((blob) => {
-              if (!isCancelledRef.current) pushAudioUrl(URL.createObjectURL(blob));
-            })
-            .catch((err) => {
-              if (!isCancelledRef.current) {
-                setError(`Failed to load audio chunk: ${err.message}`);
-              }
-            });
-        },
-        onComplete() {
-          if (esRef.current) { esRef.current.close(); esRef.current = null; }
-          if (!isCancelledRef.current) setPhase('done');
-        },
-        onError(data) {
-          if (esRef.current) { esRef.current.close(); esRef.current = null; }
-          if (!isCancelledRef.current) {
-            setError(data?.message || 'Generation failed');
-            setPhase('idle');
-          }
-        },
-      });
+      if (isCancelledRef.current) return;
+      const url = URL.createObjectURL(blob);
+      currentUrlRef.current = url;
+      setAudioSrc(url);
+      setPhase('done');
     } catch (err) {
       if (!isCancelledRef.current) {
-        setError(err.response?.data?.error || err.message || 'Generation failed');
+        setError(`Synthesis failed: ${err.message}`);
         setPhase('idle');
       }
     }
   }
 
-  async function runPostReleasePipeline(blob) {
+  async function runPostReleasePipeline(audioBlob) {
     try {
-      const uploadRes = await uploadLiveAudio(blob);
+      // Always use Whisper for the authoritative transcript — far more accurate than Web Speech API
+      const uploadRes = await uploadLiveAudio(audioBlob);
       const { filePath } = uploadRes.data;
-
-      const transcribeRes = await transcribeAudio(filePath, 'auto');
+      const transcribeRes = await transcribeAudio(filePath, 'en');
       const { text, language } = transcribeRes.data;
-      if (!isCancelledRef.current) setFinalTranscript(text || '');
 
-      // Wait for any Track A synthesis to finish before deciding
-      await waitForTextDrain();
       if (isCancelledRef.current) return;
-
-      const trackAProducedAudio = allUrlsRef.current.length > 0;
-      if (trackAProducedAudio) {
-        setPhase('done');
-        return;
-      }
 
       if (!text?.trim()) {
         setError('No speech detected. Try speaking louder or closer to the mic.');
@@ -168,7 +76,12 @@ export function useLiveSpeech({ refParams }) {
         return;
       }
 
-      await runFallbackStreaming(text, language);
+      // Replace the live Web Speech preview with Whisper's accurate result
+      setFinalTranscript(text);
+      setInterimTranscript('');
+
+      const textLang = V2_SUPPORTED_LANGS.has(language) ? language : 'en';
+      await synthesizeAndPlay(text.trim(), textLang);
     } catch (err) {
       if (!isCancelledRef.current) {
         setError(err.response?.data?.error || err.message || 'Pipeline failed');
@@ -184,13 +97,9 @@ export function useLiveSpeech({ refParams }) {
       return;
     }
 
-    if (esRef.current) { esRef.current.close(); esRef.current = null; }
     isCancelledRef.current = false;
-    pendingTextRef.current = [];
-    audioQueueRef.current = [];
-    allUrlsRef.current = [];
-    isSynthesisingRef.current = false;
     currentUrlRef.current = null;
+    accumulatedTextRef.current = '';
 
     setError(null);
     setInterimTranscript('');
@@ -199,7 +108,13 @@ export function useLiveSpeech({ refParams }) {
 
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
     } catch {
       setError('Microphone access denied. Please allow microphone access and try again.');
       return;
@@ -207,6 +122,8 @@ export function useLiveSpeech({ refParams }) {
     streamRef.current = stream;
     chunksRef.current = [];
 
+    // Web Speech API is display-only — gives live feedback while speaking,
+    // but Whisper always produces the final transcript used for synthesis
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       setSpeechApiAvailable(true);
@@ -221,10 +138,12 @@ export function useLiveSpeech({ refParams }) {
           for (let i = event.resultIndex; i < event.results.length; i++) {
             const result = event.results[i];
             if (result.isFinal) {
-              const sentence = result[0].transcript.trim();
-              if (sentence) {
-                pendingTextRef.current.push(sentence);
-                drainTextQueue();
+              const segment = result[0].transcript.trim();
+              if (segment) {
+                accumulatedTextRef.current = accumulatedTextRef.current
+                  ? `${accumulatedTextRef.current} ${segment}`
+                  : segment;
+                setFinalTranscript(accumulatedTextRef.current);
               }
             } else {
               interim += result[0].transcript;
@@ -284,18 +203,11 @@ export function useLiveSpeech({ refParams }) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
     }
     setInterimTranscript('');
-    setPhase('processing');
+    accumulatedTextRef.current = '';
 
+    setPhase('processing');
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
-    }
-  }
-
-  function onAudioEnded() {
-    const finished = currentUrlRef.current;
-    advanceAudioQueue();
-    if (finished) {
-      try { URL.revokeObjectURL(finished); } catch { /* ignore */ }
     }
   }
 
@@ -308,11 +220,8 @@ export function useLiveSpeech({ refParams }) {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
-      if (esRef.current) {
-        esRef.current.close();
-      }
-      for (const url of allUrlsRef.current) {
-        try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+      if (currentUrlRef.current) {
+        try { URL.revokeObjectURL(currentUrlRef.current); } catch { /* ignore */ }
       }
     };
   }, []);

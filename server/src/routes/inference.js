@@ -660,13 +660,6 @@ router.post('/live/tts-sentence', async (req, res) => {
   }
 
   try {
-    if (!isS3Mode() && REF_AUDIO_DIR) {
-      const resolvedPath = path.resolve(GPT_SOVITS_ROOT, ref_audio_path);
-      if (!isPathInside(resolvedPath, REF_AUDIO_DIR)) {
-        return res.status(400).json({ error: 'Invalid reference audio path' });
-      }
-    }
-
     const resolved = await resolveRefAudioPaths(ref_audio_path, aux_ref_audio_paths);
     const audioBuffer = await inferenceServer.synthesize({
       text: `${text.trim()} `,

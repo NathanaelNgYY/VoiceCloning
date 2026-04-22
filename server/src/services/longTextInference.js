@@ -1088,11 +1088,6 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       });
     }
 
-    // Clean up individual chunk files
-    for (const p of chunkPaths) {
-      try { fs.unlinkSync(p); } catch { /* ignore */ }
-    }
-
     const totalDuration = (Date.now() - startTime) / 1000;
     sseManager.send(sessionId, 'inference-complete', {
       totalChunks: chunks.length,
