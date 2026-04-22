@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Activity, Download, Mic } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { MicLevelMeter } from '@/components/MicLevelMeter';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
 
@@ -171,6 +172,8 @@ export default function LivePage() {
           <Mic size={32} />
           <span>{phaseLabel}</span>
         </button>
+
+        <MicLevelMeter level={liveSpeech.audioLevel} active={liveSpeech.phase === 'recording'} />
 
         {displayTranscript && (
           <div className="w-full max-w-lg rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4">
