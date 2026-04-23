@@ -77,13 +77,17 @@ export async function uploadLiveAudio(blob) {
   await getStorageMode();
 
   if (isS3Mode()) {
-    const presignRes = await api.post('/live/upload/presign');
+    const contentType = blob.type || 'audio/webm';
+    const presignRes = await api.post('/live/upload/presign', { contentType });
     const { url, key } = presignRes.data;
-    await fetch(url, {
+    const s3Res = await fetch(url, {
       method: 'PUT',
       body: blob,
-      headers: { 'Content-Type': 'audio/webm' },
+      headers: { 'Content-Type': contentType },
     });
+    if (!s3Res.ok) {
+      throw new Error(`Audio upload to S3 failed: ${s3Res.status} ${s3Res.statusText}`);
+    }
     return { data: { filePath: key } };
   }
 

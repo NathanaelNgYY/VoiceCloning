@@ -237,15 +237,17 @@ router.post('/upload-ref/confirm', async (req, res) => {
   }
 });
 
-router.post('/live/upload/presign', async (_req, res) => {
+router.post('/live/upload/presign', async (req, res) => {
   if (!isS3Mode()) {
     return res.status(400).json({ error: 'Only available in S3 mode' });
   }
 
+  const ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
+  const contentType = ALLOWED_TYPES.includes(req.body.contentType) ? req.body.contentType : 'audio/webm';
   const key = `audio/live-uploads/${crypto.randomUUID()}.webm`;
 
   try {
-    const { url } = await generatePresignedPutUrl(key, 'audio/webm');
+    const { url } = await generatePresignedPutUrl(key, contentType);
     res.json({ url, key });
   } catch (err) {
     res.status(500).json({ error: err.message });
