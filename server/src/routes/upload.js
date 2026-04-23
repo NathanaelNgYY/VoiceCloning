@@ -237,14 +237,19 @@ router.post('/upload-ref/confirm', async (req, res) => {
   }
 });
 
+const LIVE_UPLOAD_ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
+const LIVE_UPLOAD_EXT_MAP = { 'audio/mp4': '.mp4', 'audio/ogg': '.ogg' };
+
 router.post('/live/upload/presign', async (req, res) => {
   if (!isS3Mode()) {
     return res.status(400).json({ error: 'Only available in S3 mode' });
   }
 
-  const ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
-  const contentType = ALLOWED_TYPES.includes(req.body.contentType) ? req.body.contentType : 'audio/webm';
-  const key = `audio/live-uploads/${crypto.randomUUID()}.webm`;
+  const contentType = LIVE_UPLOAD_ALLOWED_TYPES.includes(req.body.contentType)
+    ? req.body.contentType
+    : 'audio/webm';
+  const ext = LIVE_UPLOAD_EXT_MAP[contentType] ?? '.webm';
+  const key = `audio/live-uploads/${crypto.randomUUID()}${ext}`;
 
   try {
     const { url } = await generatePresignedPutUrl(key, contentType);
