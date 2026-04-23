@@ -21,6 +21,7 @@ import { sseManager } from './services/sseManager.js';
 import { trainingState } from './services/trainingState.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { inferenceState } from './services/inferenceState.js';
+import { liveTranscriber } from './services/liveTranscriber.js';
 import uploadRoutes from './routes/upload.js';
 import trainingRoutes from './routes/training.js';
 import inferenceRoutes from './routes/inference.js';
@@ -136,6 +137,7 @@ async function shutdown(signal) {
   } catch (err) {
     console.error('[shutdown] Failed to stop inference server cleanly:', err);
   }
+  liveTranscriber.stop();
 
   server.close(() => {
     process.exit(0);

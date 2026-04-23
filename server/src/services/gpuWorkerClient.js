@@ -88,6 +88,11 @@ export const gpuWorkerClient = {
     return res.data;
   },
 
+  async transcribeLivePhrase(s3Key, language = 'auto') {
+    const res = await client.post(`${getBaseUrl()}/live/transcribe-phrase`, { s3Key, language });
+    return res.data;
+  },
+
   async downloadModel(s3Key) {
     const res = await client.post(`${getBaseUrl()}/models/download`, { s3Key });
     return res.data;

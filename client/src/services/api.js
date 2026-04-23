@@ -97,6 +97,23 @@ export async function uploadLiveAudio(blob) {
   return api.post('/live/upload', formData);
 }
 
+export async function transcribeLivePhrase(blob, language = 'auto') {
+  await getStorageMode();
+
+  if (isS3Mode()) {
+    const uploadRes = await uploadLiveAudio(blob);
+    return api.post('/live/transcribe-phrase', {
+      filePath: uploadRes.data.filePath,
+      language,
+    });
+  }
+
+  const formData = new FormData();
+  formData.append('audio', blob, 'live-phrase.wav');
+  formData.append('language', language);
+  return api.post('/live/transcribe-phrase', formData);
+}
+
 // ── Training ──
 
 export function startTraining(params) {
