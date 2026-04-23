@@ -64,6 +64,9 @@ export function useLiveSpeech({ refParams }) {
       // Always use Whisper for the authoritative transcript — far more accurate than Web Speech API
       const uploadRes = await uploadLiveAudio(audioBlob);
       const { filePath } = uploadRes.data;
+      if (!filePath) {
+        throw new Error('Audio upload succeeded but server returned no file path. Check server logs.');
+      }
       const transcribeRes = await transcribeAudio(filePath, 'en');
       const { text, language } = transcribeRes.data;
 

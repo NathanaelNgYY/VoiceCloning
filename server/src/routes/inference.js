@@ -379,6 +379,7 @@ router.post('/inference/stop', async (_req, res) => {
 router.post('/transcribe', async (req, res) => {
   const { filePath, language = 'auto' } = req.body;
   if (!filePath) {
+    console.error('[transcribe] Missing filePath. Content-Type:', req.headers['content-type'], '| Body:', req.body);
     return res.status(400).json({ error: 'filePath is required' });
   }
 
