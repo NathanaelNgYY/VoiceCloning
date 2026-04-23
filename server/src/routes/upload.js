@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { DATA_ROOT, REF_AUDIO_DIR, GPT_SOVITS_ROOT } from '../config.js';
 import { isSafePathSegment, sanitizeFilename } from '../utils/paths.js';
@@ -231,6 +232,21 @@ router.post('/upload-ref/confirm', async (req, res) => {
       return res.status(404).json({ error: 'File not found in S3' });
     }
     res.json({ key, filename: path.basename(key) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/live/upload/presign', async (_req, res) => {
+  if (!isS3Mode()) {
+    return res.status(400).json({ error: 'Only available in S3 mode' });
+  }
+
+  const key = `audio/live-uploads/${crypto.randomUUID()}.webm`;
+
+  try {
+    const { url } = await generatePresignedPutUrl(key, 'audio/webm');
+    res.json({ url, key });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
