@@ -73,8 +73,24 @@ export async function uploadRefAudio(file) {
 
 // ── Live audio upload ──
 
-// Live recording upload — local mode only. S3 mode is not supported for this pipeline.
 export async function uploadLiveAudio(blob) {
+  await getStorageMode();
+
+  if (isS3Mode()) {
+    const contentType = blob.type || 'audio/webm';
+    const presignRes = await api.post('/live/upload/presign', { contentType });
+    const { url, key } = presignRes.data;
+    const s3Res = await fetch(url, {
+      method: 'PUT',
+      body: blob,
+      headers: { 'Content-Type': contentType },
+    });
+    if (!s3Res.ok) {
+      throw new Error(`Audio upload to S3 failed: ${s3Res.status} ${s3Res.statusText}`);
+    }
+    return { data: { filePath: key } };
+  }
+
   const ext = blob.type.includes('ogg') ? '.ogg' : blob.type.includes('mp4') ? '.mp4' : '.webm';
   const formData = new FormData();
   formData.append('audio', blob, `live-recording${ext}`);

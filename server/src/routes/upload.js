@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { DATA_ROOT, REF_AUDIO_DIR, GPT_SOVITS_ROOT } from '../config.js';
 import { isSafePathSegment, sanitizeFilename } from '../utils/paths.js';
@@ -231,6 +232,28 @@ router.post('/upload-ref/confirm', async (req, res) => {
       return res.status(404).json({ error: 'File not found in S3' });
     }
     res.json({ key, filename: path.basename(key) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const LIVE_UPLOAD_ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
+const LIVE_UPLOAD_EXT_MAP = { 'audio/mp4': '.mp4', 'audio/ogg': '.ogg' };
+
+router.post('/live/upload/presign', async (req, res) => {
+  if (!isS3Mode()) {
+    return res.status(400).json({ error: 'Only available in S3 mode' });
+  }
+
+  const contentType = LIVE_UPLOAD_ALLOWED_TYPES.includes(req.body.contentType)
+    ? req.body.contentType
+    : 'audio/webm';
+  const ext = LIVE_UPLOAD_EXT_MAP[contentType] ?? '.webm';
+  const key = `audio/live-uploads/${crypto.randomUUID()}${ext}`;
+
+  try {
+    const { url } = await generatePresignedPutUrl(key, contentType);
+    res.json({ url, key });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
