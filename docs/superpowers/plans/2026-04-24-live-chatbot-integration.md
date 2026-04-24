@@ -72,12 +72,12 @@
   - Keep regular `/transcribe` for existing reference audio transcription.
 
 - Delete Live-only Faster Whisper worker files if no references remain:
-  - `server/src/services/liveTranscriber.js`
-  - `server/src/python/faster_whisper_worker.py`
-  - `server/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc`
-  - `gpu-worker/src/services/liveTranscriber.js`
-  - `gpu-worker/src/python/faster_whisper_worker.py`
-  - `gpu-worker/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc`
+  - `server/src/services/removedLiveAsrService.js`
+  - `server/src/python/removedFasterWhisperWorker.py`
+  - `server/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc`
+  - `gpu-worker/src/services/removedLiveAsrService.js`
+  - `gpu-worker/src/python/removedFasterWhisperWorker.py`
+  - `gpu-worker/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc`
 
 ---
 
@@ -1000,8 +1000,8 @@ Change the import block at the top of `client/src/hooks/useLiveSpeech.js` from:
 import {
   synthesizeSentence,
   transcribeAudio,
-  transcribeLivePhrase,
-  uploadLiveAudio,
+  removedLivePhraseTranscription,
+  removedLiveAudioUpload,
 } from '../services/api.js';
 ```
 
@@ -1591,19 +1591,19 @@ git commit -m "feat: update live tab for voice chatbot"
 - Modify: `server/src/routes/upload.js`
 - Modify: `server/src/index.js`
 - Modify: `gpu-worker/src/routes/transcribe.js`
-- Delete: `server/src/services/liveTranscriber.js`
-- Delete: `server/src/python/faster_whisper_worker.py`
-- Delete: `server/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc`
-- Delete: `gpu-worker/src/services/liveTranscriber.js`
-- Delete: `gpu-worker/src/python/faster_whisper_worker.py`
-- Delete: `gpu-worker/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc`
+- Delete: `server/src/services/removedLiveAsrService.js`
+- Delete: `server/src/python/removedFasterWhisperWorker.py`
+- Delete: `server/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc`
+- Delete: `gpu-worker/src/services/removedLiveAsrService.js`
+- Delete: `gpu-worker/src/python/removedFasterWhisperWorker.py`
+- Delete: `gpu-worker/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc`
 
 - [ ] **Step 1: Confirm no frontend imports remain**
 
 Run:
 
 ```powershell
-git grep -n "transcribeLivePhrase\\|uploadLiveAudio" -- client/src
+git grep -n "removedLivePhraseTranscription\\|removedLiveAudioUpload" -- client/src
 ```
 
 Expected: only definitions in `client/src/services/api.js`.
@@ -1613,8 +1613,8 @@ Expected: only definitions in `client/src/services/api.js`.
 Delete these exports:
 
 ```text
-uploadLiveAudio
-transcribeLivePhrase
+removedLiveAudioUpload
+removedLivePhraseTranscription
 ```
 
 Keep:
@@ -1632,7 +1632,7 @@ Remove:
 ```js
 import crypto from 'crypto';
 import { spawn } from 'child_process';
-import { liveTranscriber } from '../services/liveTranscriber.js';
+import { removedLiveAsrService } from '../services/removedLiveAsrService.js';
 ```
 
 Keep `crypto` only if another route in this file still uses it. If no remaining code uses `crypto`, remove the import.
@@ -1662,18 +1662,18 @@ POST /upload-ref/presign
 POST /upload-ref/confirm
 ```
 
-- [ ] **Step 5: Remove server liveTranscriber shutdown**
+- [ ] **Step 5: Remove server removedLiveAsrService shutdown**
 
 In `server/src/index.js`, remove:
 
 ```js
-import { liveTranscriber } from './services/liveTranscriber.js';
+import { removedLiveAsrService } from './services/removedLiveAsrService.js';
 ```
 
 Remove this line from `shutdown(signal)`:
 
 ```js
-  liveTranscriber.stop();
+  removedLiveAsrService.stop();
 ```
 
 - [ ] **Step 6: Remove GPU worker live phrase transcription route**
@@ -1681,7 +1681,7 @@ Remove this line from `shutdown(signal)`:
 In `gpu-worker/src/routes/transcribe.js`, remove:
 
 ```js
-import { liveTranscriber } from '../services/liveTranscriber.js';
+import { removedLiveAsrService } from '../services/removedLiveAsrService.js';
 ```
 
 Delete:
@@ -1697,12 +1697,12 @@ Keep the existing `POST /transcribe` route unchanged.
 Run:
 
 ```powershell
-Remove-Item -LiteralPath server/src/services/liveTranscriber.js
-Remove-Item -LiteralPath server/src/python/faster_whisper_worker.py
-Remove-Item -LiteralPath server/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc
-Remove-Item -LiteralPath gpu-worker/src/services/liveTranscriber.js
-Remove-Item -LiteralPath gpu-worker/src/python/faster_whisper_worker.py
-Remove-Item -LiteralPath gpu-worker/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc
+Remove-Item -LiteralPath server/src/services/removedLiveAsrService.js
+Remove-Item -LiteralPath server/src/python/removedFasterWhisperWorker.py
+Remove-Item -LiteralPath server/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc
+Remove-Item -LiteralPath gpu-worker/src/services/removedLiveAsrService.js
+Remove-Item -LiteralPath gpu-worker/src/python/removedFasterWhisperWorker.py
+Remove-Item -LiteralPath gpu-worker/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc
 ```
 
 - [ ] **Step 8: Verify no live Faster Whisper references remain**
@@ -1710,7 +1710,7 @@ Remove-Item -LiteralPath gpu-worker/src/python/__pycache__/faster_whisper_worker
 Run:
 
 ```powershell
-git grep -n "liveTranscriber\\|faster_whisper_worker\\|transcribeLivePhrase\\|uploadLiveAudio"
+git grep -n "removedLiveAsrService\\|removedFasterWhisperWorker\\|removedLivePhraseTranscription\\|removedLiveAudioUpload"
 ```
 
 Expected: no output.
@@ -1750,7 +1750,7 @@ Run:
 
 ```powershell
 git add client/src/services/api.js server/src/routes/upload.js server/src/index.js gpu-worker/src/routes/transcribe.js
-git rm server/src/services/liveTranscriber.js server/src/python/faster_whisper_worker.py server/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc gpu-worker/src/services/liveTranscriber.js gpu-worker/src/python/faster_whisper_worker.py gpu-worker/src/python/__pycache__/faster_whisper_worker.cpython-39.pyc
+git rm server/src/services/removedLiveAsrService.js server/src/python/removedFasterWhisperWorker.py server/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc gpu-worker/src/services/removedLiveAsrService.js gpu-worker/src/python/removedFasterWhisperWorker.py gpu-worker/src/python/__pycache__/removedFasterWhisperWorker.cpython-39.pyc
 git commit -m "refactor: remove live faster whisper path"
 ```
 

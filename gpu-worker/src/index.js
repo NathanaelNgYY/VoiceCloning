@@ -6,7 +6,6 @@ import modelsRoutes from './routes/models.js';
 import transcribeRoutes from './routes/transcribe.js';
 import inferenceRoutes from './routes/inference.js';
 import { inferenceServer } from './services/inferenceServer.js';
-import { liveTranscriber } from './services/liveTranscriber.js';
 import { processManager } from './services/processManager.js';
 import { sseManager } from './services/sseManager.js';
 import { trainingState } from './services/trainingState.js';
@@ -50,7 +49,6 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`[gpu-worker] Received ${signal}, shutting down...`);
   inferenceServer.stop();
-  liveTranscriber.stop();
 
   server.close(() => {
     process.exit(0);

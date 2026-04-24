@@ -9,7 +9,7 @@
 The live inference pipeline (record → transcribe → synthesize) only works in local mode. In S3 mode (CloudFront + S3 + Singapore backend + Seoul GPU worker), the upload and transcription steps break:
 
 - `POST /live/upload` saves to the backend's local disk and runs ffmpeg there — the GPU worker can never access that path.
-- `uploadLiveAudio()` in the client has an explicit "S3 mode not supported" comment.
+- `removedLiveAudioUpload()` in the client has an explicit "S3 mode not supported" comment.
 - `POST /transcribe` in S3 mode expects an S3 key, but receives a local backend path.
 
 The synthesize step (`POST /live/tts-sentence`) already works in S3 mode because `inferenceServer.synthesize()` internally proxies to `gpuWorkerClient.synthesize()`.
@@ -59,7 +59,7 @@ POST /api/live/upload/presign
 
 The existing `POST /live/upload` route is unchanged (still handles local mode).
 
-### 2. `client/src/services/api.js` — branch `uploadLiveAudio()`
+### 2. `client/src/services/api.js` — branch `removedLiveAudioUpload()`
 
 S3 mode:
 1. `POST /api/live/upload/presign` → `{ url, key }`

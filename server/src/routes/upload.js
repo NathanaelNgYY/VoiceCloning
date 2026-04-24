@@ -2,12 +2,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
-import { spawn } from 'child_process';
 import { DATA_ROOT, REF_AUDIO_DIR, GPT_SOVITS_ROOT } from '../config.js';
 import { isSafePathSegment, sanitizeFilename } from '../utils/paths.js';
 import { isS3Mode, generatePresignedPutUrl, headObject } from '../services/s3Storage.js';
-import { liveTranscriber } from '../services/liveTranscriber.js';
 
 const router = Router();
 
@@ -91,82 +88,6 @@ router.post('/upload-ref', uploadRef.single('file'), (req, res) => {
     path: pathForClient.replace(/\\/g, '/'),
     filename: req.file.filename,
   });
-});
-
-function toClientPath(absPath) {
-  const rel = GPT_SOVITS_ROOT ? path.relative(GPT_SOVITS_ROOT, absPath) : '';
-  const usable = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : path.resolve(absPath);
-  return usable.replace(/\\/g, '/');
-}
-
-function convertToWav(inputPath) {
-  return new Promise((resolve, reject) => {
-    const outputPath = inputPath.replace(/\.[^.]+$/, '.wav');
-    const ffmpeg = GPT_SOVITS_ROOT ? path.join(GPT_SOVITS_ROOT, 'ffmpeg.exe') : 'ffmpeg';
-    const proc = spawn(ffmpeg, ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', outputPath], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    proc.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`ffmpeg exited with code ${code}`));
-      fs.unlink(inputPath, () => {});
-      resolve(outputPath);
-    });
-    proc.on('error', reject);
-  });
-}
-
-router.post('/live/upload', uploadRef.single('audio'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No audio file uploaded' });
-  }
-  try {
-    const ext = path.extname(req.file.path).toLowerCase();
-    const finalPath = ext === '.wav' ? req.file.path : await convertToWav(req.file.path);
-    res.json({ filePath: toClientPath(finalPath) });
-  } catch (err) {
-    res.status(500).json({ error: `Audio conversion failed: ${err.message}` });
-  }
-});
-
-router.post('/live/transcribe-phrase', uploadRef.single('audio'), async (req, res) => {
-  const language = req.body.language || process.env.LIVE_ASR_LANGUAGE || 'en';
-
-  if (req.file) {
-    try {
-      const result = await liveTranscriber.transcribe(req.file.path, { language });
-      return res.json(result);
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    } finally {
-      try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
-    }
-  }
-
-  const filePath = req.body.filePath;
-  if (!filePath) {
-    return res.status(400).json({ error: 'audio file or filePath is required' });
-  }
-
-  if (isS3Mode()) {
-    try {
-      const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
-      const result = await gpuWorkerClient.transcribeLivePhrase(filePath, language);
-      return res.json(result);
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-  }
-
-  try {
-    const absolutePath = path.resolve(GPT_SOVITS_ROOT, filePath);
-    if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ error: 'Audio file not found' });
-    }
-    const result = await liveTranscriber.transcribe(absolutePath, { language });
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
 });
 
 // ── S3 presigned upload endpoints ──
@@ -274,28 +195,6 @@ router.post('/upload-ref/confirm', async (req, res) => {
       return res.status(404).json({ error: 'File not found in S3' });
     }
     res.json({ key, filename: path.basename(key) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-const LIVE_UPLOAD_ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg', 'audio/wav'];
-const LIVE_UPLOAD_EXT_MAP = { 'audio/mp4': '.mp4', 'audio/ogg': '.ogg', 'audio/wav': '.wav' };
-
-router.post('/live/upload/presign', async (req, res) => {
-  if (!isS3Mode()) {
-    return res.status(400).json({ error: 'Only available in S3 mode' });
-  }
-
-  const contentType = LIVE_UPLOAD_ALLOWED_TYPES.includes(req.body.contentType)
-    ? req.body.contentType
-    : 'audio/webm';
-  const ext = LIVE_UPLOAD_EXT_MAP[contentType] ?? '.webm';
-  const key = `audio/live-uploads/${crypto.randomUUID()}${ext}`;
-
-  try {
-    const { url } = await generatePresignedPutUrl(key, contentType);
-    res.json({ url, key });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

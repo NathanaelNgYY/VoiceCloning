@@ -15,7 +15,7 @@
 | File | Change |
 |------|--------|
 | `server/src/routes/upload.js` | Add `POST /live/upload/presign` endpoint |
-| `client/src/services/api.js` | Add S3-mode branch to `uploadLiveAudio()` |
+| `client/src/services/api.js` | Add S3-mode branch to `removedLiveAudioUpload()` |
 
 No other files need changes. `useLiveSpeech.js`, the server transcribe route, the GPU worker transcribe route, and the TTS route all already handle S3 mode correctly.
 
@@ -95,22 +95,22 @@ git commit -m "feat: add POST /live/upload/presign endpoint for S3 mode"
 
 ---
 
-### Task 2: Update `uploadLiveAudio()` on the client
+### Task 2: Update `removedLiveAudioUpload()` on the client
 
 **Files:**
 - Modify: `client/src/services/api.js`
 
-**Context:** `uploadLiveAudio()` currently always POSTs the blob as multipart to `/live/upload`. In S3 mode it needs to (1) get a presigned URL, (2) PUT the blob directly to S3, and (3) return `{ data: { filePath: key } }` — the same shape the local mode returns — so that `useLiveSpeech.js` can pass the key straight to `transcribeAudio()` unchanged.
+**Context:** `removedLiveAudioUpload()` currently always POSTs the blob as multipart to `/live/upload`. In S3 mode it needs to (1) get a presigned URL, (2) PUT the blob directly to S3, and (3) return `{ data: { filePath: key } }` — the same shape the local mode returns — so that `useLiveSpeech.js` can pass the key straight to `transcribeAudio()` unchanged.
 
 `getStorageMode()` and `isS3Mode()` are already imported at the top of `api.js`.
 
-- [ ] **Step 1: Replace `uploadLiveAudio()` with the branched version**
+- [ ] **Step 1: Replace `removedLiveAudioUpload()` with the branched version**
 
 Find the current implementation in `client/src/services/api.js`:
 
 ```js
 // Live recording upload — local mode only. S3 mode is not supported for this pipeline.
-export async function uploadLiveAudio(blob) {
+export async function removedLiveAudioUpload(blob) {
   const ext = blob.type.includes('ogg') ? '.ogg' : blob.type.includes('mp4') ? '.mp4' : '.webm';
   const formData = new FormData();
   formData.append('audio', blob, `live-recording${ext}`);
@@ -121,7 +121,7 @@ export async function uploadLiveAudio(blob) {
 Replace it with:
 
 ```js
-export async function uploadLiveAudio(blob) {
+export async function removedLiveAudioUpload(blob) {
   await getStorageMode();
 
   if (isS3Mode()) {
@@ -165,7 +165,7 @@ This confirms the local-mode path is untouched.
 
 ```bash
 git add client/src/services/api.js
-git commit -m "feat: add S3 presigned upload path to uploadLiveAudio"
+git commit -m "feat: add S3 presigned upload path to removedLiveAudioUpload"
 ```
 
 ---

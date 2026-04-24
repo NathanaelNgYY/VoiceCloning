@@ -136,10 +136,10 @@ The existing model/reference-audio readiness checks stay:
 
 The Live tab no longer needs:
 
-- `transcribeLivePhrase()`
+- `removedLivePhraseTranscription()`
 - `/live/transcribe-phrase`
-- `liveTranscriber`
-- `faster_whisper_worker.py` for live phrase transcription
+- `removedLiveAsrService`
+- `removedFasterWhisperWorker.py` for live phrase transcription
 - The browser-side silence slider and RMS phrase cutoff as the primary turn detector
 
 The general `/transcribe` endpoint should remain because the Inference page still uses auto-transcription for reference audio.

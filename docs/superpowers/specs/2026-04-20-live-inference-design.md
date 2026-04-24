@@ -95,7 +95,7 @@ Processing is a single linear async chain: upload → transcribe → generate �
 | `server/src/index.js` | Mount new live route |
 | `client/src/pages/LivePage.jsx` | New page (single file, no sub-components) |
 | `client/src/App.jsx` | Add `/live` route + nav link |
-| `client/src/services/api.js` | Add `uploadLiveAudio()` helper |
+| `client/src/services/api.js` | Add `removedLiveAudioUpload()` helper |
 
 ---
 

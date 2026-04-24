@@ -73,47 +73,6 @@ export async function uploadRefAudio(file) {
 
 // ── Live audio upload ──
 
-export async function uploadLiveAudio(blob) {
-  await getStorageMode();
-
-  if (isS3Mode()) {
-    const contentType = blob.type || 'audio/webm';
-    const presignRes = await api.post('/live/upload/presign', { contentType });
-    const { url, key } = presignRes.data;
-    const s3Res = await fetch(url, {
-      method: 'PUT',
-      body: blob,
-      headers: { 'Content-Type': contentType },
-    });
-    if (!s3Res.ok) {
-      throw new Error(`Audio upload to S3 failed: ${s3Res.status} ${s3Res.statusText}`);
-    }
-    return { data: { filePath: key } };
-  }
-
-  const ext = blob.type.includes('ogg') ? '.ogg' : blob.type.includes('mp4') ? '.mp4' : '.webm';
-  const formData = new FormData();
-  formData.append('audio', blob, `live-recording${ext}`);
-  return api.post('/live/upload', formData);
-}
-
-export async function transcribeLivePhrase(blob, language = 'auto') {
-  await getStorageMode();
-
-  if (isS3Mode()) {
-    const uploadRes = await uploadLiveAudio(blob);
-    return api.post('/live/transcribe-phrase', {
-      filePath: uploadRes.data.filePath,
-      language,
-    });
-  }
-
-  const formData = new FormData();
-  formData.append('audio', blob, 'live-phrase.wav');
-  formData.append('language', language);
-  return api.post('/live/transcribe-phrase', formData);
-}
-
 // ── Training ──
 
 export function startTraining(params) {
