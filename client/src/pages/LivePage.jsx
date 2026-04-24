@@ -11,28 +11,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
-import { Activity, CircleAlert, Clock3, Download, Loader2, Mic, PlayCircle } from 'lucide-react';
+import { Activity, CircleAlert, Download, Loader2, Mic, PlayCircle } from 'lucide-react';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
-const LIVE_SILENCE_KEY = 'voice-cloning-live-silence-ms';
 
 export default function LivePage() {
   const [serverReady, setServerReady] = useState(false);
   const [loadedVoiceName, setLoadedVoiceName] = useState('');
   const [refParams, setRefParams] = useState(null);
-  const [silenceMs, setSilenceMs] = useState(() => {
-    if (typeof window === 'undefined') return 1200;
-    const saved = Number.parseInt(window.localStorage.getItem(LIVE_SILENCE_KEY) || '', 10);
-    return Number.isFinite(saved) ? saved : 1200;
-  });
   const audioRef = useRef(null);
-
-  useEffect(() => {
-    window.localStorage.setItem(LIVE_SILENCE_KEY, String(silenceMs));
-  }, [silenceMs]);
 
   useEffect(() => {
     async function init() {
@@ -83,8 +72,8 @@ export default function LivePage() {
     init();
   }, []);
 
-  const liveSpeech = useLiveSpeech({ refParams, silenceMs });
-  const playbackReady = liveSpeech.phase === 'idle' && Boolean(liveSpeech.audioSrc);
+  const liveSpeech = useLiveSpeech({ refParams });
+  const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -105,13 +94,29 @@ export default function LivePage() {
   }, [liveSpeech.audioSrc, liveSpeech.selectedClipId, playbackReady]);
 
   const isReady = serverReady && Boolean(refParams);
-  const isRecording = liveSpeech.phase === 'recording';
-  const buttonDisabled = !isReady || liveSpeech.phase === 'processing';
-  const phaseLabel = {
-    idle: 'Tap to talk',
-    recording: 'Tap to stop',
-    processing: 'Processing...',
-  }[liveSpeech.phase] || 'Tap to talk';
+  const isListening = liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking';
+  const buttonDisabled =
+    !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping';
+  const phaseLabel =
+    {
+      idle: 'Start conversation',
+      connecting: 'Connecting...',
+      listening: 'Stop conversation',
+      thinking: 'Stop conversation',
+      speaking: 'Interrupt',
+      stopping: 'Stopping...',
+    }[liveSpeech.phase] || 'Start conversation';
+  const statusText =
+    liveSpeech.notice ||
+    {
+      idle: 'Ready to start a live voice conversation.',
+      connecting: 'Connecting to the live assistant...',
+      listening: 'Listening...',
+      thinking: 'Thinking...',
+      speaking: 'Playing the cloned voice reply...',
+      stopping: 'Stopping conversation...',
+    }[liveSpeech.phase] ||
+    'Ready to start a live voice conversation.';
 
   const displayTranscript = [liveSpeech.finalTranscript, liveSpeech.interimTranscript]
     .filter(Boolean)
@@ -130,10 +135,10 @@ export default function LivePage() {
             Live Studio
           </Badge>
           <h2 className="mt-5 font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-            Speak in real time with a cloned voice.
+            Chat live through a cloned voice.
           </h2>
           <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
-            Tap the mic, speak naturally, and generated clips will appear as each phrase finishes.
+            Talk with the assistant and hear replies spoken back using the selected cloned voice.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
@@ -178,64 +183,46 @@ export default function LivePage() {
             'flex h-36 w-36 select-none flex-col items-center justify-center gap-2 rounded-full border-4 text-sm font-semibold transition-all',
             buttonDisabled
               ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-              : isRecording
+              : liveSpeech.phase === 'speaking'
+                ? 'cursor-pointer border-amber-400 bg-amber-50 text-amber-700 shadow-[0_0_0_8px_rgba(245,158,11,0.15)] active:scale-95'
+                : isListening
                 ? 'border-red-400 bg-red-50 text-red-600 shadow-[0_0_0_8px_rgba(239,68,68,0.15)]'
                 : 'cursor-pointer border-sky-300 bg-sky-50 text-sky-700 shadow-[0_18px_50px_-20px_rgba(14,165,233,0.5)] hover:shadow-[0_18px_50px_-20px_rgba(14,165,233,0.7)] active:scale-95'
           )}
           onClick={liveSpeech.toggle}
           disabled={buttonDisabled}
-          aria-pressed={isRecording}
+          aria-pressed={liveSpeech.phase !== 'idle'}
         >
           <Mic size={32} />
           <span>{phaseLabel}</span>
         </button>
 
-        <MicLevelMeter level={liveSpeech.audioLevel} active={isRecording} />
+        <MicLevelMeter level={liveSpeech.audioLevel} active={isListening} />
 
         <div className="w-full max-w-lg rounded-[22px] border border-slate-200 bg-white px-5 py-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <Clock3 size={16} className="text-sky-600" />
-              Silence before inference
-            </div>
-            <Badge className="border border-sky-200 bg-sky-50 text-sky-700 shadow-none">
-              {(silenceMs / 1000).toFixed(1)}s
-            </Badge>
-          </div>
-          <Slider
-            value={[silenceMs]}
-            min={500}
-            max={3000}
-            step={100}
-            onValueChange={([value]) => setSilenceMs(value)}
-          />
-          <div className="mt-2 flex justify-between text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            <span>Faster</span>
-            <span>Longer pauses</span>
-          </div>
+          <p className="text-sm font-medium text-foreground">The AI listens while you speak.</p>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            When the cloned voice is playing, listening pauses. Speak again or tap the mic to
+            interrupt.
+          </p>
         </div>
 
-        {displayTranscript && (
-          <div className="w-full max-w-lg rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4">
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {isInterim ? 'Listening...' : 'Transcript'}
-            </p>
+        <div className="w-full max-w-lg rounded-[22px] border border-slate-200 bg-slate-50 px-5 py-4">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Status
+          </p>
+          <p className="text-sm leading-6 text-foreground">{statusText}</p>
+          {displayTranscript && (
             <p
               className={cn(
-                'text-sm leading-7',
+                'mt-3 border-t border-slate-200 pt-3 text-sm leading-7',
                 isInterim ? 'text-muted-foreground italic' : 'text-foreground'
               )}
             >
               {displayTranscript}
             </p>
-          </div>
-        )}
-
-        {!liveSpeech.speechApiAvailable && isRecording && (
-          <div className="w-full max-w-lg rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-            Live Faster Whisper is unavailable here. Whisper will generate clips after you stop.
-          </div>
-        )}
+          )}
+        </div>
 
         {liveSpeech.error && (
           <div className="w-full max-w-lg rounded-[22px] border border-destructive/20 bg-destructive/5 px-5 py-4 text-sm text-destructive">
@@ -248,7 +235,7 @@ export default function LivePage() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <div className="h-2 w-2 rounded-full bg-emerald-500" />
-                <span className="text-sm font-medium text-foreground">Generated Clips</span>
+                <span className="text-sm font-medium text-foreground">Conversation Replies</span>
               </div>
               <Badge className="border border-emerald-200 bg-white/70 text-emerald-700 shadow-none">
                 {liveSpeech.audioClips.length} total
@@ -257,12 +244,12 @@ export default function LivePage() {
 
             <Select value={liveSpeech.selectedClipId} onValueChange={liveSpeech.selectClip}>
               <SelectTrigger className="bg-white/85">
-                <SelectValue placeholder="Select a ready clip" />
+                <SelectValue placeholder="Select a ready reply" />
               </SelectTrigger>
               <SelectContent>
                 {liveSpeech.audioClips.map((clip) => (
                   <SelectItem key={clip.id} value={clip.id} disabled={clip.status !== 'ready'}>
-                    {`Clip ${clip.index}: ${clip.text.slice(0, 70)}`}
+                    {`Reply ${clip.index}: ${clip.text.slice(0, 70)}`}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -304,7 +291,7 @@ export default function LivePage() {
                     <PlayCircle size={16} className="shrink-0 text-emerald-600" />
                   )}
                   <span className="w-14 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Clip {clip.index}
+                    Reply {clip.index}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm">{clip.text}</span>
                   <span className="shrink-0 text-xs capitalize text-slate-500">
@@ -322,7 +309,7 @@ export default function LivePage() {
                   className="rounded-xl border-slate-200 bg-white/85"
                   asChild
                 >
-                  <a href={liveSpeech.audioSrc} download={`live_clip_${selectedClip?.index || 1}.wav`}>
+                  <a href={liveSpeech.audioSrc} download={`live_reply_${selectedClip?.index || 1}.wav`}>
                     <Download size={14} />
                     Download WAV
                   </a>
