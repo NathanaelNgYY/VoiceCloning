@@ -108,6 +108,29 @@ test('RealtimeEventMapper emits separate done events for text parts in the same 
   }), [{ type: 'assistant.text.done', text: 'Second' }]);
 });
 
+test('RealtimeEventMapper skips response done text parts already finalized by output text done', () => {
+  const mapper = new RealtimeEventMapper();
+
+  assert.deepEqual(mapper.map({
+    type: 'response.output_text.done',
+    response_id: 'resp_1',
+    item_id: 'item_1',
+    content_index: 0,
+    text: 'Hello there',
+  }), [{ type: 'assistant.text.done', text: 'Hello there' }]);
+
+  assert.deepEqual(mapper.map({
+    type: 'response.done',
+    response: {
+      id: 'resp_1',
+      output: [{
+        id: 'item_1',
+        content: [{ type: 'output_text', text: 'Hello there' }],
+      }],
+    },
+  }), []);
+});
+
 test('RealtimeEventMapper preserves newlines in final text', () => {
   const mapper = new RealtimeEventMapper();
 

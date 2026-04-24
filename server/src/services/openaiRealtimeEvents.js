@@ -157,15 +157,27 @@ export class RealtimeEventMapper {
     const textParts = [];
     for (const item of output) {
       const content = Array.isArray(item.content) ? item.content : [];
-      for (const part of content) {
+      for (const [contentIndex, part] of content.entries()) {
         if (part.type === 'output_text' && part.text) {
-          textParts.push(part.text);
+          const partKey = textPartKey({
+            response_id: response?.id,
+            item_id: item.id,
+            content_index: contentIndex,
+          });
+
+          if (!this.completed.has(partKey)) {
+            textParts.push({ key: partKey, text: part.text });
+          }
         }
       }
     }
 
-    const text = cleanText(textParts.join(' ') || this.buffers.get(key) || '');
+    const text = cleanText(textParts.map((part) => part.text).join(' ') || this.buffers.get(key) || '');
     this.completed.add(key);
+    for (const part of textParts) {
+      this.completed.add(part.key);
+      this.buffers.delete(part.key);
+    }
     this.buffers.delete(key);
 
     return text ? [{ type: 'assistant.text.done', text }] : [];
