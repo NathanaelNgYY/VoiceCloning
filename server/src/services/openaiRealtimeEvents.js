@@ -1,8 +1,16 @@
 const DEFAULT_SYSTEM_PROMPT =
-  'You are a casual, helpful assistant. Keep replies concise and conversational.';
+  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.';
 
 function cleanText(value) {
   return String(value || '').trim();
+}
+
+function englishOnlyPrompt(systemPrompt) {
+  const prompt = cleanText(systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+  if (/only in English|English only/i.test(prompt)) {
+    return prompt;
+  }
+  return `${prompt} Always respond only in English.`;
 }
 
 function responseKey(event) {
@@ -63,13 +71,17 @@ export function buildRealtimeSessionUpdate({
     type: 'session.update',
     session: {
       type: 'realtime',
-      instructions: systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      instructions: englishOnlyPrompt(systemPrompt),
       output_modalities: ['text'],
       audio: {
         input: {
           format: {
             type: 'audio/pcm',
             rate: 24000,
+          },
+          transcription: {
+            model: 'gpt-4o-mini-transcribe',
+            language: 'en',
           },
           noise_reduction: {
             type: 'near_field',
@@ -101,6 +113,19 @@ export class RealtimeEventMapper {
 
       case 'input_audio_buffer.speech_stopped':
         return [{ type: 'user.speech.stopped' }];
+
+      case 'conversation.item.input_audio_transcription.delta':
+        return this.mapUserTextDelta(event);
+
+      case 'conversation.item.input_audio_transcription.completed':
+        return this.mapUserTextDone(event);
+
+      case 'conversation.item.input_audio_transcription.failed':
+        return [{
+          type: 'user.text.failed',
+          itemId: event.item_id || '',
+          message: cleanText(event.error?.message || 'User speech transcription failed.'),
+        }];
 
       case 'response.created':
         return [{ type: 'assistant.thinking' }];
@@ -134,6 +159,24 @@ export class RealtimeEventMapper {
     const current = this.buffers.get(key) || '';
     this.buffers.set(key, `${current}${delta}`);
     return [{ type: 'assistant.text.delta', text: delta }];
+  }
+
+  mapUserTextDelta(event) {
+    const text = String(event.delta || '');
+    return text ? [{
+      type: 'user.text.delta',
+      itemId: event.item_id || '',
+      text,
+    }] : [];
+  }
+
+  mapUserTextDone(event) {
+    const text = cleanText(event.transcript || event.text || '');
+    return text ? [{
+      type: 'user.text.done',
+      itemId: event.item_id || '',
+      text,
+    }] : [];
   }
 
   mapTextDone(event) {

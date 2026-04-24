@@ -63,7 +63,7 @@ const OPENAI_REALTIME_VAD = parseModeEnv(
 );
 const OPENAI_REALTIME_SYSTEM_PROMPT =
   readEnv('OPENAI_REALTIME_SYSTEM_PROMPT') ||
-  'You are a casual, helpful assistant. Keep replies concise and conversational.';
+  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.';
 
 const STORAGE_MODE = readEnv('STORAGE_MODE') || 'local';
 const INFERENCE_MODE = parseModeEnv(

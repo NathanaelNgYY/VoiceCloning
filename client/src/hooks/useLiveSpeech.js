@@ -1,35 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { synthesizeSentence } from '../services/api.js';
+import { synthesize } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
-
-const V2_SUPPORTED_LANGS = new Set(['zh', 'en', 'ja', 'ko', 'yue', 'auto', 'zh_en']);
-const QUESTION_START_RE =
-  /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
+import {
+  buildLiveReplyParams,
+  cleanLiveText,
+  createChatMessage,
+  updateMessage,
+} from './liveConversation.js';
 
 const LIVE_TARGET_SAMPLE_RATE = 24000;
 const LIVE_SPEECH_THRESHOLD = 0.018;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function normaliseTextLang(language) {
-  return V2_SUPPORTED_LANGS.has(language) ? language : 'en';
-}
-
-function predictEnding(text) {
-  if (/[.!?]$/.test(text)) return text;
-  return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;
-}
-
-function splitIntoPhrases(text) {
-  const normalised = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!normalised) return [];
-
-  const matches = normalised.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [normalised];
-  return matches
-    .map((part) => predictEnding(part.trim()))
-    .filter(Boolean);
 }
 
 function shouldRetrySynthesis(err) {
@@ -102,9 +85,8 @@ function isInputPhase(phase) {
 export function useLiveSpeech({ refParams }) {
   const [phase, setPhaseState] = useState('idle');
   const [interimTranscript, setInterimTranscript] = useState('');
-  const [finalTranscript, setFinalTranscript] = useState('');
-  const [audioClips, setAudioClips] = useState([]);
-  const [selectedClipId, setSelectedClipIdState] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [selectedReplyId, setSelectedReplyIdState] = useState('');
   const [error, setError] = useState(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [notice, setNotice] = useState('');
@@ -118,14 +100,16 @@ export function useLiveSpeech({ refParams }) {
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const sourceRef = useRef(null);
-  const pendingPhrasesRef = useRef([]);
-  const isSynthesisingRef = useRef(false);
   const isCancelledRef = useRef(false);
   const runIdRef = useRef(0);
-  const clipSeqRef = useRef(0);
-  const audioClipsRef = useRef([]);
-  const selectedClipIdRef = useRef('');
-  const waitingForNextReadyRef = useRef(false);
+  const messageSeqRef = useRef(0);
+  const messagesRef = useRef([]);
+  const selectedReplyIdRef = useRef('');
+  const activeUserMessageIdRef = useRef('');
+  const activeAssistantMessageIdRef = useRef('');
+  const currentSynthesisMessageIdRef = useRef('');
+  const cancelledReplyIdsRef = useRef(new Set());
+  const userTextBuffersRef = useRef(new Map());
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
 
@@ -134,17 +118,30 @@ export function useLiveSpeech({ refParams }) {
     setPhaseState(phase);
   }
 
-  function setSelectedClipId(id) {
-    selectedClipIdRef.current = id;
-    setSelectedClipIdState(id);
+  function setSelectedReplyId(id) {
+    selectedReplyIdRef.current = id;
+    setSelectedReplyIdState(id);
   }
 
-  function setAudioClipsSync(updater) {
-    setAudioClips((prev) => {
+  function setMessagesSync(updater) {
+    setMessages((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
-      audioClipsRef.current = next;
+      messagesRef.current = next;
       return next;
     });
+  }
+
+  function nextMessageId(prefix) {
+    messageSeqRef.current += 1;
+    return `${prefix}-${Date.now()}-${messageSeqRef.current}`;
+  }
+
+  function patchMessage(id, patch) {
+    setMessagesSync((prev) => updateMessage(prev, id, patch));
+  }
+
+  function appendMessage(message) {
+    setMessagesSync((prev) => [...prev, message]);
   }
 
   function showNotice(message) {
@@ -158,26 +155,73 @@ export function useLiveSpeech({ refParams }) {
     }, 3500);
   }
 
-  function cleanupGeneratedAudio() {
-    for (const clip of audioClipsRef.current) {
-      if (clip.url) {
-        try {
-          URL.revokeObjectURL(clip.url);
-        } catch {
-          // Ignore object URL cleanup failures.
-        }
+  function revokeMessageAudio(message) {
+    if (message?.audioUrl) {
+      try {
+        URL.revokeObjectURL(message.audioUrl);
+      } catch {
+        // Ignore object URL cleanup failures.
       }
     }
-    audioClipsRef.current = [];
-    setAudioClips([]);
-    setSelectedClipId('');
-    waitingForNextReadyRef.current = false;
   }
 
-  function findNextReadyClip(afterId) {
-    const clips = audioClipsRef.current;
-    const startIndex = Math.max(0, clips.findIndex((clip) => clip.id === afterId) + 1);
-    return clips.slice(startIndex).find((clip) => clip.status === 'ready') || null;
+  function cleanupConversation() {
+    for (const message of messagesRef.current) {
+      revokeMessageAudio(message);
+    }
+    messagesRef.current = [];
+    setMessages([]);
+    setSelectedReplyId('');
+    activeUserMessageIdRef.current = '';
+    activeAssistantMessageIdRef.current = '';
+    currentSynthesisMessageIdRef.current = '';
+    cancelledReplyIdsRef.current = new Set();
+    userTextBuffersRef.current = new Map();
+  }
+
+  function findUserMessageId(itemId) {
+    if (itemId) {
+      const existing = messagesRef.current.find(
+        (message) => message.role === 'user' && message.itemId === itemId
+      );
+      if (existing) return existing.id;
+    }
+    return activeUserMessageIdRef.current;
+  }
+
+  function ensureUserMessage(itemId = '') {
+    const existingId = findUserMessageId(itemId);
+    if (existingId) {
+      if (itemId) patchMessage(existingId, { itemId });
+      return existingId;
+    }
+
+    const id = itemId ? `user-${itemId}` : nextMessageId('user');
+    activeUserMessageIdRef.current = id;
+    appendMessage(createChatMessage({
+      id,
+      role: 'user',
+      itemId,
+      text: 'Listening...',
+      status: 'listening',
+    }));
+    return id;
+  }
+
+  function ensureAssistantMessage() {
+    if (activeAssistantMessageIdRef.current) {
+      return activeAssistantMessageIdRef.current;
+    }
+
+    const id = nextMessageId('assistant');
+    activeAssistantMessageIdRef.current = id;
+    appendMessage(createChatMessage({
+      id,
+      role: 'assistant',
+      text: '',
+      status: 'thinking',
+    }));
+    return id;
   }
 
   function pauseOpenAiInput() {
@@ -188,40 +232,11 @@ export function useLiveSpeech({ refParams }) {
     socketRef.current?.send({ type: 'input.resume' });
   }
 
-  function maybeEnterSpeaking() {
-    if (phaseRef.current === 'idle' || phaseRef.current === 'stopping') return;
-    pauseOpenAiInput();
-    setPhase('speaking');
-  }
-
-  function maybeSelectReadyClip(clipId) {
-    const selected = audioClipsRef.current.find((clip) => clip.id === selectedClipIdRef.current);
-    if (!selected || waitingForNextReadyRef.current) {
-      waitingForNextReadyRef.current = false;
-      setSelectedClipId(clipId);
-      maybeEnterSpeaking();
-    }
-  }
-
-  function selectClip(clipId) {
-    const clip = audioClipsRef.current.find((item) => item.id === clipId);
-    if (!clip || clip.status !== 'ready') return;
-    waitingForNextReadyRef.current = false;
-    setSelectedClipId(clipId);
-    maybeEnterSpeaking();
-  }
-
-  function appendTranscript(text) {
-    const clean = String(text || '').trim();
-    if (!clean) return;
-    setFinalTranscript((prev) => (prev ? `${prev} ${clean}` : clean));
-  }
-
   async function synthesizeWithRetry(params) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        return await synthesizeSentence(params);
+        return await synthesize(params);
       } catch (err) {
         lastError = err;
         if (!shouldRetrySynthesis(err) || attempt === 2) {
@@ -233,90 +248,44 @@ export function useLiveSpeech({ refParams }) {
     throw lastError;
   }
 
-  function enqueuePhrase(text, textLang, source, runId, { appendToTranscript = true } = {}) {
-    const phrases = splitIntoPhrases(text);
-    for (const phrase of phrases) {
-      const id = `${source}-${Date.now()}-${clipSeqRef.current + 1}`;
-      const index = clipSeqRef.current + 1;
-      clipSeqRef.current = index;
-
-      const item = {
-        id,
-        index,
-        text: phrase,
-        textLang: normaliseTextLang(textLang),
-        source,
-        runId,
-      };
-
-      pendingPhrasesRef.current.push(item);
-      if (appendToTranscript) {
-        appendTranscript(phrase);
-      }
-      setAudioClipsSync((prev) => [
-        ...prev,
-        {
-          id,
-          index,
-          text: phrase,
-          source,
-          status: 'generating',
-          url: null,
-          error: null,
-          createdAt: Date.now(),
-        },
-      ]);
-    }
-
-    drainPhraseQueue();
-  }
-
-  async function drainPhraseQueue() {
-    if (isSynthesisingRef.current) return;
+  async function synthesizeAssistantReply(messageId, text, runId) {
     if (!refParams) return;
 
-    isSynthesisingRef.current = true;
-    while (pendingPhrasesRef.current.length > 0 && !isCancelledRef.current) {
-      const item = pendingPhrasesRef.current.shift();
-      if (!item || item.runId !== runIdRef.current) continue;
+    currentSynthesisMessageIdRef.current = messageId;
+    cancelledReplyIdsRef.current.delete(messageId);
+    pauseOpenAiInput();
+    setPhase('speaking');
+    patchMessage(messageId, { status: 'generating_voice', error: null });
 
-      try {
-        const blob = await synthesizeWithRetry({
-          text: item.text,
-          text_lang: item.textLang,
-          ref_audio_path: refParams.ref_audio_path,
-          prompt_text: refParams.prompt_text,
-          prompt_lang: refParams.prompt_lang || 'en',
-        });
+    try {
+      const blob = await synthesizeWithRetry(buildLiveReplyParams(text, refParams));
+      if (
+        isCancelledRef.current ||
+        runId !== runIdRef.current ||
+        cancelledReplyIdsRef.current.has(messageId)
+      ) {
+        return;
+      }
 
-        if (isCancelledRef.current || item.runId !== runIdRef.current) continue;
+      const url = URL.createObjectURL(blob);
+      patchMessage(messageId, { status: 'ready', audioUrl: url, error: null });
+      setSelectedReplyId(messageId);
+      setPhase('speaking');
+    } catch (err) {
+      if (isCancelledRef.current || runId !== runIdRef.current) return;
 
-        const url = URL.createObjectURL(blob);
-        setAudioClipsSync((prev) =>
-          prev.map((clip) =>
-            clip.id === item.id ? { ...clip, status: 'ready', url, error: null } : clip
-          )
-        );
-        maybeSelectReadyClip(item.id);
-      } catch (err) {
-        if (isCancelledRef.current || item.runId !== runIdRef.current) continue;
-
-        setAudioClipsSync((prev) =>
-          prev.map((clip) =>
-            clip.id === item.id
-              ? {
-                  ...clip,
-                  status: 'error',
-                  error: err.message || 'Synthesis failed',
-                }
-              : clip
-          )
-        );
-        setError(`Clip ${item.index} failed: ${err.message}`);
+      patchMessage(messageId, {
+        status: 'error',
+        error: err.message || 'Voice generation failed',
+      });
+      setError(`Voice reply failed: ${err.message}`);
+      resumeOpenAiInput();
+      setPhase(socketRef.current ? 'listening' : 'idle');
+    } finally {
+      if (currentSynthesisMessageIdRef.current === messageId) {
+        currentSynthesisMessageIdRef.current = '';
       }
     }
-
-    isSynthesisingRef.current = false;
   }
 
   function closeSocket() {
@@ -358,12 +327,25 @@ export function useLiveSpeech({ refParams }) {
   function interruptPlayback() {
     if (phaseRef.current !== 'speaking') return;
 
+    const currentReplyId = selectedReplyIdRef.current || currentSynthesisMessageIdRef.current;
+    if (currentReplyId) {
+      cancelledReplyIdsRef.current.add(currentReplyId);
+      patchMessage(currentReplyId, { status: 'interrupted' });
+    }
+
     socketRef.current?.send({ type: 'response.cancel' });
-    setSelectedClipId('');
-    waitingForNextReadyRef.current = false;
+    setSelectedReplyId('');
     resumeOpenAiInput();
     setPhase('listening');
     showNotice('You interrupted. Listening...');
+  }
+
+  function playReply(messageId) {
+    const message = messagesRef.current.find((item) => item.id === messageId);
+    if (!message || message.role !== 'assistant' || !message.audioUrl) return;
+    pauseOpenAiInput();
+    setSelectedReplyId(messageId);
+    setPhase('speaking');
   }
 
   function sendAudioChunk(input, sampleRate) {
@@ -429,19 +411,61 @@ export function useLiveSpeech({ refParams }) {
         setNotice('');
         break;
 
-      case 'user.speech.started':
+      case 'user.speech.started': {
         if (phaseRef.current !== 'speaking') {
+          ensureUserMessage();
           setPhase('listening');
           setInterimTranscript('Listening...');
         }
         break;
+      }
 
-      case 'user.speech.stopped':
+      case 'user.speech.stopped': {
         if (phaseRef.current !== 'speaking') {
+          const id = ensureUserMessage();
+          patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
           setPhase('thinking');
           setInterimTranscript('Thinking...');
         }
         break;
+      }
+
+      case 'user.text.delta': {
+        const id = ensureUserMessage(event.itemId);
+        const key = event.itemId || id;
+        const nextText = `${userTextBuffersRef.current.get(key) || ''}${event.text || ''}`;
+        userTextBuffersRef.current.set(key, nextText);
+        patchMessage(id, { itemId: event.itemId || '', text: nextText, status: 'transcribing' });
+        break;
+      }
+
+      case 'user.text.done': {
+        const id = ensureUserMessage(event.itemId);
+        const key = event.itemId || id;
+        userTextBuffersRef.current.delete(key);
+        patchMessage(id, {
+          itemId: event.itemId || '',
+          text: cleanLiveText(event.text) || 'Voice message sent.',
+          status: 'done',
+        });
+        if (activeUserMessageIdRef.current === id) {
+          activeUserMessageIdRef.current = '';
+        }
+        break;
+      }
+
+      case 'user.text.failed': {
+        const id = ensureUserMessage(event.itemId);
+        patchMessage(id, {
+          text: 'Voice message sent.',
+          status: 'done',
+          error: event.message || null,
+        });
+        if (activeUserMessageIdRef.current === id) {
+          activeUserMessageIdRef.current = '';
+        }
+        break;
+      }
 
       case 'assistant.thinking':
         if (phaseRef.current !== 'speaking') {
@@ -450,17 +474,23 @@ export function useLiveSpeech({ refParams }) {
         }
         break;
 
-      case 'assistant.text.delta':
+      case 'assistant.text.delta': {
+        const id = ensureAssistantMessage();
         assistantTextRef.current += event.text || '';
+        patchMessage(id, { text: assistantTextRef.current, status: 'thinking' });
         setInterimTranscript(assistantTextRef.current);
         break;
+      }
 
       case 'assistant.text.done': {
-        const text = String(event.text || assistantTextRef.current || '').trim();
+        const text = cleanLiveText(event.text || assistantTextRef.current || '');
         assistantTextRef.current = '';
         setInterimTranscript('');
         if (text) {
-          enqueuePhrase(text, refParams?.prompt_lang || 'en', 'openai', runId);
+          const id = ensureAssistantMessage();
+          activeAssistantMessageIdRef.current = '';
+          patchMessage(id, { text, status: 'generating_voice' });
+          synthesizeAssistantReply(id, text, runId);
         } else if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }
@@ -499,16 +529,13 @@ export function useLiveSpeech({ refParams }) {
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
     isCancelledRef.current = false;
-    pendingPhrasesRef.current = [];
-    isSynthesisingRef.current = false;
-    clipSeqRef.current = 0;
+    messageSeqRef.current = 0;
     assistantTextRef.current = '';
-    cleanupGeneratedAudio();
+    cleanupConversation();
 
     setError(null);
     setNotice('');
     setInterimTranscript('');
-    setFinalTranscript('');
     setPhase('connecting');
 
     let stream;
@@ -583,17 +610,9 @@ export function useLiveSpeech({ refParams }) {
   }
 
   function onAudioEnded() {
-    const nextClip = findNextReadyClip(selectedClipIdRef.current);
-    if (nextClip) {
-      waitingForNextReadyRef.current = false;
-      setSelectedClipId(nextClip.id);
-      maybeEnterSpeaking();
-      return;
-    }
-
-    waitingForNextReadyRef.current = true;
+    resumeOpenAiInput();
+    setSelectedReplyId('');
     if (phaseRef.current === 'speaking') {
-      resumeOpenAiInput();
       setPhase(socketRef.current ? 'listening' : 'idle');
       setInterimTranscript(socketRef.current ? 'Listening...' : '');
     }
@@ -605,27 +624,31 @@ export function useLiveSpeech({ refParams }) {
       runIdRef.current += 1;
       closeSocket();
       stopMicCapture();
-      cleanupGeneratedAudio();
+      cleanupConversation();
       if (noticeTimeoutRef.current) {
         window.clearTimeout(noticeTimeoutRef.current);
       }
     };
   }, []);
 
-  const selectedClip =
-    audioClips.find((clip) => clip.id === selectedClipId) ||
-    audioClips.find((clip) => clip.status === 'ready') ||
+  const selectedReply =
+    messages.find((message) => message.id === selectedReplyId) ||
+    [...messages].reverse().find((message) => message.role === 'assistant' && message.audioUrl) ||
     null;
-  const audioSrc = selectedClip?.status === 'ready' ? selectedClip.url : null;
+  const audioSrc = selectedReply?.audioUrl || null;
   const shouldPlayAudio = phase === 'speaking' && Boolean(audioSrc);
+  const finalTranscript = messages
+    .filter((message) => message.text && message.status !== 'listening')
+    .map((message) => message.text)
+    .join(' ');
 
   return {
     phase,
     interimTranscript,
     finalTranscript,
-    audioClips,
-    selectedClip,
-    selectedClipId,
+    messages,
+    selectedReply,
+    selectedReplyId,
     audioSrc,
     error,
     speechApiAvailable,
@@ -637,7 +660,7 @@ export function useLiveSpeech({ refParams }) {
     stop,
     toggle,
     interruptPlayback,
-    selectClip,
+    playReply,
     onAudioEnded,
   };
 }

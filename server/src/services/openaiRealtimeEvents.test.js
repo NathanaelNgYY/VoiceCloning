@@ -24,13 +24,21 @@ test('buildRealtimeSessionUpdate configures text-only OpenAI responses', () => {
   assert.equal(message.type, 'session.update');
   assert.equal(message.session.type, 'realtime');
   assert.deepEqual(message.session.output_modalities, ['text']);
-  assert.equal(message.session.instructions, 'You are casual.');
+  assert.equal(message.session.instructions, 'You are casual. Always respond only in English.');
   assert.equal(message.session.audio.input.format.type, 'audio/pcm');
   assert.equal(message.session.audio.input.format.rate, 24000);
+  assert.equal(message.session.audio.input.transcription.model, 'gpt-4o-mini-transcribe');
+  assert.equal(message.session.audio.input.transcription.language, 'en');
   assert.equal(message.session.audio.input.turn_detection.type, 'semantic_vad');
   assert.equal(message.session.audio.input.turn_detection.create_response, true);
   assert.equal(message.session.audio.input.turn_detection.interrupt_response, true);
   assert.equal('max_output_tokens' in message.session, false);
+});
+
+test('buildRealtimeSessionUpdate instructs the assistant to answer only in English', () => {
+  const message = buildRealtimeSessionUpdate();
+
+  assert.match(message.session.instructions, /English/i);
 });
 
 test('buildRealtimeSessionUpdate configures server VAD when requested', () => {
@@ -54,6 +62,22 @@ test('RealtimeEventMapper maps speech lifecycle events', () => {
   assert.deepEqual(mapper.map({ type: 'input_audio_buffer.speech_stopped' }), [
     { type: 'user.speech.stopped' },
   ]);
+});
+
+test('RealtimeEventMapper maps input transcription events for chat bubbles', () => {
+  const mapper = new RealtimeEventMapper();
+
+  assert.deepEqual(mapper.map({
+    type: 'conversation.item.input_audio_transcription.delta',
+    item_id: 'item_1',
+    delta: 'Hello',
+  }), [{ type: 'user.text.delta', itemId: 'item_1', text: 'Hello' }]);
+
+  assert.deepEqual(mapper.map({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: 'item_1',
+    transcript: 'Hello there',
+  }), [{ type: 'user.text.done', itemId: 'item_1', text: 'Hello there' }]);
 });
 
 test('RealtimeEventMapper accumulates assistant text deltas and emits final text once', () => {
