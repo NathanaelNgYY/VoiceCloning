@@ -2,9 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RealtimeEventMapper,
+  buildClientEvent,
   buildRealtimeSessionUpdate,
   getMissingOpenAiConfigMessage,
 } from './openaiRealtimeEvents.js';
+
+test('buildClientEvent keeps browser events JSON serializable', () => {
+  assert.deepEqual(buildClientEvent('assistant.text.done', { text: 'Hi' }), {
+    type: 'assistant.text.done',
+    text: 'Hi',
+  });
+  assert.deepEqual(buildClientEvent('session.ready'), { type: 'session.ready' });
+});
 
 test('buildRealtimeSessionUpdate configures text-only OpenAI responses', () => {
   const message = buildRealtimeSessionUpdate({

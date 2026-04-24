@@ -35,6 +35,10 @@ export function getMissingOpenAiConfigMessage(apiKey) {
     : 'OpenAI Realtime is not configured. Set OPENAI_API_KEY on the backend.';
 }
 
+export function buildClientEvent(type, payload = {}) {
+  return { type, ...payload };
+}
+
 export function buildRealtimeSessionUpdate({
   systemPrompt = DEFAULT_SYSTEM_PROMPT,
   vadMode = 'semantic_vad',
