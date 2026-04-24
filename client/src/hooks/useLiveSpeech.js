@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { synthesize } from '../services/api.js';
+import { synthesize, synthesizeSentence } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import {
+  LIVE_REPLY_MODES,
+  buildLiveSentenceParams,
   buildLiveReplyParams,
   cleanLiveText,
   createChatMessage,
+  findSelectedPlayback,
+  splitLiveReplyPhrases,
   updateMessage,
 } from './liveConversation.js';
 
@@ -82,7 +86,8 @@ function isInputPhase(phase) {
   return phase === 'listening' || phase === 'thinking';
 }
 
-export function useLiveSpeech({ refParams }) {
+export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } = {}) {
+  const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const [phase, setPhaseState] = useState('idle');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [messages, setMessages] = useState([]);
@@ -140,6 +145,20 @@ export function useLiveSpeech({ refParams }) {
     setMessagesSync((prev) => updateMessage(prev, id, patch));
   }
 
+  function patchAudioPart(messageId, partId, patch) {
+    setMessagesSync((prev) =>
+      prev.map((message) => {
+        if (message.id !== messageId) return message;
+        return {
+          ...message,
+          audioParts: (message.audioParts || []).map((part) =>
+            part.id === partId ? { ...part, ...patch } : part
+          ),
+        };
+      })
+    );
+  }
+
   function appendMessage(message) {
     setMessagesSync((prev) => [...prev, message]);
   }
@@ -161,6 +180,15 @@ export function useLiveSpeech({ refParams }) {
         URL.revokeObjectURL(message.audioUrl);
       } catch {
         // Ignore object URL cleanup failures.
+      }
+    }
+    for (const part of message?.audioParts || []) {
+      if (part.audioUrl) {
+        try {
+          URL.revokeObjectURL(part.audioUrl);
+        } catch {
+          // Ignore object URL cleanup failures.
+        }
       }
     }
   }
@@ -248,12 +276,43 @@ export function useLiveSpeech({ refParams }) {
     throw lastError;
   }
 
-  async function synthesizeAssistantReply(messageId, text, runId) {
+  async function synthesizeSentenceWithRetry(params) {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await synthesizeSentence(params);
+      } catch (err) {
+        lastError = err;
+        if (!shouldRetrySynthesis(err) || attempt === 2) {
+          throw err;
+        }
+        await wait(650 * (attempt + 1));
+      }
+    }
+    throw lastError;
+  }
+
+  function firstReadyPart(message, afterPartId = '') {
+    const parts = message?.audioParts || [];
+    const start = afterPartId
+      ? Math.max(0, parts.findIndex((part) => part.id === afterPartId) + 1)
+      : 0;
+    return parts.slice(start).find((part) => part.status === 'ready' && part.audioUrl) || null;
+  }
+
+  function hasPendingParts(message) {
+    return (message?.audioParts || []).some((part) =>
+      ['queued', 'generating'].includes(part.status)
+    );
+  }
+
+  async function synthesizeFullAssistantReply(messageId, text, runId) {
     if (!refParams) return;
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
     pauseOpenAiInput();
+    setSelectedReplyId(messageId);
     setPhase('speaking');
     patchMessage(messageId, { status: 'generating_voice', error: null });
 
@@ -286,6 +345,98 @@ export function useLiveSpeech({ refParams }) {
         currentSynthesisMessageIdRef.current = '';
       }
     }
+  }
+
+  async function synthesizePhraseAssistantReply(messageId, text, runId) {
+    if (!refParams) return;
+
+    const phrases = splitLiveReplyPhrases(text);
+    if (phrases.length === 0) return;
+
+    currentSynthesisMessageIdRef.current = messageId;
+    cancelledReplyIdsRef.current.delete(messageId);
+    pauseOpenAiInput();
+    setSelectedReplyId('');
+    setPhase('speaking');
+    patchMessage(messageId, {
+      status: 'generating_voice',
+      error: null,
+      audioParts: phrases.map((phrase, index) => ({
+        id: `${messageId}-part-${index + 1}`,
+        index: index + 1,
+        text: phrase,
+        status: 'queued',
+        audioUrl: null,
+        error: null,
+      })),
+    });
+
+    try {
+      for (let index = 0; index < phrases.length; index += 1) {
+        const partId = `${messageId}-part-${index + 1}`;
+        if (
+          isCancelledRef.current ||
+          runId !== runIdRef.current ||
+          cancelledReplyIdsRef.current.has(messageId)
+        ) {
+          return;
+        }
+
+        patchAudioPart(messageId, partId, { status: 'generating', error: null });
+        const blob = await synthesizeSentenceWithRetry(
+          buildLiveSentenceParams(phrases[index], refParams)
+        );
+
+        if (
+          isCancelledRef.current ||
+          runId !== runIdRef.current ||
+          cancelledReplyIdsRef.current.has(messageId)
+        ) {
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
+        if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
+          setSelectedReplyId(partId);
+        }
+      }
+
+      if (!cancelledReplyIdsRef.current.has(messageId)) {
+        patchMessage(messageId, { status: 'ready' });
+        const message = messagesRef.current.find((item) => item.id === messageId);
+        if (!selectedReplyIdRef.current) {
+          const nextPart = firstReadyPart(message);
+          if (nextPart) {
+            setSelectedReplyId(nextPart.id);
+          }
+        }
+      }
+    } catch (err) {
+      if (isCancelledRef.current || runId !== runIdRef.current) return;
+
+      patchMessage(messageId, {
+        status: 'error',
+        error: err.message || 'Voice generation failed',
+      });
+      setError(`Voice reply failed: ${err.message}`);
+      resumeOpenAiInput();
+      setSelectedReplyId('');
+      setPhase(socketRef.current ? 'listening' : 'idle');
+    } finally {
+      if (currentSynthesisMessageIdRef.current === messageId) {
+        currentSynthesisMessageIdRef.current = '';
+      }
+    }
+  }
+
+  function synthesizeAssistantReply(messageId, text, runId) {
+    if (isPhraseMode) {
+      synthesizePhraseAssistantReply(messageId, text, runId);
+      return;
+    }
+
+    synthesizeFullAssistantReply(messageId, text, runId);
   }
 
   function closeSocket() {
@@ -333,7 +484,6 @@ export function useLiveSpeech({ refParams }) {
       patchMessage(currentReplyId, { status: 'interrupted' });
     }
 
-    socketRef.current?.send({ type: 'response.cancel' });
     setSelectedReplyId('');
     resumeOpenAiInput();
     setPhase('listening');
@@ -342,9 +492,11 @@ export function useLiveSpeech({ refParams }) {
 
   function playReply(messageId) {
     const message = messagesRef.current.find((item) => item.id === messageId);
-    if (!message || message.role !== 'assistant' || !message.audioUrl) return;
+    if (!message || message.role !== 'assistant') return;
+    const playbackId = isPhraseMode ? firstReadyPart(message)?.id : message.id;
+    if (!playbackId) return;
     pauseOpenAiInput();
-    setSelectedReplyId(messageId);
+    setSelectedReplyId(playbackId);
     setPhase('speaking');
   }
 
@@ -610,6 +762,33 @@ export function useLiveSpeech({ refParams }) {
   }
 
   function onAudioEnded() {
+    const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
+
+    if (isPhraseMode && playback?.part) {
+      patchAudioPart(playback.message.id, playback.part.id, { status: 'played' });
+      const nextPart = firstReadyPart(playback.message, playback.part.id);
+      if (nextPart) {
+        setSelectedReplyId(nextPart.id);
+        return;
+      }
+
+      setSelectedReplyId('');
+      if (
+        currentSynthesisMessageIdRef.current === playback.message.id ||
+        hasPendingParts(playback.message)
+      ) {
+        setPhase('speaking');
+        return;
+      }
+
+      resumeOpenAiInput();
+      if (phaseRef.current === 'speaking') {
+        setPhase(socketRef.current ? 'listening' : 'idle');
+        setInterimTranscript(socketRef.current ? 'Listening...' : '');
+      }
+      return;
+    }
+
     resumeOpenAiInput();
     setSelectedReplyId('');
     if (phaseRef.current === 'speaking') {
@@ -631,11 +810,10 @@ export function useLiveSpeech({ refParams }) {
     };
   }, []);
 
-  const selectedReply =
-    messages.find((message) => message.id === selectedReplyId) ||
-    [...messages].reverse().find((message) => message.role === 'assistant' && message.audioUrl) ||
-    null;
-  const audioSrc = selectedReply?.audioUrl || null;
+  const selectedPlayback = findSelectedPlayback(messages, selectedReplyId);
+  const selectedReply = selectedPlayback?.message || null;
+  const selectedAudioPart = selectedPlayback?.part || null;
+  const audioSrc = selectedPlayback?.audioUrl || null;
   const shouldPlayAudio = phase === 'speaking' && Boolean(audioSrc);
   const finalTranscript = messages
     .filter((message) => message.text && message.status !== 'listening')
@@ -648,6 +826,7 @@ export function useLiveSpeech({ refParams }) {
     finalTranscript,
     messages,
     selectedReply,
+    selectedAudioPart,
     selectedReplyId,
     audioSrc,
     error,

@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLiveReplyParams, createChatMessage, updateMessage } from './liveConversation.js';
+import {
+  buildLiveReplyParams,
+  createChatMessage,
+  findSelectedPlayback,
+  splitLiveReplyPhrases,
+  updateMessage,
+} from './liveConversation.js';
 
 test('buildLiveReplyParams forces English assistant text for full inference', () => {
   const params = buildLiveReplyParams(' Hello there. ', {
@@ -37,4 +43,30 @@ test('chat messages keep stable ids and can be patched immutably', () => {
   assert.notEqual(next[0], message);
   assert.equal(next[0].text, 'Done');
   assert.equal(next[0].status, 'ready');
+});
+
+test('splitLiveReplyPhrases splits punctuation for immediate voice playback', () => {
+  assert.deepEqual(splitLiveReplyPhrases('Hello there! How are you? I am ready'), [
+    'Hello there!',
+    'How are you?',
+    'I am ready.',
+  ]);
+});
+
+test('findSelectedPlayback never falls back to previous audio', () => {
+  const previous = createChatMessage({
+    id: 'old',
+    role: 'assistant',
+    text: 'Old reply',
+    audioUrl: 'blob:old',
+  });
+  const next = createChatMessage({
+    id: 'new',
+    role: 'assistant',
+    text: 'New reply',
+    status: 'generating_voice',
+  });
+
+  assert.equal(findSelectedPlayback([previous, next], 'new'), null);
+  assert.equal(findSelectedPlayback([previous, next], 'old').audioUrl, 'blob:old');
 });

@@ -33,6 +33,7 @@ function messageStatusText(message) {
     thinking: 'Writing',
     generating_voice: 'Generating cloned voice',
     ready: 'Voice ready',
+    played: 'Played',
     interrupted: 'Interrupted',
     error: 'Failed',
   }[message.status] || 'Reply';
@@ -40,7 +41,8 @@ function messageStatusText(message) {
 
 function ChatBubble({ message, selected, onPlay }) {
   const isUser = message.role === 'user';
-  const hasVoice = !isUser && Boolean(message.audioUrl);
+  const readyParts = (message.audioParts || []).filter((part) => part.audioUrl);
+  const hasVoice = !isUser && (Boolean(message.audioUrl) || readyParts.length > 0);
   const isBusy = ['thinking', 'generating_voice', 'transcribing', 'listening'].includes(message.status);
 
   return (
@@ -75,6 +77,28 @@ function ChatBubble({ message, selected, onPlay }) {
           </p>
         )}
 
+        {!isUser && message.audioParts?.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {message.audioParts.map((part) => (
+              <span
+                key={part.id}
+                className={cn(
+                  'rounded-full border px-2 py-0.5 text-[11px] capitalize',
+                  part.status === 'ready' || part.status === 'played'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : part.status === 'generating'
+                    ? 'border-sky-200 bg-sky-50 text-sky-700'
+                    : part.status === 'error'
+                    ? 'border-destructive/20 bg-destructive/5 text-destructive'
+                    : 'border-slate-200 bg-slate-50 text-slate-500'
+                )}
+              >
+                {part.index}: {part.status}
+              </span>
+            ))}
+          </div>
+        )}
+
         {hasVoice && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
@@ -87,18 +111,20 @@ function ChatBubble({ message, selected, onPlay }) {
               {selected ? <Volume2 size={14} /> : <PlayCircle size={14} />}
               {selected ? 'Playing' : 'Play voice'}
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 rounded-xl bg-white"
-              asChild
-            >
-              <a href={message.audioUrl} download={`live_reply_${message.id}.wav`}>
-                <Download size={14} />
-                WAV
-              </a>
-            </Button>
+            {message.audioUrl && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-xl bg-white"
+                asChild
+              >
+                <a href={message.audioUrl} download={`live_reply_${message.id}.wav`}>
+                  <Download size={14} />
+                  WAV
+                </a>
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -112,7 +138,8 @@ function ChatBubble({ message, selected, onPlay }) {
   );
 }
 
-export default function LivePage() {
+export default function LivePage({ replyMode = 'full' }) {
+  const isFastMode = replyMode === 'phrases';
   const [serverReady, setServerReady] = useState(false);
   const [loadedVoiceName, setLoadedVoiceName] = useState('');
   const [refParams, setRefParams] = useState(null);
@@ -168,7 +195,7 @@ export default function LivePage() {
     init();
   }, []);
 
-  const liveSpeech = useLiveSpeech({ refParams });
+  const liveSpeech = useLiveSpeech({ refParams, replyMode });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
 
   useEffect(() => {
@@ -251,8 +278,14 @@ export default function LivePage() {
                   <Bot size={18} />
                 </div>
                 <div>
-                  <h2 className="text-base font-semibold text-slate-950">Live Voice Chat</h2>
-                  <p className="text-xs text-muted-foreground">English replies, cloned voice output</p>
+                  <h2 className="text-base font-semibold text-slate-950">
+                    {isFastMode ? 'Live Fast Voice Chat' : 'Live Voice Chat'}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    {isFastMode
+                      ? 'English replies, phrase-by-phrase cloned voice'
+                      : 'English replies, full cloned voice output'}
+                  </p>
                 </div>
               </div>
             </div>
@@ -269,7 +302,9 @@ export default function LivePage() {
                 </div>
                 <h3 className="mt-4 text-lg font-semibold text-slate-950">Start speaking when ready.</h3>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                  The assistant will listen, reply in English text, then generate one complete cloned voice response.
+                  {isFastMode
+                    ? 'The assistant will listen, reply in English text, then play cloned voice phrases in order as they become ready.'
+                    : 'The assistant will listen, reply in English text, then generate one complete cloned voice response.'}
                 </p>
               </div>
             ) : (
@@ -278,7 +313,7 @@ export default function LivePage() {
                   <ChatBubble
                     key={message.id}
                     message={message}
-                    selected={liveSpeech.selectedReplyId === message.id && liveSpeech.phase === 'speaking'}
+                    selected={liveSpeech.selectedReply?.id === message.id && liveSpeech.phase === 'speaking'}
                     onPlay={liveSpeech.playReply}
                   />
                 ))}
@@ -355,7 +390,9 @@ export default function LivePage() {
           </div>
 
           <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
-            The assistant waits for your phrase to finish, writes one reply, then sends the full text through the normal inference pipeline for one complete cloned voice audio.
+            {isFastMode
+              ? 'The assistant waits for your phrase to finish, writes one reply, splits it by punctuation, then generates and plays each cloned voice phrase in order.'
+              : 'The assistant waits for your phrase to finish, writes one reply, then sends the full text through the normal inference pipeline for one complete cloned voice audio.'}
           </div>
 
           {!liveSpeech.speechApiAvailable && (
