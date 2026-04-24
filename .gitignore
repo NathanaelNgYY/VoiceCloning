@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .claude/
+.worktrees/
 *.wav
 nul
 CLAUDE.md
