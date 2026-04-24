@@ -191,11 +191,11 @@ git commit -m "chore: add openai realtime live config"
 
 **Files:**
 - Create: `server/src/services/openaiRealtimeEvents.js`
-- Create: `server/src/services/openaiRealtimeEvents.test.js`
+- Modify: `server/src/services/openaiRealtimeEvents.test.js`
 
 - [ ] **Step 1: Create the failing event helper tests**
 
-Create `server/src/services/openaiRealtimeEvents.test.js`:
+Replace the placeholder contents of `server/src/services/openaiRealtimeEvents.test.js` with:
 
 ```js
 import test from 'node:test';
