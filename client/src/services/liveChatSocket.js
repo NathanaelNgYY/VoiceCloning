@@ -10,19 +10,15 @@ export function createLiveChatSocket({ onOpen, onMessage, onError, onClose } = {
   });
 
   socket.addEventListener('message', (event) => {
-    let message = event.data;
-
     try {
-      message = JSON.parse(event.data);
-    } catch {
-      // Preserve non-JSON payloads so callers can decide how to handle them.
+      onMessage?.(JSON.parse(event.data), event);
+    } catch (err) {
+      onError?.(new Error(`Live chat message parse failed: ${err.message}`));
     }
-
-    onMessage?.(message, event);
   });
 
-  socket.addEventListener('error', (event) => {
-    onError?.(event);
+  socket.addEventListener('error', () => {
+    onError?.(new Error('Live chat connection failed.'));
   });
 
   socket.addEventListener('close', (event) => {
@@ -41,11 +37,10 @@ export function createLiveChatSocket({ onOpen, onMessage, onError, onClose } = {
       socket.send(JSON.stringify(payload));
       return true;
     },
-    close(code, reason) {
+    close() {
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-        socket.close(code, reason);
+        socket.close(1000, 'Live conversation ended');
       }
     },
-    socket,
   };
 }
