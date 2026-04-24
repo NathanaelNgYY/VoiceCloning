@@ -27,7 +27,9 @@ class FakeWebSocket extends EventEmitter {
     this.sent.push(message);
   }
 
-  close() {
+  close(code, reason) {
+    this.closeCode = code;
+    this.closeReason = reason;
     this.readyState = FakeWebSocket.CLOSED;
     this.emit('close');
   }
@@ -91,6 +93,27 @@ test('stale socket close does not emit session.closed for active newer socket', 
 
   assert.equal(bridge.socket, activeSocket);
   assert.equal(appEvents.some((event) => event.type === 'session.closed'), false);
+});
+
+test('connect closes an existing live socket before replacing it', () => {
+  resetFakeSockets();
+  const bridge = new OpenAiRealtimeBridge({
+    apiKey: 'sk-test',
+    WebSocketClass: FakeWebSocket,
+  });
+
+  bridge.connect();
+  const firstSocket = FakeWebSocket.instances[0];
+  firstSocket.open();
+
+  bridge.connect();
+  const secondSocket = FakeWebSocket.instances[1];
+
+  assert.equal(firstSocket.readyState, FakeWebSocket.CLOSED);
+  assert.equal(firstSocket.closeCode, 1000);
+  assert.equal(firstSocket.closeReason, 'Replacing live session');
+  assert.equal(bridge.socket, secondSocket);
+  assert.equal(secondSocket.readyState, FakeWebSocket.CONNECTING);
 });
 
 test('sendAudio reports whether audio was sent', () => {

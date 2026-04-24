@@ -54,6 +54,18 @@ export class OpenAiRealtimeBridge extends EventEmitter {
       return;
     }
 
+    const existingSocket = this.socket;
+    if (
+      existingSocket
+      && (
+        existingSocket.readyState === this.WebSocketClass.CONNECTING
+        || existingSocket.readyState === this.WebSocketClass.OPEN
+      )
+    ) {
+      this.socket = null;
+      existingSocket.close(1000, 'Replacing live session');
+    }
+
     this.closed = false;
     this.socket = new this.WebSocketClass(buildRealtimeUrl(this.model), {
       headers: {
