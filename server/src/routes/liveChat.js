@@ -9,24 +9,31 @@ export function parseRequestUrl(req) {
   return new URL(req.url || '/', 'http://' + host);
 }
 
-export function originAllowed(origin) {
+export function originAllowed(origin, options = {}) {
+  const {
+    nodeEnv = process.env.NODE_ENV || 'development',
+    corsOrigins = CORS_ORIGINS,
+    allowAllCors = ALLOW_ALL_CORS,
+  } = options;
+
+  if (nodeEnv !== 'production') {
+    return true;
+  }
+
   if (!origin) {
     return true;
   }
 
-  if (ALLOW_ALL_CORS) {
+  if (allowAllCors) {
     return true;
   }
 
-  if (CORS_ORIGINS.length === 0) {
-    return true;
-  }
+  return corsOrigins.includes(origin);
+}
 
-  if (process.env.NODE_ENV !== 'production') {
-    return true;
-  }
-
-  return CORS_ORIGINS.includes(origin);
+export function rejectUpgrade(socket, response) {
+  socket.write(response);
+  socket.destroy();
 }
 
 export function sendBrowser(socket, payload) {
@@ -68,15 +75,22 @@ export function attachLiveChatSocket(server) {
   const activeClients = new Map();
 
   server.on('upgrade', (req, socket, head) => {
-    const url = parseRequestUrl(req);
+    let url;
+    try {
+      url = parseRequestUrl(req);
+    } catch {
+      rejectUpgrade(socket, 'HTTP/1.1 400 Bad Request\r\n\r\n');
+      return;
+    }
+
     if (url.pathname !== LIVE_CHAT_PATH) {
+      rejectUpgrade(socket, 'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
       return;
     }
 
     const origin = req.headers.origin || '';
     if (!originAllowed(origin)) {
-      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-      socket.destroy();
+      rejectUpgrade(socket, 'HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
 
