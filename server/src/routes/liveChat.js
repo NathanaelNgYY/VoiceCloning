@@ -14,6 +14,7 @@ export function originAllowed(origin, options = {}) {
     nodeEnv = process.env.NODE_ENV || 'development',
     corsOrigins = CORS_ORIGINS,
     allowAllCors = ALLOW_ALL_CORS,
+    requestHost = '',
   } = options;
 
   if (nodeEnv !== 'production') {
@@ -26,6 +27,15 @@ export function originAllowed(origin, options = {}) {
 
   if (allowAllCors) {
     return true;
+  }
+
+  try {
+    const originHost = new URL(origin).host.toLowerCase();
+    if (requestHost && originHost === String(requestHost).toLowerCase()) {
+      return true;
+    }
+  } catch {
+    return false;
   }
 
   return corsOrigins.includes(origin);
@@ -93,7 +103,8 @@ export function attachLiveChatSocket(server) {
     }
 
     const origin = req.headers.origin || '';
-    if (!originAllowed(origin)) {
+    const requestHost = req.headers['x-forwarded-host'] || req.headers.host || '';
+    if (!originAllowed(origin, { requestHost })) {
       rejectUpgrade(socket, 'HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }

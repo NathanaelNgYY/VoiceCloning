@@ -95,6 +95,20 @@ test('stale socket close does not emit session.closed for active newer socket', 
   assert.equal(appEvents.some((event) => event.type === 'session.closed'), false);
 });
 
+test('connect uses GA Realtime websocket auth headers', () => {
+  resetFakeSockets();
+  const bridge = new OpenAiRealtimeBridge({
+    apiKey: 'sk-test',
+    WebSocketClass: FakeWebSocket,
+  });
+
+  bridge.connect();
+  const socket = FakeWebSocket.instances[0];
+
+  assert.equal(socket.options.headers.Authorization, 'Bearer sk-test');
+  assert.equal('OpenAI-Beta' in socket.options.headers, false);
+});
+
 test('connect closes an existing live socket before replacing it', () => {
   resetFakeSockets();
   const bridge = new OpenAiRealtimeBridge({

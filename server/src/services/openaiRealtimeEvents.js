@@ -65,7 +65,6 @@ export function buildRealtimeSessionUpdate({
       type: 'realtime',
       instructions: systemPrompt || DEFAULT_SYSTEM_PROMPT,
       output_modalities: ['text'],
-      max_output_tokens: 220,
       audio: {
         input: {
           format: {

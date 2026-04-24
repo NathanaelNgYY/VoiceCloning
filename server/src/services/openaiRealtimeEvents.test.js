@@ -30,6 +30,7 @@ test('buildRealtimeSessionUpdate configures text-only OpenAI responses', () => {
   assert.equal(message.session.audio.input.turn_detection.type, 'semantic_vad');
   assert.equal(message.session.audio.input.turn_detection.create_response, true);
   assert.equal(message.session.audio.input.turn_detection.interrupt_response, true);
+  assert.equal('max_output_tokens' in message.session, false);
 });
 
 test('buildRealtimeSessionUpdate configures server VAD when requested', () => {

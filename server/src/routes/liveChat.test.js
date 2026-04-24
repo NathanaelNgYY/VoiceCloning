@@ -67,6 +67,24 @@ test('originAllowed keeps non-production upgrades permissive', () => {
   }
 });
 
+test('originAllowed accepts same-origin websocket upgrades in production', () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+
+  try {
+    assert.equal(originAllowed('https://voice.example.com', {
+      requestHost: 'voice.example.com',
+      forwardedProto: 'https',
+    }), true);
+  } finally {
+    if (previousNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+  }
+});
+
 test('unknown upgrade paths are rejected and destroyed', () => {
   const socket = triggerUpgrade({
     url: '/not-live-chat',

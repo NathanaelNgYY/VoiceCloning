@@ -70,7 +70,6 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.socket = new this.WebSocketClass(buildRealtimeUrl(this.model), {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        'OpenAI-Beta': 'realtime=v1',
       },
     });
     const socket = this.socket;
