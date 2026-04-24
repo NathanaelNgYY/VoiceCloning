@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import {
   LIVE_CHAT_PATH,
   attachLiveChatSocket,
+  handleBrowserMessage,
   originAllowed,
 } from './liveChat.js';
 
@@ -84,4 +85,58 @@ test('malformed upgrade URLs are rejected as bad requests', () => {
 
   assert.equal(socket.writes[0], 'HTTP/1.1 400 Bad Request\r\n\r\n');
   assert.equal(socket.destroyed, true);
+});
+
+test('handleBrowserMessage ignores non-object JSON messages', () => {
+  const calls = [];
+  const bridge = {
+    sendAudio(audio) {
+      calls.push(['sendAudio', audio]);
+    },
+    pauseInput() {
+      calls.push(['pauseInput']);
+    },
+    resumeInput() {
+      calls.push(['resumeInput']);
+    },
+    cancelResponse() {
+      calls.push(['cancelResponse']);
+    },
+  };
+
+  assert.doesNotThrow(() => handleBrowserMessage(bridge, Buffer.from('null')));
+  assert.doesNotThrow(() => handleBrowserMessage(bridge, Buffer.from('"audio.chunk"')));
+  assert.doesNotThrow(() => handleBrowserMessage(bridge, Buffer.from('["audio.chunk"]')));
+
+  assert.deepEqual(calls, []);
+});
+
+test('handleBrowserMessage routes valid message objects', () => {
+  const calls = [];
+  const bridge = {
+    sendAudio(audio) {
+      calls.push(['sendAudio', audio]);
+    },
+    pauseInput() {
+      calls.push(['pauseInput']);
+    },
+    resumeInput() {
+      calls.push(['resumeInput']);
+    },
+    cancelResponse() {
+      calls.push(['cancelResponse']);
+    },
+  };
+
+  handleBrowserMessage(bridge, Buffer.from('{"type":"audio.chunk","audio":"abc"}'));
+  handleBrowserMessage(bridge, Buffer.from('{"type":"input.pause"}'));
+  handleBrowserMessage(bridge, Buffer.from('{"type":"input.resume"}'));
+  handleBrowserMessage(bridge, Buffer.from('{"type":"response.cancel"}'));
+
+  assert.deepEqual(calls, [
+    ['sendAudio', 'abc'],
+    ['pauseInput'],
+    ['resumeInput'],
+    ['cancelResponse'],
+  ]);
 });

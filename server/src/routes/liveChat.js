@@ -50,6 +50,10 @@ export function handleBrowserMessage(bridge, data) {
     return;
   }
 
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+    return;
+  }
+
   if (message.type === 'audio.chunk') {
     bridge.sendAudio(message.audio);
     return;
