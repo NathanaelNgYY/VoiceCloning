@@ -74,6 +74,52 @@ test('RealtimeEventMapper accumulates assistant text deltas and emits final text
   }), []);
 });
 
+test('RealtimeEventMapper emits separate done events for text parts in the same response', () => {
+  const mapper = new RealtimeEventMapper();
+
+  assert.deepEqual(mapper.map({
+    type: 'response.output_text.delta',
+    response_id: 'resp_1',
+    item_id: 'item_1',
+    content_index: 0,
+    delta: 'First',
+  }), [{ type: 'assistant.text.delta', text: 'First' }]);
+
+  assert.deepEqual(mapper.map({
+    type: 'response.output_text.delta',
+    response_id: 'resp_1',
+    item_id: 'item_2',
+    content_index: 1,
+    delta: 'Second',
+  }), [{ type: 'assistant.text.delta', text: 'Second' }]);
+
+  assert.deepEqual(mapper.map({
+    type: 'response.output_text.done',
+    response_id: 'resp_1',
+    item_id: 'item_1',
+    content_index: 0,
+  }), [{ type: 'assistant.text.done', text: 'First' }]);
+
+  assert.deepEqual(mapper.map({
+    type: 'response.output_text.done',
+    response_id: 'resp_1',
+    item_id: 'item_2',
+    content_index: 1,
+  }), [{ type: 'assistant.text.done', text: 'Second' }]);
+});
+
+test('RealtimeEventMapper preserves newlines in final text', () => {
+  const mapper = new RealtimeEventMapper();
+
+  assert.deepEqual(mapper.map({
+    type: 'response.output_text.done',
+    response_id: 'resp_1',
+    item_id: 'item_1',
+    content_index: 0,
+    text: '\nLine one\nLine two\n',
+  }), [{ type: 'assistant.text.done', text: 'Line one\nLine two' }]);
+});
+
 test('RealtimeEventMapper maps OpenAI errors to user-safe app errors', () => {
   const mapper = new RealtimeEventMapper();
 

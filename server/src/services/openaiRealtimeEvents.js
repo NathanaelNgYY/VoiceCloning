@@ -2,11 +2,31 @@ const DEFAULT_SYSTEM_PROMPT =
   'You are a casual, helpful assistant. Keep replies concise and conversational.';
 
 function cleanText(value) {
-  return String(value || '').replace(/\s+/gu, ' ').trim();
+  return String(value || '').trim();
 }
 
 function responseKey(event) {
   return event.response_id || event.item_id || event.event_id || 'default';
+}
+
+function hasKeyPart(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function textPartKey(event) {
+  if (
+    hasKeyPart(event.response_id)
+    && hasKeyPart(event.item_id)
+    && hasKeyPart(event.content_index)
+  ) {
+    return [
+      event.response_id,
+      event.item_id,
+      event.content_index,
+    ].join(':');
+  }
+
+  return responseKey(event);
 }
 
 export function getMissingOpenAiConfigMessage(apiKey) {
@@ -107,14 +127,14 @@ export class RealtimeEventMapper {
       return [];
     }
 
-    const key = responseKey(event);
+    const key = textPartKey(event);
     const current = this.buffers.get(key) || '';
     this.buffers.set(key, `${current}${delta}`);
     return [{ type: 'assistant.text.delta', text: delta }];
   }
 
   mapTextDone(event) {
-    const key = responseKey(event);
+    const key = textPartKey(event);
     if (this.completed.has(key)) {
       return [];
     }
