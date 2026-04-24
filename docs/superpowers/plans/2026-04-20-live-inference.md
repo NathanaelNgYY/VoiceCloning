@@ -17,7 +17,7 @@
 | File | Action | Responsibility |
 |---|---|---|
 | `server/src/routes/upload.js` | Modify | Add `POST /api/live/upload` handler |
-| `client/src/services/api.js` | Modify | Add `removedLiveAudioUpload()` helper |
+| `client/src/services/api.js` | Modify | Add `uploadLiveAudio()` helper |
 | `client/src/pages/LivePage.jsx` | Create | Full live-mode page |
 | `client/src/App.jsx` | Modify | Register `/live` route + nav link |
 
@@ -71,7 +71,7 @@ git commit -m "feat: add POST /api/live/upload endpoint for live recording"
 
 ---
 
-## Task 2: Add `removedLiveAudioUpload` API helper
+## Task 2: Add `uploadLiveAudio` API helper
 
 **Files:**
 - Modify: `client/src/services/api.js`
@@ -81,7 +81,7 @@ git commit -m "feat: add POST /api/live/upload endpoint for live recording"
 Open `client/src/services/api.js`. After the `uploadRefAudio` export (around line 72), add:
 
 ```js
-export async function removedLiveAudioUpload(blob) {
+export async function uploadLiveAudio(blob) {
   const ext = blob.type.includes('ogg') ? '.ogg' : blob.type.includes('mp4') ? '.mp4' : '.webm';
   const formData = new FormData();
   formData.append('audio', blob, `live-recording${ext}`);
@@ -101,7 +101,7 @@ Expected: Vite dev server starts without errors. No browser console errors on an
 
 ```bash
 git add client/src/services/api.js
-git commit -m "feat: add removedLiveAudioUpload API helper"
+git commit -m "feat: add uploadLiveAudio API helper"
 ```
 
 ---
@@ -120,7 +120,7 @@ import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import {
   getInferenceStatus,
   getCurrentInference,
-  removedLiveAudioUpload,
+  uploadLiveAudio,
   transcribeAudio,
   startGeneration,
   getGenerationResult,
@@ -281,7 +281,7 @@ export default function LivePage() {
 
   async function runPipeline(blob) {
     try {
-      const uploadRes = await removedLiveAudioUpload(blob);
+      const uploadRes = await uploadLiveAudio(blob);
       const { filePath } = uploadRes.data;
 
       const transcribeRes = await transcribeAudio(filePath, 'auto');

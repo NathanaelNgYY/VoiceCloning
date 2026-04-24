@@ -296,7 +296,7 @@ This hook owns everything: MediaRecorder, SpeechRecognition, synthesis text queu
 import { useState, useEffect, useRef } from 'react';
 import { connectInferenceSSE } from '../services/sse.js';
 import {
-  removedLiveAudioUpload,
+  uploadLiveAudio,
   transcribeAudio,
   startGeneration,
   synthesizeSentence,
@@ -438,7 +438,7 @@ export function useLiveSpeech({ refParams }) {
 
   async function runPostReleasePipeline(blob) {
     try {
-      const uploadRes = await removedLiveAudioUpload(blob);
+      const uploadRes = await uploadLiveAudio(blob);
       const { filePath } = uploadRes.data;
 
       const transcribeRes = await transcribeAudio(filePath, 'auto');
