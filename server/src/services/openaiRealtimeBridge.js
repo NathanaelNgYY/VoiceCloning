@@ -26,9 +26,20 @@ function safeErrorMessage(message, code = 'openai_realtime_error') {
   });
 }
 
-export class OpenAIRealtimeBridge extends EventEmitter {
-  constructor() {
+export class OpenAiRealtimeBridge extends EventEmitter {
+  constructor({
+    apiKey = OPENAI_API_KEY,
+    model = OPENAI_REALTIME_MODEL,
+    systemPrompt = OPENAI_REALTIME_SYSTEM_PROMPT,
+    vadMode = OPENAI_REALTIME_VAD,
+    WebSocketClass = WebSocket,
+  } = {}) {
     super();
+    this.apiKey = apiKey;
+    this.model = model;
+    this.systemPrompt = systemPrompt;
+    this.vadMode = vadMode;
+    this.WebSocketClass = WebSocketClass;
     this.socket = null;
     this.mapper = new RealtimeEventMapper();
     this.closed = false;
@@ -36,7 +47,7 @@ export class OpenAIRealtimeBridge extends EventEmitter {
   }
 
   connect() {
-    const configMessage = getMissingOpenAiConfigMessage(OPENAI_API_KEY);
+    const configMessage = getMissingOpenAiConfigMessage(this.apiKey);
     if (configMessage) {
       this.emit('app-event', safeErrorMessage(configMessage, 'openai_realtime_missing_config'));
       this.handleClose();
@@ -44,33 +55,46 @@ export class OpenAIRealtimeBridge extends EventEmitter {
     }
 
     this.closed = false;
-    this.socket = new WebSocket(buildRealtimeUrl(OPENAI_REALTIME_MODEL), {
+    this.socket = new this.WebSocketClass(buildRealtimeUrl(this.model), {
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${this.apiKey}`,
         'OpenAI-Beta': 'realtime=v1',
       },
     });
+    const socket = this.socket;
 
-    this.socket.on('open', () => {
+    socket.on('open', () => {
+      if (socket !== this.socket) {
+        return;
+      }
+
       this.sendOpenAi(buildRealtimeSessionUpdate({
-        systemPrompt: OPENAI_REALTIME_SYSTEM_PROMPT,
-        vadMode: OPENAI_REALTIME_VAD,
+        systemPrompt: this.systemPrompt,
+        vadMode: this.vadMode,
       }));
     });
 
-    this.socket.on('message', (data) => {
+    socket.on('message', (data) => {
+      if (socket !== this.socket) {
+        return;
+      }
+
       this.handleMessage(data);
     });
 
-    this.socket.on('error', () => {
+    socket.on('error', () => {
+      if (socket !== this.socket) {
+        return;
+      }
+
       this.emit('app-event', safeErrorMessage(
         'AI conversation failed while connecting to OpenAI Realtime.',
         'openai_realtime_socket_error',
       ));
     });
 
-    this.socket.on('close', () => {
-      this.handleClose();
+    socket.on('close', () => {
+      this.handleClose(socket);
     });
   }
 
@@ -91,22 +115,27 @@ export class OpenAIRealtimeBridge extends EventEmitter {
     }
   }
 
-  handleClose() {
+  handleClose(socket = this.socket) {
+    if (socket && socket !== this.socket) {
+      return;
+    }
+
     if (this.closed) {
       return;
     }
 
     this.closed = true;
+    this.socket = null;
     this.emit('app-event', buildClientEvent('session.closed'));
     this.emit('close');
   }
 
   sendAudio(base64Audio) {
     if (this.closed || this.inputPaused || !base64Audio) {
-      return;
+      return false;
     }
 
-    this.sendOpenAi({
+    return this.sendOpenAi({
       type: 'input_audio_buffer.append',
       audio: base64Audio,
     });
@@ -114,15 +143,16 @@ export class OpenAIRealtimeBridge extends EventEmitter {
 
   pauseInput() {
     this.inputPaused = true;
-    this.sendOpenAi({ type: 'input_audio_buffer.clear' });
+    return this.sendOpenAi({ type: 'input_audio_buffer.clear' });
   }
 
   resumeInput() {
     this.inputPaused = false;
+    return true;
   }
 
   cancelResponse() {
-    this.sendOpenAi({ type: 'response.cancel' });
+    return this.sendOpenAi({ type: 'response.cancel' });
   }
 
   close() {
@@ -132,8 +162,8 @@ export class OpenAIRealtimeBridge extends EventEmitter {
     }
 
     if (
-      this.socket.readyState === WebSocket.CONNECTING
-      || this.socket.readyState === WebSocket.OPEN
+      this.socket.readyState === this.WebSocketClass.CONNECTING
+      || this.socket.readyState === this.WebSocketClass.OPEN
     ) {
       this.socket.close(1000, 'Live session ended');
       return;
@@ -143,11 +173,13 @@ export class OpenAIRealtimeBridge extends EventEmitter {
   }
 
   sendOpenAi(message) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      return;
+    if (!this.socket || this.socket.readyState !== this.WebSocketClass.OPEN) {
+      return false;
     }
 
     this.socket.send(JSON.stringify(message));
+    return true;
   }
 }
 
+export const OpenAIRealtimeBridge = OpenAiRealtimeBridge;
