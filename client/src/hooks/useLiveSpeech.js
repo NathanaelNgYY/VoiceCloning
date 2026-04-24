@@ -1,21 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  synthesizeSentence,
-  transcribeAudio,
-  transcribeLivePhrase,
-  uploadLiveAudio,
-} from '../services/api.js';
+import { synthesizeSentence } from '../services/api.js';
+import { createLiveChatSocket } from '../services/liveChatSocket.js';
 
 const V2_SUPPORTED_LANGS = new Set(['zh', 'en', 'ja', 'ko', 'yue', 'auto', 'zh_en']);
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
 
-const LIVE_TARGET_SAMPLE_RATE = 16000;
+const LIVE_TARGET_SAMPLE_RATE = 24000;
 const LIVE_SPEECH_THRESHOLD = 0.018;
-const DEFAULT_LIVE_SILENCE_MS = 1200;
-const LIVE_MIN_PHRASE_MS = 700;
-const LIVE_MAX_PHRASE_MS = 20000;
-const LIVE_PREROLL_MS = 350;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,11 +15,6 @@ function wait(ms) {
 
 function normaliseTextLang(language) {
   return V2_SUPPORTED_LANGS.has(language) ? language : 'en';
-}
-
-function getLiveAsrLanguage(refParams) {
-  const language = normaliseTextLang(refParams?.prompt_lang || 'en');
-  return language === 'auto' || language === 'zh_en' ? 'en' : language;
 }
 
 function predictEnding(text) {
@@ -49,14 +36,14 @@ function shouldRetrySynthesis(err) {
   return /already|busy|conflict|409|503/i.test(err?.message || '');
 }
 
-function concatFloat32(chunks, totalLength) {
-  const output = new Float32Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
+function getRms(samples) {
+  if (!samples.length) return 0;
+
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    sumSq += samples[i] * samples[i];
   }
-  return output;
+  return Math.sqrt(sumSq / samples.length);
 }
 
 function downsampleBuffer(input, inputSampleRate, outputSampleRate) {
@@ -85,106 +72,62 @@ function downsampleBuffer(input, inputSampleRate, outputSampleRate) {
   return output;
 }
 
-function writeAscii(view, offset, value) {
-  for (let i = 0; i < value.length; i += 1) {
-    view.setUint8(offset + i, value.charCodeAt(i));
-  }
-}
-
-function encodeWav(samples, sampleRate) {
-  const bytesPerSample = 2;
-  const blockAlign = bytesPerSample;
-  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+function pcm16Base64(samples) {
+  const buffer = new ArrayBuffer(samples.length * 2);
   const view = new DataView(buffer);
 
-  writeAscii(view, 0, 'RIFF');
-  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
-  writeAscii(view, 8, 'WAVE');
-  writeAscii(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);
-  writeAscii(view, 36, 'data');
-  view.setUint32(40, samples.length * bytesPerSample, true);
-
-  let offset = 44;
   for (let i = 0; i < samples.length; i += 1) {
     const sample = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-    offset += bytesPerSample;
+    view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
   }
 
-  return buffer;
-}
-
-function makeWavBlob(samples, inputSampleRate) {
-  const downsampled = downsampleBuffer(samples, inputSampleRate, LIVE_TARGET_SAMPLE_RATE);
-  return new Blob([encodeWav(downsampled, LIVE_TARGET_SAMPLE_RATE)], { type: 'audio/wav' });
-}
-
-function cloneSamples(input) {
-  const copy = new Float32Array(input.length);
-  copy.set(input);
-  return copy;
-}
-
-function getRms(samples) {
-  let sumSq = 0;
-  for (let i = 0; i < samples.length; i += 1) {
-    sumSq += samples[i] * samples[i];
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
   }
-  return Math.sqrt(sumSq / samples.length);
+  return btoa(binary);
 }
 
-export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }) {
-  const [phase, setPhaseState] = useState('idle'); // idle | recording | processing
+function encodeOpenAiAudioChunk(input, inputSampleRate) {
+  const downsampled = downsampleBuffer(input, inputSampleRate, LIVE_TARGET_SAMPLE_RATE);
+  return pcm16Base64(downsampled);
+}
+
+function isInputPhase(phase) {
+  return phase === 'listening' || phase === 'thinking';
+}
+
+export function useLiveSpeech({ refParams }) {
+  const [phase, setPhaseState] = useState('idle');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
   const [audioClips, setAudioClips] = useState([]);
   const [selectedClipId, setSelectedClipIdState] = useState('');
   const [error, setError] = useState(null);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [notice, setNotice] = useState('');
   const [speechApiAvailable, setSpeechApiAvailable] = useState(
     typeof window !== 'undefined' && Boolean(window.AudioContext || window.webkitAudioContext)
   );
 
   const phaseRef = useRef('idle');
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
+  const socketRef = useRef(null);
   const streamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const sourceRef = useRef(null);
   const pendingPhrasesRef = useRef([]);
-  const pendingLiveAudioRef = useRef([]);
   const isSynthesisingRef = useRef(false);
-  const isTranscribingLiveRef = useRef(false);
   const isCancelledRef = useRef(false);
   const runIdRef = useRef(0);
   const clipSeqRef = useRef(0);
   const audioClipsRef = useRef([]);
   const selectedClipIdRef = useRef('');
   const waitingForNextReadyRef = useRef(false);
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const processorRef = useRef(null);
-  const sourceRef = useRef(null);
-  const rafIdRef = useRef(null);
-  const preRollChunksRef = useRef([]);
-  const preRollSampleCountRef = useRef(0);
-  const phraseChunksRef = useRef([]);
-  const phraseSampleCountRef = useRef(0);
-  const phraseStartedRef = useRef(false);
-  const phraseStartMsRef = useRef(0);
-  const lastVoiceMsRef = useRef(0);
-  const liveClockMsRef = useRef(0);
-  const liveInputSampleRateRef = useRef(48000);
-  const silenceMsRef = useRef(silenceMs);
-
-  useEffect(() => {
-    silenceMsRef.current = silenceMs;
-  }, [silenceMs]);
+  const assistantTextRef = useRef('');
+  const noticeTimeoutRef = useRef(null);
 
   function setPhase(phase) {
     phaseRef.current = phase;
@@ -202,6 +145,17 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
       audioClipsRef.current = next;
       return next;
     });
+  }
+
+  function showNotice(message) {
+    setNotice(message);
+    if (noticeTimeoutRef.current) {
+      window.clearTimeout(noticeTimeoutRef.current);
+    }
+    noticeTimeoutRef.current = window.setTimeout(() => {
+      setNotice('');
+      noticeTimeoutRef.current = null;
+    }, 3500);
   }
 
   function cleanupGeneratedAudio() {
@@ -226,11 +180,26 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     return clips.slice(startIndex).find((clip) => clip.status === 'ready') || null;
   }
 
+  function pauseOpenAiInput() {
+    socketRef.current?.send({ type: 'input.pause' });
+  }
+
+  function resumeOpenAiInput() {
+    socketRef.current?.send({ type: 'input.resume' });
+  }
+
+  function maybeEnterSpeaking() {
+    if (phaseRef.current === 'idle' || phaseRef.current === 'stopping') return;
+    pauseOpenAiInput();
+    setPhase('speaking');
+  }
+
   function maybeSelectReadyClip(clipId) {
     const selected = audioClipsRef.current.find((clip) => clip.id === selectedClipIdRef.current);
     if (!selected || waitingForNextReadyRef.current) {
       waitingForNextReadyRef.current = false;
       setSelectedClipId(clipId);
+      maybeEnterSpeaking();
     }
   }
 
@@ -239,10 +208,13 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     if (!clip || clip.status !== 'ready') return;
     waitingForNextReadyRef.current = false;
     setSelectedClipId(clipId);
+    maybeEnterSpeaking();
   }
 
   function appendTranscript(text) {
-    setFinalTranscript((prev) => (prev ? `${prev} ${text}` : text));
+    const clean = String(text || '').trim();
+    if (!clean) return;
+    setFinalTranscript((prev) => (prev ? `${prev} ${clean}` : clean));
   }
 
   async function synthesizeWithRetry(params) {
@@ -347,228 +319,14 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     isSynthesisingRef.current = false;
   }
 
-  function waitForPhraseDrain(runId) {
-    return new Promise((resolve) => {
-      const check = () => {
-        const hasPendingForRun = pendingPhrasesRef.current.some((item) => item.runId === runId);
-        if (!hasPendingForRun && !isSynthesisingRef.current) {
-          resolve();
-          return;
-        }
-        window.setTimeout(check, 120);
-      };
-      check();
-    });
-  }
-
-  function waitForLiveTranscriptionDrain(runId) {
-    return new Promise((resolve) => {
-      const check = () => {
-        const hasPendingForRun = pendingLiveAudioRef.current.some((item) => item.runId === runId);
-        if (!hasPendingForRun && !isTranscribingLiveRef.current) {
-          resolve();
-          return;
-        }
-        window.setTimeout(check, 120);
-      };
-      check();
-    });
-  }
-
-  function pushPreRoll(samples, sampleRate) {
-    preRollChunksRef.current.push(samples);
-    preRollSampleCountRef.current += samples.length;
-
-    const maxSamples = Math.round((sampleRate * LIVE_PREROLL_MS) / 1000);
-    while (preRollSampleCountRef.current > maxSamples && preRollChunksRef.current.length > 0) {
-      const excess = preRollSampleCountRef.current - maxSamples;
-      const first = preRollChunksRef.current[0];
-      if (first.length <= excess) {
-        preRollChunksRef.current.shift();
-        preRollSampleCountRef.current -= first.length;
-      } else {
-        preRollChunksRef.current[0] = first.slice(excess);
-        preRollSampleCountRef.current -= excess;
-      }
+  function closeSocket() {
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
     }
   }
 
-  function resetPhraseBuffer() {
-    phraseStartedRef.current = false;
-    phraseStartMsRef.current = 0;
-    lastVoiceMsRef.current = 0;
-    phraseChunksRef.current = [];
-    phraseSampleCountRef.current = 0;
-  }
-
-  function startPhrase(samples, nowMs) {
-    phraseStartedRef.current = true;
-    phraseStartMsRef.current = Math.max(0, nowMs - LIVE_PREROLL_MS);
-    lastVoiceMsRef.current = nowMs;
-    phraseChunksRef.current = preRollChunksRef.current.map((chunk) => chunk.slice());
-    phraseSampleCountRef.current = preRollSampleCountRef.current;
-    phraseChunksRef.current.push(samples);
-    phraseSampleCountRef.current += samples.length;
-    preRollChunksRef.current = [];
-    preRollSampleCountRef.current = 0;
-    setInterimTranscript('Listening...');
-  }
-
-  function appendPhraseSamples(samples) {
-    phraseChunksRef.current.push(samples);
-    phraseSampleCountRef.current += samples.length;
-  }
-
-  function enqueueLiveAudioPhrase(runId) {
-    if (!phraseStartedRef.current) return;
-
-    const totalSamples = phraseSampleCountRef.current;
-    const durationMs = (totalSamples / liveInputSampleRateRef.current) * 1000;
-    const chunks = phraseChunksRef.current;
-    resetPhraseBuffer();
-
-    if (durationMs < LIVE_MIN_PHRASE_MS || chunks.length === 0) {
-      setInterimTranscript('');
-      return;
-    }
-
-    try {
-      const samples = concatFloat32(chunks, totalSamples);
-      const blob = makeWavBlob(samples, liveInputSampleRateRef.current);
-      pendingLiveAudioRef.current.push({ blob, runId });
-      setInterimTranscript('Transcribing...');
-      drainLiveTranscriptionQueue();
-    } catch (err) {
-      setError(`Live transcription audio failed: ${err.message}`);
-      setInterimTranscript('');
-    }
-  }
-
-  async function drainLiveTranscriptionQueue() {
-    if (isTranscribingLiveRef.current) return;
-
-    isTranscribingLiveRef.current = true;
-    while (pendingLiveAudioRef.current.length > 0 && !isCancelledRef.current) {
-      const item = pendingLiveAudioRef.current.shift();
-      if (!item || item.runId !== runIdRef.current) continue;
-
-      try {
-        const asrLanguage = getLiveAsrLanguage(refParams);
-        const result = await transcribeLivePhrase(item.blob, asrLanguage);
-        if (isCancelledRef.current || item.runId !== runIdRef.current) continue;
-
-        const text = result.data?.text?.trim();
-        if (text) {
-          enqueuePhrase(text, result.data?.language || asrLanguage, 'live', item.runId);
-        }
-      } catch (err) {
-        if (!isCancelledRef.current && item.runId === runIdRef.current) {
-          setSpeechApiAvailable(false);
-          setError(`Live Faster Whisper failed: ${err.response?.data?.error || err.message}`);
-        }
-      } finally {
-        if (!isCancelledRef.current && item.runId === runIdRef.current) {
-          setInterimTranscript(phaseRef.current === 'recording' ? 'Listening...' : '');
-        }
-      }
-    }
-
-    isTranscribingLiveRef.current = false;
-  }
-
-  function handleLiveSamples(input, sampleRate, runId) {
-    if (runId !== runIdRef.current || phaseRef.current !== 'recording') return;
-
-    const samples = cloneSamples(input);
-    const rms = getRms(samples);
-    const isVoice = rms >= LIVE_SPEECH_THRESHOLD;
-    const nowMs = liveClockMsRef.current + (samples.length / sampleRate) * 1000;
-    liveClockMsRef.current = nowMs;
-
-    if (!phraseStartedRef.current) {
-      if (isVoice) {
-        startPhrase(samples, nowMs);
-      } else {
-        pushPreRoll(samples, sampleRate);
-      }
-      return;
-    }
-
-    appendPhraseSamples(samples);
-    if (isVoice) {
-      lastVoiceMsRef.current = nowMs;
-    }
-
-    const silenceMs = nowMs - lastVoiceMsRef.current;
-    const phraseMs = nowMs - phraseStartMsRef.current;
-    if (silenceMs >= silenceMsRef.current || phraseMs >= LIVE_MAX_PHRASE_MS) {
-      enqueueLiveAudioPhrase(runId);
-    }
-  }
-
-  function startLiveAudioCapture(stream, runId) {
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) {
-      setSpeechApiAvailable(false);
-      throw new Error('This browser does not support live audio processing.');
-    }
-
-    const audioCtx = new AudioContextCtor();
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-
-    analyser.fftSize = 256;
-    source.connect(analyser);
-    source.connect(processor);
-    processor.connect(audioCtx.destination);
-
-    audioContextRef.current = audioCtx;
-    sourceRef.current = source;
-    analyserRef.current = analyser;
-    processorRef.current = processor;
-    liveInputSampleRateRef.current = audioCtx.sampleRate;
-    liveClockMsRef.current = 0;
-    preRollChunksRef.current = [];
-    preRollSampleCountRef.current = 0;
-    resetPhraseBuffer();
-    setSpeechApiAvailable(true);
-
-    processor.onaudioprocess = (event) => {
-      const input = event.inputBuffer.getChannelData(0);
-      const output = event.outputBuffer.getChannelData(0);
-      output.fill(0);
-      handleLiveSamples(input, audioCtx.sampleRate, runId);
-    };
-
-    const buffer = new Uint8Array(analyser.frequencyBinCount);
-    let prevLevel = 0;
-
-    function tick() {
-      rafIdRef.current = requestAnimationFrame(tick);
-      analyser.getByteTimeDomainData(buffer);
-      let sumSq = 0;
-      for (let i = 0; i < buffer.length; i += 1) {
-        const sample = (buffer[i] - 128) / 128;
-        sumSq += sample * sample;
-      }
-      const rms = Math.sqrt(sumSq / buffer.length);
-      prevLevel = prevLevel * 0.8 + rms * 0.2;
-      setAudioLevel(Math.min(1, prevLevel * 5));
-    }
-
-    tick();
-  }
-
-  function stopLiveAudioCapture({ flush = false, runId = runIdRef.current } = {}) {
-    if (flush) {
-      enqueueLiveAudioPhrase(runId);
-    }
-
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
+  function stopMicCapture() {
     setAudioLevel(0);
 
     if (processorRef.current) {
@@ -580,63 +338,150 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
       try { sourceRef.current.disconnect(); } catch { /* ignore */ }
       sourceRef.current = null;
     }
-    if (analyserRef.current) {
-      try { analyserRef.current.disconnect(); } catch { /* ignore */ }
-      analyserRef.current = null;
-    }
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
   }
 
-  async function runPostReleasePipeline(audioBlob, runId) {
+  function endConversationFromSocket() {
+    socketRef.current = null;
+    stopMicCapture();
+    setInterimTranscript('');
+    setPhase('idle');
+  }
+
+  function interruptPlayback() {
+    if (phaseRef.current !== 'speaking') return;
+
+    socketRef.current?.send({ type: 'response.cancel' });
+    setSelectedClipId('');
+    waitingForNextReadyRef.current = false;
+    resumeOpenAiInput();
+    setPhase('listening');
+    showNotice('You interrupted. Listening...');
+  }
+
+  function sendAudioChunk(input, sampleRate) {
     try {
-      const uploadRes = await uploadLiveAudio(audioBlob);
-      const { filePath } = uploadRes.data;
-      if (!filePath) {
-        throw new Error('Audio upload succeeded but server returned no file path.');
-      }
-
-      const transcribeRes = await transcribeAudio(filePath, getLiveAsrLanguage(refParams));
-      const { text, language } = transcribeRes.data;
-
-      if (isCancelledRef.current || runId !== runIdRef.current) return;
-
-      const whisperText = String(text || '').trim();
-      if (whisperText) {
-        setFinalTranscript(whisperText);
-      }
-
-      await waitForLiveTranscriptionDrain(runId);
-      if (isCancelledRef.current || runId !== runIdRef.current) return;
-
-      const hasLiveWork =
-        audioClipsRef.current.length > 0 ||
-        pendingPhrasesRef.current.some((item) => item.runId === runId) ||
-        isSynthesisingRef.current;
-
-      if (!hasLiveWork) {
-        if (!whisperText) {
-          setError('No speech detected. Try speaking louder or closer to the mic.');
-          setPhase('idle');
-          return;
-        }
-        enqueuePhrase(whisperText, normaliseTextLang(language), 'whisper', runId, {
-          appendToTranscript: false,
-        });
-      }
-
-      await waitForPhraseDrain(runId);
-      if (!isCancelledRef.current && runId === runIdRef.current) {
-        setInterimTranscript('');
-        setPhase('idle');
-      }
+      socketRef.current?.send({
+        type: 'audio.chunk',
+        audio: encodeOpenAiAudioChunk(input, sampleRate),
+      });
     } catch (err) {
-      if (!isCancelledRef.current && runId === runIdRef.current) {
-        setError(err.response?.data?.error || err.message || 'Pipeline failed');
-        setPhase('idle');
+      setError(`Live audio failed: ${err.message}`);
+    }
+  }
+
+  function startMicCapture(stream) {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {
+      setSpeechApiAvailable(false);
+      throw new Error('This browser does not support live audio processing.');
+    }
+
+    const audioCtx = new AudioContextCtor();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    audioContextRef.current = audioCtx;
+    sourceRef.current = source;
+    processorRef.current = processor;
+    setSpeechApiAvailable(true);
+
+    let smoothedLevel = 0;
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const output = event.outputBuffer.getChannelData(0);
+      output.fill(0);
+
+      const rms = getRms(input);
+      smoothedLevel = smoothedLevel * 0.82 + rms * 0.18;
+      setAudioLevel(Math.min(1, smoothedLevel * 5));
+
+      if (phaseRef.current === 'speaking') {
+        if (rms >= LIVE_SPEECH_THRESHOLD) {
+          interruptPlayback();
+        }
+        return;
       }
+
+      if (isInputPhase(phaseRef.current)) {
+        sendAudioChunk(input, audioCtx.sampleRate);
+      }
+    };
+  }
+
+  function handleSocketEvent(event, runId) {
+    if (runId !== runIdRef.current || isCancelledRef.current) return;
+
+    switch (event.type) {
+      case 'session.ready':
+        setPhase('listening');
+        setInterimTranscript('Listening...');
+        setNotice('');
+        break;
+
+      case 'user.speech.started':
+        if (phaseRef.current !== 'speaking') {
+          setPhase('listening');
+          setInterimTranscript('Listening...');
+        }
+        break;
+
+      case 'user.speech.stopped':
+        if (phaseRef.current !== 'speaking') {
+          setPhase('thinking');
+          setInterimTranscript('Thinking...');
+        }
+        break;
+
+      case 'assistant.thinking':
+        if (phaseRef.current !== 'speaking') {
+          setPhase('thinking');
+          setInterimTranscript('Thinking...');
+        }
+        break;
+
+      case 'assistant.text.delta':
+        assistantTextRef.current += event.text || '';
+        setInterimTranscript(assistantTextRef.current);
+        break;
+
+      case 'assistant.text.done': {
+        const text = String(event.text || assistantTextRef.current || '').trim();
+        assistantTextRef.current = '';
+        setInterimTranscript('');
+        if (text) {
+          enqueuePhrase(text, refParams?.prompt_lang || 'en', 'openai', runId);
+        } else if (phaseRef.current !== 'speaking') {
+          setPhase('listening');
+        }
+        break;
+      }
+
+      case 'error':
+        setError(event.message || 'AI conversation failed.');
+        if (phaseRef.current !== 'speaking') {
+          setPhase('listening');
+        }
+        break;
+
+      case 'session.closed':
+        if (phaseRef.current !== 'idle') {
+          endConversationFromSocket();
+        }
+        break;
+
+      default:
+        break;
     }
   }
 
@@ -646,7 +491,7 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
       setError('No reference audio configured. Go to the Inference page first.');
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       setError('This browser does not support live microphone recording.');
       return;
     }
@@ -655,15 +500,16 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     runIdRef.current = runId;
     isCancelledRef.current = false;
     pendingPhrasesRef.current = [];
-    pendingLiveAudioRef.current = [];
     isSynthesisingRef.current = false;
-    isTranscribingLiveRef.current = false;
     clipSeqRef.current = 0;
+    assistantTextRef.current = '';
     cleanupGeneratedAudio();
 
     setError(null);
+    setNotice('');
     setInterimTranscript('');
     setFinalTranscript('');
+    setPhase('connecting');
 
     let stream;
     try {
@@ -675,71 +521,65 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
         },
       });
     } catch {
+      setPhase('idle');
       setError('Microphone access denied. Please allow microphone access and try again.');
       return;
     }
 
-    streamRef.current = stream;
-    chunksRef.current = [];
-
     try {
-      startLiveAudioCapture(stream, runId);
+      streamRef.current = stream;
+      startMicCapture(stream);
     } catch (err) {
+      stopMicCapture();
+      setPhase('idle');
       setError(err.message);
-      stream.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
       return;
     }
 
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : '';
-
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    mediaRecorderRef.current = recorder;
-
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunksRef.current.push(event.data);
-    };
-
-    recorder.onstop = async () => {
-      stream.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-
-      const audioBlob = new Blob(chunksRef.current, {
-        type: recorder.mimeType || 'audio/webm',
-      });
-      chunksRef.current = [];
-      await runPostReleasePipeline(audioBlob, runId);
-    };
-
-    recorder.start();
-    setPhase('recording');
+    const socket = createLiveChatSocket({
+      onOpen: () => {
+        if (runId === runIdRef.current) {
+          setNotice('Connected. Preparing live chat...');
+        }
+      },
+      onMessage: (event) => handleSocketEvent(event, runId),
+      onError: (err) => {
+        if (runId !== runIdRef.current) return;
+        setError(err.message || 'Live chat connection failed.');
+        endConversationFromSocket();
+      },
+      onClose: () => {
+        if (runId !== runIdRef.current) return;
+        if (phaseRef.current !== 'idle' && phaseRef.current !== 'stopping') {
+          endConversationFromSocket();
+        }
+      },
+    });
+    socketRef.current = socket;
   }
 
   function stop() {
-    if (phaseRef.current !== 'recording') return;
+    if (phaseRef.current === 'idle' || phaseRef.current === 'stopping') return;
 
-    stopLiveAudioCapture({ flush: true, runId: runIdRef.current });
+    isCancelledRef.current = true;
+    runIdRef.current += 1;
+    setPhase('stopping');
     setInterimTranscript('');
-    setPhase('processing');
-
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.stop();
-    }
+    closeSocket();
+    stopMicCapture();
+    setPhase('idle');
   }
 
   function toggle() {
-    if (phaseRef.current === 'recording') {
-      stop();
-      return;
-    }
     if (phaseRef.current === 'idle') {
       start();
+      return;
     }
+    if (phaseRef.current === 'speaking') {
+      interruptPlayback();
+      return;
+    }
+    stop();
   }
 
   function onAudioEnded() {
@@ -747,22 +587,28 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     if (nextClip) {
       waitingForNextReadyRef.current = false;
       setSelectedClipId(nextClip.id);
+      maybeEnterSpeaking();
       return;
     }
+
     waitingForNextReadyRef.current = true;
+    if (phaseRef.current === 'speaking') {
+      resumeOpenAiInput();
+      setPhase(socketRef.current ? 'listening' : 'idle');
+      setInterimTranscript(socketRef.current ? 'Listening...' : '');
+    }
   }
 
   useEffect(() => {
     return () => {
       isCancelledRef.current = true;
       runIdRef.current += 1;
-      stopLiveAudioCapture({ flush: false });
-
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-
+      closeSocket();
+      stopMicCapture();
       cleanupGeneratedAudio();
+      if (noticeTimeoutRef.current) {
+        window.clearTimeout(noticeTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -770,6 +616,8 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     audioClips.find((clip) => clip.id === selectedClipId) ||
     audioClips.find((clip) => clip.status === 'ready') ||
     null;
+  const audioSrc = selectedClip?.status === 'ready' ? selectedClip.url : null;
+  const shouldPlayAudio = phase === 'speaking' && Boolean(audioSrc);
 
   return {
     phase,
@@ -778,13 +626,17 @@ export function useLiveSpeech({ refParams, silenceMs = DEFAULT_LIVE_SILENCE_MS }
     audioClips,
     selectedClip,
     selectedClipId,
-    audioSrc: selectedClip?.status === 'ready' ? selectedClip.url : null,
+    audioSrc,
     error,
     speechApiAvailable,
     audioLevel,
+    notice,
+    isConversationActive: phase !== 'idle',
+    shouldPlayAudio,
     start,
     stop,
     toggle,
+    interruptPlayback,
     selectClip,
     onAudioEnded,
   };
