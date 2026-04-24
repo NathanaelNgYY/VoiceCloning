@@ -25,6 +25,7 @@ import { liveTranscriber } from './services/liveTranscriber.js';
 import uploadRoutes from './routes/upload.js';
 import trainingRoutes from './routes/training.js';
 import inferenceRoutes from './routes/inference.js';
+import { attachLiveChatSocket } from './routes/liveChat.js';
 
 const app = express();
 
@@ -116,6 +117,7 @@ process.on('unhandledRejection', (reason) => {
 const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
   console.log(`Server running on http://${SERVER_HOST}:${SERVER_PORT}`);
 });
+const liveChatSocket = attachLiveChatSocket(server);
 
 // Disable server timeout so SSE connections survive long training runs
 server.timeout = 0;
@@ -138,6 +140,7 @@ async function shutdown(signal) {
     console.error('[shutdown] Failed to stop inference server cleanly:', err);
   }
   liveTranscriber.stop();
+  liveChatSocket.close();
 
   server.close(() => {
     process.exit(0);
