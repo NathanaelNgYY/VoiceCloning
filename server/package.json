@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
-    "build:client": "npm --prefix ../client run build"
+    "build:client": "npm --prefix ../client run build",
+    "test:live-chat": "node --test src/services/openaiRealtimeEvents.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1030.0",
@@ -16,6 +17,7 @@
     "express": "^4.21.0",
     "js-yaml": "^4.1.0",
     "multer": "^1.4.5-lts.1",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "ws": "^8.20.0"
   }
 }

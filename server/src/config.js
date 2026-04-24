@@ -54,6 +54,17 @@ const NODE_ENV = readEnv('NODE_ENV') || 'development';
 const SERVER_DIR = path.dirname(CONFIG_FILE);
 const PROJECT_ROOT = path.resolve(SERVER_DIR, '..');
 
+const OPENAI_API_KEY = readEnv('OPENAI_API_KEY');
+const OPENAI_REALTIME_MODEL = readEnv('OPENAI_REALTIME_MODEL') || 'gpt-realtime';
+const OPENAI_REALTIME_VAD = parseModeEnv(
+  readEnv('OPENAI_REALTIME_VAD'),
+  'semantic_vad',
+  ['semantic_vad', 'server_vad'],
+);
+const OPENAI_REALTIME_SYSTEM_PROMPT =
+  readEnv('OPENAI_REALTIME_SYSTEM_PROMPT') ||
+  'You are a casual, helpful assistant. Keep replies concise and conversational.';
+
 const STORAGE_MODE = readEnv('STORAGE_MODE') || 'local';
 const INFERENCE_MODE = parseModeEnv(
   readEnv('INFERENCE_MODE'),
@@ -255,6 +266,10 @@ function ensureRuntimeDirectories() {
 export {
   NODE_ENV,
   PROJECT_ROOT,
+  OPENAI_API_KEY,
+  OPENAI_REALTIME_MODEL,
+  OPENAI_REALTIME_VAD,
+  OPENAI_REALTIME_SYSTEM_PROMPT,
   GPT_SOVITS_ROOT,
   PYTHON_EXEC,
   PRETRAINED,
