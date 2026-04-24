@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 import { DATA_ROOT, REF_AUDIO_DIR, GPT_SOVITS_ROOT } from '../config.js';
 import { isSafePathSegment, sanitizeFilename } from '../utils/paths.js';
 import { isS3Mode, generatePresignedPutUrl, headObject } from '../services/s3Storage.js';
+import { liveTranscriber } from '../services/liveTranscriber.js';
 
 const router = Router();
 
@@ -127,6 +128,47 @@ router.post('/live/upload', uploadRef.single('audio'), async (req, res) => {
   }
 });
 
+router.post('/live/transcribe-phrase', uploadRef.single('audio'), async (req, res) => {
+  const language = req.body.language || process.env.LIVE_ASR_LANGUAGE || 'en';
+
+  if (req.file) {
+    try {
+      const result = await liveTranscriber.transcribe(req.file.path, { language });
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    } finally {
+      try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+    }
+  }
+
+  const filePath = req.body.filePath;
+  if (!filePath) {
+    return res.status(400).json({ error: 'audio file or filePath is required' });
+  }
+
+  if (isS3Mode()) {
+    try {
+      const { gpuWorkerClient } = await import('../services/gpuWorkerClient.js');
+      const result = await gpuWorkerClient.transcribeLivePhrase(filePath, language);
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  try {
+    const absolutePath = path.resolve(GPT_SOVITS_ROOT, filePath);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ error: 'Audio file not found' });
+    }
+    const result = await liveTranscriber.transcribe(absolutePath, { language });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ── S3 presigned upload endpoints ──
 
 const ALLOWED_AUDIO_EXTS = ['.wav', '.mp3', '.ogg', '.flac', '.m4a'];
@@ -237,8 +279,8 @@ router.post('/upload-ref/confirm', async (req, res) => {
   }
 });
 
-const LIVE_UPLOAD_ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
-const LIVE_UPLOAD_EXT_MAP = { 'audio/mp4': '.mp4', 'audio/ogg': '.ogg' };
+const LIVE_UPLOAD_ALLOWED_TYPES = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg', 'audio/wav'];
+const LIVE_UPLOAD_EXT_MAP = { 'audio/mp4': '.mp4', 'audio/ogg': '.ogg', 'audio/wav': '.wav' };
 
 router.post('/live/upload/presign', async (req, res) => {
   if (!isS3Mode()) {

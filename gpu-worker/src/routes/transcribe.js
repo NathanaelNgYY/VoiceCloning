@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { PYTHON_EXEC, GPT_SOVITS_ROOT, SCRIPTS, LOCAL_TEMP_ROOT, buildPythonEnv } from '../config.js';
 import { downloadFile } from '../services/s3Sync.js';
+import { liveTranscriber } from '../services/liveTranscriber.js';
 
 const router = Router();
 
@@ -67,6 +68,29 @@ router.post('/transcribe', async (req, res) => {
       proc.on('error', reject);
     });
 
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+  }
+});
+
+router.post('/live/transcribe-phrase', async (req, res) => {
+  const { s3Key, language = process.env.LIVE_ASR_LANGUAGE || 'en' } = req.body;
+  if (!s3Key) {
+    return res.status(400).json({ error: 's3Key is required' });
+  }
+
+  const localPath = path.join(
+    LOCAL_TEMP_ROOT,
+    'live-transcribe',
+    `${Date.now()}_${path.basename(s3Key)}`
+  );
+
+  try {
+    await downloadFile(s3Key, localPath);
+    const result = await liveTranscriber.transcribe(localPath, { language });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
