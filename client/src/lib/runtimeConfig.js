@@ -9,6 +9,14 @@ export function resolveApiPath(pathname) {
   return apiOrigin ? `${apiOrigin}${normalizedPath}` : normalizedPath;
 }
 
+export function resolveWsPath(pathname) {
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  const base = apiOrigin || (typeof window !== 'undefined' ? window.location.origin : '');
+  const url = new URL(normalizedPath, base || 'http://localhost');
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+}
+
 export const API_BASE_URL = resolveApiPath('/api');
 export const APP_BASENAME = import.meta.env.VITE_APP_BASENAME || '/';
 
