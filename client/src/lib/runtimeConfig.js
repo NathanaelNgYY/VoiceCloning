@@ -3,15 +3,30 @@ function trimTrailingSlash(value) {
 }
 
 const apiOrigin = trimTrailingSlash(import.meta.env.VITE_API_BASE_URL || '');
+const workerOrigin = trimTrailingSlash(import.meta.env.VITE_GPU_WORKER_URL || '');
+const liveGatewayOrigin = trimTrailingSlash(
+  import.meta.env.VITE_LIVE_GATEWAY_URL || import.meta.env.VITE_GPU_WORKER_URL || '',
+);
 
 export function resolveApiPath(pathname) {
   const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
   return apiOrigin ? `${apiOrigin}${normalizedPath}` : normalizedPath;
 }
 
+export function resolveWorkerPath(pathname, fallbackPathname = pathname) {
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  if (workerOrigin) {
+    return `${workerOrigin}${normalizedPath}`;
+  }
+
+  return resolveApiPath(fallbackPathname);
+}
+
 export function resolveWsPath(pathname) {
   const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
-  const base = apiOrigin || (typeof window !== 'undefined' ? window.location.origin : '');
+  const base = liveGatewayOrigin
+    || apiOrigin
+    || (typeof window !== 'undefined' ? window.location.origin : '');
   const url = new URL(normalizedPath, base || 'http://localhost');
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();

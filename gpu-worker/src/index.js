@@ -17,7 +17,8 @@ processManager.on('log', ({ sessionId, stream, data }) => {
   trainingState.appendLog(payload);
   sseManager.send(sessionId, 'log', payload);
 });
-app.use(cors());
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
 
 app.get('/healthz', (_req, res) => {

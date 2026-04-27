@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lambda": "vite --mode lambda-local",
     "build": "vite build",
     "preview": "vite preview"
   },
