@@ -10,6 +10,21 @@
 
 ---
 
+## Current Implementation Note
+
+This plan is historical. The implemented Live chatbot now has two modes and a chatbot UI:
+
+- `/live` (`Live Full`) sends complete assistant replies to `POST /api/inference`.
+- `/live-fast` (`Live Fast`) splits assistant replies by punctuation and sends each phrase to `POST /api/live/tts-sentence`, then plays phrase audio in order.
+- OpenAI Realtime input transcription is used for user chat bubbles.
+- Cloned audio interruption is local only; do not send `response.cancel` for GPT-SoVITS playback interruption.
+
+For current handoff details, environment values, deployment gotchas, and verification commands, read:
+
+```text
+docs/live-chatbot-handoff.md
+```
+
 ## File Structure
 
 - Create `server/src/services/openaiRealtimeEvents.js`

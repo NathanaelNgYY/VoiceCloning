@@ -2,7 +2,20 @@
 
 **Date:** 2026-04-24  
 **Branch:** chatbot-integrationV1  
-**Status:** Approved for planning
+**Status:** Historical design. See `docs/live-chatbot-handoff.md` for the current implementation state as of 2026-04-27.
+
+## Current Implementation Note
+
+The implemented Live chatbot has moved beyond this original V1 design:
+
+- `/live` is now `Live Full`: OpenAI Realtime generates English assistant text, then the full reply is synthesized once through `POST /api/inference`.
+- `/live-fast` is now `Live Fast`: OpenAI Realtime generates English assistant text, then the frontend splits by punctuation and synthesizes each phrase through `POST /api/live/tts-sentence`.
+- The UI is a chatbot transcript with user and assistant bubbles.
+- User speech transcription for display comes from OpenAI Realtime input transcription.
+- Cloned playback interruption is local only; the frontend should not send `response.cancel` when stopping GPT-SoVITS audio.
+- Cloud deployments must either route `/api/*` WebSocket upgrades through CloudFront to the backend or set `VITE_API_BASE_URL` to the backend origin.
+
+Read `docs/live-chatbot-handoff.md` before doing new Live development.
 
 ## Problem
 
