@@ -1,7 +1,17 @@
 import path from 'path';
 import { generatePresignedGetUrl, listObjects, getObject } from '../shared/s3.js';
+import { gpuGet, gpuPublicUrl } from '../shared/gpuWorker.js';
+import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { ok, err, preflight } from '../shared/cors.js';
+
+function decodeSegment(value) {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    return '';
+  }
+}
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -15,24 +25,37 @@ export const handler = async (event) => {
     if (routePath.endsWith('/ref-audio')) {
       const filePath = query.filePath;
       if (!filePath) return err(400, 'filePath is required');
+      if (useGpuWorkerArtifacts()) {
+        return ok({ url: gpuPublicUrl(`/ref-audio?filePath=${encodeURIComponent(filePath)}`) });
+      }
       const url = await generatePresignedGetUrl(filePath);
       return ok({ url });
     }
 
     if (routePath.includes('/training-audio/file/')) {
       const suffix = routePath.split('/training-audio/file/')[1] || '';
-      const [expName, filename] = suffix.split('/');
+      const [rawExpName, rawFilename] = suffix.split('/');
+      const expName = decodeSegment(rawExpName);
+      const filename = decodeSegment(rawFilename);
       if (!isSafePathSegment(expName) || !isSafePathSegment(filename)) {
         return err(400, 'Invalid path');
+      }
+      if (useGpuWorkerArtifacts()) {
+        return ok({
+          url: gpuPublicUrl(`/training-audio/file/${encodeURIComponent(expName)}/${encodeURIComponent(filename)}`),
+        });
       }
       const url = await generatePresignedGetUrl(`training/datasets/${expName}/denoised/${filename}`);
       return ok({ url });
     }
 
     if (routePath.includes('/training-audio/')) {
-      const expName = routePath.split('/training-audio/')[1]?.replace(/\/$/u, '');
+      const expName = decodeSegment(routePath.split('/training-audio/')[1]?.replace(/\/$/u, ''));
       if (!expName || !isSafePathSegment(expName)) {
         return err(400, 'Invalid experiment name');
+      }
+      if (useGpuWorkerArtifacts()) {
+        return ok(await gpuGet(`/training-audio/${encodeURIComponent(expName)}`));
       }
 
       const denoisedPrefix = `training/datasets/${expName}/denoised/`;
