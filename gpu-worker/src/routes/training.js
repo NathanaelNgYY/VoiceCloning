@@ -28,6 +28,7 @@ router.post('/train', (req, res) => {
   res.json({ sessionId, steps: STEPS });
 
   sseManager.waitForClient(sessionId).then(() => {
+    trainingState.setStatus('running');
     return runPipelineWithS3(sessionId, {
       expName,
       s3Prefix,
@@ -65,6 +66,10 @@ router.post('/train/stop', (req, res) => {
   } else {
     res.status(404).json({ error: 'No running process found' });
   }
+});
+
+router.get('/train/current', (_req, res) => {
+  res.json(trainingState.getState());
 });
 
 export default router;

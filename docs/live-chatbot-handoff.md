@@ -80,6 +80,19 @@ CORS_ORIGINS=https://your-frontend-domain.example.com
 
 If same-origin, `CORS_ORIGINS` may be left unset.
 
+## Lambda Migration Note
+
+The REST backend can now move to Lambda/API Gateway, but the Live chatbot WebSocket should stay stateful. Use the new `live-gateway/` process on the GPU EC2 for `/api/live/chat/realtime`, and use `lambda/` for REST routes. Deployment details are in `docs/lambda-serverless-gpu-worker-guide.md`.
+
+Frontend Lambda deployment uses:
+
+```env
+VITE_API_BASE_URL=https://your-api-gateway-domain.example.com
+VITE_GPU_WORKER_URL=https://your-gpu-worker-alb.example.com
+# Optional only when WebSocket gateway has a different origin:
+# VITE_LIVE_GATEWAY_URL=https://your-live-gateway-alb.example.com
+```
+
 ## Backend Env
 
 Backend cloud template: `server/.env.backend.deployment`
