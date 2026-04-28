@@ -1,13 +1,14 @@
 # Lambda Serverless Backend + GPU Worker Guide
 
-Last updated: 2026-04-27
+Last updated: 2026-04-28
 
 This guide explains the new deployment shape:
 
 - React SPA: S3 + CloudFront
 - REST backend: AWS Lambda + API Gateway HTTP API
 - GPU work: existing GPU EC2, still running `gpu-worker` on port `3001`
-- Live chatbot WebSocket: new `live-gateway` process on the GPU EC2, normally behind the same ALB on port `3002`
+- Live chatbot WebSocket: `live-gateway` process on the same GPU EC2, running on port `3002`
+- Current test networking: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, and only `/api/live/chat/realtime` path-routes to `live-gateway:3002`
 - Storage handoff: S3
 
 AWS references worth keeping open:
@@ -43,8 +44,8 @@ GPU worker changes:
 Frontend changes:
 
 - `VITE_API_BASE_URL`: API Gateway REST origin
-- `VITE_GPU_WORKER_URL`: GPU worker ALB origin for SSE
-- `VITE_LIVE_GATEWAY_URL`: optional separate live WebSocket origin
+- `VITE_GPU_WORKER_URL`: browser-facing origin for SSE and WebSocket path routing; with CloudFront behaviors, use the CloudFront domain, not the raw HTTP ALB URL
+- `VITE_LIVE_GATEWAY_URL`: normally omitted; only set this if live-gateway uses a different public origin
 
 ## Traffic Flow
 
@@ -54,7 +55,7 @@ flowchart LR
   Api["API Gateway HTTP API"]
   Lambda["Lambda handlers"]
   S3["S3 bucket"]
-  Alb["GPU Worker ALB"]
+  Alb["Public GPU ALB"]
   Worker["gpu-worker :3001"]
   Live["live-gateway :3002"]
   OpenAI["OpenAI Realtime"]
@@ -63,7 +64,8 @@ flowchart LR
   Browser -->|REST /api/*| Api
   Api --> Lambda
   Lambda --> S3
-  Lambda -->|private or ALB URL| Worker
+  Lambda -->|same public ALB URL| Alb
+  Alb -->|default action| Worker
   Browser -->|SSE /train/progress, /inference/progress| Alb
   Alb --> Worker
   Browser -->|WSS /api/live/chat/realtime| Alb
@@ -74,7 +76,7 @@ flowchart LR
 
 ## GPU EC2 Setup
 
-Run the existing GPU worker:
+Run the existing GPU worker. In the current test setup, this is the ALB default target on port `3001`:
 
 ```bash
 cd /opt/VoiceCloning/gpu-worker
@@ -91,7 +93,7 @@ CORS_ORIGIN=https://YOUR_CLOUDFRONT_DOMAIN \
 npm start
 ```
 
-Run the live gateway as a second process:
+Run the live gateway as a second process on the same GPU EC2. This process owns OpenAI Realtime and the browser WebSocket; `gpu-worker` itself does not talk to OpenAI Realtime:
 
 ```bash
 cd /opt/VoiceCloning/live-gateway
@@ -106,41 +108,93 @@ OPENAI_REALTIME_SYSTEM_PROMPT="You are a casual, helpful assistant. Keep replies
 npm start
 ```
 
-Recommended `pm2` setup:
+Recommended `systemd` setup:
+
+```ini
+# /etc/systemd/system/voice-gpu-worker.service
+[Unit]
+Description=Voice Cloning GPU Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/VoiceCloning/gpu-worker
+EnvironmentFile=/opt/VoiceCloning/gpu-worker/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
+# /etc/systemd/system/voice-live-gateway.service
+[Unit]
+Description=Voice Cloning Live Gateway
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/VoiceCloning/live-gateway
+EnvironmentFile=/opt/VoiceCloning/live-gateway/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-pm2 start /opt/VoiceCloning/gpu-worker/src/index.js --name voice-gpu-worker --cwd /opt/VoiceCloning/gpu-worker
-pm2 start /opt/VoiceCloning/live-gateway/src/index.js --name voice-live-gateway --cwd /opt/VoiceCloning/live-gateway
-pm2 save
+sudo systemctl daemon-reload
+sudo systemctl enable --now voice-gpu-worker
+sudo systemctl enable --now voice-live-gateway
+sudo systemctl status voice-gpu-worker
+sudo systemctl status voice-live-gateway
 ```
 
 ## ALB Routing
 
-Put HTTPS in front of the GPU EC2. Two common options:
+Current test setup uses one public ALB in front of the GPU EC2.
 
-1. One ALB with path-based routing:
-   - `/api/live/chat/realtime` -> target group port `3002`
-   - `/train/progress/*` -> target group port `3001`
-   - `/inference/progress/*` -> target group port `3001`
-   - `/healthz` -> target group port `3001`
+ALB listener rules:
 
-2. Two origins/domains:
-   - `https://gpu-worker.example.com` -> port `3001`
-   - `https://live-gateway.example.com` -> port `3002`
+- Rule 1, highest priority: path `/api/live/chat/realtime` -> live-gateway target group, port `3002`
+- Default action: gpu-worker target group, port `3001`
 
-For option 1:
+Lambda can call the public ALB URL directly:
 
-```env
-VITE_GPU_WORKER_URL=https://gpu-worker.example.com
-# VITE_LIVE_GATEWAY_URL can be omitted
+```text
+GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 ```
 
-For option 2:
+The browser should use the HTTPS CloudFront domain when CloudFront is routing SSE/WSS to that ALB origin:
 
 ```env
-VITE_GPU_WORKER_URL=https://gpu-worker.example.com
-VITE_LIVE_GATEWAY_URL=https://live-gateway.example.com
+VITE_GPU_WORKER_URL=https://d3dghqhnk7aoku.cloudfront.net
+# VITE_LIVE_GATEWAY_URL should be omitted for this one-ALB setup
 ```
+
+The browser derives the live WebSocket URL from `VITE_GPU_WORKER_URL`, so it connects to:
+
+```text
+wss://d3dghqhnk7aoku.cloudfront.net/api/live/chat/realtime
+```
+
+CloudFront can also use the same GPU ALB origin for SSE and WSS. Configure behaviors in this order:
+
+- `/api/live/chat/realtime` -> GPU ALB origin, caching disabled, WebSocket upgrade headers forwarded
+- `/train/progress/*` -> GPU ALB origin, caching disabled
+- `/inference/progress/*` -> GPU ALB origin, caching disabled
+- `/api/*` -> API Gateway origin
+- default `/*` -> S3 SPA origin
+
+The `/api/live/chat/realtime` behavior must have higher priority than `/api/*`; otherwise CloudFront may send the WebSocket request to API Gateway or the SPA fallback.
+
+The live-gateway target group can still health check `GET /healthz` on port `3002`; this does not require exposing `/healthz` through a public ALB listener rule.
 
 ## Lambda Deployment
 
@@ -152,53 +206,95 @@ npm install
 sam build --template template.yaml
 ```
 
-Deploy when the GPU worker is reachable through a public/internal ALB URL:
+Deploy for the current public-GPU-ALB test setup. This does not attach Lambda to a VPC because Lambda can call the public ALB URL directly.
 
-```bash
-sam deploy \
-  --stack-name voice-cloning-api \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides \
-    S3Bucket=interns2026-small-projects-bucket-shared \
-    S3Region=ap-southeast-1 \
-    S3Prefix=echolect/ \
-    GpuWorkerUrl=https://YOUR_GPU_WORKER_ALB_DOMAIN \
-    GpuWorkerPublicUrl=https://YOUR_GPU_WORKER_ALB_DOMAIN \
-    ModelSource=gpu-worker \
-    ArtifactSource=s3 \
-    CorsOrigin=https://YOUR_CLOUDFRONT_DOMAIN
+PowerShell:
+
+```powershell
+sam deploy `
+  --region ap-southeast-1 `
+  --s3-bucket interns2026-small-projects-bucket-shared `
+  --s3-prefix echolect/sam-artifacts `
+  --stack-name voice-cloning-api `
+  --capabilities CAPABILITY_IAM `
+  --parameter-overrides `
+    S3Bucket=interns2026-small-projects-bucket-shared `
+    S3Region=ap-southeast-1 `
+    S3Prefix=echolect/ `
+    GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com `
+    GpuWorkerPublicUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com `
+    ModelSource=gpu-worker `
+    ArtifactSource=s3 `
+    CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
-Deploy when Lambda must call the GPU EC2 private IP:
+Same command in bash:
 
 ```bash
 sam deploy \
+  --region ap-southeast-1 \
+  --s3-bucket interns2026-small-projects-bucket-shared \
+  --s3-prefix echolect/sam-artifacts \
   --stack-name voice-cloning-api \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
     S3Bucket=interns2026-small-projects-bucket-shared \
     S3Region=ap-southeast-1 \
     S3Prefix=echolect/ \
-    GpuWorkerUrl=http://10.0.2.25:3001 \
-    GpuWorkerPublicUrl=https://YOUR_GPU_WORKER_ALB_DOMAIN \
+    GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com \
+    GpuWorkerPublicUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com \
     ModelSource=gpu-worker \
     ArtifactSource=s3 \
-    CorsOrigin=https://YOUR_CLOUDFRONT_DOMAIN \
-    VpcSubnetIds=subnet-aaa,subnet-bbb \
+    CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
+```
+
+Notes:
+
+- `GpuWorkerUrl` is what Lambda calls. For now, use the public ALB URL.
+- `GpuWorkerPublicUrl` is what the browser can use for direct artifact URLs if `ArtifactSource=gpu-worker`. With CloudFront behaviors, prefer the CloudFront URL here; with `ArtifactSource=s3`, it is not used for result playback.
+- `ArtifactSource=s3` means generated final WAVs and training audio URLs are served through S3 presigned URLs in deployed Lambda.
+- `ModelSource=gpu-worker` means `/api/models` reads the GPT and SoVITS checkpoints from the GPU server's `GPT_SOVITS_ROOT`, not from S3.
+
+## Future Private GPU Worker Plan
+
+When the GPU EC2 is moved off the public internet, change the architecture like this:
+
+1. Put the GPU worker EC2 and internal ALB in private subnets.
+2. Change `GpuWorkerUrl` to the private/internal ALB URL, for example `http://internal-voice-gpu-alb-...:80`.
+3. Keep `GpuWorkerPublicUrl` as the public ALB or CloudFront URL only if browsers still need direct SSE/artifact access. If the public route is removed too, put CloudFront in front of an internet-facing ALB or redesign SSE through a public gateway.
+4. Deploy Lambda with VPC parameters:
+
+```powershell
+sam deploy `
+  --region ap-southeast-1 `
+  --s3-bucket interns2026-small-projects-bucket-shared `
+  --s3-prefix echolect/sam-artifacts `
+  --stack-name voice-cloning-api `
+  --capabilities CAPABILITY_IAM `
+  --parameter-overrides `
+    S3Bucket=interns2026-small-projects-bucket-shared `
+    S3Region=ap-southeast-1 `
+    S3Prefix=echolect/ `
+    GpuWorkerUrl=http://INTERNAL_GPU_ALB_DNS `
+    GpuWorkerPublicUrl=https://PUBLIC_GPU_OR_CLOUDFRONT_DOMAIN `
+    ModelSource=gpu-worker `
+    ArtifactSource=s3 `
+    CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net `
+    VpcSubnetIds=subnet-aaa,subnet-bbb `
     VpcSecurityGroupIds=sg-lambda
 ```
+
+5. Security groups:
+
+- Lambda security group outbound -> internal GPU ALB or GPU worker security group TCP `80`/`3001`
+- Internal ALB or GPU worker security group inbound from Lambda security group
+- Public ALB security group inbound HTTPS `443` from users if browser SSE/WSS still goes direct
+- GPU EC2 security group inbound from ALB security group TCP `3001` and `3002`
 
 If Lambda is VPC-attached, make sure it can still reach S3. Use either:
 
 - NAT Gateway / NAT instance for outbound internet access
 - S3 Gateway VPC Endpoint for private S3 access
-
-Security groups:
-
-- Lambda security group outbound -> GPU worker security group TCP `3001`
-- GPU worker security group inbound from Lambda security group TCP `3001`
-- ALB security group inbound HTTPS `443` from users
-- GPU worker security group inbound from ALB security group TCP `3001` and `3002`
 
 ## Frontend Deployment
 
@@ -206,9 +302,8 @@ Create or update the frontend production env:
 
 ```env
 VITE_API_BASE_URL=https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com
-VITE_GPU_WORKER_URL=https://YOUR_GPU_WORKER_ALB_DOMAIN
-# Optional only if live gateway has a separate origin:
-# VITE_LIVE_GATEWAY_URL=https://YOUR_LIVE_GATEWAY_DOMAIN
+VITE_GPU_WORKER_URL=https://d3dghqhnk7aoku.cloudfront.net
+# Omit VITE_LIVE_GATEWAY_URL when the same GPU ALB path-routes /api/live/chat/realtime to port 3002.
 VITE_APP_BASENAME=/
 ```
 
@@ -331,7 +426,7 @@ Expected:
 
 - `/api/config` returns `{"storageMode":"s3","inferenceMode":"remote"}`
 - current-state endpoints return JSON, even when idle
-- `/api/models` returns S3-backed `gpt` and `sovits` arrays
+- `/api/models` returns `gpt` and `sovits` arrays from the GPU worker when `ModelSource=gpu-worker`
 
 GPU worker direct:
 
@@ -345,8 +440,10 @@ curl "$GPU/inference/current"
 Live gateway:
 
 ```bash
-LIVE=https://YOUR_LIVE_GATEWAY_OR_GPU_ALB_DOMAIN
-curl "$LIVE/healthz"
+GPU=https://YOUR_GPU_WORKER_ALB_DOMAIN
+# The public ALB default /healthz usually checks gpu-worker:3001.
+curl "$GPU/healthz"
+# Test /api/live/chat/realtime with a WebSocket client or the browser, because this path routes to live-gateway:3002.
 ```
 
 Browser network checks:

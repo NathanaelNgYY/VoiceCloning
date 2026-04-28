@@ -57,8 +57,6 @@ Globals:
     Runtime: nodejs20.x
     Timeout: 120
     MemorySize: 256
-    Policies:
-      - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
     VpcConfig: !If
       - UseVpcConfig
       - SecurityGroupIds: !Split [',', !Ref VpcSecurityGroupIds]
@@ -96,6 +94,8 @@ Resources:
     Properties:
       Handler: config/index.handler
       CodeUri: .
+      Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
       Events:
         GetConfig:
           Type: HttpApi
@@ -110,6 +110,7 @@ Resources:
       Handler: upload/index.handler
       CodeUri: .
       Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
         - S3CrudPolicy:
             BucketName: !Ref S3Bucket
       Events:
@@ -143,6 +144,8 @@ Resources:
     Properties:
       Handler: training/index.handler
       CodeUri: .
+      Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
       Events:
         Train:
           Type: HttpApi
@@ -170,6 +173,7 @@ Resources:
       CodeUri: .
       Timeout: 300
       Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
         - S3ReadPolicy:
             BucketName: !Ref S3Bucket
       Events:
@@ -193,6 +197,7 @@ Resources:
       CodeUri: .
       Timeout: 300
       Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
         - S3ReadPolicy:
             BucketName: !Ref S3Bucket
       Events:
@@ -245,6 +250,8 @@ Resources:
       Handler: transcribe/index.handler
       CodeUri: .
       Timeout: 120
+      Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
       Events:
         Transcribe:
           Type: HttpApi
@@ -259,6 +266,7 @@ Resources:
       Handler: training-audio/index.handler
       CodeUri: .
       Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
         - S3ReadPolicy:
             BucketName: !Ref S3Bucket
       Events:
@@ -287,6 +295,8 @@ Resources:
       Handler: live/index.handler
       CodeUri: .
       Timeout: 120
+      Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
       Events:
         TtsSentence:
           Type: HttpApi
