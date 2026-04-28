@@ -7,4 +7,3 @@ dist/
 nul
 CLAUDE.md
 .env.example
-local.env
