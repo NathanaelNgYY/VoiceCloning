@@ -1,5 +1,6 @@
 import { generatePresignedGetUrl } from '../shared/s3.js';
-import { gpuPost, gpuGet, gpuPostBinary } from '../shared/gpuWorker.js';
+import { gpuPost, gpuGet, gpuPostBinary, gpuPublicUrl } from '../shared/gpuWorker.js';
+import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { corsHeaders, ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 
 function binaryWav(buffer, contentType = 'audio/wav') {
@@ -49,6 +50,9 @@ export const handler = async (event) => {
       const sessionId = routePath.split('/inference/result/')[1]?.replace(/\/$/u, '');
       if (!sessionId || !/^[A-Za-z0-9-]+$/u.test(sessionId)) {
         return err(400, 'Invalid sessionId');
+      }
+      if (useGpuWorkerArtifacts()) {
+        return ok({ url: gpuPublicUrl(`/inference/result/${encodeURIComponent(sessionId)}`) });
       }
       const url = await generatePresignedGetUrl(`audio/output/${sessionId}/final.wav`);
       return ok({ url });
