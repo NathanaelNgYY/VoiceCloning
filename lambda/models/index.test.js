@@ -59,6 +59,36 @@ test('models handler can list models from GPU worker instead of S3', async () =>
   }
 });
 
+test('models handler returns an empty library when GPU worker models are unreachable', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError('fetch failed');
+  };
+
+  try {
+    const { handler } = await import(`./index.js?gpu-list-unavailable=${Date.now()}`);
+    await withEnv({
+      MODEL_SOURCE: 'gpu-worker',
+      GPU_WORKER_URL: 'http://localhost:3001',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'GET' } },
+        rawPath: '/api/models',
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.body), {
+        gpt: [],
+        sovits: [],
+        workerAvailable: false,
+        message: 'fetch failed',
+      });
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('models select uses local GPU paths when MODEL_SOURCE is gpu-worker', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;

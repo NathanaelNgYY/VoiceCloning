@@ -190,6 +190,14 @@ export function getInferenceStatus() {
   return api.get('/inference/status');
 }
 
+export function getInstanceStatus() {
+  return api.get('/instance/status');
+}
+
+export function startInstance() {
+  return api.post('/instance/start');
+}
+
 // ── Training audio browser ──
 
 export function getTrainingAudioFiles(expName) {

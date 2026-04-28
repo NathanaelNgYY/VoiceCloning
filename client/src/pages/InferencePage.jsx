@@ -26,6 +26,7 @@ import {
   createReferencePresetSignature,
   parseStoredReferencePresets,
 } from '@/lib/referencePresets';
+import { chooseBestReferenceSet } from '@/lib/referenceSelection';
 import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
@@ -39,6 +40,11 @@ function revokeIfBlobUrl(url) {
 
 function getFallbackReferenceName(filePath) {
   return (filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
+}
+
+function normalizeReferenceLanguage(lang) {
+  const langMap = { ZH: 'zh', EN: 'en', JA: 'ja', KO: 'ko', zh: 'zh', en: 'en', ja: 'ja', ko: 'ko' };
+  return langMap[lang] || 'en';
 }
 
 export default function InferencePage() {
@@ -94,6 +100,8 @@ export default function InferencePage() {
   const restoredSessionRef = useRef(null);
   const noticeTimeoutRef = useRef(null);
   const skipNextCompletionToastRef = useRef(false);
+  const autoLoadKeyRef = useRef('');
+  const autoReferenceProfileRef = useRef('');
 
   const inference = useInferenceSSE();
   const voiceProfiles = buildVoiceProfiles(gptModels, sovitsModels);
@@ -160,6 +168,17 @@ export default function InferencePage() {
         window.clearTimeout(noticeTimeoutRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    function handleGpuReady() {
+      autoLoadKeyRef.current = '';
+      fetchModels();
+      checkStatus();
+    }
+
+    window.addEventListener('voice-cloning-gpu-ready', handleGpuReady);
+    return () => window.removeEventListener('voice-cloning-gpu-ready', handleGpuReady);
   }, []);
 
   async function fetchModels() {
@@ -370,6 +389,27 @@ export default function InferencePage() {
   }, [modelsFetched, selectedProfile, selectedGPTPath, selectedSoVITSPath, loadedGPTPath, loadedSoVITSPath]);
 
   useEffect(() => {
+    if (!modelsFetched || !selectedProfile?.complete || !selectedGPT || !selectedSoVITS) return;
+
+    const loadKey = `${selectedGPT}::${selectedSoVITS}`;
+    if (selectionLoaded) {
+      autoLoadKeyRef.current = loadKey;
+      return;
+    }
+    if (loading || autoLoadKeyRef.current === loadKey) return;
+
+    autoLoadKeyRef.current = loadKey;
+    handleLoadModels({ auto: true });
+  }, [
+    modelsFetched,
+    selectedProfile,
+    selectedGPT,
+    selectedSoVITS,
+    selectionLoaded,
+    loading,
+  ]);
+
+  useEffect(() => {
     if (!currentExpName) {
       setTrainingAudioFiles([]);
       setLoadingTrainingAudio(false);
@@ -381,6 +421,50 @@ export default function InferencePage() {
       .catch(() => setTrainingAudioFiles([]))
       .finally(() => setLoadingTrainingAudio(false));
   }, [currentExpName]);
+
+  useEffect(() => {
+    if (!currentExpName || loadingTrainingAudio || trainingAudioFiles.length === 0 || refLocked) return;
+    if (uploadedRefFiles.some(file => file.serverPath === refAudioPath)) return;
+    if (autoReferenceProfileRef.current === currentExpName && refAudioPath) return;
+
+    const selection = chooseBestReferenceSet(trainingAudioFiles);
+    if (!selection.primary) return;
+
+    autoReferenceProfileRef.current = currentExpName;
+    const primary = selection.primary;
+    const aux = selection.aux;
+
+    getTrainingAudioUrl(currentExpName, primary.filename)
+      .then((url) => {
+        setRefAudioPath(primary.path);
+        setRefAudioFile({ name: primary.filename });
+        setRefAudioUrl(url);
+        setPromptText(primary.transcript || '');
+        setPromptLang(normalizeReferenceLanguage(primary.lang));
+        setAuxRefAudios(aux);
+        setPreview({
+          path: primary.path,
+          url,
+          name: primary.filename,
+          role: 'primary',
+        });
+        showNotice({
+          title: 'Reference auto-selected',
+          message: `${primary.filename} is primary with ${aux.length} auxiliary clip${aux.length === 1 ? '' : 's'}.`,
+          tone: 'success',
+        });
+      })
+      .catch(() => {
+        // Keep manual selection available if preview URL resolution fails.
+      });
+  }, [
+    currentExpName,
+    loadingTrainingAudio,
+    trainingAudioFiles,
+    refLocked,
+    uploadedRefFiles,
+    refAudioPath,
+  ]);
 
   useEffect(() => {
     if (!refAudioPath) return;
@@ -684,6 +768,8 @@ export default function InferencePage() {
     setModelError(null);
     setRefLocked(false);
     setAuxRefAudios([]);
+    autoReferenceProfileRef.current = '';
+    autoLoadKeyRef.current = '';
 
     if (!primaryIsUploaded) {
       revokeIfBlobUrl(refAudioUrl);
@@ -708,8 +794,7 @@ export default function InferencePage() {
       role: 'primary',
     });
     if (file.lang) {
-      const langMap = { ZH: 'zh', EN: 'en', JA: 'ja', KO: 'ko', zh: 'zh', en: 'en', ja: 'ja', ko: 'ko' };
-      setPromptLang(langMap[file.lang] || 'en');
+      setPromptLang(normalizeReferenceLanguage(file.lang));
     }
     setAuxRefAudios(prev => prev.filter(f => f.filename !== file.filename));
   }
@@ -729,17 +814,25 @@ export default function InferencePage() {
     });
   }
 
-  async function handleLoadModels() {
+  async function handleLoadModels({ auto = false } = {}) {
     if (!selectedGPT || !selectedSoVITS) {
-      return alert('Select a person with both GPT and SoVITS checkpoints');
+      if (!auto) alert('Select a person with both GPT and SoVITS checkpoints');
+      return;
     }
     setLoading(true);
     setModelError(null);
     try {
-      const res = await selectModels(selectedGPT, selectedSoVITS);
+      await selectModels(selectedGPT, selectedSoVITS);
       setLoadedGPTPath(selectedGPT);
       setLoadedSoVITSPath(selectedSoVITS);
       setServerReady(true);
+      if (!auto) {
+        showNotice({
+          title: 'Voice profile loaded',
+          message: 'The selected GPT and SoVITS checkpoints are ready for inference.',
+          tone: 'success',
+        });
+      }
     } catch (err) {
       setModelError(err.response?.data?.error || err.message);
     } finally {
@@ -845,7 +938,7 @@ export default function InferencePage() {
     if (!text.trim()) return alert('Enter text to synthesize');
     if (!refAudioPath) return alert('Select a reference audio first');
     if (!refLocked) return alert('Confirm your reference audio selection first');
-    if (!selectionLoaded) return alert('Load the selected voice profile first');
+    if (!selectionLoaded) return alert('Wait for the selected voice profile to finish loading first');
 
     setInferError(null);
 
@@ -945,7 +1038,7 @@ export default function InferencePage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Voice You’re Preparing</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight">{selectedProfile?.displayName || 'No profile selected'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {selectedProfile ? 'Choose the exact GPT and SoVITS pair you want before you load this voice on the server.' : 'Pick a speaker here before you move on to references and text.'}
+                {selectedProfile ? 'Choose the exact GPT and SoVITS pair you want; the server loads the selected profile automatically.' : 'Pick a speaker here before you move on to references and text.'}
               </p>
             </div>
 
@@ -953,7 +1046,7 @@ export default function InferencePage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Ready On Server</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight">{loadedProfileName || 'Nothing loaded'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {selectionLoaded ? 'You can move straight to references, text, and generation.' : 'Load the voice you want here before you generate anything.'}
+                {selectionLoaded ? 'You can move straight to references, text, and generation.' : 'The selected profile will load automatically when the backend is reachable.'}
               </p>
             </div>
           </div>
@@ -999,15 +1092,22 @@ export default function InferencePage() {
 
           <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
             {selectedProfile
-              ? `When you load this voice, the server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'}.`
-              : 'Choose a speaker first, then load the voice you want to use for generation.'}
+              ? `The server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'} for this profile.`
+              : 'Choose a speaker first; complete profiles load automatically for generation.'}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={handleLoadModels} disabled={loading || !selectedProfile?.complete} size="lg" className="rounded-2xl px-6 shadow-[0_18px_45px_-25px_rgba(14,165,233,0.7)]">
-              {loading ? <Spinner size={14} className="text-primary-foreground" /> : null}
-              {loading ? 'Loading...' : selectionLoaded ? 'Loaded On Server' : 'Load Voice Profile'}
-            </Button>
+            <span className={cn(
+              "inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-semibold",
+              selectionLoaded
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : loading
+                  ? "border-sky-200 bg-sky-50 text-sky-700"
+                  : "border-slate-200 bg-slate-50 text-slate-600"
+            )}>
+              {loading ? <Spinner size={14} /> : null}
+              {loading ? 'Loading selected profile...' : selectionLoaded ? 'Profile ready' : 'Waiting for profile selection'}
+            </span>
 
             <Button variant="outline" size="lg" onClick={fetchModels} className="rounded-2xl border-slate-200 px-5">
               <RefreshCw size={14} />
@@ -1021,8 +1121,18 @@ export default function InferencePage() {
             )}
 
             {modelError && (
-              <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
+              <span className="inline-flex items-center gap-3 rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
                 {modelError}
+                <button
+                  type="button"
+                  onClick={() => {
+                    autoLoadKeyRef.current = '';
+                    handleLoadModels();
+                  }}
+                  className="rounded-xl bg-white px-2.5 py-1 text-xs font-semibold text-destructive shadow-sm"
+                >
+                  Retry
+                </button>
               </span>
             )}
           </div>
@@ -1201,7 +1311,7 @@ export default function InferencePage() {
                     </div>
                   ) : (
                     <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-center text-sm text-muted-foreground">
-                      Load a voice profile to browse matching training audio
+                      Choose a voice profile to browse matching training audio
                     </div>
                   )}
 
@@ -1422,7 +1532,7 @@ export default function InferencePage() {
                   </div>
                   <div className="grid grid-cols-[auto,minmax(0,1fr)] items-start gap-3">
                     <span>Status</span>
-                    <span className="min-w-0 text-right font-semibold text-slate-800">{selectionLoaded ? 'Ready' : 'Load voice first'}</span>
+                    <span className="min-w-0 text-right font-semibold text-slate-800">{selectionLoaded ? 'Ready' : 'Auto-loading voice'}</span>
                   </div>
                 </div>
               </div>

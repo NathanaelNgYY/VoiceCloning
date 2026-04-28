@@ -27,6 +27,7 @@ Current known AWS resources:
 - Current gap: create a second target group for `live-gateway` on HTTP port `3002`, then add the `/api/live/chat/realtime` ALB listener rule.
 - Frontend S3 bucket: `interns2026-small-projects-bucket-shared`, under prefix `echolect/dist/`.
 - CloudFront distribution ID: `E2KTGN0G56FW71`.
+- Optional GPU start-on-click support: set `GpuInstanceId` and `GpuInstanceRegion` in the Lambda SAM deploy. The frontend checks `/api/instance/status` passively, and only calls `/api/instance/start` when the user presses the GPU start button.
 
 AWS references worth keeping open:
 
@@ -384,6 +385,8 @@ sam deploy `
     S3Prefix=echolect/ `
     GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com `
     GpuWorkerPublicUrl=https://d3dghqhnk7aoku.cloudfront.net `
+    GpuInstanceId=i-xxxxxxxxxxxxxxxxx `
+    GpuInstanceRegion=ap-northeast-2 `
     ModelSource=gpu-worker `
     ArtifactSource=s3 `
     CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
@@ -405,6 +408,8 @@ sam deploy \
     S3Prefix=echolect/ \
     GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com \
     GpuWorkerPublicUrl=https://d3dghqhnk7aoku.cloudfront.net \
+    GpuInstanceId=i-xxxxxxxxxxxxxxxxx \
+    GpuInstanceRegion=ap-northeast-2 \
     ModelSource=gpu-worker \
     ArtifactSource=s3 \
     CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
@@ -414,6 +419,8 @@ Notes:
 
 - `GpuWorkerUrl` is what Lambda calls. For now, use the public ALB URL.
 - `GpuWorkerPublicUrl` is what the browser can use for direct artifact URLs if `ArtifactSource=gpu-worker`. With CloudFront behaviors, prefer the CloudFront URL here; with `ArtifactSource=s3`, it is not used for result playback.
+- `GpuInstanceId` is optional. When set, Lambda can describe/start that EC2 instance for the browser GPU button. Leave it empty for local-only or always-on GPU deployments.
+- `GpuInstanceRegion` should match the GPU EC2 region, currently `ap-northeast-2`.
 - `ArtifactSource=s3` means generated final WAVs and training audio URLs are served through S3 presigned URLs in deployed Lambda.
 - `ModelSource=gpu-worker` means `/api/models` reads the GPT and SoVITS checkpoints from the GPU server's `GPT_SOVITS_ROOT`, not from S3.
 

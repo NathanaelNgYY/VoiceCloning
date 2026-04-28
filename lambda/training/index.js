@@ -2,6 +2,12 @@ import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 
+function isWorkerUnavailableError(error) {
+  const message = error?.message || '';
+  return error instanceof TypeError
+    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return preflight();
@@ -56,7 +62,21 @@ export const handler = async (event) => {
     }
 
     if (method === 'GET' && routePath.endsWith('/train/current')) {
-      return ok(await gpuGet('/train/current'));
+      try {
+        return ok(await gpuGet('/train/current'));
+      } catch (error) {
+        if (!isWorkerUnavailableError(error)) {
+          throw error;
+        }
+        return ok({
+          sessionId: null,
+          status: 'idle',
+          steps: [],
+          logs: [],
+          workerAvailable: false,
+          message: error.message,
+        });
+      }
     }
 
     return err(404, 'Not found');

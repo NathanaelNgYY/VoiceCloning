@@ -7,6 +7,7 @@ import {
   buildLiveReplyParams,
   cleanLiveText,
   createChatMessage,
+  findNextPhrasePlayback,
   findSelectedPlayback,
   splitLiveReplyPhrases,
   updateMessage,
@@ -477,6 +478,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   function interruptPlayback() {
     if (phaseRef.current !== 'speaking') return;
+    if (!findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current)) return;
 
     const currentReplyId = selectedReplyIdRef.current || currentSynthesisMessageIdRef.current;
     if (currentReplyId) {
@@ -541,7 +543,8 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       setAudioLevel(Math.min(1, smoothedLevel * 5));
 
       if (phaseRef.current === 'speaking') {
-        if (rms >= LIVE_SPEECH_THRESHOLD) {
+        const playbackReady = Boolean(findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current));
+        if (playbackReady && rms >= LIVE_SPEECH_THRESHOLD) {
           interruptPlayback();
         }
         return;
@@ -755,7 +758,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       return;
     }
     if (phaseRef.current === 'speaking') {
-      interruptPlayback();
+      if (findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current)) {
+        interruptPlayback();
+      }
       return;
     }
     stop();
@@ -766,9 +771,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
     if (isPhraseMode && playback?.part) {
       patchAudioPart(playback.message.id, playback.part.id, { status: 'played' });
-      const nextPart = firstReadyPart(playback.message, playback.part.id);
-      if (nextPart) {
-        setSelectedReplyId(nextPart.id);
+      const nextPlayback = findNextPhrasePlayback(messagesRef.current, playback.part.id);
+      if (nextPlayback?.part) {
+        setSelectedReplyId(nextPlayback.part.id);
         return;
       }
 

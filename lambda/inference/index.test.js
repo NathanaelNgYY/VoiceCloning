@@ -71,3 +71,28 @@ test('inference result can return a GPU worker artifact URL instead of S3', asyn
     });
   });
 });
+
+test('inference current returns idle when the GPU worker is not reachable', async () => {
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://localhost:3999';
+  globalThis.fetch = async () => {
+    throw new TypeError('fetch failed');
+  };
+
+  try {
+    const response = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/inference/current',
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(JSON.parse(response.body), {
+      sessionId: null,
+      status: 'idle',
+      workerAvailable: false,
+      message: 'fetch failed',
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

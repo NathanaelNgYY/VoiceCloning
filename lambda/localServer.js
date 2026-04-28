@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 
 const ROUTES = [
   { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
+  { name: 'InstanceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/instance\/(?:status|start)\/?$/u, modulePath: './instance/index.js' },
   { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },
   { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current))?\/?$/u, modulePath: './training/index.js' },
   { name: 'ModelsFunction', methods: ['GET', 'POST'], pattern: /^\/api\/models(?:\/select)?\/?$/u, modulePath: './models/index.js' },
@@ -15,28 +16,59 @@ const ROUTES = [
 
 const handlerCache = new Map();
 
-function corsHeaders() {
+function isLoopbackOrigin(origin) {
+  if (!origin) return false;
+
+  try {
+    const url = new URL(origin);
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function resolveLocalCorsOrigin(requestOrigin, configuredOrigin = process.env.CORS_ORIGIN || '*') {
+  if (!requestOrigin) {
+    return configuredOrigin;
+  }
+
+  if (configuredOrigin === '*') {
+    return '*';
+  }
+
+  const configuredOrigins = configuredOrigin
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (configuredOrigins.includes(requestOrigin)) {
+    return requestOrigin;
+  }
+
+  return isLoopbackOrigin(requestOrigin) ? requestOrigin : configuredOrigin;
+}
+
+function corsHeaders(req) {
   return {
-    'Access-Control-Allow-Origin': process.env.CORS_ORIGIN || '*',
+    'Access-Control-Allow-Origin': resolveLocalCorsOrigin(req?.headers?.origin),
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
   };
 }
 
-function localPreflight() {
+function localPreflight(req) {
   return {
     statusCode: 200,
-    headers: corsHeaders(),
+    headers: corsHeaders(req),
     body: '',
   };
 }
 
-function localError(statusCode, message) {
+function localError(statusCode, message, req) {
   return {
     statusCode,
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders(),
+      ...corsHeaders(req),
     },
     body: JSON.stringify({ error: message }),
   };
@@ -154,10 +186,13 @@ async function toRequest(req, body) {
   return new Request(url, init);
 }
 
-function writeLambdaResponse(res, lambdaResponse) {
-  const response = lambdaResponse || localError(500, 'Lambda handler returned no response');
+function writeLambdaResponse(req, res, lambdaResponse) {
+  const response = lambdaResponse || localError(500, 'Lambda handler returned no response', req);
   const statusCode = response.statusCode || 200;
-  const headers = response.headers || {};
+  const headers = {
+    ...(response.headers || {}),
+    ...corsHeaders(req),
+  };
   for (const [key, value] of Object.entries(headers)) {
     res.setHeader(key, value);
   }
@@ -179,13 +214,13 @@ export async function handleLocalRequest(req, res) {
   const url = new URL(req.url || '/', `http://${host}`);
 
   if (method === 'OPTIONS') {
-    writeLambdaResponse(res, localPreflight());
+    writeLambdaResponse(req, res, localPreflight(req));
     return;
   }
 
   const route = findRoute(method, url.pathname);
   if (!route) {
-    writeLambdaResponse(res, localError(404, `No local Lambda route for ${method} ${url.pathname}`));
+    writeLambdaResponse(req, res, localError(404, `No local Lambda route for ${method} ${url.pathname}`, req));
     return;
   }
 
@@ -195,9 +230,9 @@ export async function handleLocalRequest(req, res) {
     const event = await createApiGatewayEvent(request, url.pathname);
     const handler = await getRouteHandler(route);
     const lambdaResponse = await handler(event);
-    writeLambdaResponse(res, lambdaResponse);
+    writeLambdaResponse(req, res, lambdaResponse);
   } catch (error) {
-    writeLambdaResponse(res, localError(500, error.message));
+    writeLambdaResponse(req, res, localError(500, error.message, req));
   }
 }
 

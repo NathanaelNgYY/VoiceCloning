@@ -21,6 +21,14 @@ Parameters:
     Type: String
     Default: ''
     Description: Browser-accessible GPU Worker URL for direct artifact downloads, for example https://gpu-worker-alb.example.com
+  GpuInstanceId:
+    Type: String
+    Default: ''
+    Description: Optional GPU EC2 instance ID. When set, /api/instance/start can start this stopped instance on user click.
+  GpuInstanceRegion:
+    Type: String
+    Default: ap-northeast-2
+    Description: AWS region for the GPU EC2 instance.
   ModelSource:
     Type: String
     Default: gpu-worker
@@ -51,6 +59,7 @@ Conditions:
   UseVpcConfig: !And
     - !Not [!Equals [!Ref VpcSubnetIds, '']]
     - !Not [!Equals [!Ref VpcSecurityGroupIds, '']]
+  HasGpuInstanceId: !Not [!Equals [!Ref GpuInstanceId, '']]
 
 Globals:
   Function:
@@ -69,6 +78,8 @@ Globals:
         S3_PREFIX: !Ref S3Prefix
         GPU_WORKER_URL: !Ref GpuWorkerUrl
         GPU_WORKER_PUBLIC_URL: !Ref GpuWorkerPublicUrl
+        GPU_INSTANCE_ID: !Ref GpuInstanceId
+        GPU_INSTANCE_REGION: !Ref GpuInstanceRegion
         MODEL_SOURCE: !Ref ModelSource
         ARTIFACT_SOURCE: !Ref ArtifactSource
         CORS_ORIGIN: !Ref CorsOrigin
@@ -103,6 +114,44 @@ Resources:
             ApiId: !Ref VoiceCloningApi
             Path: /api/config
             Method: GET
+
+  InstanceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: instance/index.handler
+      CodeUri: .
+      Timeout: 30
+      Policies:
+        - !If [UseVpcConfig, AWSLambdaVPCAccessExecutionRole, !Ref AWS::NoValue]
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - ec2:DescribeInstanceStatus
+              Resource: '*'
+            - !If
+              - HasGpuInstanceId
+              - Effect: Allow
+                Action:
+                  - ec2:StartInstances
+                Resource: !Sub
+                  - arn:${AWS::Partition}:ec2:${InstanceRegion}:${AWS::AccountId}:instance/${InstanceId}
+                  - InstanceRegion: !Ref GpuInstanceRegion
+                    InstanceId: !Ref GpuInstanceId
+              - !Ref AWS::NoValue
+      Events:
+        InstanceStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VoiceCloningApi
+            Path: /api/instance/status
+            Method: GET
+        InstanceStart:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref VoiceCloningApi
+            Path: /api/instance/start
+            Method: POST
 
   UploadFunction:
     Type: AWS::Serverless::Function

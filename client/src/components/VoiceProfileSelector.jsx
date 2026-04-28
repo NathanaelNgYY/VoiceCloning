@@ -13,7 +13,7 @@ function ModelSelect({ label, value, onChange, options, disabled, accentClass, b
         </Badge>
       </div>
 
-      <Select value={value || undefined} onValueChange={onChange} disabled={disabled || options.length === 0}>
+      <Select value={value || ''} onValueChange={onChange} disabled={disabled || options.length === 0}>
         <SelectTrigger className="mt-3 h-11 rounded-2xl border-white/80 bg-white/90 shadow-sm">
           <SelectValue placeholder={`Choose ${label} model...`} />
         </SelectTrigger>
@@ -54,7 +54,7 @@ export default function VoiceProfileSelector({
           </Badge>
         </div>
 
-        <Select value={value || undefined} onValueChange={onChange} disabled={disabled || profiles.length === 0}>
+        <Select value={value || ''} onValueChange={onChange} disabled={disabled || profiles.length === 0}>
           <SelectTrigger className="mt-3 h-12 rounded-2xl border-slate-200 bg-white shadow-sm">
             <SelectValue placeholder="Choose a person..." />
           </SelectTrigger>
