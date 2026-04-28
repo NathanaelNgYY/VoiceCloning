@@ -6,14 +6,6 @@ function baseUrl() {
   return GPU_WORKER_URL.replace(/\/+$/u, '');
 }
 
-function publicBaseUrl() {
-  const url = process.env.GPU_WORKER_PUBLIC_URL || process.env.GPU_WORKER_URL || '';
-  if (!url) {
-    throw new Error('GPU_WORKER_PUBLIC_URL or GPU_WORKER_URL env var is not set');
-  }
-  return url.replace(/\/+$/u, '');
-}
-
 async function parseResponse(response) {
   const text = await response.text();
   if (!text) {
@@ -47,11 +39,6 @@ export async function gpuGet(routePath) {
     throw new Error(data.error || data.message || `GPU Worker GET ${routePath} failed (${response.status})`);
   }
   return data;
-}
-
-export function gpuPublicUrl(routePath) {
-  const normalizedPath = routePath.startsWith('/') ? routePath : `/${routePath}`;
-  return `${publicBaseUrl()}${normalizedPath}`;
 }
 
 export async function gpuPostBinary(routePath, body = {}) {

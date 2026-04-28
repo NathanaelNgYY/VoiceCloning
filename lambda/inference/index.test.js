@@ -2,26 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handler } from './index.js';
 
-async function withEnv(values, fn) {
-  const previous = {};
-  for (const key of Object.keys(values)) {
-    previous[key] = process.env[key];
-    process.env[key] = values[key];
-  }
-
-  try {
-    return await fn();
-  } finally {
-    for (const key of Object.keys(values)) {
-      if (previous[key] === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = previous[key];
-      }
-    }
-  }
-}
-
 test('inference handler proxies direct synthesis as base64 WAV', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
@@ -52,22 +32,4 @@ test('inference handler proxies direct synthesis as base64 WAV', async () => {
   } finally {
     globalThis.fetch = previousFetch;
   }
-});
-
-test('inference result can return a GPU worker artifact URL instead of S3', async () => {
-  await withEnv({
-    ARTIFACT_SOURCE: 'gpu-worker',
-    GPU_WORKER_URL: 'http://gpu-worker.internal:3001',
-    GPU_WORKER_PUBLIC_URL: 'https://gpu-worker.example.com',
-  }, async () => {
-    const response = await handler({
-      requestContext: { http: { method: 'GET' } },
-      rawPath: '/api/inference/result/abc-123',
-    });
-
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(JSON.parse(response.body), {
-      url: 'https://gpu-worker.example.com/inference/result/abc-123',
-    });
-  });
 });

@@ -163,9 +163,6 @@ sam deploy \
     S3Region=ap-southeast-1 \
     S3Prefix=echolect/ \
     GpuWorkerUrl=https://YOUR_GPU_WORKER_ALB_DOMAIN \
-    GpuWorkerPublicUrl=https://YOUR_GPU_WORKER_ALB_DOMAIN \
-    ModelSource=gpu-worker \
-    ArtifactSource=s3 \
     CorsOrigin=https://YOUR_CLOUDFRONT_DOMAIN
 ```
 
@@ -180,9 +177,6 @@ sam deploy \
     S3Region=ap-southeast-1 \
     S3Prefix=echolect/ \
     GpuWorkerUrl=http://10.0.2.25:3001 \
-    GpuWorkerPublicUrl=https://YOUR_GPU_WORKER_ALB_DOMAIN \
-    ModelSource=gpu-worker \
-    ArtifactSource=s3 \
     CorsOrigin=https://YOUR_CLOUDFRONT_DOMAIN \
     VpcSubnetIds=subnet-aaa,subnet-bbb \
     VpcSecurityGroupIds=sg-lambda
@@ -241,15 +235,8 @@ S3_BUCKET=interns2026-small-projects-bucket-shared
 S3_REGION=ap-southeast-1
 S3_PREFIX=echolect/
 GPU_WORKER_URL=http://localhost:3001
-GPU_WORKER_PUBLIC_URL=http://localhost:3001
 CORS_ORIGIN=http://localhost:5173
-MODEL_SOURCE=gpu-worker
-ARTIFACT_SOURCE=gpu-worker
 ```
-
-`MODEL_SOURCE=gpu-worker` makes local `/api/models` read GPT and SoVITS checkpoints from the GPU worker's `GPT_SOVITS_ROOT` instead of S3. The SAM template also defaults `ModelSource` to `gpu-worker`; set `ModelSource=s3` only if you want the old S3 model-list behavior.
-
-`ARTIFACT_SOURCE=gpu-worker` makes local `/api/training-audio/...` and `/api/inference/result/...` return URLs served by the GPU worker instead of presigned S3 URLs. For deployed Lambda, keep `ArtifactSource=s3` when you want generated audio and training audio persisted through S3; use `ArtifactSource=gpu-worker` only if the browser can reach `GpuWorkerPublicUrl`.
 
 Terminal 1: GPU worker REST/SSE service:
 

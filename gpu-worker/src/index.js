@@ -5,7 +5,6 @@ import trainingRoutes from './routes/training.js';
 import modelsRoutes from './routes/models.js';
 import transcribeRoutes from './routes/transcribe.js';
 import inferenceRoutes from './routes/inference.js';
-import artifactRoutes from './routes/artifacts.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { processManager } from './services/processManager.js';
 import { sseManager } from './services/sseManager.js';
@@ -30,7 +29,6 @@ app.use('/', trainingRoutes);
 app.use('/', modelsRoutes);
 app.use('/', transcribeRoutes);
 app.use('/', inferenceRoutes);
-app.use('/', artifactRoutes);
 
 const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
   console.log(`[gpu-worker] Running on http://${WORKER_HOST}:${WORKER_PORT}`);

@@ -1,15 +1,7 @@
 import path from 'path';
 import { listObjects } from '../shared/s3.js';
-import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
+import { gpuPost } from '../shared/gpuWorker.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
-
-function modelSource() {
-  return (process.env.MODEL_SOURCE || 's3').trim().toLowerCase();
-}
-
-function useGpuWorkerModels() {
-  return ['gpu-worker', 'gpu', 'local', 'gpt-sovits'].includes(modelSource());
-}
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -21,10 +13,6 @@ export const handler = async (event) => {
 
   try {
     if (method === 'GET' && routePath.endsWith('/models')) {
-      if (useGpuWorkerModels()) {
-        return ok(await gpuGet('/models'));
-      }
-
       const [gptObjects, sovitsObjects] = await Promise.all([
         listObjects('models/user-models/gpt/'),
         listObjects('models/user-models/sovits/'),
@@ -50,19 +38,6 @@ export const handler = async (event) => {
       const resolvedSovitsKey = body.sovitsKey || body.sovitsPath;
 
       let lastStatus = null;
-      if (useGpuWorkerModels()) {
-        if (resolvedSovitsKey) {
-          lastStatus = await gpuPost('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
-        }
-        if (resolvedGptKey) {
-          lastStatus = await gpuPost('/inference/weights/gpt', { weightsPath: resolvedGptKey });
-        }
-        return ok({
-          message: 'Models loaded successfully',
-          loaded: lastStatus?.loaded || {},
-        });
-      }
-
       if (resolvedSovitsKey) {
         const { localPath } = await gpuPost('/models/download', { s3Key: resolvedSovitsKey });
         lastStatus = await gpuPost('/inference/weights/sovits', { weightsPath: localPath });

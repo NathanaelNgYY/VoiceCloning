@@ -17,24 +17,6 @@ Parameters:
   GpuWorkerUrl:
     Type: String
     Description: URL for the GPU Worker service, for example http://10.0.2.25:3001
-  GpuWorkerPublicUrl:
-    Type: String
-    Default: ''
-    Description: Browser-accessible GPU Worker URL for direct artifact downloads, for example https://gpu-worker-alb.example.com
-  ModelSource:
-    Type: String
-    Default: gpu-worker
-    AllowedValues:
-      - gpu-worker
-      - s3
-    Description: Where /api/models should read checkpoint choices from
-  ArtifactSource:
-    Type: String
-    Default: s3
-    AllowedValues:
-      - s3
-      - gpu-worker
-    Description: Where generated audio and training-audio URLs should be served from
   CorsOrigin:
     Type: String
     Description: Allowed frontend origin, for example https://your-cloudfront-domain.cloudfront.net
@@ -70,9 +52,6 @@ Globals:
         S3_REGION: !Ref S3Region
         S3_PREFIX: !Ref S3Prefix
         GPU_WORKER_URL: !Ref GpuWorkerUrl
-        GPU_WORKER_PUBLIC_URL: !Ref GpuWorkerPublicUrl
-        MODEL_SOURCE: !Ref ModelSource
-        ARTIFACT_SOURCE: !Ref ArtifactSource
         CORS_ORIGIN: !Ref CorsOrigin
 
 Resources:
