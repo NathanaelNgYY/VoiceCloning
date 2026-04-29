@@ -9,7 +9,8 @@ This guide explains the new deployment shape:
 - GPU work: existing GPU EC2, still running `gpu-worker` on port `3001`
 - Live chatbot WebSocket: `live-gateway` process on the same GPU EC2, running on port `3002`
 - Current test networking target: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, and only `/api/live/chat/realtime` path-routes to `live-gateway:3002`
-- Storage handoff: S3
+- Storage handoff: S3 bucket in Singapore (`ap-southeast-1`), even when Lambda and GPU compute run in Seoul (`ap-northeast-2`)
+- Current Function URL auth status: `NONE` is the working deployment setting. `AWS_IAM` with CloudFront Lambda Function URL OAC was configured but still returned SigV4 signature mismatch errors, so it needs a later hardening pass.
 
 Current known AWS resources:
 
@@ -24,9 +25,13 @@ Current known AWS resources:
 - GPU ALB DNS: `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com`.
 - GPU security group: `VoiClo-Gpu-Seoul-SG` (`sg-0806b2491f69f242e`).
 - Current GPU target group: `voice-gpu-worker`, instance target, HTTP port `3001`.
-- Current gap: create a second target group for `live-gateway` on HTTP port `3002`, then add the `/api/live/chat/realtime` ALB listener rule.
+- Live gateway target group: `voice-live-gateway`, instance target, HTTP port `3002`.
+- ALB listener rule: `/api/live/chat/realtime` forwards to `voice-live-gateway`; default action forwards everything else to `voice-gpu-worker`.
 - Frontend S3 bucket: `interns2026-small-projects-bucket-shared`, under prefix `echolect/dist/`.
 - CloudFront distribution ID: `E2KTGN0G56FW71`.
+- Lambda function: `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in `ap-northeast-2`.
+- Lambda Function URL host: `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`.
+- Lambda Function URL auth: currently `NONE` because `AWS_IAM` + CloudFront OAC signing is not yet stable.
 
 AWS references worth keeping open:
 
@@ -304,16 +309,18 @@ CloudFront has three kinds of origins in this setup: the SPA bucket, Lambda Func
 | Origin name | Origin domain | Protocol to origin | Origin path |
 | --- | --- | --- | --- |
 | `spa-s3-origin` | frontend S3 REST origin | existing S3/OAI setting | blank |
-| `lambda-function-url-origin` | `YOUR_FUNCTION_URL_ID.lambda-url.ap-southeast-1.on.aws` | HTTPS only, port `443` | blank |
+| `lambda-function-url-origin` | `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws` | HTTPS only, port `443` | blank |
 | `gpu-worker-alb-origin` | `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com` | HTTP only, port `80` | blank |
 
 For the S3 origin, keep the existing OAI permission model. For the Lambda Function URL origin, do not include `https://` or `/api` in the origin domain. For the GPU ALB origin, do not include `http://` or any path.
 
-Recommended security for the Lambda Function URL origin:
+Current Lambda Function URL access status:
 
-- Function URL `AuthType`: `AWS_IAM`
-- CloudFront Origin Access Control: Lambda Function URL OAC with request signing enabled
-- Lambda resource-based policy allows only the CloudFront distribution to invoke the Function URL
+- Working setting: Function URL `AuthType` is `NONE`.
+- Intended secure setting: Function URL `AuthType` should be `AWS_IAM` with a CloudFront Lambda Function URL OAC and request signing enabled.
+- Current blocker: the `AWS_IAM` + OAC setup reached the Lambda Function URL but failed with `The request signature we calculated does not match the signature you provided`.
+- Existing resource-based policy already allows `cloudfront.amazonaws.com` to call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` from `arn:aws:cloudfront::329599637774:distribution/E2KTGN0G56FW71`.
+- Revisit this later by either rebuilding the OAC/origin signing setup again or moving `/api/*` to API Gateway HTTP API in front of Lambda.
 
 ### Behaviors
 
@@ -342,13 +349,15 @@ For `/api/*` to Lambda Function URL, prefer `AllViewerExceptHostHeader`. Forward
 
 ### Error Pages
 
-Use only this SPA fallback:
+During backend/debugging work, use only this SPA fallback:
 
 | HTTP error code | Response page path | HTTP response code |
 | ---: | --- | ---: |
 | `404` | `/index.html` | `200` |
 
 Do not add `403 -> /index.html -> 200`. A global 403 rewrite hides real Lambda Function URL, OAC, S3, and permissions errors by returning the React app HTML. Keep 403 visible so backend/security problems are debuggable.
+
+For user-facing demos after backend checks are done, a temporary `403 -> /index.html -> 200` fallback can make direct refreshes on React routes such as `/inference` work with the S3 REST origin. Remove or disable it again when debugging CloudFront/Lambda/S3 access problems.
 
 ## Lambda Deployment
 
@@ -397,6 +406,8 @@ lambda/.dist/voice-cloning-function-url.zip
 
 Deploy for the current public-GPU-ALB test setup. This does not attach Lambda to a VPC because Lambda can call the public ALB URL directly.
 
+Current deployed Lambda region is `ap-northeast-2` (Seoul). The S3 bucket remains in `ap-southeast-1` (Singapore), so keep `S3_REGION=ap-southeast-1` even though the Lambda function itself is in Seoul. Setting `S3_REGION` to the Lambda region causes S3 endpoint errors such as `The bucket you are attempting to access must be addressed using the specified endpoint`.
+
 Create the Lambda function manually in the AWS console or with AWS CLI. Use:
 
 - Runtime: Node.js 20.x
@@ -405,7 +416,7 @@ Create the Lambda function manually in the AWS console or with AWS CLI. Use:
 - Timeout: `120` seconds for normal REST calls; increase if your supervisor wants longer synchronous calls
 - Memory: `256` MB or higher
 - Function URL: enabled
-- Function URL auth: `AWS_IAM` when using CloudFront OAC; `NONE` only for temporary testing
+- Function URL auth: currently `NONE` for the working deployment. `AWS_IAM` is the intended locked-down setup, but CloudFront OAC signing currently fails with a SigV4 mismatch.
 
 Environment variables:
 
@@ -420,13 +431,13 @@ ARTIFACT_SOURCE=s3
 CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
-Create once with CLI, replacing the role ARN:
+Create once with CLI, replacing the role ARN. For the current Seoul Lambda, use `ap-northeast-2` and the deployed function name:
 
 ```powershell
 aws lambda create-function `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --runtime nodejs20.x `
   --handler index.handler `
   --architectures x86_64 `
@@ -442,38 +453,40 @@ Update code after later changes:
 ```powershell
 aws lambda update-function-code `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --zip-file fileb://.dist/voice-cloning-function-url.zip
 ```
 
-Create the Function URL:
+Create the Function URL. The currently working setting is `NONE`:
 
 ```powershell
 aws lambda create-function-url-config `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
-  --auth-type AWS_IAM
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
+  --auth-type NONE
 ```
+
+For the later secure retry, switch the Function URL back to `AWS_IAM` only after the CloudFront Lambda Function URL OAC path is confirmed healthy.
 
 Add the Function URL as a CloudFront origin:
 
-1. Copy the Function URL domain only, for example `abc123.lambda-url.ap-southeast-1.on.aws`.
+1. Copy the Function URL domain only, currently `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`.
 2. Create a CloudFront origin using that domain, HTTPS only, origin path blank.
 3. Attach a Lambda Function URL OAC and enable request signing.
 4. Point the `/api/*` behavior to this origin.
 5. Keep `/api/live/chat/realtime` above `/api/*`, because Live WebSocket goes to the GPU ALB, not Lambda.
 
-Allow CloudFront to invoke the Function URL. Replace account and distribution values if needed:
+Allow CloudFront to invoke the Function URL when using the intended `AWS_IAM` setup. These permissions already exist for the current distribution, but the signed OAC path is still failing and is not the current working mode:
 
 ```powershell
-$distributionArn = "arn:aws:cloudfront::YOUR_ACCOUNT_ID:distribution/E2KTGN0G56FW71"
+$distributionArn = "arn:aws:cloudfront::329599637774:distribution/E2KTGN0G56FW71"
 
 aws lambda add-permission `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --statement-id AllowCloudFrontFunctionUrl `
   --action lambda:InvokeFunctionUrl `
   --principal cloudfront.amazonaws.com `
@@ -482,8 +495,8 @@ aws lambda add-permission `
 
 aws lambda add-permission `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --statement-id AllowCloudFrontInvokeFunction `
   --action lambda:InvokeFunction `
   --principal cloudfront.amazonaws.com `

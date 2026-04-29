@@ -10,6 +10,8 @@ This is the short context file to read first when starting new development on th
 - The Live chatbot feature history is also on `chatbot-integrationV1`.
 - Latest relevant commit: `90055cb feat: add fast live phrase playback mode`.
 - Training and normal Inference paths should stay untouched unless a shared route boundary requires it.
+- Current deployed REST Lambda is `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in Seoul (`ap-northeast-2`), while the shared S3 bucket remains in Singapore (`ap-southeast-1`).
+- Current working Function URL auth is `NONE`. `AWS_IAM` with CloudFront Lambda Function URL OAC was configured but still failed with a SigV4 signature mismatch, so treat that as a later hardening task.
 
 ## What The Live Feature Does Now
 
@@ -83,11 +85,12 @@ Current test networking:
 - The ALB having two public subnets is normal; ALB nodes span availability zones even if the GPU target is currently one EC2 instance in one subnet.
 - ALB default action routes to `gpu-worker:3001`.
 - Required ALB path rule: `/api/live/chat/realtime` routes to `live-gateway:3002`.
-- Current screenshot state shows only the `voice-gpu-worker` target group on port `3001`; create the `voice-live-gateway` target group on port `3002` before testing CloudFront WSS.
 - Lambda is not VPC-attached yet; Lambda calls the public GPU ALB URL through `GpuWorkerUrl`.
 - CloudFront uses the same GPU ALB origin for SSE and WSS behaviors.
 - The React SPA is served from an S3 REST origin protected by OAI.
 - CloudFront proxies `/api/*` to the Lambda Function URL origin, so the browser does not call the raw Function URL directly.
+- The Lambda Function URL origin is `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`, HTTPS only, with blank origin path.
+- The `/api/*` behavior uses `CachingDisabled` and `AllViewerExceptHostHeader`.
 - The GPU ALB is HTTP-only for the current test setup.
 - On the GPU EC2, both services run from the GitHub clone under the `ubuntu` user, with `gpu-worker.service` and `live-gateway.service`.
 - The GPU EC2 instance profile already has access to the project S3 bucket/prefix.
@@ -167,9 +170,11 @@ ArtifactSource=s3
 CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
+Keep `S3Region=ap-southeast-1` even though Lambda is in `ap-northeast-2`. The S3 region must match the bucket, not the Lambda function. Using the Lambda region caused this error: `The bucket you are attempting to access must be addressed using the specified endpoint`.
+
 Do not pass `VpcSubnetIds` or `VpcSecurityGroupIds` while Lambda calls the public ALB. Add those only after the GPU worker moves behind private networking.
 
-The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront.
+The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront. Current Function URL auth is `NONE` for the working deployment; the intended secure target is `AWS_IAM` once the CloudFront OAC signature mismatch is resolved or replaced by API Gateway HTTP API.
 
 Future production direction: move Lambda to Seoul (`ap-northeast-2`) and keep GPU EC2 private.
 
@@ -182,8 +187,9 @@ Prefer Lambda calling the internal ALB for scalability. Direct private IP is acc
 
 CloudFront error pages:
 
-- Keep `404 -> /index.html -> 200` for React routes.
-- Do not use `403 -> /index.html -> 200`; it hides Lambda Function URL/OAC/S3 permission problems by returning the React app HTML.
+- During backend debugging, keep only `404 -> /index.html -> 200` for React routes.
+- Do not use `403 -> /index.html -> 200` while debugging Lambda Function URL/OAC/S3 permissions; it hides real access failures behind the React app.
+- For short user-facing demos after backend checks are done, `403 -> /index.html -> 200` can be temporarily restored so direct refreshes on React routes such as `/inference` work with the S3 REST origin.
 
 ## Frontend Env
 
