@@ -9,7 +9,8 @@ This guide explains the new deployment shape:
 - GPU work: existing GPU EC2, still running `gpu-worker` on port `3001`
 - Live chatbot WebSocket: `live-gateway` process on the same GPU EC2, running on port `3002`
 - Current test networking target: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, and only `/api/live/chat/realtime` path-routes to `live-gateway:3002`
-- Storage handoff: S3
+- Storage handoff: S3 bucket in Singapore (`ap-southeast-1`), even when Lambda and GPU compute run in Seoul (`ap-northeast-2`)
+- Current Function URL auth status: `NONE` is the working deployment setting. `AWS_IAM` with CloudFront Lambda Function URL OAC was configured but still returned SigV4 signature mismatch errors, so it needs a later hardening pass.
 
 Current known AWS resources:
 
@@ -24,9 +25,13 @@ Current known AWS resources:
 - GPU ALB DNS: `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com`.
 - GPU security group: `VoiClo-Gpu-Seoul-SG` (`sg-0806b2491f69f242e`).
 - Current GPU target group: `voice-gpu-worker`, instance target, HTTP port `3001`.
-- Current gap: create a second target group for `live-gateway` on HTTP port `3002`, then add the `/api/live/chat/realtime` ALB listener rule.
+- Live gateway target group: `voice-live-gateway`, instance target, HTTP port `3002`.
+- ALB listener rule: `/api/live/chat/realtime` forwards to `voice-live-gateway`; default action forwards everything else to `voice-gpu-worker`.
 - Frontend S3 bucket: `interns2026-small-projects-bucket-shared`, under prefix `echolect/dist/`.
 - CloudFront distribution ID: `E2KTGN0G56FW71`.
+- Lambda function: `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in `ap-northeast-2`.
+- Lambda Function URL host: `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`.
+- Lambda Function URL auth: currently `NONE` because `AWS_IAM` + CloudFront OAC signing is not yet stable.
 
 AWS references worth keeping open:
 
@@ -287,8 +292,13 @@ The live-gateway target group can still health check `GET /healthz` on port `300
 Current security group note: `sg-0806b2491f69f242e` is used for the GPU EC2 and ALB right now. This works for testing, but split it later into a dedicated ALB security group and a dedicated GPU EC2 security group:
 
 - ALB SG inbound: HTTP `80` from CloudFront/browser while testing; later HTTPS `443`.
+- ALB SG outbound: TCP `3001` and `3002` to the GPU EC2 SG.
 - GPU EC2 SG inbound: TCP `3001` and `3002` only from the ALB SG.
+- GPU EC2 SG inbound: SSH `22` from your own IP only, if SSH is still needed.
+- GPU EC2 SG inbound: no rule for `9880`; GPT-SoVITS `api_v2.py` should stay local on `127.0.0.1:9880`.
 - Do not leave direct public inbound access to `3001`, `3002`, or `9880` in production.
+
+There is no separate inbound rule for SSE. Training/inference SSE is normal HTTP traffic from the browser to CloudFront, then CloudFront to the ALB on `80`/`443`, then the ALB forwards to `gpu-worker:3001`.
 
 ## CloudFront Origins And Behaviors
 
@@ -299,16 +309,18 @@ CloudFront has three kinds of origins in this setup: the SPA bucket, Lambda Func
 | Origin name | Origin domain | Protocol to origin | Origin path |
 | --- | --- | --- | --- |
 | `spa-s3-origin` | frontend S3 REST origin | existing S3/OAI setting | blank |
-| `lambda-function-url-origin` | `YOUR_FUNCTION_URL_ID.lambda-url.ap-southeast-1.on.aws` | HTTPS only, port `443` | blank |
+| `lambda-function-url-origin` | `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws` | HTTPS only, port `443` | blank |
 | `gpu-worker-alb-origin` | `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com` | HTTP only, port `80` | blank |
 
 For the S3 origin, keep the existing OAI permission model. For the Lambda Function URL origin, do not include `https://` or `/api` in the origin domain. For the GPU ALB origin, do not include `http://` or any path.
 
-Recommended security for the Lambda Function URL origin:
+Current Lambda Function URL access status:
 
-- Function URL `AuthType`: `AWS_IAM`
-- CloudFront Origin Access Control: Lambda Function URL OAC with request signing enabled
-- Lambda resource-based policy allows only the CloudFront distribution to invoke the Function URL
+- Working setting: Function URL `AuthType` is `NONE`.
+- Intended secure setting: Function URL `AuthType` should be `AWS_IAM` with a CloudFront Lambda Function URL OAC and request signing enabled.
+- Current blocker: the `AWS_IAM` + OAC setup reached the Lambda Function URL but failed with `The request signature we calculated does not match the signature you provided`.
+- Existing resource-based policy already allows `cloudfront.amazonaws.com` to call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` from `arn:aws:cloudfront::329599637774:distribution/E2KTGN0G56FW71`.
+- Revisit this later by either rebuilding the OAC/origin signing setup again or moving `/api/*` to API Gateway HTTP API in front of Lambda.
 
 ### Behaviors
 
@@ -334,6 +346,18 @@ For `/api/live/chat/realtime`, CloudFront must forward WebSocket upgrade headers
 - `Sec-WebSocket-Extensions`
 
 For `/api/*` to Lambda Function URL, prefer `AllViewerExceptHostHeader`. Forwarding the CloudFront viewer `Host` header to the default `lambda-url` domain can cause origin routing issues.
+
+### Error Pages
+
+During backend/debugging work, use only this SPA fallback:
+
+| HTTP error code | Response page path | HTTP response code |
+| ---: | --- | ---: |
+| `404` | `/index.html` | `200` |
+
+Do not add `403 -> /index.html -> 200`. A global 403 rewrite hides real Lambda Function URL, OAC, S3, and permissions errors by returning the React app HTML. Keep 403 visible so backend/security problems are debuggable.
+
+For user-facing demos after backend checks are done, a temporary `403 -> /index.html -> 200` fallback can make direct refreshes on React routes such as `/inference` work with the S3 REST origin. Remove or disable it again when debugging CloudFront/Lambda/S3 access problems.
 
 ## Lambda Deployment
 
@@ -382,6 +406,8 @@ lambda/.dist/voice-cloning-function-url.zip
 
 Deploy for the current public-GPU-ALB test setup. This does not attach Lambda to a VPC because Lambda can call the public ALB URL directly.
 
+Current deployed Lambda region is `ap-northeast-2` (Seoul). The S3 bucket remains in `ap-southeast-1` (Singapore), so keep `S3_REGION=ap-southeast-1` even though the Lambda function itself is in Seoul. Setting `S3_REGION` to the Lambda region causes S3 endpoint errors such as `The bucket you are attempting to access must be addressed using the specified endpoint`.
+
 Create the Lambda function manually in the AWS console or with AWS CLI. Use:
 
 - Runtime: Node.js 20.x
@@ -390,7 +416,7 @@ Create the Lambda function manually in the AWS console or with AWS CLI. Use:
 - Timeout: `120` seconds for normal REST calls; increase if your supervisor wants longer synchronous calls
 - Memory: `256` MB or higher
 - Function URL: enabled
-- Function URL auth: `AWS_IAM` when using CloudFront OAC; `NONE` only for temporary testing
+- Function URL auth: currently `NONE` for the working deployment. `AWS_IAM` is the intended locked-down setup, but CloudFront OAC signing currently fails with a SigV4 mismatch.
 
 Environment variables:
 
@@ -405,13 +431,13 @@ ARTIFACT_SOURCE=s3
 CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
-Create once with CLI, replacing the role ARN:
+Create once with CLI, replacing the role ARN. For the current Seoul Lambda, use `ap-northeast-2` and the deployed function name:
 
 ```powershell
 aws lambda create-function `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --runtime nodejs20.x `
   --handler index.handler `
   --architectures x86_64 `
@@ -427,38 +453,40 @@ Update code after later changes:
 ```powershell
 aws lambda update-function-code `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --zip-file fileb://.dist/voice-cloning-function-url.zip
 ```
 
-Create the Function URL:
+Create the Function URL. The currently working setting is `NONE`:
 
 ```powershell
 aws lambda create-function-url-config `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
-  --auth-type AWS_IAM
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
+  --auth-type NONE
 ```
+
+For the later secure retry, switch the Function URL back to `AWS_IAM` only after the CloudFront Lambda Function URL OAC path is confirmed healthy.
 
 Add the Function URL as a CloudFront origin:
 
-1. Copy the Function URL domain only, for example `abc123.lambda-url.ap-southeast-1.on.aws`.
+1. Copy the Function URL domain only, currently `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`.
 2. Create a CloudFront origin using that domain, HTTPS only, origin path blank.
 3. Attach a Lambda Function URL OAC and enable request signing.
 4. Point the `/api/*` behavior to this origin.
 5. Keep `/api/live/chat/realtime` above `/api/*`, because Live WebSocket goes to the GPU ALB, not Lambda.
 
-Allow CloudFront to invoke the Function URL. Replace account and distribution values if needed:
+Allow CloudFront to invoke the Function URL when using the intended `AWS_IAM` setup. These permissions already exist for the current distribution, but the signed OAC path is still failing and is not the current working mode:
 
 ```powershell
-$distributionArn = "arn:aws:cloudfront::YOUR_ACCOUNT_ID:distribution/E2KTGN0G56FW71"
+$distributionArn = "arn:aws:cloudfront::329599637774:distribution/E2KTGN0G56FW71"
 
 aws lambda add-permission `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --statement-id AllowCloudFrontFunctionUrl `
   --action lambda:InvokeFunctionUrl `
   --principal cloudfront.amazonaws.com `
@@ -467,8 +495,8 @@ aws lambda add-permission `
 
 aws lambda add-permission `
   --profile account3 `
-  --region ap-southeast-1 `
-  --function-name voice-cloning-api `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --statement-id AllowCloudFrontInvokeFunction `
   --action lambda:InvokeFunction `
   --principal cloudfront.amazonaws.com `
@@ -501,15 +529,23 @@ The GPU EC2 instance profile already has access to this bucket/prefix, so `gpu-w
 
 ## Future Private GPU Worker Plan
 
-When the GPU EC2 is moved off the public internet, prefer the two-ALB production shape:
+When the GPU EC2 is moved off the public internet, there are two valid Lambda-to-GPU options.
+
+Recommended for scalability:
 
 - Public ALB: internet-facing, used only by CloudFront for browser SSE/WSS routes.
 - Internal ALB: private, used by Lambda for REST-triggered calls into the GPU worker.
 - GPU EC2: private subnet, no app traffic to its public IP.
 
-This preserves the current browser streaming design while giving Lambda a private path to the GPU service.
+Acceptable for a single fixed GPU EC2:
 
-Future traffic flow:
+- Public ALB: internet-facing, used by CloudFront for browser SSE/WSS routes.
+- Lambda in the same VPC calls the GPU EC2 private IP directly on `3001`.
+- GPU EC2 SG allows `3001` from Lambda SG.
+
+The direct private-IP option is simpler and secure enough for one fixed EC2 in the same VPC, but it is less scalable. If the GPU EC2 is replaced and its private IP changes, `GPU_WORKER_URL` must be updated. The internal ALB option gives stable DNS, health checks, and easier future scaling.
+
+Scalable future traffic flow:
 
 ```text
 Browser -> CloudFront -> public ALB -> private GPU EC2
@@ -522,8 +558,8 @@ Change the architecture like this:
 1. Put the GPU worker EC2 in private subnets.
 2. Move or recreate the Lambda function in Seoul (`ap-northeast-2`) or otherwise ensure it has private network connectivity to the Seoul VPC.
 3. Keep an internet-facing public ALB for CloudFront browser SSE/WSS paths.
-4. Add a second internal ALB for Lambda-to-GPU private traffic.
-5. Change `GpuWorkerUrl` to the private/internal ALB URL, for example `http://internal-voice-gpu-alb-...:80`.
+4. Either add a second internal ALB for Lambda-to-GPU private traffic, or point Lambda directly to the GPU EC2 private IP for the single-instance setup.
+5. Change `GpuWorkerUrl` to the private/internal ALB URL, for example `http://internal-voice-gpu-alb-...:80`, or to the EC2 private URL, for example `http://10.0.x.x:3001`.
 6. Keep `GpuWorkerPublicUrl` as the public CloudFront URL for browser SSE/WSS paths.
 7. Add an S3 Gateway VPC Endpoint so private GPU EC2 can reach S3 without public internet: `EC2 (private) -> VPC Endpoint -> S3`.
 8. Update the Lambda function with VPC parameters:
@@ -539,18 +575,19 @@ aws lambda update-function-configuration `
 
 9. Security groups:
 
-- Lambda security group outbound -> internal ALB security group TCP `80`
-- Internal ALB security group inbound from Lambda security group TCP `80`
+- Lambda security group outbound -> internal ALB security group TCP `80`, or GPU EC2 security group TCP `3001` for direct private-IP mode.
+- Internal ALB security group inbound from Lambda security group TCP `80`, if using internal ALB.
 - Public ALB security group inbound HTTPS `443` from CloudFront/browser traffic
 - GPU EC2 security group inbound from public ALB security group TCP `3001` and `3002`
-- GPU EC2 security group inbound from internal ALB security group TCP `3001` and `3002`
+- GPU EC2 security group inbound from internal ALB security group TCP `3001` and `3002`, if using internal ALB.
+- GPU EC2 security group inbound from Lambda security group TCP `3001`, if using direct private-IP mode.
 
 If Lambda is VPC-attached, make sure it can still reach S3. Use either:
 
 - NAT Gateway / NAT instance for outbound internet access
 - S3 Gateway VPC Endpoint for private S3 access
 
-Prefer routing Lambda through the internal ALB instead of directly to the EC2 private IP. The ALB gives a stable DNS name, health checks, cleaner security-group boundaries, and lets the target EC2 be replaced without changing Lambda configuration.
+For future scalability, prefer routing Lambda through the internal ALB instead of directly to the EC2 private IP. For a single fixed GPU EC2 in the same VPC, direct private IP is acceptable if you are comfortable updating `GPU_WORKER_URL` whenever the instance is replaced.
 
 ## Frontend Deployment
 
