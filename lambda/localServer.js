@@ -1,74 +1,32 @@
 import fs from 'fs';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
+import { findRoute, getRouteHandler } from './router.js';
 
-const ROUTES = [
-  { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
-  { name: 'InstanceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/instance\/(?:status|start)\/?$/u, modulePath: './instance/index.js' },
-  { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },
-  { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current))?\/?$/u, modulePath: './training/index.js' },
-  { name: 'ModelsFunction', methods: ['GET', 'POST'], pattern: /^\/api\/models(?:\/select)?\/?$/u, modulePath: './models/index.js' },
-  { name: 'InferenceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/inference(?:\/(?:generate|result\/[A-Za-z0-9-]+|cancel|current|status|stop))?\/?$/u, modulePath: './inference/index.js' },
-  { name: 'TranscribeFunction', methods: ['POST'], pattern: /^\/api\/transcribe\/?$/u, modulePath: './transcribe/index.js' },
-  { name: 'TrainingAudioFunction', methods: ['GET'], pattern: /^\/api\/(?:training-audio(?:\/file\/[^/]+\/[^/]+|\/[^/]+)|ref-audio)\/?$/u, modulePath: './training-audio/index.js' },
-  { name: 'LiveFunction', methods: ['POST'], pattern: /^\/api\/live\/tts-sentence\/?$/u, modulePath: './live/index.js' },
-];
+export { findRoute };
 
-const handlerCache = new Map();
-
-function isLoopbackOrigin(origin) {
-  if (!origin) return false;
-
-  try {
-    const url = new URL(origin);
-    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
-export function resolveLocalCorsOrigin(requestOrigin, configuredOrigin = process.env.CORS_ORIGIN || '*') {
-  if (!requestOrigin) {
-    return configuredOrigin;
-  }
-
-  if (configuredOrigin === '*') {
-    return '*';
-  }
-
-  const configuredOrigins = configuredOrigin
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-  if (configuredOrigins.includes(requestOrigin)) {
-    return requestOrigin;
-  }
-
-  return isLoopbackOrigin(requestOrigin) ? requestOrigin : configuredOrigin;
-}
-
-function corsHeaders(req) {
+function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin': resolveLocalCorsOrigin(req?.headers?.origin),
+    'Access-Control-Allow-Origin': process.env.CORS_ORIGIN || '*',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
   };
 }
 
-function localPreflight(req) {
+function localPreflight() {
   return {
     statusCode: 200,
-    headers: corsHeaders(req),
+    headers: corsHeaders(),
     body: '',
   };
 }
 
-function localError(statusCode, message, req) {
+function localError(statusCode, message) {
   return {
     statusCode,
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders(req),
+      ...corsHeaders(),
     },
     body: JSON.stringify({ error: message }),
   };
@@ -104,20 +62,6 @@ function loadLocalEnv() {
   loadEnvFile(new URL('./local.env', import.meta.url));
 }
 
-export function findRoute(method, pathname) {
-  const route = ROUTES.find((entry) =>
-    entry.methods.includes(method.toUpperCase()) && entry.pattern.test(pathname)
-  );
-  return route ? { ...route, lambdaPath: pathname } : null;
-}
-
-async function getRouteHandler(route) {
-  if (!handlerCache.has(route.modulePath)) {
-    handlerCache.set(route.modulePath, import(route.modulePath).then((module) => module.handler));
-  }
-  return handlerCache.get(route.modulePath);
-}
-
 function headersObject(headers) {
   const result = {};
   for (const [key, value] of headers.entries()) {
@@ -126,7 +70,7 @@ function headersObject(headers) {
   return result;
 }
 
-export async function createApiGatewayEvent(request, lambdaPath) {
+export async function createFunctionUrlEvent(request, lambdaPath) {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const queryStringParameters = Object.fromEntries(url.searchParams.entries());
@@ -186,13 +130,10 @@ async function toRequest(req, body) {
   return new Request(url, init);
 }
 
-function writeLambdaResponse(req, res, lambdaResponse) {
-  const response = lambdaResponse || localError(500, 'Lambda handler returned no response', req);
+function writeLambdaResponse(res, lambdaResponse) {
+  const response = lambdaResponse || localError(500, 'Lambda handler returned no response');
   const statusCode = response.statusCode || 200;
-  const headers = {
-    ...(response.headers || {}),
-    ...corsHeaders(req),
-  };
+  const headers = response.headers || {};
   for (const [key, value] of Object.entries(headers)) {
     res.setHeader(key, value);
   }
@@ -214,25 +155,25 @@ export async function handleLocalRequest(req, res) {
   const url = new URL(req.url || '/', `http://${host}`);
 
   if (method === 'OPTIONS') {
-    writeLambdaResponse(req, res, localPreflight(req));
+    writeLambdaResponse(res, localPreflight());
     return;
   }
 
   const route = findRoute(method, url.pathname);
   if (!route) {
-    writeLambdaResponse(req, res, localError(404, `No local Lambda route for ${method} ${url.pathname}`, req));
+    writeLambdaResponse(res, localError(404, `No local Lambda route for ${method} ${url.pathname}`));
     return;
   }
 
   try {
     const body = await readRequestBody(req);
     const request = await toRequest(req, body);
-    const event = await createApiGatewayEvent(request, url.pathname);
+    const event = await createFunctionUrlEvent(request, url.pathname);
     const handler = await getRouteHandler(route);
     const lambdaResponse = await handler(event);
-    writeLambdaResponse(req, res, lambdaResponse);
+    writeLambdaResponse(res, lambdaResponse);
   } catch (error) {
-    writeLambdaResponse(req, res, localError(500, error.message, req));
+    writeLambdaResponse(res, localError(500, error.message));
   }
 }
 

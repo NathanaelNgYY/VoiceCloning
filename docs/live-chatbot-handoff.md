@@ -1,6 +1,6 @@
 # Live Chatbot Handoff
 
-Last updated: 2026-04-28
+Last updated: 2026-04-29
 
 This is the short context file to read first when starting new development on the Live chatbot work.
 
@@ -62,13 +62,13 @@ Unexpected server response: 200
 
 then CloudFront is returning the React `index.html` instead of forwarding the WebSocket upgrade to the backend.
 
-Current deployment fix: CloudFront must route `/api/live/chat/realtime` to the GPU ALB origin before the broader `/api/*` API Gateway behavior. The GPU ALB then path-routes `/api/live/chat/realtime` to `live-gateway:3002`; its default action remains `gpu-worker:3001`.
+Current deployment fix: CloudFront must route `/api/live/chat/realtime` to the GPU ALB origin before the broader `/api/*` Lambda Function URL behavior. The GPU ALB then path-routes `/api/live/chat/realtime` to `live-gateway:3002`; its default action remains `gpu-worker:3001`.
 
-Do not let SPA fallback rewrite `/api/live/chat/realtime` to `index.html`, and do not route this WebSocket path to API Gateway.
+Do not let SPA fallback rewrite `/api/live/chat/realtime` to `index.html`, and do not route this WebSocket path to the Lambda Function URL.
 
 ## Lambda Migration Note
 
-The REST backend can now move to Lambda/API Gateway, but the Live chatbot WebSocket should stay stateful. Use the `live-gateway/` process on the GPU EC2 for `/api/live/chat/realtime`, and use `lambda/` for REST routes. Deployment details are in `docs/lambda-serverless-gpu-worker-guide.md`.
+The REST backend can now move to Lambda Function URL behind CloudFront, but the Live chatbot WebSocket should stay stateful. Use the `live-gateway/` process on the GPU EC2 for `/api/live/chat/realtime`, and use `lambda/` for REST routes. Deployment details are in `docs/lambda-serverless-gpu-worker-guide.md`.
 
 Current test networking:
 
@@ -87,7 +87,7 @@ Current test networking:
 - Lambda is not VPC-attached yet; Lambda calls the public GPU ALB URL through `GpuWorkerUrl`.
 - CloudFront uses the same GPU ALB origin for SSE and WSS behaviors.
 - The React SPA is served from an S3 REST origin protected by OAI.
-- CloudFront proxies `/api/*` to API Gateway, so the browser does not need to call the raw API Gateway domain directly.
+- CloudFront proxies `/api/*` to the Lambda Function URL origin, so the browser does not call the raw Function URL directly.
 - The GPU ALB is HTTP-only for the current test setup.
 - On the GPU EC2, both services run from the GitHub clone under the `ubuntu` user, with `gpu-worker.service` and `live-gateway.service`.
 - The GPU EC2 instance profile already has access to the project S3 bucket/prefix.
@@ -97,7 +97,7 @@ Current test networking:
 CloudFront origins:
 
 - S3/frontend origin for the React SPA.
-- API Gateway origin for `/api/*` REST requests.
+- Lambda Function URL origin for `/api/*` REST requests.
 - GPU ALB origin for SSE and the Live WebSocket.
 
 CloudFront behavior order:
@@ -105,7 +105,7 @@ CloudFront behavior order:
 1. `/api/live/chat/realtime` -> GPU ALB origin -> ALB routes to `live-gateway:3002`
 2. `/train/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
 3. `/inference/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
-4. `/api/*` -> API Gateway origin
+4. `/api/*` -> Lambda Function URL origin
 5. default `*` -> S3/frontend origin
 
 ALB listener rules:
@@ -149,7 +149,7 @@ CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 
 `gpu-worker` does not need `OPENAI_API_KEY`; OpenAI Realtime belongs to `live-gateway`.
 
-## Lambda Env / Deploy Params
+## Lambda Function URL Env
 
 For the current public-ALB test deployment:
 
@@ -166,6 +166,8 @@ CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
 
 Do not pass `VpcSubnetIds` or `VpcSecurityGroupIds` while Lambda calls the public ALB. Add those only after the GPU worker moves behind private networking.
 
+The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront.
+
 Future production direction: move Lambda to Seoul (`ap-northeast-2`) and use the two-ALB shape:
 
 - CloudFront -> public ALB -> private GPU EC2 for browser SSE/WSS.
@@ -178,7 +180,7 @@ Prefer Lambda calling the internal ALB instead of the EC2 private IP directly. T
 
 Frontend cloud template: `client/.env.frontend.deployment`
 
-Production frontend env should point REST, SSE, and WSS at CloudFront. CloudFront then routes `/api/*` to API Gateway and GPU streaming/WebSocket paths to the GPU ALB:
+Production frontend env should point REST, SSE, and WSS at CloudFront. CloudFront then routes `/api/*` to the Lambda Function URL origin and GPU streaming/WebSocket paths to the GPU ALB:
 
 ```env
 VITE_API_BASE_URL=https://d3dghqhnk7aoku.cloudfront.net
@@ -294,7 +296,7 @@ Live gateway:
   - Configures input transcription with `gpt-4o-mini-transcribe`, language `en`.
   - Do not re-add `max_output_tokens` in `session.update`; it caused Realtime parameter issues.
 
-Lambda/API Gateway:
+Lambda Function URL:
 
 - `lambda/inference/index.js`
   - `POST /api/inference`: full-reply WAV generation through long-text inference.
