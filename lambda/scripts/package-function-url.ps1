@@ -25,6 +25,7 @@ try {
     'package-lock.json',
     'config',
     'inference',
+    'instance',
     'live',
     'models',
     'shared',

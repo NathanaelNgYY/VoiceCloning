@@ -9,6 +9,7 @@ export const ROUTES = [
   { name: 'TranscribeFunction', methods: ['POST'], pattern: /^\/api\/transcribe\/?$/u, modulePath: './transcribe/index.js' },
   { name: 'TrainingAudioFunction', methods: ['GET'], pattern: /^\/api\/(?:training-audio(?:\/file\/[^/]+\/[^/]+|\/[^/]+)|ref-audio)\/?$/u, modulePath: './training-audio/index.js' },
   { name: 'LiveFunction', methods: ['POST'], pattern: /^\/api\/live\/tts-sentence\/?$/u, modulePath: './live/index.js' },
+  { name: 'InstanceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/instance\/(?:status|start)\/?$/u, modulePath: './instance/index.js' },
 ];
 
 const handlerCache = new Map();
