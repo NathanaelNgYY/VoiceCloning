@@ -11,6 +11,12 @@ function useGpuWorkerModels() {
   return ['gpu-worker', 'gpu', 'local', 'gpt-sovits'].includes(modelSource());
 }
 
+function isWorkerUnavailableError(error) {
+  const message = error?.message || '';
+  return error instanceof TypeError
+    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return preflight();
@@ -22,7 +28,19 @@ export const handler = async (event) => {
   try {
     if (method === 'GET' && routePath.endsWith('/models')) {
       if (useGpuWorkerModels()) {
-        return ok(await gpuGet('/models'));
+        try {
+          return ok(await gpuGet('/models'));
+        } catch (error) {
+          if (!isWorkerUnavailableError(error)) {
+            throw error;
+          }
+          return ok({
+            gpt: [],
+            sovits: [],
+            workerAvailable: false,
+            message: error.message,
+          });
+        }
       }
 
       const [gptObjects, sovitsObjects] = await Promise.all([

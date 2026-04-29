@@ -4,6 +4,7 @@ import {
   buildLiveReplyParams,
   createChatMessage,
   findSelectedPlayback,
+  findNextPhrasePlayback,
   splitLiveReplyPhrases,
   updateMessage,
 } from './liveConversation.js';
@@ -13,6 +14,7 @@ test('buildLiveReplyParams forces English assistant text for full inference', ()
     ref_audio_path: 'refs/sample.wav',
     prompt_text: 'reference words',
     prompt_lang: 'ja',
+    aux_ref_audio_paths: ['refs/aux-a.wav', 'refs/aux-b.wav'],
   });
 
   assert.deepEqual(params, {
@@ -21,6 +23,7 @@ test('buildLiveReplyParams forces English assistant text for full inference', ()
     ref_audio_path: 'refs/sample.wav',
     prompt_text: 'reference words',
     prompt_lang: 'ja',
+    aux_ref_audio_paths: ['refs/aux-a.wav', 'refs/aux-b.wav'],
   });
 });
 
@@ -69,4 +72,25 @@ test('findSelectedPlayback never falls back to previous audio', () => {
 
   assert.equal(findSelectedPlayback([previous, next], 'new'), null);
   assert.equal(findSelectedPlayback([previous, next], 'old').audioUrl, 'blob:old');
+});
+
+test('findNextPhrasePlayback advances through every ready phrase clip in order', () => {
+  const message = createChatMessage({
+    id: 'reply-1',
+    role: 'assistant',
+    text: 'First. Second. Third.',
+    audioParts: [
+      { id: 'reply-1-part-1', index: 1, status: 'played', audioUrl: 'blob:first' },
+      { id: 'reply-1-part-2', index: 2, status: 'ready', audioUrl: 'blob:second' },
+      { id: 'reply-1-part-3', index: 3, status: 'ready', audioUrl: 'blob:third' },
+    ],
+  });
+
+  const second = findNextPhrasePlayback([message], 'reply-1-part-1');
+  assert.equal(second.part.id, 'reply-1-part-2');
+
+  const third = findNextPhrasePlayback([message], 'reply-1-part-2');
+  assert.equal(third.part.id, 'reply-1-part-3');
+
+  assert.equal(findNextPhrasePlayback([message], 'reply-1-part-3'), null);
 });

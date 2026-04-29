@@ -33,6 +33,7 @@ export function buildLiveReplyParams(text, refParams = {}) {
     ref_audio_path: refParams.ref_audio_path,
     prompt_text: refParams.prompt_text || '',
     prompt_lang: refParams.prompt_lang || 'en',
+    aux_ref_audio_paths: refParams.aux_ref_audio_paths || [],
   };
 }
 
@@ -82,6 +83,24 @@ export function findSelectedPlayback(messages, selectedId) {
     if (part?.audioUrl) {
       return { message, part, audioUrl: part.audioUrl };
     }
+  }
+
+  return null;
+}
+
+export function findNextPhrasePlayback(messages, selectedId) {
+  if (!selectedId) return null;
+
+  for (const message of messages) {
+    const parts = message.audioParts || [];
+    const currentIndex = parts.findIndex((part) => part.id === selectedId);
+    if (currentIndex === -1) continue;
+
+    const nextPart = parts
+      .slice(currentIndex + 1)
+      .find((part) => part.audioUrl && part.status === 'ready');
+
+    return nextPart ? { message, part: nextPart, audioUrl: nextPart.audioUrl } : null;
   }
 
   return null;

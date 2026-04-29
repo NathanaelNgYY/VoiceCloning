@@ -3,6 +3,12 @@ import { gpuPost, gpuGet, gpuPostBinary, gpuPublicUrl } from '../shared/gpuWorke
 import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { corsHeaders, ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 
+function isWorkerUnavailableError(error) {
+  const message = error?.message || '';
+  return error instanceof TypeError
+    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
+}
+
 function binaryWav(buffer, contentType = 'audio/wav') {
   return {
     statusCode: 200,
@@ -69,7 +75,19 @@ export const handler = async (event) => {
     }
 
     if (method === 'GET' && routePath.endsWith('/inference/current')) {
-      return ok(await gpuGet('/inference/current'));
+      try {
+        return ok(await gpuGet('/inference/current'));
+      } catch (error) {
+        if (!isWorkerUnavailableError(error)) {
+          throw error;
+        }
+        return ok({
+          sessionId: null,
+          status: 'idle',
+          workerAvailable: false,
+          message: error.message,
+        });
+      }
     }
 
     if (method === 'GET' && routePath.endsWith('/inference/status')) {

@@ -169,6 +169,7 @@ export default function LivePage({ replyMode = 'full' }) {
             ref_audio_path: params.ref_audio_path,
             prompt_text: params.prompt_text || '',
             prompt_lang: params.prompt_lang || 'en',
+            aux_ref_audio_paths: params.aux_ref_audio_paths || [],
           });
           return;
         }
@@ -185,6 +186,7 @@ export default function LivePage({ replyMode = 'full' }) {
               ref_audio_path: draft.refAudioPath,
               prompt_text: draft.promptText || '',
               prompt_lang: draft.promptLang || 'en',
+              aux_ref_audio_paths: (draft.auxRefAudios || []).map((file) => file.path),
             });
           }
         }
@@ -222,15 +224,16 @@ export default function LivePage({ replyMode = 'full' }) {
 
   const isReady = serverReady && Boolean(refParams);
   const isListening = liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking';
+  const isGeneratingVoice = liveSpeech.phase === 'speaking' && !liveSpeech.audioSrc;
   const buttonDisabled =
-    !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping';
+    !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping' || isGeneratingVoice;
   const phaseLabel =
     {
       idle: 'Start',
       connecting: 'Connecting',
       listening: 'Stop',
       thinking: 'Stop',
-      speaking: 'Interrupt',
+      speaking: liveSpeech.audioSrc ? 'Interrupt' : 'Generating',
       stopping: 'Stopping',
     }[liveSpeech.phase] || 'Start';
   const statusText =
@@ -333,7 +336,7 @@ export default function LivePage({ replyMode = 'full' }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-950">{statusText}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  While the cloned voice is playing, listening pauses. Speak again or tap interrupt to stop playback.
+                  While cloned voice is generating or playing, listening pauses. You can interrupt only after playback starts.
                 </p>
               </div>
 
