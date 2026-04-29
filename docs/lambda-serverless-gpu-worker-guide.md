@@ -1,11 +1,11 @@
 # Lambda Serverless Backend + GPU Worker Guide
 
-Last updated: 2026-04-28
+Last updated: 2026-04-29
 
 This guide explains the new deployment shape:
 
 - React SPA: S3 + CloudFront
-- REST backend: AWS Lambda + API Gateway HTTP API
+- REST backend: AWS Lambda Function URL behind CloudFront
 - GPU work: existing GPU EC2, still running `gpu-worker` on port `3001`
 - Live chatbot WebSocket: `live-gateway` process on the same GPU EC2, running on port `3002`
 - Current test networking target: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, and only `/api/live/chat/realtime` path-routes to `live-gateway:3002`
@@ -32,16 +32,17 @@ AWS references worth keeping open:
 
 - Lambda VPC access: https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html
 - Lambda VPC internet/S3 access note: https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc-internet.html
-- SAM deploy: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/using-sam-cli-deploy.html
-- API Gateway HTTP API integration timeout: https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-quotas.html
-- Lambda proxy binary responses: https://docs.aws.amazon.com/apigateway/latest/developerguide/lambda-proxy-binary-media.html
+- Lambda Function URLs: https://docs.aws.amazon.com/lambda/latest/dg/urls-configuration.html
+- CloudFront with Lambda Function URL origins: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistS3AndCustomOrigins.html
+- Restrict Lambda Function URL access with CloudFront OAC: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html
 
 ## What Changed In The Repo
 
 New top-level packages:
 
 - `lambda/`
-  - SAM template and Node.js Lambda handlers for REST routes.
+  - Node.js Lambda handlers for REST routes.
+  - `index.handler` is the single Lambda Function URL entrypoint; it routes `/api/*` to the smaller route modules.
   - Handles config, uploads, model listing/loading, training start/stop/current, inference start/result/current/status/stop, transcription, training-audio browsing, and fast live phrase TTS.
 - `live-gateway/`
   - Standalone Express + `ws` process that owns `/api/live/chat/realtime`.
@@ -60,7 +61,7 @@ GPU worker changes:
 
 Frontend changes:
 
-- `VITE_API_BASE_URL`: REST API origin; in deployed CloudFront testing, use the CloudFront domain because `/api/*` is proxied to API Gateway
+- `VITE_API_BASE_URL`: REST API origin; in deployed CloudFront testing, use the CloudFront domain because `/api/*` is proxied to the Lambda Function URL origin
 - `VITE_GPU_WORKER_URL`: browser-facing origin for SSE and WebSocket path routing; with CloudFront behaviors, use the CloudFront domain, not the raw HTTP ALB URL
 - `VITE_LIVE_GATEWAY_URL`: normally omitted; only set this if live-gateway uses a different public origin
 
@@ -70,7 +71,7 @@ Frontend changes:
 flowchart LR
   Browser["Browser"]
   Cf["CloudFront"]
-  Api["API Gateway HTTP API"]
+  FunctionUrl["Lambda Function URL"]
   Lambda["Lambda handlers"]
   S3["S3 bucket"]
   Alb["Public GPU ALB"]
@@ -81,8 +82,8 @@ flowchart LR
 
   Browser --> Cf
   Cf -->|SPA assets| S3
-  Cf -->|REST /api/*| Api
-  Api --> Lambda
+  Cf -->|REST /api/*| FunctionUrl
+  FunctionUrl --> Lambda
   Lambda --> S3
   Lambda -->|same public ALB URL| Alb
   Alb -->|default action| Worker
@@ -276,10 +277,10 @@ CloudFront can also use the same GPU ALB origin for SSE and WSS. Configure behav
 - `/api/live/chat/realtime` -> GPU ALB origin, caching disabled, WebSocket upgrade headers forwarded
 - `/train/progress/*` -> GPU ALB origin, caching disabled
 - `/inference/progress/*` -> GPU ALB origin, caching disabled
-- `/api/*` -> API Gateway origin
+- `/api/*` -> Lambda Function URL origin
 - default `/*` -> S3 SPA origin
 
-The `/api/live/chat/realtime` behavior must have higher priority than `/api/*`; otherwise CloudFront may send the WebSocket request to API Gateway or the SPA fallback.
+The `/api/live/chat/realtime` behavior must have higher priority than `/api/*`; otherwise CloudFront may send the WebSocket request to the Lambda Function URL or the SPA fallback.
 
 The live-gateway target group can still health check `GET /healthz` on port `3002`; this does not require exposing `/healthz` through a public ALB listener rule.
 
@@ -291,17 +292,23 @@ Current security group note: `sg-0806b2491f69f242e` is used for the GPU EC2 and 
 
 ## CloudFront Origins And Behaviors
 
-CloudFront has three kinds of origins in this setup: the SPA bucket, API Gateway, and the GPU ALB. The current frontend bucket uses an S3 REST origin protected by OAI.
+CloudFront has three kinds of origins in this setup: the SPA bucket, Lambda Function URL, and the GPU ALB. The current frontend bucket uses an S3 REST origin protected by OAI.
 
 ### Origins
 
 | Origin name | Origin domain | Protocol to origin | Origin path |
 | --- | --- | --- | --- |
 | `spa-s3-origin` | frontend S3 REST origin | existing S3/OAI setting | blank |
-| `api-gateway-origin` | `YOUR_API_ID.execute-api.ap-southeast-1.amazonaws.com` | HTTPS only, port `443` | blank |
+| `lambda-function-url-origin` | `YOUR_FUNCTION_URL_ID.lambda-url.ap-southeast-1.on.aws` | HTTPS only, port `443` | blank |
 | `gpu-worker-alb-origin` | `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com` | HTTP only, port `80` | blank |
 
-For the S3 origin, keep the existing OAI permission model. For the API Gateway origin, do not include `https://` or `/api` in the origin domain. For the GPU ALB origin, do not include `http://` or any path.
+For the S3 origin, keep the existing OAI permission model. For the Lambda Function URL origin, do not include `https://` or `/api` in the origin domain. For the GPU ALB origin, do not include `http://` or any path.
+
+Recommended security for the Lambda Function URL origin:
+
+- Function URL `AuthType`: `AWS_IAM`
+- CloudFront Origin Access Control: Lambda Function URL OAC with request signing enabled
+- Lambda resource-based policy allows only the CloudFront distribution to invoke the Function URL
 
 ### Behaviors
 
@@ -312,12 +319,12 @@ Order matters. Put the most specific behaviors above broader ones:
 | `1` | `/api/live/chat/realtime` | `gpu-worker-alb-origin` | Caching disabled | Forward WebSocket headers or use `AllViewer` | Must be above `/api/*`; routes to `live-gateway:3002` at ALB |
 | `2` | `/train/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-worker:3001` |
 | `3` | `/inference/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-worker:3001` |
-| `4` | `/api/*` | `api-gateway-origin` | Caching disabled | `AllViewerExceptHostHeader` | REST Lambda/API Gateway proxied through CloudFront |
+| `4` | `/api/*` | `lambda-function-url-origin` | Caching disabled | `AllViewerExceptHostHeader` | REST Lambda Function URL proxied through CloudFront |
 | default | `*` | `spa-s3-origin` | normal SPA/static policy | existing setting | React app |
 
 For `/api/live/chat/realtime`, CloudFront must forward WebSocket upgrade headers. If you use a managed policy, start with `AllViewer`. If you create a custom origin request policy, include at least:
 
-- `Host` only if your origin requires it; API Gateway usually should not receive the viewer `Host`
+- `Host` only if your origin requires it; Lambda Function URL should not receive the CloudFront viewer `Host` when using the default `lambda-url` domain
 - `Origin`
 - `Connection`
 - `Upgrade`
@@ -326,7 +333,7 @@ For `/api/live/chat/realtime`, CloudFront must forward WebSocket upgrade headers
 - `Sec-WebSocket-Protocol`
 - `Sec-WebSocket-Extensions`
 
-For `/api/*` to API Gateway, prefer `AllViewerExceptHostHeader`. Forwarding the CloudFront viewer `Host` header to the default `execute-api` domain can cause API Gateway routing issues.
+For `/api/*` to Lambda Function URL, prefer `AllViewerExceptHostHeader`. Forwarding the CloudFront viewer `Host` header to the default `lambda-url` domain can cause origin routing issues.
 
 ## Lambda Deployment
 
@@ -356,58 +363,116 @@ Verify the deploy profile:
 aws sts get-caller-identity --profile account3
 ```
 
-Then add `--profile account3` to `sam build` or `sam deploy` if that shell is not already using the intended AWS credentials.
+Use `--profile account3` on AWS CLI commands if that shell is not already using the intended AWS credentials.
 
-Install dependencies and build:
+Install dependencies, test, and package a plain Lambda zip:
 
-```bash
+```powershell
 cd lambda
 npm install
-sam build --template template.yaml
+npm test
+npm run package:function-url
+```
+
+The package is written to:
+
+```text
+lambda/.dist/voice-cloning-function-url.zip
 ```
 
 Deploy for the current public-GPU-ALB test setup. This does not attach Lambda to a VPC because Lambda can call the public ALB URL directly.
 
-PowerShell:
+Create the Lambda function manually in the AWS console or with AWS CLI. Use:
 
-```powershell
-sam deploy `
-  --profile account3 `
-  --region ap-southeast-1 `
-  --s3-bucket interns2026-small-projects-bucket-shared `
-  --s3-prefix echolect/sam-artifacts `
-  --stack-name voice-cloning-api `
-  --capabilities CAPABILITY_IAM `
-  --parameter-overrides `
-    S3Bucket=interns2026-small-projects-bucket-shared `
-    S3Region=ap-southeast-1 `
-    S3Prefix=echolect/ `
-    GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com `
-    GpuWorkerPublicUrl=https://d3dghqhnk7aoku.cloudfront.net `
-    ModelSource=gpu-worker `
-    ArtifactSource=s3 `
-    CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
+- Runtime: Node.js 20.x
+- Handler: `index.handler`
+- Architecture: `x86_64`
+- Timeout: `120` seconds for normal REST calls; increase if your supervisor wants longer synchronous calls
+- Memory: `256` MB or higher
+- Function URL: enabled
+- Function URL auth: `AWS_IAM` when using CloudFront OAC; `NONE` only for temporary testing
+
+Environment variables:
+
+```text
+S3_BUCKET=interns2026-small-projects-bucket-shared
+S3_REGION=ap-southeast-1
+S3_PREFIX=echolect/
+GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
+GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net
+MODEL_SOURCE=gpu-worker
+ARTIFACT_SOURCE=s3
+CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
-Same command in bash:
+Create once with CLI, replacing the role ARN:
 
-```bash
-sam deploy \
-  --profile account3 \
-  --region ap-southeast-1 \
-  --s3-bucket interns2026-small-projects-bucket-shared \
-  --s3-prefix echolect/sam-artifacts \
-  --stack-name voice-cloning-api \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides \
-    S3Bucket=interns2026-small-projects-bucket-shared \
-    S3Region=ap-southeast-1 \
-    S3Prefix=echolect/ \
-    GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com \
-    GpuWorkerPublicUrl=https://d3dghqhnk7aoku.cloudfront.net \
-    ModelSource=gpu-worker \
-    ArtifactSource=s3 \
-    CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
+```powershell
+aws lambda create-function `
+  --profile account3 `
+  --region ap-southeast-1 `
+  --function-name voice-cloning-api `
+  --runtime nodejs20.x `
+  --handler index.handler `
+  --architectures x86_64 `
+  --timeout 120 `
+  --memory-size 256 `
+  --role arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_LAMBDA_EXECUTION_ROLE `
+  --zip-file fileb://.dist/voice-cloning-function-url.zip `
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+```
+
+Update code after later changes:
+
+```powershell
+aws lambda update-function-code `
+  --profile account3 `
+  --region ap-southeast-1 `
+  --function-name voice-cloning-api `
+  --zip-file fileb://.dist/voice-cloning-function-url.zip
+```
+
+Create the Function URL:
+
+```powershell
+aws lambda create-function-url-config `
+  --profile account3 `
+  --region ap-southeast-1 `
+  --function-name voice-cloning-api `
+  --auth-type AWS_IAM
+```
+
+Add the Function URL as a CloudFront origin:
+
+1. Copy the Function URL domain only, for example `abc123.lambda-url.ap-southeast-1.on.aws`.
+2. Create a CloudFront origin using that domain, HTTPS only, origin path blank.
+3. Attach a Lambda Function URL OAC and enable request signing.
+4. Point the `/api/*` behavior to this origin.
+5. Keep `/api/live/chat/realtime` above `/api/*`, because Live WebSocket goes to the GPU ALB, not Lambda.
+
+Allow CloudFront to invoke the Function URL. Replace account and distribution values if needed:
+
+```powershell
+$distributionArn = "arn:aws:cloudfront::YOUR_ACCOUNT_ID:distribution/E2KTGN0G56FW71"
+
+aws lambda add-permission `
+  --profile account3 `
+  --region ap-southeast-1 `
+  --function-name voice-cloning-api `
+  --statement-id AllowCloudFrontFunctionUrl `
+  --action lambda:InvokeFunctionUrl `
+  --principal cloudfront.amazonaws.com `
+  --function-url-auth-type AWS_IAM `
+  --source-arn $distributionArn
+
+aws lambda add-permission `
+  --profile account3 `
+  --region ap-southeast-1 `
+  --function-name voice-cloning-api `
+  --statement-id AllowCloudFrontInvokeFunction `
+  --action lambda:InvokeFunction `
+  --principal cloudfront.amazonaws.com `
+  --source-arn $distributionArn
 ```
 
 Notes:
@@ -455,32 +520,21 @@ GPU EC2 private subnet -> S3 Gateway VPC Endpoint -> S3
 Change the architecture like this:
 
 1. Put the GPU worker EC2 in private subnets.
-2. Deploy the Lambda stack in Seoul (`ap-northeast-2`) or otherwise ensure it has private network connectivity to the Seoul VPC.
+2. Move or recreate the Lambda function in Seoul (`ap-northeast-2`) or otherwise ensure it has private network connectivity to the Seoul VPC.
 3. Keep an internet-facing public ALB for CloudFront browser SSE/WSS paths.
 4. Add a second internal ALB for Lambda-to-GPU private traffic.
 5. Change `GpuWorkerUrl` to the private/internal ALB URL, for example `http://internal-voice-gpu-alb-...:80`.
 6. Keep `GpuWorkerPublicUrl` as the public CloudFront URL for browser SSE/WSS paths.
 7. Add an S3 Gateway VPC Endpoint so private GPU EC2 can reach S3 without public internet: `EC2 (private) -> VPC Endpoint -> S3`.
-8. Deploy Lambda with VPC parameters:
+8. Update the Lambda function with VPC parameters:
 
 ```powershell
-sam deploy `
+aws lambda update-function-configuration `
+  --profile account3 `
   --region ap-northeast-2 `
-  --s3-bucket interns2026-small-projects-bucket-shared `
-  --s3-prefix echolect/sam-artifacts `
-  --stack-name voice-cloning-api `
-  --capabilities CAPABILITY_IAM `
-  --parameter-overrides `
-    S3Bucket=interns2026-small-projects-bucket-shared `
-    S3Region=ap-southeast-1 `
-    S3Prefix=echolect/ `
-    GpuWorkerUrl=http://INTERNAL_GPU_ALB_DNS `
-    GpuWorkerPublicUrl=https://PUBLIC_GPU_OR_CLOUDFRONT_DOMAIN `
-    ModelSource=gpu-worker `
-    ArtifactSource=s3 `
-    CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net `
-    VpcSubnetIds=subnet-aaa,subnet-bbb `
-    VpcSecurityGroupIds=sg-lambda
+  --function-name voice-cloning-api `
+  --vpc-config SubnetIds=subnet-aaa,subnet-bbb,SecurityGroupIds=sg-lambda `
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
 ```
 
 9. Security groups:
@@ -528,9 +582,9 @@ No deployment env should use the GPU EC2 public IP directly. Use:
 
 The GPU EC2 public IP is only useful for administrative access, such as temporary SSH, unless you replace SSH with SSM Session Manager.
 
-## Local Testing Without SAM
+## Local Testing
 
-You can test the Lambda migration locally with four terminals. This does not require SAM CLI. It still uses real S3, so your shell must have AWS credentials that can read/write the configured bucket.
+You can test the Lambda migration locally with four terminals. This does not require AWS deployment tools. It still uses real S3, so your shell must have AWS credentials that can read/write the configured bucket.
 
 First create `lambda/local.env`:
 
@@ -553,7 +607,7 @@ MODEL_SOURCE=gpu-worker
 ARTIFACT_SOURCE=gpu-worker
 ```
 
-`MODEL_SOURCE=gpu-worker` makes local `/api/models` read GPT and SoVITS checkpoints from the GPU worker's `GPT_SOVITS_ROOT` instead of S3. The SAM template also defaults `ModelSource` to `gpu-worker`; set `ModelSource=s3` only if you want the old S3 model-list behavior.
+`MODEL_SOURCE=gpu-worker` makes local `/api/models` read GPT and SoVITS checkpoints from the GPU worker's `GPT_SOVITS_ROOT` instead of S3. Use the same value in the deployed Lambda Function URL environment. Set `MODEL_SOURCE=s3` only if you want the old S3 model-list behavior.
 
 `ARTIFACT_SOURCE=gpu-worker` makes local `/api/training-audio/...` and `/api/inference/result/...` return URLs served by the GPU worker instead of presigned S3 URLs. For deployed Lambda, keep `ArtifactSource=s3` when you want generated audio and training audio persisted through S3; use `ArtifactSource=gpu-worker` only if the browser can reach `GpuWorkerPublicUrl`.
 
@@ -625,7 +679,7 @@ Expected:
 REST through Lambda:
 
 ```bash
-API=https://YOUR_API_ID.execute-api.YOUR_REGION.amazonaws.com
+API=https://d3dghqhnk7aoku.cloudfront.net
 curl "$API/api/config"
 curl "$API/api/models"
 curl "$API/api/train/current"
@@ -659,15 +713,15 @@ curl "$GPU/healthz"
 
 Browser network checks:
 
-- Normal REST calls go to API Gateway.
+- Normal REST calls go to CloudFront `/api/*`, then CloudFront forwards to the Lambda Function URL origin.
 - Training SSE goes to `VITE_GPU_WORKER_URL/train/progress/<sessionId>`.
 - Inference SSE goes to `VITE_GPU_WORKER_URL/inference/progress/<sessionId>`.
 - Live chatbot WebSocket goes to `wss://.../api/live/chat/realtime`.
-- Fast phrase TTS calls `POST /api/live/tts-sentence` on API Gateway and receives `audio/wav`.
+- Fast phrase TTS calls `POST /api/live/tts-sentence` through CloudFront to the Lambda Function URL and receives `audio/wav`.
 
 ## Important Limits
 
-API Gateway HTTP APIs have a 30-second maximum integration timeout. Long inference should use:
+Lambda Function URLs remove the old gateway integration layer, but long GPU jobs should still avoid a single synchronous browser -> CloudFront -> Lambda request. Keep long inference on the existing async flow:
 
 - `POST /api/inference/generate`
 - direct browser SSE to `/inference/progress/:sessionId`
@@ -675,4 +729,4 @@ API Gateway HTTP APIs have a 30-second maximum integration timeout. Long inferen
 
 `POST /api/inference` is still present for compatibility with Live Full and short direct synthesis, but long text should prefer the streaming flow.
 
-API Gateway WebSocket Lambda integrations are per-message and do not let Lambda own a raw long-lived socket. That is why `/api/live/chat/realtime` runs in `live-gateway` on the GPU EC2 instead of Lambda.
+Lambda Function URLs are HTTP endpoints; they do not let Lambda own a raw long-lived bidirectional WebSocket. That is why `/api/live/chat/realtime` runs in `live-gateway` on the GPU EC2 instead of Lambda.

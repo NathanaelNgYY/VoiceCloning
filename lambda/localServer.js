@@ -1,19 +1,9 @@
 import fs from 'fs';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
+import { findRoute, getRouteHandler } from './router.js';
 
-const ROUTES = [
-  { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
-  { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },
-  { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current))?\/?$/u, modulePath: './training/index.js' },
-  { name: 'ModelsFunction', methods: ['GET', 'POST'], pattern: /^\/api\/models(?:\/select)?\/?$/u, modulePath: './models/index.js' },
-  { name: 'InferenceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/inference(?:\/(?:generate|result\/[A-Za-z0-9-]+|cancel|current|status|stop))?\/?$/u, modulePath: './inference/index.js' },
-  { name: 'TranscribeFunction', methods: ['POST'], pattern: /^\/api\/transcribe\/?$/u, modulePath: './transcribe/index.js' },
-  { name: 'TrainingAudioFunction', methods: ['GET'], pattern: /^\/api\/(?:training-audio(?:\/file\/[^/]+\/[^/]+|\/[^/]+)|ref-audio)\/?$/u, modulePath: './training-audio/index.js' },
-  { name: 'LiveFunction', methods: ['POST'], pattern: /^\/api\/live\/tts-sentence\/?$/u, modulePath: './live/index.js' },
-];
-
-const handlerCache = new Map();
+export { findRoute };
 
 function corsHeaders() {
   return {
@@ -72,20 +62,6 @@ function loadLocalEnv() {
   loadEnvFile(new URL('./local.env', import.meta.url));
 }
 
-export function findRoute(method, pathname) {
-  const route = ROUTES.find((entry) =>
-    entry.methods.includes(method.toUpperCase()) && entry.pattern.test(pathname)
-  );
-  return route ? { ...route, lambdaPath: pathname } : null;
-}
-
-async function getRouteHandler(route) {
-  if (!handlerCache.has(route.modulePath)) {
-    handlerCache.set(route.modulePath, import(route.modulePath).then((module) => module.handler));
-  }
-  return handlerCache.get(route.modulePath);
-}
-
 function headersObject(headers) {
   const result = {};
   for (const [key, value] of headers.entries()) {
@@ -94,7 +70,7 @@ function headersObject(headers) {
   return result;
 }
 
-export async function createApiGatewayEvent(request, lambdaPath) {
+export async function createFunctionUrlEvent(request, lambdaPath) {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const queryStringParameters = Object.fromEntries(url.searchParams.entries());
@@ -192,7 +168,7 @@ export async function handleLocalRequest(req, res) {
   try {
     const body = await readRequestBody(req);
     const request = await toRequest(req, body);
-    const event = await createApiGatewayEvent(request, url.pathname);
+    const event = await createFunctionUrlEvent(request, url.pathname);
     const handler = await getRouteHandler(route);
     const lambdaResponse = await handler(event);
     writeLambdaResponse(res, lambdaResponse);

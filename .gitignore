@@ -1,6 +1,6 @@
 node_modules/
 dist/
-.aws-sam/
+.dist/
 .env
 .claude/
 .worktrees/
