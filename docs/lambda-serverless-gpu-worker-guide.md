@@ -287,8 +287,13 @@ The live-gateway target group can still health check `GET /healthz` on port `300
 Current security group note: `sg-0806b2491f69f242e` is used for the GPU EC2 and ALB right now. This works for testing, but split it later into a dedicated ALB security group and a dedicated GPU EC2 security group:
 
 - ALB SG inbound: HTTP `80` from CloudFront/browser while testing; later HTTPS `443`.
+- ALB SG outbound: TCP `3001` and `3002` to the GPU EC2 SG.
 - GPU EC2 SG inbound: TCP `3001` and `3002` only from the ALB SG.
+- GPU EC2 SG inbound: SSH `22` from your own IP only, if SSH is still needed.
+- GPU EC2 SG inbound: no rule for `9880`; GPT-SoVITS `api_v2.py` should stay local on `127.0.0.1:9880`.
 - Do not leave direct public inbound access to `3001`, `3002`, or `9880` in production.
+
+There is no separate inbound rule for SSE. Training/inference SSE is normal HTTP traffic from the browser to CloudFront, then CloudFront to the ALB on `80`/`443`, then the ALB forwards to `gpu-worker:3001`.
 
 ## CloudFront Origins And Behaviors
 
@@ -334,6 +339,16 @@ For `/api/live/chat/realtime`, CloudFront must forward WebSocket upgrade headers
 - `Sec-WebSocket-Extensions`
 
 For `/api/*` to Lambda Function URL, prefer `AllViewerExceptHostHeader`. Forwarding the CloudFront viewer `Host` header to the default `lambda-url` domain can cause origin routing issues.
+
+### Error Pages
+
+Use only this SPA fallback:
+
+| HTTP error code | Response page path | HTTP response code |
+| ---: | --- | ---: |
+| `404` | `/index.html` | `200` |
+
+Do not add `403 -> /index.html -> 200`. A global 403 rewrite hides real Lambda Function URL, OAC, S3, and permissions errors by returning the React app HTML. Keep 403 visible so backend/security problems are debuggable.
 
 ## Lambda Deployment
 
@@ -501,15 +516,23 @@ The GPU EC2 instance profile already has access to this bucket/prefix, so `gpu-w
 
 ## Future Private GPU Worker Plan
 
-When the GPU EC2 is moved off the public internet, prefer the two-ALB production shape:
+When the GPU EC2 is moved off the public internet, there are two valid Lambda-to-GPU options.
+
+Recommended for scalability:
 
 - Public ALB: internet-facing, used only by CloudFront for browser SSE/WSS routes.
 - Internal ALB: private, used by Lambda for REST-triggered calls into the GPU worker.
 - GPU EC2: private subnet, no app traffic to its public IP.
 
-This preserves the current browser streaming design while giving Lambda a private path to the GPU service.
+Acceptable for a single fixed GPU EC2:
 
-Future traffic flow:
+- Public ALB: internet-facing, used by CloudFront for browser SSE/WSS routes.
+- Lambda in the same VPC calls the GPU EC2 private IP directly on `3001`.
+- GPU EC2 SG allows `3001` from Lambda SG.
+
+The direct private-IP option is simpler and secure enough for one fixed EC2 in the same VPC, but it is less scalable. If the GPU EC2 is replaced and its private IP changes, `GPU_WORKER_URL` must be updated. The internal ALB option gives stable DNS, health checks, and easier future scaling.
+
+Scalable future traffic flow:
 
 ```text
 Browser -> CloudFront -> public ALB -> private GPU EC2
@@ -522,8 +545,8 @@ Change the architecture like this:
 1. Put the GPU worker EC2 in private subnets.
 2. Move or recreate the Lambda function in Seoul (`ap-northeast-2`) or otherwise ensure it has private network connectivity to the Seoul VPC.
 3. Keep an internet-facing public ALB for CloudFront browser SSE/WSS paths.
-4. Add a second internal ALB for Lambda-to-GPU private traffic.
-5. Change `GpuWorkerUrl` to the private/internal ALB URL, for example `http://internal-voice-gpu-alb-...:80`.
+4. Either add a second internal ALB for Lambda-to-GPU private traffic, or point Lambda directly to the GPU EC2 private IP for the single-instance setup.
+5. Change `GpuWorkerUrl` to the private/internal ALB URL, for example `http://internal-voice-gpu-alb-...:80`, or to the EC2 private URL, for example `http://10.0.x.x:3001`.
 6. Keep `GpuWorkerPublicUrl` as the public CloudFront URL for browser SSE/WSS paths.
 7. Add an S3 Gateway VPC Endpoint so private GPU EC2 can reach S3 without public internet: `EC2 (private) -> VPC Endpoint -> S3`.
 8. Update the Lambda function with VPC parameters:
@@ -539,18 +562,19 @@ aws lambda update-function-configuration `
 
 9. Security groups:
 
-- Lambda security group outbound -> internal ALB security group TCP `80`
-- Internal ALB security group inbound from Lambda security group TCP `80`
+- Lambda security group outbound -> internal ALB security group TCP `80`, or GPU EC2 security group TCP `3001` for direct private-IP mode.
+- Internal ALB security group inbound from Lambda security group TCP `80`, if using internal ALB.
 - Public ALB security group inbound HTTPS `443` from CloudFront/browser traffic
 - GPU EC2 security group inbound from public ALB security group TCP `3001` and `3002`
-- GPU EC2 security group inbound from internal ALB security group TCP `3001` and `3002`
+- GPU EC2 security group inbound from internal ALB security group TCP `3001` and `3002`, if using internal ALB.
+- GPU EC2 security group inbound from Lambda security group TCP `3001`, if using direct private-IP mode.
 
 If Lambda is VPC-attached, make sure it can still reach S3. Use either:
 
 - NAT Gateway / NAT instance for outbound internet access
 - S3 Gateway VPC Endpoint for private S3 access
 
-Prefer routing Lambda through the internal ALB instead of directly to the EC2 private IP. The ALB gives a stable DNS name, health checks, cleaner security-group boundaries, and lets the target EC2 be replaced without changing Lambda configuration.
+For future scalability, prefer routing Lambda through the internal ALB instead of directly to the EC2 private IP. For a single fixed GPU EC2 in the same VPC, direct private IP is acceptable if you are comfortable updating `GPU_WORKER_URL` whenever the instance is replaced.
 
 ## Frontend Deployment
 

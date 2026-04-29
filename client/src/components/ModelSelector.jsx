@@ -14,7 +14,7 @@ export default function ModelSelector({ label, models, value, onChange, disabled
       <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </Label>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Select a model..." />
         </SelectTrigger>

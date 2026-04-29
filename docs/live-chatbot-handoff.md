@@ -93,6 +93,9 @@ Current test networking:
 - The GPU EC2 instance profile already has access to the project S3 bucket/prefix.
 - Current security group is shared by ALB and GPU EC2 (`sg-0806b2491f69f242e`). Split this later into separate ALB and instance security groups.
 - No frontend, Lambda, CloudFront, or ALB config should depend on the GPU EC2 public IP. Use CloudFront for browser traffic and ALB DNS for Lambda-to-GPU while testing.
+- There is no separate security-group inbound rule for SSE. SSE is normal HTTP traffic through CloudFront and the ALB, then the ALB forwards to `gpu-worker:3001`.
+- GPU EC2 SG should allow `3001` and `3002` only from the ALB SG, plus SSH `22` from your own IP if needed.
+- GPU EC2 SG should not expose `9880`; GPT-SoVITS `api_v2.py` should stay local on `127.0.0.1:9880`.
 
 CloudFront origins:
 
@@ -168,13 +171,19 @@ Do not pass `VpcSubnetIds` or `VpcSecurityGroupIds` while Lambda calls the publi
 
 The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront.
 
-Future production direction: move Lambda to Seoul (`ap-northeast-2`) and use the two-ALB shape:
+Future production direction: move Lambda to Seoul (`ap-northeast-2`) and keep GPU EC2 private.
 
 - CloudFront -> public ALB -> private GPU EC2 for browser SSE/WSS.
-- Lambda in Seoul VPC -> internal ALB -> private GPU EC2 for REST-triggered GPU calls.
+- Lambda in Seoul VPC -> internal ALB -> private GPU EC2 for scalable REST-triggered GPU calls.
+- Simpler single-instance alternative: Lambda in Seoul VPC -> GPU EC2 private IP on `3001`.
 - Private GPU EC2 -> S3 Gateway VPC Endpoint -> S3.
 
-Prefer Lambda calling the internal ALB instead of the EC2 private IP directly. The ALB gives stable DNS, health checks, cleaner security groups, and easier target replacement.
+Prefer Lambda calling the internal ALB for scalability. Direct private IP is acceptable for one fixed GPU EC2 in the same VPC, but `GPU_WORKER_URL` must be updated if the instance is replaced.
+
+CloudFront error pages:
+
+- Keep `404 -> /index.html -> 200` for React routes.
+- Do not use `403 -> /index.html -> 200`; it hides Lambda Function URL/OAC/S3 permission problems by returning the React app HTML.
 
 ## Frontend Env
 
