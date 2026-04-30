@@ -17,6 +17,19 @@ function workerUrl() {
   return (process.env.GPU_WORKER_URL || '').replace(/\/+$/u, '');
 }
 
+function mockInitialState() {
+  return (process.env.GPU_INSTANCE_MOCK_STATE || '').trim().toLowerCase();
+}
+
+function mockReadyDelayMs() {
+  const value = Number.parseInt(process.env.GPU_INSTANCE_MOCK_READY_DELAY_MS || '1500', 10);
+  return Number.isFinite(value) && value >= 0 ? value : 1500;
+}
+
+function mockModeEnabled() {
+  return Boolean(mockInitialState());
+}
+
 function createEc2Client() {
   return globalThis.__voiceCloningEc2Client || new EC2Client({ region: instanceRegion() });
 }
@@ -78,7 +91,71 @@ function statusPayload({ id, state, workerReady, started = false, previousState 
   return payload;
 }
 
+function mockStateRecord() {
+  if (!mockModeEnabled()) return null;
+
+  const initialState = mockInitialState();
+  if (!globalThis.__voiceCloningMockInstanceState) {
+    globalThis.__voiceCloningMockInstanceState = {
+      initialState,
+      state: initialState,
+      startedAt: null,
+    };
+  }
+
+  const record = globalThis.__voiceCloningMockInstanceState;
+  if (record.initialState !== initialState) {
+    record.initialState = initialState;
+    record.state = initialState;
+    record.startedAt = null;
+  }
+
+  if (record.state === 'pending' && record.startedAt !== null) {
+    const elapsed = Date.now() - record.startedAt;
+    if (elapsed >= mockReadyDelayMs()) {
+      record.state = 'running';
+      record.startedAt = null;
+    }
+  }
+
+  return record;
+}
+
+function mockWorkerReady(state) {
+  if (state !== 'running') return false;
+  const value = (process.env.GPU_INSTANCE_MOCK_WORKER_READY || '').trim().toLowerCase();
+  if (!value) return true;
+  return ['1', 'true', 'yes', 'ready'].includes(value);
+}
+
+function mockMessage(state, workerReady) {
+  if (workerReady) return 'Local mock GPU instance is ready.';
+  if (state === 'stopped') return 'Local mock GPU instance is stopped.';
+  if (state === 'pending') return 'Local mock GPU instance is starting.';
+  return `Local mock GPU instance is ${state || 'unknown'}.`;
+}
+
+function mockStatusPayload({ record, started = false, previousState = null }) {
+  const workerReady = mockWorkerReady(record.state);
+  return {
+    ...statusPayload({
+      id: 'local-mock-gpu',
+      state: record.state,
+      workerReady,
+      started,
+      previousState,
+    }),
+    mock: true,
+    message: mockMessage(record.state, workerReady),
+  };
+}
+
 async function getStatus() {
+  const mockRecord = mockStateRecord();
+  if (mockRecord) {
+    return mockStatusPayload({ record: mockRecord });
+  }
+
   const id = instanceId();
   if (!id) return unconfiguredStatus();
 
@@ -89,6 +166,27 @@ async function getStatus() {
 }
 
 async function startInstance() {
+  const mockRecord = mockStateRecord();
+  if (mockRecord) {
+    const previousState = mockRecord.state;
+    let started = false;
+
+    if (mockRecord.state === 'stopped') {
+      mockRecord.state = 'pending';
+      mockRecord.startedAt = Date.now();
+      started = true;
+      mockStateRecord();
+    }
+
+    return {
+      body: mockStatusPayload({
+        record: mockRecord,
+        started,
+        previousState: started ? previousState : null,
+      }),
+    };
+  }
+
   const id = instanceId();
   if (!id) {
     return {

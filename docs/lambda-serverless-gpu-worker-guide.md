@@ -426,9 +426,31 @@ S3_REGION=ap-southeast-1
 S3_PREFIX=echolect/
 GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net
+GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID
+GPU_INSTANCE_REGION=ap-northeast-2
 MODEL_SOURCE=gpu-worker
 ARTIFACT_SOURCE=s3
 CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
+```
+
+Do not set `GPU_INSTANCE_MOCK_STATE` in deployed Lambda. That variable is only for local UI testing.
+
+The Lambda execution role also needs permission to read and start the GPU EC2 instance:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:StartInstances"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
 ```
 
 Create once with CLI, replacing the role ARN. For the current Seoul Lambda, use `ap-northeast-2` and the deployed function name:
@@ -445,7 +467,7 @@ aws lambda create-function `
   --memory-size 256 `
   --role arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_LAMBDA_EXECUTION_ROLE `
   --zip-file fileb://.dist/voice-cloning-function-url.zip `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
 ```
 
 Update code after later changes:
@@ -456,6 +478,16 @@ aws lambda update-function-code `
   --region ap-northeast-2 `
   --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
   --zip-file fileb://.dist/voice-cloning-function-url.zip
+```
+
+Update environment after adding GPU instance control:
+
+```powershell
+aws lambda update-function-configuration `
+  --profile account3 `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
 ```
 
 Create the Function URL. The currently working setting is `NONE`:
