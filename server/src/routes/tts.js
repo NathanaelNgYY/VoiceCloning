@@ -13,7 +13,7 @@ router.post('/tts', async (req, res) => {
     res.set('Content-Type', 'audio/mpeg');
     res.end(buffer);
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(err.statusCode || 502).json({ error: err.message });
   }
 });
 

@@ -21,7 +21,7 @@ export default function InferencePage() {
   useEffect(() => {
     getVoices()
       .then(res => setVoices(res.data))
-      .catch(() => setError('Failed to load voices. Is the server running?'));
+      .catch(err => setError(err.response?.data?.error || err.message || 'Failed to load voices.'));
   }, []);
 
   function handleVoiceChange(id) {

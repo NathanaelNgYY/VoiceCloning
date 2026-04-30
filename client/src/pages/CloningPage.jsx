@@ -19,21 +19,28 @@ export default function CloningPage() {
     try {
       const res = await getVoices();
       setVoices(res.data);
-    } catch {
-      // silently fail on list load
+      setError(null);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to load voices.');
     }
   }
 
   useEffect(() => { loadVoices(); }, []);
 
+  function getDefaultVoiceName() {
+    const firstFileName = files[0]?.name || 'My Voice';
+    return firstFileName.replace(/\.[^.]+$/u, '').trim() || 'My Voice';
+  }
+
   async function handleClone() {
-    if (!name.trim() || files.length === 0) return;
+    if (files.length === 0) return;
+    const voiceName = name.trim() || getDefaultVoiceName();
     setCloning(true);
     setError(null);
     setSuccess(null);
     try {
-      const res = await cloneVoice(name.trim(), files);
-      setSuccess(`Voice "${res.data.name}" cloned successfully.`);
+      const res = await cloneVoice(voiceName, files);
+      setSuccess(`Instant voice "${res.data.name}" created successfully.`);
       setName('');
       setFiles([]);
       await loadVoices();
@@ -62,9 +69,9 @@ export default function CloningPage() {
               <Mic size={18} />
             </div>
             <div>
-              <CardTitle className="text-base">Clone a new voice</CardTitle>
+              <CardTitle className="text-base">Create an instant voice clone</CardTitle>
               <CardDescription className="text-xs">
-                Upload audio samples — ElevenLabs will create a cloned voice in seconds
+                Upload audio samples for an ElevenLabs Instant Voice Clone
               </CardDescription>
             </div>
           </div>
@@ -76,17 +83,17 @@ export default function CloningPage() {
               id="voice-name"
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="e.g. My Voice"
+              placeholder={files.length > 0 ? getDefaultVoiceName() : 'e.g. My Voice'}
               disabled={cloning}
             />
           </div>
           <AudioUploader files={files} onFilesChange={setFiles} disabled={cloning} />
           <Button
             onClick={handleClone}
-            disabled={cloning || !name.trim() || files.length === 0}
+            disabled={cloning || files.length === 0}
             className="w-full rounded-xl"
           >
-            {cloning ? 'Cloning...' : 'Clone Voice'}
+            {cloning ? 'Creating clone...' : 'Create Instant Clone'}
           </Button>
           {success && <p className="text-sm text-emerald-600">{success}</p>}
           {error && <p className="text-sm text-destructive">{error}</p>}

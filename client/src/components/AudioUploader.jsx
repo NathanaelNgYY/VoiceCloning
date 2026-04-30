@@ -4,7 +4,13 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
-const ACCEPT = '.wav,.mp3,.ogg,.flac,.m4a';
+const ACCEPTED_EXTENSIONS = ['.wav', '.mp3', '.ogg', '.oga', '.opus', '.flac', '.m4a', '.aac', '.aiff', '.webm'];
+const ACCEPT = ACCEPTED_EXTENSIONS.join(',');
+
+function isAcceptedAudioFile(file) {
+  const name = file.name.toLowerCase();
+  return ACCEPTED_EXTENSIONS.some(ext => name.endsWith(ext)) || file.type.startsWith('audio/');
+}
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -20,14 +26,12 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
     e.preventDefault();
     setDragOver(false);
     if (disabled) return;
-    const dropped = Array.from(e.dataTransfer.files).filter(f =>
-      ACCEPT.split(',').some(ext => f.name.toLowerCase().endsWith(ext))
-    );
+    const dropped = Array.from(e.dataTransfer.files).filter(isAcceptedAudioFile);
     onFilesChange([...files, ...dropped]);
   }
 
   function handleSelect(e) {
-    const selected = Array.from(e.target.files);
+    const selected = Array.from(e.target.files).filter(isAcceptedAudioFile);
     onFilesChange([...files, ...selected]);
     e.target.value = '';
   }
@@ -68,7 +72,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
           {dragOver ? 'Drop files here' : 'Drop audio files, or click to browse'}
         </p>
         <p className="mt-2 text-xs uppercase tracking-[0.22em] text-muted-foreground">
-          WAV, MP3, OGG, FLAC, M4A
+          WAV, MP3, OGG, FLAC, M4A, WEBM
         </p>
         <input
           ref={inputRef}
