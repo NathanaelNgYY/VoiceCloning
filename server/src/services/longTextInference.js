@@ -226,6 +226,7 @@ function yearWords(n) {
   const high = Math.floor(n / 100);
   const low = n % 100;
   if (low === 0) return `${twoDigitWords(high)} hundred`;
+  if (low < 10) return `${twoDigitWords(high)} oh ${NUM_ONES[low]}`;
   return `${twoDigitWords(high)} ${twoDigitWords(low)}`;
 }
 

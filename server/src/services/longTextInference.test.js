@@ -21,6 +21,9 @@ test('preprocessText: year 2010 -> twenty ten', () => {
 test('preprocessText: year 1776 -> seventeen seventy-six', () => {
   assert.equal(preprocessText('in 1776'), 'in seventeen seventy-six');
 });
+test('preprocessText: year 1801 -> eighteen oh one', () => {
+  assert.equal(preprocessText('in 1801'), 'in eighteen oh one');
+});
 
 // Ordinals
 test('preprocessText: 1st -> first', () => {
