@@ -6,6 +6,7 @@ import {
   findSelectedPlayback,
   findNextPhrasePlayback,
   splitLiveReplyPhrases,
+  shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
 
@@ -93,4 +94,11 @@ test('findNextPhrasePlayback advances through every ready phrase clip in order',
   assert.equal(third.part.id, 'reply-1-part-3');
 
   assert.equal(findNextPhrasePlayback([message], 'reply-1-part-3'), null);
+});
+
+test('shouldSendLiveMicAudio only allows enabled mic input during listening phases', () => {
+  assert.equal(shouldSendLiveMicAudio({ phase: 'listening', micInputEnabled: true }), true);
+  assert.equal(shouldSendLiveMicAudio({ phase: 'thinking', micInputEnabled: true }), true);
+  assert.equal(shouldSendLiveMicAudio({ phase: 'speaking', micInputEnabled: true }), false);
+  assert.equal(shouldSendLiveMicAudio({ phase: 'listening', micInputEnabled: false }), false);
 });

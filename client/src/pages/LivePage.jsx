@@ -13,9 +13,12 @@ import {
   Download,
   Loader2,
   Mic,
+  MicOff,
   PlayCircle,
+  Square,
   UserRound,
   Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
@@ -223,25 +226,29 @@ export default function LivePage({ replyMode = 'full' }) {
   }, [liveSpeech.audioSrc, liveSpeech.selectedReplyId, playbackReady]);
 
   const isReady = serverReady && Boolean(refParams);
-  const isListening = liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking';
-  const isGeneratingVoice = liveSpeech.phase === 'speaking' && !liveSpeech.audioSrc;
+  const isConversationActive = liveSpeech.phase !== 'idle';
+  const isListening = liveSpeech.isMicInputEnabled
+    && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
   const buttonDisabled =
-    !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping' || isGeneratingVoice;
+    !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping';
   const phaseLabel =
     {
       idle: 'Start',
       connecting: 'Connecting',
-      listening: 'Stop',
-      thinking: 'Stop',
-      speaking: liveSpeech.audioSrc ? 'Interrupt' : 'Generating',
+      listening: liveSpeech.isMicInputEnabled ? 'Mic on' : 'Mic off',
+      thinking: liveSpeech.isMicInputEnabled ? 'Mic on' : 'Mic off',
+      speaking: liveSpeech.isMicInputEnabled ? 'Mic on' : 'Mic off',
       stopping: 'Stopping',
     }[liveSpeech.phase] || 'Start';
   const statusText =
     liveSpeech.notice ||
+    (!liveSpeech.isMicInputEnabled && isConversationActive && liveSpeech.phase !== 'speaking'
+      ? 'Mic off. Voice chat is still open.'
+      : '') ||
     {
       idle: 'Ready for an English voice chat.',
       connecting: 'Connecting to the live assistant...',
-      listening: 'Listening...',
+      listening: liveSpeech.isMicInputEnabled ? 'Listening...' : 'Mic off. Voice chat is still open.',
       thinking: 'Thinking...',
       speaking: liveSpeech.audioSrc ? 'Playing cloned voice reply...' : 'Preparing cloned voice reply...',
       stopping: 'Stopping conversation...',
@@ -336,11 +343,37 @@ export default function LivePage({ replyMode = 'full' }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-950">{statusText}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  While cloned voice is generating or playing, listening pauses. You can interrupt only after playback starts.
+                  {liveSpeech.isMicInputEnabled
+                    ? 'Mic input is available when the assistant is listening.'
+                    : 'Mic input is off; voice playback can continue.'}
                 </p>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {playbackReady && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-10 rounded-xl border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                    onClick={liveSpeech.interruptPlayback}
+                  >
+                    <VolumeX size={14} />
+                    Stop voice
+                  </Button>
+                )}
+                {isConversationActive && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-10 rounded-xl border-slate-200 bg-white text-slate-600"
+                    onClick={liveSpeech.stop}
+                  >
+                    <Square size={13} />
+                    End
+                  </Button>
+                )}
                 <MicLevelMeter level={liveSpeech.audioLevel} active={isListening} />
                 <button
                   type="button"
@@ -348,18 +381,23 @@ export default function LivePage({ replyMode = 'full' }) {
                     'flex h-16 w-16 shrink-0 select-none items-center justify-center rounded-full border-4 text-xs font-semibold transition-all',
                     buttonDisabled
                       ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-                      : liveSpeech.phase === 'speaking'
-                        ? 'cursor-pointer border-amber-400 bg-amber-50 text-amber-700 shadow-[0_0_0_8px_rgba(245,158,11,0.15)] active:scale-95'
+                      : isConversationActive && !liveSpeech.isMicInputEnabled
+                        ? 'cursor-pointer border-slate-300 bg-slate-50 text-slate-500 shadow-[0_0_0_8px_rgba(100,116,139,0.12)] active:scale-95'
                         : isListening
                         ? 'border-red-400 bg-red-50 text-red-600 shadow-[0_0_0_8px_rgba(239,68,68,0.15)]'
+                        : isConversationActive
+                        ? 'cursor-pointer border-slate-300 bg-white text-slate-700 shadow-[0_0_0_8px_rgba(100,116,139,0.12)] active:scale-95'
                         : 'cursor-pointer border-sky-300 bg-sky-50 text-sky-700 shadow-[0_18px_50px_-20px_rgba(14,165,233,0.5)] hover:shadow-[0_18px_50px_-20px_rgba(14,165,233,0.7)] active:scale-95'
                   )}
                   onClick={liveSpeech.toggle}
                   disabled={buttonDisabled}
-                  aria-pressed={liveSpeech.phase !== 'idle'}
+                  aria-pressed={liveSpeech.isMicInputEnabled}
+                  title={phaseLabel}
                 >
                   <span className="sr-only">{phaseLabel}</span>
-                  <Mic size={24} />
+                  {liveSpeech.isMicInputEnabled || liveSpeech.phase === 'idle'
+                    ? <Mic size={24} />
+                    : <MicOff size={24} />}
                 </button>
               </div>
             </div>

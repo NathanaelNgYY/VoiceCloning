@@ -9,12 +9,13 @@ import {
   createChatMessage,
   findNextPhrasePlayback,
   findSelectedPlayback,
+  isLiveInputPhase,
   splitLiveReplyPhrases,
+  shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
 
 const LIVE_TARGET_SAMPLE_RATE = 24000;
-const LIVE_SPEECH_THRESHOLD = 0.018;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,10 +84,6 @@ function encodeOpenAiAudioChunk(input, inputSampleRate) {
   return pcm16Base64(downsampled);
 }
 
-function isInputPhase(phase) {
-  return phase === 'listening' || phase === 'thinking';
-}
-
 export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const [phase, setPhaseState] = useState('idle');
@@ -95,6 +92,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   const [selectedReplyId, setSelectedReplyIdState] = useState('');
   const [error, setError] = useState(null);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [micInputEnabled, setMicInputEnabledState] = useState(false);
   const [notice, setNotice] = useState('');
   const [speechApiAvailable, setSpeechApiAvailable] = useState(
     typeof window !== 'undefined' && Boolean(window.AudioContext || window.webkitAudioContext)
@@ -111,6 +109,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   const messageSeqRef = useRef(0);
   const messagesRef = useRef([]);
   const selectedReplyIdRef = useRef('');
+  const micInputEnabledRef = useRef(false);
   const activeUserMessageIdRef = useRef('');
   const activeAssistantMessageIdRef = useRef('');
   const currentSynthesisMessageIdRef = useRef('');
@@ -127,6 +126,11 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   function setSelectedReplyId(id) {
     selectedReplyIdRef.current = id;
     setSelectedReplyIdState(id);
+  }
+
+  function setMicInputEnabled(value) {
+    micInputEnabledRef.current = Boolean(value);
+    setMicInputEnabledState(Boolean(value));
   }
 
   function setMessagesSync(updater) {
@@ -261,6 +265,14 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     socketRef.current?.send({ type: 'input.resume' });
   }
 
+  function syncOpenAiInputWithMic(nextPhase = phaseRef.current) {
+    if (micInputEnabledRef.current && isLiveInputPhase(nextPhase)) {
+      resumeOpenAiInput();
+      return;
+    }
+    pauseOpenAiInput();
+  }
+
   async function synthesizeWithRetry(params) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -339,8 +351,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         error: err.message || 'Voice generation failed',
       });
       setError(`Voice reply failed: ${err.message}`);
-      resumeOpenAiInput();
-      setPhase(socketRef.current ? 'listening' : 'idle');
+      const nextPhase = socketRef.current ? 'listening' : 'idle';
+      setPhase(nextPhase);
+      syncOpenAiInputWithMic(nextPhase);
     } finally {
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
@@ -421,9 +434,10 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         error: err.message || 'Voice generation failed',
       });
       setError(`Voice reply failed: ${err.message}`);
-      resumeOpenAiInput();
       setSelectedReplyId('');
-      setPhase(socketRef.current ? 'listening' : 'idle');
+      const nextPhase = socketRef.current ? 'listening' : 'idle';
+      setPhase(nextPhase);
+      syncOpenAiInputWithMic(nextPhase);
     } finally {
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
@@ -449,6 +463,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   function stopMicCapture() {
     setAudioLevel(0);
+    setMicInputEnabled(false);
 
     if (processorRef.current) {
       processorRef.current.onaudioprocess = null;
@@ -478,18 +493,23 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   function interruptPlayback() {
     if (phaseRef.current !== 'speaking') return;
-    if (!findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current)) return;
+    const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
+    if (!playback) return;
 
-    const currentReplyId = selectedReplyIdRef.current || currentSynthesisMessageIdRef.current;
+    const currentReplyId = playback.message.id || currentSynthesisMessageIdRef.current;
     if (currentReplyId) {
       cancelledReplyIdsRef.current.add(currentReplyId);
       patchMessage(currentReplyId, { status: 'interrupted' });
     }
+    if (playback.part) {
+      patchAudioPart(playback.message.id, playback.part.id, { status: 'interrupted' });
+    }
 
     setSelectedReplyId('');
-    resumeOpenAiInput();
     setPhase('listening');
-    showNotice('You interrupted. Listening...');
+    syncOpenAiInputWithMic('listening');
+    setInterimTranscript(micInputEnabledRef.current ? 'Listening...' : '');
+    showNotice(micInputEnabledRef.current ? 'Voice stopped. Listening...' : 'Voice stopped. Mic is off.');
   }
 
   function playReply(messageId) {
@@ -513,6 +533,20 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     }
   }
 
+  async function requestMicStream() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('This browser does not support live microphone recording.');
+    }
+
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  }
+
   function startMicCapture(stream) {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) {
@@ -531,6 +565,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     sourceRef.current = source;
     processorRef.current = processor;
     setSpeechApiAvailable(true);
+    setMicInputEnabled(true);
 
     let smoothedLevel = 0;
     processor.onaudioprocess = (event) => {
@@ -542,18 +577,46 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       smoothedLevel = smoothedLevel * 0.82 + rms * 0.18;
       setAudioLevel(Math.min(1, smoothedLevel * 5));
 
-      if (phaseRef.current === 'speaking') {
-        const playbackReady = Boolean(findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current));
-        if (playbackReady && rms >= LIVE_SPEECH_THRESHOLD) {
-          interruptPlayback();
-        }
-        return;
-      }
-
-      if (isInputPhase(phaseRef.current)) {
+      if (shouldSendLiveMicAudio({
+        phase: phaseRef.current,
+        micInputEnabled: micInputEnabledRef.current,
+      })) {
         sendAudioChunk(input, audioCtx.sampleRate);
       }
     };
+  }
+
+  async function enableMicInput() {
+    if (phaseRef.current === 'idle') {
+      start();
+      return;
+    }
+    if (micInputEnabledRef.current) return;
+
+    try {
+      const stream = await requestMicStream();
+      streamRef.current = stream;
+      startMicCapture(stream);
+      syncOpenAiInputWithMic();
+      if (isLiveInputPhase(phaseRef.current)) {
+        setInterimTranscript('Listening...');
+      }
+      showNotice('Mic on.');
+    } catch (err) {
+      setError(err.message === 'This browser does not support live microphone recording.'
+        ? err.message
+        : 'Microphone access denied. Please allow microphone access and try again.');
+    }
+  }
+
+  function disableMicInput() {
+    if (!micInputEnabledRef.current) return;
+    stopMicCapture();
+    pauseOpenAiInput();
+    setInterimTranscript('');
+    showNotice(phaseRef.current === 'speaking'
+      ? 'Mic off. Voice playback continues.'
+      : 'Mic off. Conversation stays open.');
   }
 
   function handleSocketEvent(event, runId) {
@@ -676,11 +739,6 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       setError('No reference audio configured. Go to the Inference page first.');
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError('This browser does not support live microphone recording.');
-      return;
-    }
-
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
     isCancelledRef.current = false;
@@ -695,16 +753,12 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-    } catch {
+      stream = await requestMicStream();
+    } catch (err) {
       setPhase('idle');
-      setError('Microphone access denied. Please allow microphone access and try again.');
+      setError(err.message === 'This browser does not support live microphone recording.'
+        ? err.message
+        : 'Microphone access denied. Please allow microphone access and try again.');
       return;
     }
 
@@ -757,13 +811,14 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       start();
       return;
     }
-    if (phaseRef.current === 'speaking') {
-      if (findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current)) {
-        interruptPlayback();
-      }
+    if (phaseRef.current === 'connecting' || phaseRef.current === 'stopping') {
       return;
     }
-    stop();
+    if (micInputEnabledRef.current) {
+      disableMicInput();
+      return;
+    }
+    enableMicInput();
   }
 
   function onAudioEnded() {
@@ -786,19 +841,21 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         return;
       }
 
-      resumeOpenAiInput();
       if (phaseRef.current === 'speaking') {
-        setPhase(socketRef.current ? 'listening' : 'idle');
-        setInterimTranscript(socketRef.current ? 'Listening...' : '');
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+        setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
       }
       return;
     }
 
-    resumeOpenAiInput();
     setSelectedReplyId('');
     if (phaseRef.current === 'speaking') {
-      setPhase(socketRef.current ? 'listening' : 'idle');
-      setInterimTranscript(socketRef.current ? 'Listening...' : '');
+      const nextPhase = socketRef.current ? 'listening' : 'idle';
+      setPhase(nextPhase);
+      syncOpenAiInputWithMic(nextPhase);
+      setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
     }
   }
 
@@ -837,12 +894,15 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     error,
     speechApiAvailable,
     audioLevel,
+    isMicInputEnabled: micInputEnabled,
     notice,
     isConversationActive: phase !== 'idle',
     shouldPlayAudio,
     start,
     stop,
     toggle,
+    enableMicInput,
+    disableMicInput,
     interruptPlayback,
     playReply,
     onAudioEnded,

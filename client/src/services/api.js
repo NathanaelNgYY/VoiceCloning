@@ -156,15 +156,40 @@ export function getCurrentInference() {
   return api.get('/inference/current');
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchGeneratedAudio(url, { attempts = 8, delayMs = 500 } = {}) {
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const audioRes = await fetch(url);
+    lastStatus = audioRes.status;
+
+    if (audioRes.ok) {
+      const blob = await audioRes.blob();
+      return new Blob([blob], { type: 'audio/wav' });
+    }
+
+    const canRetry = [403, 404, 409, 425].includes(audioRes.status);
+    if (!canRetry || attempt === attempts) {
+      break;
+    }
+
+    await sleep(delayMs * attempt);
+  }
+
+  throw new Error(`Generated audio is not ready yet (${lastStatus || 'network error'})`);
+}
+
 export async function getGenerationResult(sessionId) {
   await getStorageMode();
 
   if (isS3Mode()) {
     const res = await api.get(`/inference/result/${sessionId}`);
     const { url } = res.data;
-    const audioRes = await fetch(url);
-    const blob = await audioRes.blob();
-    return new Blob([blob], { type: 'audio/wav' });
+    return fetchGeneratedAudio(url);
   }
 
   const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });

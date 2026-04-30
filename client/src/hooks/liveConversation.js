@@ -11,6 +11,14 @@ export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
+export function isLiveInputPhase(phase) {
+  return phase === 'listening' || phase === 'thinking';
+}
+
+export function shouldSendLiveMicAudio({ phase, micInputEnabled }) {
+  return Boolean(micInputEnabled) && isLiveInputPhase(phase);
+}
+
 function ensurePhraseEnding(text) {
   if (/[.!?;:]$/.test(text)) return text;
   return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;
