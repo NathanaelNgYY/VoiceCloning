@@ -1,6 +1,6 @@
 # Lambda Serverless Backend + GPU Worker Guide
 
-Last updated: 2026-04-29
+Last updated: 2026-04-30
 
 This guide explains the new deployment shape:
 
@@ -495,31 +495,94 @@ aws lambda update-function-configuration `
   --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
 ```
 
-Optional but recommended: add an EventBridge schedule so Lambda checks idleness without a user opening the app. This only stops the instance when `/activity/status` says the worker is not training or generating and has been idle longer than `GPU_IDLE_STOP_MINUTES`.
+Required for automatic GPU shutdown: add an EventBridge schedule so Lambda checks idleness without a user opening the app. `GPU_IDLE_STOP_MINUTES` only sets the idle threshold inside Lambda. It does not run a timer by itself.
+
+The rule below calls the Lambda every five minutes. The actual shutdown happens only when `/activity/status` says the worker is not training or generating and has been idle longer than `GPU_IDLE_STOP_MINUTES`. With `GPU_IDLE_STOP_MINUTES=30`, stop time is roughly 30 to 35 minutes after last activity. With `GPU_IDLE_STOP_MINUTES=1` for testing, stop time is roughly 1 to 6 minutes.
 
 ```powershell
-$functionArn = "arn:aws:lambda:ap-northeast-2:YOUR_ACCOUNT_ID:function:Liu_Teng_Yu_Intern2026-Voice_Cloning_Project"
+$profile = "account3"
+$region = "ap-northeast-2"
+$functionName = "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project"
+$ruleName = "voice-cloning-gpu-idle-stop"
+
+$accountId = aws sts get-caller-identity `
+  --profile $profile `
+  --query Account `
+  --output text
+
+$functionArn = aws lambda get-function `
+  --profile $profile `
+  --region $region `
+  --function-name $functionName `
+  --query "Configuration.FunctionArn" `
+  --output text
 
 aws events put-rule `
-  --profile account3 `
-  --region ap-northeast-2 `
-  --name voice-cloning-gpu-idle-stop `
-  --schedule-expression "rate(5 minutes)"
+  --profile $profile `
+  --region $region `
+  --name $ruleName `
+  --schedule-expression "rate(5 minutes)" `
+  --state ENABLED
 
 aws lambda add-permission `
-  --profile account3 `
-  --region ap-northeast-2 `
-  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
+  --profile $profile `
+  --region $region `
+  --function-name $functionName `
   --statement-id AllowEventBridgeGpuIdleStop `
   --action lambda:InvokeFunction `
   --principal events.amazonaws.com `
-  --source-arn arn:aws:events:ap-northeast-2:YOUR_ACCOUNT_ID:rule/voice-cloning-gpu-idle-stop
+  --source-arn "arn:aws:events:$region:$accountId:rule/$ruleName"
+
+$targetInput = '{"rawPath":"/api/instance/idle-check","requestContext":{"http":{"method":"POST"}}}'
+$targets = @(
+  @{
+    Id = "1"
+    Arn = $functionArn
+    Input = $targetInput
+  }
+) | ConvertTo-Json -Compress
+
+Set-Content -Path ".\eventbridge-targets.json" -Value $targets
 
 aws events put-targets `
+  --profile $profile `
+  --region $region `
+  --rule $ruleName `
+  --targets file://eventbridge-targets.json
+```
+
+If `add-permission` reports that `AllowEventBridgeGpuIdleStop` already exists, continue with `put-targets`.
+
+Verify the schedule:
+
+```powershell
+aws events describe-rule `
   --profile account3 `
   --region ap-northeast-2 `
-  --rule voice-cloning-gpu-idle-stop `
-  --targets "Id"="1","Arn"="$functionArn","Input"="{\"rawPath\":\"/api/instance/idle-check\",\"requestContext\":{\"http\":{\"method\":\"POST\"}}}"
+  --name voice-cloning-gpu-idle-stop
+
+aws events list-targets-by-rule `
+  --profile account3 `
+  --region ap-northeast-2 `
+  --rule voice-cloning-gpu-idle-stop
+```
+
+Manual idle-check test:
+
+```powershell
+curl -X POST https://d3dghqhnk7aoku.cloudfront.net/api/instance/idle-check
+curl https://d3dghqhnk7aoku.cloudfront.net/api/instance/status
+```
+
+Expected after the worker has been idle longer than the threshold:
+
+```json
+{
+  "checked": true,
+  "stopped": true,
+  "reason": "idle-timeout",
+  "state": "stopping"
+}
 ```
 
 Create the Function URL. The currently working setting is `NONE`:
@@ -673,6 +736,42 @@ npm install
 npm run build
 aws s3 sync dist/ s3://interns2026-small-projects-bucket-shared/echolect/dist/ --delete
 aws cloudfront create-invalidation --distribution-id E2KTGN0G56FW71 --paths "/*"
+```
+
+Frontend-only changes, such as UI text, retry timing, mic controls, replay buttons, and local live-chat state handling, need only the build/sync/invalidation commands above.
+
+Changes under `live-gateway/` need a GPU EC2 service restart after pulling the code:
+
+```bash
+cd ~/VoiceCloning
+git pull
+cd live-gateway
+npm install
+sudo systemctl restart live-gateway
+sudo systemctl status live-gateway
+```
+
+Changes under `lambda/` need:
+
+```powershell
+cd lambda
+npm run package:function-url
+aws lambda update-function-code `
+  --profile account3 `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
+  --zip-file fileb://.dist/voice-cloning-function-url.zip
+```
+
+Changes under `gpu-worker/` need a GPU EC2 service restart:
+
+```bash
+cd ~/VoiceCloning
+git pull
+cd gpu-worker
+npm install
+sudo systemctl restart gpu-worker
+sudo systemctl status gpu-worker
 ```
 
 No deployment env should use the GPU EC2 public IP directly. Use:

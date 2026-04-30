@@ -1,12 +1,12 @@
 # Live Chatbot Handoff
 
-Last updated: 2026-04-29
+Last updated: 2026-04-30
 
 This is the short context file to read first when starting new development on the Live chatbot work.
 
 ## Current Branch State
 
-- Current working branch during this handoff: `deployment`.
+- Current working branch during this handoff: `deployment-with-changes`.
 - The Live chatbot feature history is also on `chatbot-integrationV1`.
 - Latest relevant commit: `90055cb feat: add fast live phrase playback mode`.
 - Training and normal Inference paths should stay untouched unless a shared route boundary requires it.
@@ -38,8 +38,11 @@ There are now two Live modes:
 
 - Assistant replies must be English-only for now.
 - Only cloned GPT-SoVITS audio is played. OpenAI audio output is not requested and not played.
-- While cloned voice is playing, mic input to OpenAI is paused.
-- If the user speaks/taps during cloned playback, local cloned playback is interrupted and input resumes.
+- While cloned voice is playing, audio input to OpenAI is paused so assistant TTS is not fed back into the next user turn.
+- If the user speaks during cloned playback, the browser uses local mic level as a barge-in signal: local cloned playback is interrupted, input resumes, and the speech becomes the next user turn.
+- If the user turns the mic off while speaking, the browser sends a short silence tail, then sends `input.commit` through `live-gateway` so OpenAI finishes transcription and generates from that user transcript.
+- After mic-off submits a turn, the browser can keep a local barge-in monitor armed during playback without sending audio until the user actually speaks over the reply.
+- `Play voice` must replay ready or already-played audio. In Live Fast, replay starts from the first available phrase clip and advances through later ready/played clips.
 - The frontend should not send `response.cancel` just because cloned playback was interrupted. That caused:
 
 ```text
@@ -155,6 +158,15 @@ CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 
 `gpu-worker` does not need `OPENAI_API_KEY`; OpenAI Realtime belongs to `live-gateway`.
 
+Live gateway must support these browser control messages:
+
+- `audio.chunk` -> `input_audio_buffer.append`
+- `input.pause` -> pause/clear current OpenAI input buffer
+- `input.resume` -> allow new input audio chunks
+- `input.commit` -> `input_audio_buffer.commit`, then `response.create`
+
+If mic-off gets stuck at transcription in deployment, first confirm that the deployed `live-gateway` code includes `input.commit` support and that `live-gateway.service` has been restarted after `git pull`.
+
 ## Lambda Function URL Env
 
 For the current public-ALB test deployment:
@@ -165,9 +177,12 @@ S3Region=ap-southeast-1
 S3Prefix=echolect/
 GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 GpuWorkerPublicUrl=https://d3dghqhnk7aoku.cloudfront.net
-ModelSource=gpu-worker
+ModelSource=s3
 ArtifactSource=s3
 CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
+GpuInstanceId=i-03f258d470a2fa73f
+GpuInstanceRegion=ap-northeast-2
+GpuIdleStopMinutes=30
 ```
 
 Keep `S3Region=ap-southeast-1` even though Lambda is in `ap-northeast-2`. The S3 region must match the bucket, not the Lambda function. Using the Lambda region caused this error: `The bucket you are attempting to access must be addressed using the specified endpoint`.
@@ -175,6 +190,8 @@ Keep `S3Region=ap-southeast-1` even though Lambda is in `ap-northeast-2`. The S3
 Do not pass `VpcSubnetIds` or `VpcSecurityGroupIds` while Lambda calls the public ALB. Add those only after the GPU worker moves behind private networking.
 
 The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront. Current Function URL auth is `NONE` for the working deployment; the intended secure target is `AWS_IAM` once the CloudFront OAC signature mismatch is resolved or replaced by API Gateway HTTP API.
+
+`GpuIdleStopMinutes` only defines the idle threshold. Lambda does not run on a timer by itself; EventBridge must call `/api/instance/idle-check` periodically. Manual `curl -X POST https://d3dghqhnk7aoku.cloudfront.net/api/instance/idle-check` proves the stop path, but automatic shutdown requires the EventBridge rule and target in the deployment guide.
 
 Future production direction: move Lambda to Seoul (`ap-northeast-2`) and keep GPU EC2 private.
 
@@ -372,8 +389,8 @@ npm --prefix client run build
 
 Expected current results:
 
-- Client helper tests: 4 passing.
-- Live gateway route tests pass.
+- Client helper/reference tests: 14 passing when run with `node --test client/src/hooks/liveConversation.test.js client/src/lib/referenceSelection.test.js`.
+- Live gateway tests: 5 passing.
 - Client production build passes.
 
 Useful grep checks:
