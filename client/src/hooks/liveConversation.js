@@ -19,6 +19,15 @@ export function shouldSendLiveMicAudio({ phase, micInputEnabled }) {
   return Boolean(micInputEnabled) && isLiveInputPhase(phase);
 }
 
+export function shouldTriggerLiveBargeIn({
+  phase,
+  micInputEnabled,
+  rms,
+  threshold = 0.04,
+}) {
+  return phase === 'speaking' && Boolean(micInputEnabled) && Number(rms) >= threshold;
+}
+
 export function getMicOffAction({ phase, hasPendingAudio }) {
   if (phase === 'listening' && hasPendingAudio) {
     return 'commit';
@@ -118,10 +127,14 @@ export function findNextPhrasePlayback(messages, selectedId) {
 
     const nextPart = parts
       .slice(currentIndex + 1)
-      .find((part) => part.audioUrl && part.status === 'ready');
+      .find((part) => part.audioUrl && ['ready', 'played'].includes(part.status));
 
     return nextPart ? { message, part: nextPart, audioUrl: nextPart.audioUrl } : null;
   }
 
   return null;
+}
+
+export function findFirstReplayablePart(message) {
+  return (message?.audioParts || []).find((part) => part.audioUrl) || null;
 }

@@ -229,6 +229,10 @@ export default function LivePage({ replyMode = 'full' }) {
   const isConversationActive = liveSpeech.phase !== 'idle';
   const isListening = liveSpeech.isMicInputEnabled
     && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
+  const canBargeIn = liveSpeech.isMicInputEnabled || liveSpeech.isBargeInArmed;
+  const meterActive = (liveSpeech.isMicInputEnabled
+    && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking'))
+    || (canBargeIn && liveSpeech.phase === 'speaking');
   const buttonDisabled =
     !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping';
   const phaseLabel =
@@ -250,7 +254,11 @@ export default function LivePage({ replyMode = 'full' }) {
       connecting: 'Connecting to the live assistant...',
       listening: liveSpeech.isMicInputEnabled ? 'Listening...' : 'Mic off. Voice chat is still open.',
       thinking: 'Thinking...',
-      speaking: liveSpeech.audioSrc ? 'Playing cloned voice reply...' : 'Preparing cloned voice reply...',
+      speaking: liveSpeech.audioSrc
+        ? canBargeIn
+          ? 'Playing cloned voice reply. Speak to interrupt.'
+          : 'Playing cloned voice reply...'
+        : 'Preparing cloned voice reply...',
       stopping: 'Stopping conversation...',
     }[liveSpeech.phase] ||
     'Ready for an English voice chat.';
@@ -343,7 +351,9 @@ export default function LivePage({ replyMode = 'full' }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-950">{statusText}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {liveSpeech.isMicInputEnabled
+                  {canBargeIn && liveSpeech.phase === 'speaking'
+                    ? 'Speak over playback to stop it and start your next turn.'
+                    : liveSpeech.isMicInputEnabled
                     ? 'Mic input is available when the assistant is listening.'
                     : 'Mic input is off; voice playback can continue.'}
                 </p>
@@ -374,7 +384,7 @@ export default function LivePage({ replyMode = 'full' }) {
                     End
                   </Button>
                 )}
-                <MicLevelMeter level={liveSpeech.audioLevel} active={isListening} />
+                <MicLevelMeter level={liveSpeech.audioLevel} active={meterActive} />
                 <button
                   type="button"
                   className={cn(

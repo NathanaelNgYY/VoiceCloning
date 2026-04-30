@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import {
   buildLiveReplyParams,
   createChatMessage,
+  findFirstReplayablePart,
   findSelectedPlayback,
   findNextPhrasePlayback,
   getMicOffAction,
   splitLiveReplyPhrases,
+  shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
@@ -97,6 +99,20 @@ test('findNextPhrasePlayback advances through every ready phrase clip in order',
   assert.equal(findNextPhrasePlayback([message], 'reply-1-part-3'), null);
 });
 
+test('findNextPhrasePlayback can replay phrase clips that were already played', () => {
+  const message = createChatMessage({
+    id: 'reply-replay',
+    role: 'assistant',
+    audioParts: [
+      { id: 'reply-replay-part-1', index: 1, status: 'played', audioUrl: 'blob:first' },
+      { id: 'reply-replay-part-2', index: 2, status: 'played', audioUrl: 'blob:second' },
+    ],
+  });
+
+  const second = findNextPhrasePlayback([message], 'reply-replay-part-1');
+  assert.equal(second.part.id, 'reply-replay-part-2');
+});
+
 test('shouldSendLiveMicAudio only allows enabled mic input during listening phases', () => {
   assert.equal(shouldSendLiveMicAudio({ phase: 'listening', micInputEnabled: true }), true);
   assert.equal(shouldSendLiveMicAudio({ phase: 'thinking', micInputEnabled: true }), true);
@@ -109,4 +125,40 @@ test('getMicOffAction commits active speech without pausing an in-flight respons
   assert.equal(getMicOffAction({ phase: 'listening', hasPendingAudio: false }), 'pause');
   assert.equal(getMicOffAction({ phase: 'thinking', hasPendingAudio: true }), 'wait');
   assert.equal(getMicOffAction({ phase: 'speaking', hasPendingAudio: true }), 'pause');
+});
+
+test('findFirstReplayablePart allows replaying clips that were already played', () => {
+  const message = createChatMessage({
+    id: 'reply-2',
+    role: 'assistant',
+    audioParts: [
+      { id: 'reply-2-part-1', index: 1, status: 'played', audioUrl: 'blob:first' },
+      { id: 'reply-2-part-2', index: 2, status: 'ready', audioUrl: 'blob:second' },
+    ],
+  });
+
+  assert.equal(findFirstReplayablePart(message).id, 'reply-2-part-1');
+});
+
+test('shouldTriggerLiveBargeIn only reacts to deliberate speech during cloned playback', () => {
+  assert.equal(shouldTriggerLiveBargeIn({
+    phase: 'speaking',
+    micInputEnabled: true,
+    rms: 0.06,
+  }), true);
+  assert.equal(shouldTriggerLiveBargeIn({
+    phase: 'speaking',
+    micInputEnabled: true,
+    rms: 0.01,
+  }), false);
+  assert.equal(shouldTriggerLiveBargeIn({
+    phase: 'listening',
+    micInputEnabled: true,
+    rms: 0.06,
+  }), false);
+  assert.equal(shouldTriggerLiveBargeIn({
+    phase: 'speaking',
+    micInputEnabled: false,
+    rms: 0.06,
+  }), false);
 });

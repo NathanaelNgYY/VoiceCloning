@@ -7,16 +7,21 @@ import {
   buildLiveReplyParams,
   cleanLiveText,
   createChatMessage,
+  findFirstReplayablePart,
   findNextPhrasePlayback,
   findSelectedPlayback,
   getMicOffAction,
   isLiveInputPhase,
   splitLiveReplyPhrases,
+  shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
 
 const LIVE_TARGET_SAMPLE_RATE = 24000;
+const MANUAL_COMMIT_SILENCE_MS = 360;
+const BARGE_IN_MIN_FRAMES = 2;
+const BARGE_IN_COOLDOWN_MS = 900;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -94,6 +99,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   const [error, setError] = useState(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [micInputEnabled, setMicInputEnabledState] = useState(false);
+  const [bargeInArmed, setBargeInArmedState] = useState(false);
   const [notice, setNotice] = useState('');
   const [speechApiAvailable, setSpeechApiAvailable] = useState(
     typeof window !== 'undefined' && Boolean(window.AudioContext || window.webkitAudioContext)
@@ -119,6 +125,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
+  const bargeInArmedRef = useRef(false);
+  const bargeInFramesRef = useRef(0);
+  const lastBargeInAtRef = useRef(0);
 
   function setPhase(phase) {
     phaseRef.current = phase;
@@ -133,6 +142,11 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   function setMicInputEnabled(value) {
     micInputEnabledRef.current = Boolean(value);
     setMicInputEnabledState(Boolean(value));
+  }
+
+  function setBargeInArmed(value) {
+    bargeInArmedRef.current = Boolean(value);
+    setBargeInArmedState(Boolean(value));
   }
 
   function setMessagesSync(updater) {
@@ -211,6 +225,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     activeAssistantMessageIdRef.current = '';
     currentSynthesisMessageIdRef.current = '';
     pendingInputAudioRef.current = false;
+    setBargeInArmed(false);
+    bargeInFramesRef.current = 0;
+    lastBargeInAtRef.current = 0;
     cancelledReplyIdsRef.current = new Set();
     userTextBuffersRef.current = new Map();
   }
@@ -274,6 +291,11 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       pendingInputAudioRef.current = false;
     }
     return sent;
+  }
+
+  function sendManualCommitTail() {
+    const sampleCount = Math.round((LIVE_TARGET_SAMPLE_RATE * MANUAL_COMMIT_SILENCE_MS) / 1000);
+    sendAudioChunk(new Float32Array(sampleCount), LIVE_TARGET_SAMPLE_RATE);
   }
 
   function syncOpenAiInputWithMic(nextPhase = phaseRef.current) {
@@ -475,6 +497,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   function stopMicCapture() {
     setAudioLevel(0);
     setMicInputEnabled(false);
+    setBargeInArmed(false);
 
     if (processorRef.current) {
       processorRef.current.onaudioprocess = null;
@@ -505,14 +528,14 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   function interruptPlayback() {
     if (phaseRef.current !== 'speaking') return;
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
-    if (!playback) return;
+    const currentReplyId = playback?.message.id || currentSynthesisMessageIdRef.current;
+    if (!playback && !currentReplyId) return;
 
-    const currentReplyId = playback.message.id || currentSynthesisMessageIdRef.current;
     if (currentReplyId) {
       cancelledReplyIdsRef.current.add(currentReplyId);
       patchMessage(currentReplyId, { status: 'interrupted' });
     }
-    if (playback.part) {
+    if (playback?.part) {
       patchAudioPart(playback.message.id, playback.part.id, { status: 'interrupted' });
     }
 
@@ -526,7 +549,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   function playReply(messageId) {
     const message = messagesRef.current.find((item) => item.id === messageId);
     if (!message || message.role !== 'assistant') return;
-    const playbackId = isPhraseMode ? firstReadyPart(message)?.id : message.id;
+    const playbackId = isPhraseMode ? findFirstReplayablePart(message)?.id : message.id;
     if (!playbackId) return;
     pauseOpenAiInput();
     setSelectedReplyId(playbackId);
@@ -544,6 +567,12 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       setError(`Live audio failed: ${err.message}`);
       return false;
     }
+  }
+
+  function armBargeInMonitor() {
+    setAudioLevel(0);
+    setMicInputEnabled(false);
+    setBargeInArmed(true);
   }
 
   async function requestMicStream() {
@@ -590,10 +619,36 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       smoothedLevel = smoothedLevel * 0.82 + rms * 0.18;
       setAudioLevel(Math.min(1, smoothedLevel * 5));
 
+      let sentForBargeIn = false;
+      if (shouldTriggerLiveBargeIn({
+        phase: phaseRef.current,
+        micInputEnabled: micInputEnabledRef.current || bargeInArmedRef.current,
+        rms: smoothedLevel,
+      })) {
+        bargeInFramesRef.current += 1;
+      } else {
+        bargeInFramesRef.current = 0;
+      }
+
+      if (
+        bargeInFramesRef.current >= BARGE_IN_MIN_FRAMES
+        && Date.now() - lastBargeInAtRef.current > BARGE_IN_COOLDOWN_MS
+      ) {
+        lastBargeInAtRef.current = Date.now();
+        bargeInFramesRef.current = 0;
+        setMicInputEnabled(true);
+        setBargeInArmed(false);
+        interruptPlayback();
+        sentForBargeIn = sendAudioChunk(input, audioCtx.sampleRate);
+        if (sentForBargeIn && rms > 0.006) {
+          pendingInputAudioRef.current = true;
+        }
+      }
+
       if (shouldSendLiveMicAudio({
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current,
-      })) {
+      }) && !sentForBargeIn) {
         const sent = sendAudioChunk(input, audioCtx.sampleRate);
         if (sent && rms > 0.006) {
           pendingInputAudioRef.current = true;
@@ -608,6 +663,17 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       return;
     }
     if (micInputEnabledRef.current) return;
+
+    if (processorRef.current && streamRef.current) {
+      setMicInputEnabled(true);
+      setBargeInArmed(false);
+      syncOpenAiInputWithMic();
+      if (isLiveInputPhase(phaseRef.current)) {
+        setInterimTranscript('Listening...');
+      }
+      showNotice('Mic on.');
+      return;
+    }
 
     try {
       const stream = await requestMicStream();
@@ -633,17 +699,19 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       hasPendingAudio: pendingInputAudioRef.current,
     });
 
-    stopMicCapture();
-
     if (action === 'commit') {
+      armBargeInMonitor();
       const id = ensureUserMessage();
       patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
       setPhase('thinking');
       setInterimTranscript('Thinking...');
+      sendManualCommitTail();
       commitOpenAiInput();
-      showNotice('Mic off. Sending what you said.');
+      showNotice('Mic off. Sending what you said. You can speak over the reply to interrupt.');
       return;
     }
+
+    stopMicCapture();
 
     if (action === 'pause') {
       pauseOpenAiInput();
@@ -893,6 +961,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         setPhase(nextPhase);
         syncOpenAiInputWithMic(nextPhase);
         setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
+        if (!micInputEnabledRef.current && bargeInArmedRef.current) {
+          stopMicCapture();
+        }
       }
       return;
     }
@@ -903,6 +974,9 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
       setPhase(nextPhase);
       syncOpenAiInputWithMic(nextPhase);
       setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
+      if (!micInputEnabledRef.current && bargeInArmedRef.current) {
+        stopMicCapture();
+      }
     }
   }
 
@@ -942,6 +1016,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     speechApiAvailable,
     audioLevel,
     isMicInputEnabled: micInputEnabled,
+    isBargeInArmed: bargeInArmed,
     notice,
     isConversationActive: phase !== 'idle',
     shouldPlayAudio,
