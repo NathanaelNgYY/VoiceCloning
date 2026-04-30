@@ -35,6 +35,12 @@ test('preprocessText: 21st -> twenty-first', () => {
 test('preprocessText: 30th -> thirtieth', () => {
   assert.equal(preprocessText('the 30th anniversary'), 'the thirtieth anniversary');
 });
+test('preprocessText: 101st -> one hundred and first', () => {
+  assert.equal(preprocessText('the 101st Airborne'), 'the one hundred and first Airborne');
+});
+test('preprocessText: 100th -> one hundredth', () => {
+  assert.equal(preprocessText('the 100th time'), 'the one hundredth time');
+});
 
 // Currency
 test('preprocessText: $50 -> fifty dollars', () => {

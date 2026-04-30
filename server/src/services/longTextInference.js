@@ -208,7 +208,15 @@ function ordinalWords(n) {
     if (n % 10 === 0) return NUM_ORDINAL_TENS[Math.floor(n / 10)];
     return `${NUM_TENS[Math.floor(n / 10)]}-${NUM_ORDINAL_ONES[n % 10]}`;
   }
-  return `${cardinalWords(n)}th`;
+  // For n >= 100: build cardinal prefix for hundreds and add ordinal suffix for the remainder
+  const remainder = n % 100;
+  const hundredsPrefix = `${NUM_ONES[Math.floor(n / 100)]} hundred`;
+  if (remainder === 0) return `${hundredsPrefix}th`;
+  if (remainder < 20) return `${hundredsPrefix} and ${NUM_ORDINAL_ONES[remainder]}`;
+  const tens = Math.floor(remainder / 10);
+  const ones = remainder % 10;
+  if (ones === 0) return `${hundredsPrefix} and ${NUM_ORDINAL_TENS[tens]}`;
+  return `${hundredsPrefix} and ${NUM_TENS[tens]}-${NUM_ORDINAL_ONES[ones]}`;
 }
 
 function yearWords(n) {
