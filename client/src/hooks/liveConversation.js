@@ -1,4 +1,3 @@
-export const LIVE_TEXT_LANG = 'en';
 export const LIVE_REPLY_MODES = {
   full: 'full',
   phrases: 'phrases',
@@ -24,21 +23,6 @@ export function splitLiveReplyPhrases(text) {
   return matches
     .map((part) => ensurePhraseEnding(part.trim()))
     .filter(Boolean);
-}
-
-export function buildLiveReplyParams(text, refParams = {}) {
-  return {
-    text: cleanLiveText(text),
-    text_lang: LIVE_TEXT_LANG,
-    ref_audio_path: refParams.ref_audio_path,
-    prompt_text: refParams.prompt_text || '',
-    prompt_lang: refParams.prompt_lang || 'en',
-    aux_ref_audio_paths: refParams.aux_ref_audio_paths || [],
-  };
-}
-
-export function buildLiveSentenceParams(text, refParams = {}) {
-  return buildLiveReplyParams(text, refParams);
 }
 
 export function createChatMessage({

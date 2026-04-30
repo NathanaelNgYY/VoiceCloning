@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getCurrentInference, getInferenceStatus } from '../services/api.js';
+import { getSelectedVoiceId } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,8 +17,6 @@ import {
   UserRound,
   Volume2,
 } from 'lucide-react';
-
-const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
 
 function messageStatusText(message) {
   if (message.role === 'user') {
@@ -140,64 +138,11 @@ function ChatBubble({ message, selected, onPlay }) {
 
 export default function LivePage({ replyMode = 'full' }) {
   const isFastMode = replyMode === 'phrases';
-  const [serverReady, setServerReady] = useState(false);
-  const [loadedVoiceName, setLoadedVoiceName] = useState('');
-  const [refParams, setRefParams] = useState(null);
+  const [voiceId] = useState(() => getSelectedVoiceId());
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  useEffect(() => {
-    async function init() {
-      try {
-        const statusRes = await getInferenceStatus();
-        setServerReady(Boolean(statusRes.data.ready));
-        const loaded = statusRes.data.loaded;
-        if (loaded?.sovitsPath) {
-          const name =
-            loaded.sovitsPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.pth$/i, '') || '';
-          setLoadedVoiceName(name);
-        }
-      } catch {
-        setServerReady(false);
-      }
-
-      try {
-        const currentRes = await getCurrentInference();
-        const params = currentRes.data?.params;
-        if (params?.ref_audio_path) {
-          setRefParams({
-            ref_audio_path: params.ref_audio_path,
-            prompt_text: params.prompt_text || '',
-            prompt_lang: params.prompt_lang || 'en',
-            aux_ref_audio_paths: params.aux_ref_audio_paths || [],
-          });
-          return;
-        }
-      } catch {
-        // Fall through to localStorage.
-      }
-
-      try {
-        const raw = window.localStorage.getItem(INFERENCE_DRAFT_KEY);
-        if (raw) {
-          const draft = JSON.parse(raw);
-          if (draft.refAudioPath) {
-            setRefParams({
-              ref_audio_path: draft.refAudioPath,
-              prompt_text: draft.promptText || '',
-              prompt_lang: draft.promptLang || 'en',
-              aux_ref_audio_paths: (draft.auxRefAudios || []).map((file) => file.path),
-            });
-          }
-        }
-      } catch {
-        // Ignore stale local draft data.
-      }
-    }
-    init();
-  }, []);
-
-  const liveSpeech = useLiveSpeech({ refParams, replyMode });
+  const liveSpeech = useLiveSpeech({ voiceId, replyMode });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
 
   useEffect(() => {
@@ -222,7 +167,7 @@ export default function LivePage({ replyMode = 'full' }) {
     audio.play().catch(() => {});
   }, [liveSpeech.audioSrc, liveSpeech.selectedReplyId, playbackReady]);
 
-  const isReady = serverReady && Boolean(refParams);
+  const isReady = Boolean(voiceId);
   const isListening = liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking';
   const isGeneratingVoice = liveSpeech.phase === 'speaking' && !liveSpeech.audioSrc;
   const buttonDisabled =
@@ -252,23 +197,11 @@ export default function LivePage({ replyMode = 'full' }) {
     <div className="animate-fade-in space-y-6">
       {!isReady && (
         <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          {!serverReady ? (
-            <>
-              No voice model is loaded.{' '}
-              <Link to="/inference" className="font-semibold underline">
-                Go to Inference
-              </Link>{' '}
-              to load one first.
-            </>
-          ) : (
-            <>
-              No reference audio found.{' '}
-              <Link to="/inference" className="font-semibold underline">
-                Go to Inference
-              </Link>{' '}
-              and generate at least once to set a reference.
-            </>
-          )}
+          No voice selected.{' '}
+          <Link to="/inference" className="font-semibold underline">
+            Go to Inference
+          </Link>{' '}
+          and select a cloned voice first.
         </div>
       )}
 
@@ -374,16 +307,8 @@ export default function LivePage({ replyMode = 'full' }) {
             </div>
             <div className="space-y-3 text-sm">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model</p>
-                <p className="mt-1 text-slate-800">{serverReady ? loadedVoiceName || 'Loaded' : 'Not loaded'}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reference</p>
-                <p className="mt-1 break-all text-slate-800">
-                  {refParams?.ref_audio_path
-                    ? refParams.ref_audio_path.replace(/\\/g, '/').split('/').pop()
-                    : 'Not selected'}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</p>
+                <p className="mt-1 text-slate-800">{voiceId ? 'Selected' : 'Not selected'}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Language</p>

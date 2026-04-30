@@ -10,27 +10,15 @@ import {
   CLIENT_DIST_DIR,
   CORS_ORIGINS,
   ALLOW_ALL_CORS,
-  ensureRuntimeDirectories,
   getConfigError,
-  INFERENCE_MODE,
-  isLocalInferenceMode,
-  isS3Mode,
 } from './config.js';
-import { processManager } from './services/processManager.js';
-import { sseManager } from './services/sseManager.js';
-import { trainingState } from './services/trainingState.js';
-import { inferenceServer } from './services/inferenceServer.js';
-import { inferenceState } from './services/inferenceState.js';
-import uploadRoutes from './routes/upload.js';
-import trainingRoutes from './routes/training.js';
-import inferenceRoutes from './routes/inference.js';
+import voicesRoutes from './routes/voices.js';
+import ttsRoutes from './routes/tts.js';
 import { attachLiveChatSocket } from './routes/liveChat.js';
 
 const app = express();
 
-if (TRUST_PROXY) {
-  app.set('trust proxy', true);
-}
+if (TRUST_PROXY) app.set('trust proxy', true);
 
 if (ALLOW_ALL_CORS) {
   app.use(cors());
@@ -41,7 +29,6 @@ if (ALLOW_ALL_CORS) {
         callback(null, true);
         return;
       }
-
       callback(new Error('Origin not allowed by CORS'));
     },
   }));
@@ -51,47 +38,22 @@ if (ALLOW_ALL_CORS) {
 
 app.use(express.json());
 
-ensureRuntimeDirectories();
-
 app.get('/healthz', (_req, res) => {
-  res.json({
-    ok: true,
-    service: 'voice-cloning-server',
-    timestamp: Date.now(),
-  });
+  res.json({ ok: true, service: 'voice-cloning-server', timestamp: Date.now() });
 });
 
 app.get('/readyz', (_req, res) => {
-  const configError = getConfigError({ requireLocalRuntime: isLocalInferenceMode() });
+  const configError = getConfigError();
   const ready = !configError;
-  res.status(ready ? 200 : 503).json({
-    ready,
-    configError,
-    inferenceMode: INFERENCE_MODE,
-    storageMode: isS3Mode() ? 's3' : 'local',
-    trainingStatus: trainingState.getState().status,
-    inferenceStatus: inferenceState.getState().status,
-  });
+  res.status(ready ? 200 : 503).json({ ready, configError });
 });
 
 app.get('/api/config', (_req, res) => {
-  res.json({
-    storageMode: isS3Mode() ? 's3' : 'local',
-    inferenceMode: INFERENCE_MODE,
-  });
+  res.json({ storageMode: 'local' });
 });
 
-// Wire processManager events to SSE
-processManager.on('log', ({ sessionId, stream, data }) => {
-  const payload = { stream, data, timestamp: Date.now() };
-  trainingState.appendLog(payload);
-  sseManager.send(sessionId, 'log', payload);
-});
-
-// Routes
-app.use('/api', uploadRoutes);
-app.use('/api', trainingRoutes);
-app.use('/api', inferenceRoutes);
+app.use('/api', voicesRoutes);
+app.use('/api', ttsRoutes);
 
 if (SERVE_CLIENT_DIST) {
   const indexPath = path.join(CLIENT_DIST_DIR, 'index.html');
@@ -101,24 +63,18 @@ if (SERVE_CLIENT_DIST) {
       res.sendFile(indexPath);
     });
   } else {
-    console.warn(`[client] SERVE_CLIENT_DIST is enabled, but no build was found at ${CLIENT_DIST_DIR}`);
+    console.warn(`[client] SERVE_CLIENT_DIST is enabled but no build found at ${CLIENT_DIST_DIR}`);
   }
 }
 
-// Prevent server crashes from unhandled errors
-process.on('uncaughtException', (err) => {
-  console.error('[UNCAUGHT EXCEPTION]', err);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('[UNHANDLED REJECTION]', reason);
-});
+process.on('uncaughtException', (err) => console.error('[UNCAUGHT EXCEPTION]', err));
+process.on('unhandledRejection', (reason) => console.error('[UNHANDLED REJECTION]', reason));
 
 const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
   console.log(`Server running on http://${SERVER_HOST}:${SERVER_PORT}`);
 });
 const liveChatSocket = attachLiveChatSocket(server);
 
-// Disable server timeout so SSE connections survive long training runs
 server.timeout = 0;
 server.keepAliveTimeout = 0;
 server.headersTimeout = 0;
@@ -126,27 +82,12 @@ server.headersTimeout = 0;
 let shuttingDown = false;
 
 async function shutdown(signal) {
-  if (shuttingDown) {
-    return;
-  }
-
+  if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[shutdown] Received ${signal}, stopping services...`);
-  processManager.killAll();
-  try {
-    await inferenceServer.stop();
-  } catch (err) {
-    console.error('[shutdown] Failed to stop inference server cleanly:', err);
-  }
   liveChatSocket.close();
-
-  server.close(() => {
-    process.exit(0);
-  });
-
-  setTimeout(() => {
-    process.exit(1);
-  }, 10_000).unref();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10_000).unref();
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));

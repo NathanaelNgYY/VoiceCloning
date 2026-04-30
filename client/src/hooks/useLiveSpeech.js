@@ -3,8 +3,6 @@ import { synthesize, synthesizeSentence } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import {
   LIVE_REPLY_MODES,
-  buildLiveSentenceParams,
-  buildLiveReplyParams,
   cleanLiveText,
   createChatMessage,
   findNextPhrasePlayback,
@@ -87,7 +85,7 @@ function isInputPhase(phase) {
   return phase === 'listening' || phase === 'thinking';
 }
 
-export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } = {}) {
+export function useLiveSpeech({ voiceId, replyMode = LIVE_REPLY_MODES.full } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const [phase, setPhaseState] = useState('idle');
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -308,7 +306,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   }
 
   async function synthesizeFullAssistantReply(messageId, text, runId) {
-    if (!refParams) return;
+    if (!voiceId) return;
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
@@ -318,7 +316,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     patchMessage(messageId, { status: 'generating_voice', error: null });
 
     try {
-      const blob = await synthesizeWithRetry(buildLiveReplyParams(text, refParams));
+      const blob = await synthesizeWithRetry({ voiceId, text });
       if (
         isCancelledRef.current ||
         runId !== runIdRef.current ||
@@ -349,7 +347,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   }
 
   async function synthesizePhraseAssistantReply(messageId, text, runId) {
-    if (!refParams) return;
+    if (!voiceId) return;
 
     const phrases = splitLiveReplyPhrases(text);
     if (phrases.length === 0) return;
@@ -384,9 +382,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         }
 
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
-        const blob = await synthesizeSentenceWithRetry(
-          buildLiveSentenceParams(phrases[index], refParams)
-        );
+        const blob = await synthesizeSentenceWithRetry({ voiceId, text: phrases[index] });
 
         if (
           isCancelledRef.current ||
@@ -672,8 +668,8 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   async function start() {
     if (phaseRef.current !== 'idle') return;
-    if (!refParams) {
-      setError('No reference audio configured. Go to the Inference page first.');
+    if (!voiceId) {
+      setError('No voice selected. Go to the Inference page and select a voice first.');
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
