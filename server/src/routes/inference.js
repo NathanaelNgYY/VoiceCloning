@@ -16,7 +16,7 @@ import {
 } from '../config.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { sseManager } from '../services/sseManager.js';
-import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath, getSessionChunkPath } from '../services/longTextInference.js';
+import { synthesizeLongText, synthesizeLongTextStreaming, cancelSession, getSessionFinalPath, getSessionChunkPath, preprocessText } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { isPathInside, isSafePathSegment } from '../utils/paths.js';
 import { isS3Mode, generatePresignedGetUrl, listObjects, getObject } from '../services/s3Storage.js';
@@ -662,8 +662,9 @@ router.post('/live/tts-sentence', async (req, res) => {
 
   try {
     const resolved = await resolveRefAudioPaths(ref_audio_path, aux_ref_audio_paths);
+    const processedText = preprocessText(text.trim());
     const audioBuffer = await inferenceServer.synthesize({
-      text: `${text.trim()} `,
+      text: `${processedText} `,
       text_lang,
       ref_audio_path: resolved.refPath,
       prompt_text,
