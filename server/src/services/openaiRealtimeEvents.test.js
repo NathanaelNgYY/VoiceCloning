@@ -38,7 +38,10 @@ test('buildRealtimeSessionUpdate configures text-only OpenAI responses', () => {
 test('buildRealtimeSessionUpdate instructs the assistant to answer only in English', () => {
   const message = buildRealtimeSessionUpdate();
 
-  assert.match(message.session.instructions, /English/i);
+  assert.equal(
+    message.session.instructions,
+    'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English. Use commas to create natural rhythm in longer sentences, and em dashes — like this — for mid-sentence pauses. Use question marks on genuine questions.'
+  );
 });
 
 test('buildRealtimeSessionUpdate configures server VAD when requested', () => {

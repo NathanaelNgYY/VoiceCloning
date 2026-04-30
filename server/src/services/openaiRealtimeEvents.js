@@ -1,5 +1,5 @@
 const DEFAULT_SYSTEM_PROMPT =
-  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.';
+  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English. Use commas to create natural rhythm in longer sentences, and em dashes — like this — for mid-sentence pauses. Use question marks on genuine questions.';
 
 function cleanText(value) {
   return String(value || '').trim();
