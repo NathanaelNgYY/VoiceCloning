@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "dev": "node src/index.js",
     "build:client": "npm --prefix ../client run build",
-    "test:live-chat": "node --test src/services/openaiRealtimeEvents.test.js src/services/openaiRealtimeBridge.test.js src/routes/liveChat.test.js"
+    "test:live-chat": "node --test src/services/openaiRealtimeEvents.test.js src/services/openaiRealtimeBridge.test.js src/routes/liveChat.test.js",
+    "test:normalization": "node --test src/services/longTextInference.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1030.0",
