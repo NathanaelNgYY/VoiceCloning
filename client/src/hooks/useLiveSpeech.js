@@ -9,6 +9,7 @@ import {
   createChatMessage,
   findNextPhrasePlayback,
   findSelectedPlayback,
+  getMicOffAction,
   isLiveInputPhase,
   splitLiveReplyPhrases,
   shouldSendLiveMicAudio,
@@ -117,6 +118,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
   const userTextBuffersRef = useRef(new Map());
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
+  const pendingInputAudioRef = useRef(false);
 
   function setPhase(phase) {
     phaseRef.current = phase;
@@ -208,6 +210,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     activeUserMessageIdRef.current = '';
     activeAssistantMessageIdRef.current = '';
     currentSynthesisMessageIdRef.current = '';
+    pendingInputAudioRef.current = false;
     cancelledReplyIdsRef.current = new Set();
     userTextBuffersRef.current = new Map();
   }
@@ -263,6 +266,14 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   function resumeOpenAiInput() {
     socketRef.current?.send({ type: 'input.resume' });
+  }
+
+  function commitOpenAiInput() {
+    const sent = socketRef.current?.send({ type: 'input.commit' });
+    if (sent) {
+      pendingInputAudioRef.current = false;
+    }
+    return sent;
   }
 
   function syncOpenAiInputWithMic(nextPhase = phaseRef.current) {
@@ -524,12 +535,14 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   function sendAudioChunk(input, sampleRate) {
     try {
-      socketRef.current?.send({
+      const sent = socketRef.current?.send({
         type: 'audio.chunk',
         audio: encodeOpenAiAudioChunk(input, sampleRate),
       });
+      return Boolean(sent);
     } catch (err) {
       setError(`Live audio failed: ${err.message}`);
+      return false;
     }
   }
 
@@ -581,7 +594,10 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current,
       })) {
-        sendAudioChunk(input, audioCtx.sampleRate);
+        const sent = sendAudioChunk(input, audioCtx.sampleRate);
+        if (sent && rms > 0.006) {
+          pendingInputAudioRef.current = true;
+        }
       }
     };
   }
@@ -611,10 +627,37 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
   function disableMicInput() {
     if (!micInputEnabledRef.current) return;
+    const phaseAtToggle = phaseRef.current;
+    const action = getMicOffAction({
+      phase: phaseAtToggle,
+      hasPendingAudio: pendingInputAudioRef.current,
+    });
+
     stopMicCapture();
-    pauseOpenAiInput();
+
+    if (action === 'commit') {
+      const id = ensureUserMessage();
+      patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+      setPhase('thinking');
+      setInterimTranscript('Thinking...');
+      commitOpenAiInput();
+      showNotice('Mic off. Sending what you said.');
+      return;
+    }
+
+    if (action === 'pause') {
+      pauseOpenAiInput();
+      pendingInputAudioRef.current = false;
+    }
+
+    if (phaseAtToggle === 'thinking') {
+      setInterimTranscript('Thinking...');
+      showNotice('Mic off. Finishing the current reply.');
+      return;
+    }
+
     setInterimTranscript('');
-    showNotice(phaseRef.current === 'speaking'
+    showNotice(phaseAtToggle === 'speaking'
       ? 'Mic off. Voice playback continues.'
       : 'Mic off. Conversation stays open.');
   }
@@ -631,6 +674,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
       case 'user.speech.started': {
         if (phaseRef.current !== 'speaking') {
+          pendingInputAudioRef.current = true;
           ensureUserMessage();
           setPhase('listening');
           setInterimTranscript('Listening...');
@@ -640,6 +684,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
       case 'user.speech.stopped': {
         if (phaseRef.current !== 'speaking') {
+          pendingInputAudioRef.current = false;
           const id = ensureUserMessage();
           patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
           setPhase('thinking');
@@ -661,6 +706,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
         const id = ensureUserMessage(event.itemId);
         const key = event.itemId || id;
         userTextBuffersRef.current.delete(key);
+        pendingInputAudioRef.current = false;
         patchMessage(id, {
           itemId: event.itemId || '',
           text: cleanLiveText(event.text) || 'Voice message sent.',
@@ -674,6 +720,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
       case 'user.text.failed': {
         const id = ensureUserMessage(event.itemId);
+        pendingInputAudioRef.current = false;
         patchMessage(id, {
           text: 'Voice message sent.',
           status: 'done',

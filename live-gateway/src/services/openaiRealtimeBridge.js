@@ -44,6 +44,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.mapper = new RealtimeEventMapper();
     this.closed = false;
     this.inputPaused = false;
+    this.hasPendingAudio = false;
   }
 
   connect() {
@@ -146,19 +147,42 @@ export class OpenAiRealtimeBridge extends EventEmitter {
       return false;
     }
 
-    return this.sendOpenAi({
+    const sent = this.sendOpenAi({
       type: 'input_audio_buffer.append',
       audio: base64Audio,
     });
+
+    if (sent) {
+      this.hasPendingAudio = true;
+    }
+
+    return sent;
   }
 
   pauseInput() {
     this.inputPaused = true;
+    this.hasPendingAudio = false;
     return this.sendOpenAi({ type: 'input_audio_buffer.clear' });
   }
 
   resumeInput() {
     this.inputPaused = false;
+    return true;
+  }
+
+  commitInput() {
+    if (this.closed || this.inputPaused || !this.hasPendingAudio) {
+      return false;
+    }
+
+    const committed = this.sendOpenAi({ type: 'input_audio_buffer.commit' });
+    if (!committed) {
+      return false;
+    }
+
+    this.inputPaused = true;
+    this.hasPendingAudio = false;
+    this.sendOpenAi({ type: 'response.create' });
     return true;
   }
 

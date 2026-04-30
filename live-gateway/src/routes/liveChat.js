@@ -78,6 +78,11 @@ export function handleBrowserMessage(bridge, data) {
     return;
   }
 
+  if (message.type === 'input.commit') {
+    bridge.commitInput();
+    return;
+  }
+
   if (message.type === 'response.cancel') {
     bridge.cancelResponse();
   }

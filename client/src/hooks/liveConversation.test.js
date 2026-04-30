@@ -5,6 +5,7 @@ import {
   createChatMessage,
   findSelectedPlayback,
   findNextPhrasePlayback,
+  getMicOffAction,
   splitLiveReplyPhrases,
   shouldSendLiveMicAudio,
   updateMessage,
@@ -101,4 +102,11 @@ test('shouldSendLiveMicAudio only allows enabled mic input during listening phas
   assert.equal(shouldSendLiveMicAudio({ phase: 'thinking', micInputEnabled: true }), true);
   assert.equal(shouldSendLiveMicAudio({ phase: 'speaking', micInputEnabled: true }), false);
   assert.equal(shouldSendLiveMicAudio({ phase: 'listening', micInputEnabled: false }), false);
+});
+
+test('getMicOffAction commits active speech without pausing an in-flight response', () => {
+  assert.equal(getMicOffAction({ phase: 'listening', hasPendingAudio: true }), 'commit');
+  assert.equal(getMicOffAction({ phase: 'listening', hasPendingAudio: false }), 'pause');
+  assert.equal(getMicOffAction({ phase: 'thinking', hasPendingAudio: true }), 'wait');
+  assert.equal(getMicOffAction({ phase: 'speaking', hasPendingAudio: true }), 'pause');
 });

@@ -30,18 +30,21 @@ test('handleBrowserMessage forwards browser controls to bridge methods', () => {
     sendAudio(audio) { calls.push(['audio', audio]); },
     pauseInput() { calls.push(['pause']); },
     resumeInput() { calls.push(['resume']); },
+    commitInput() { calls.push(['commit']); },
     cancelResponse() { calls.push(['cancel']); },
   };
 
   handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'audio.chunk', audio: 'abc' })));
   handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'input.pause' })));
   handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'input.resume' })));
+  handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'input.commit' })));
   handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'response.cancel' })));
 
   assert.deepEqual(calls, [
     ['audio', 'abc'],
     ['pause'],
     ['resume'],
+    ['commit'],
     ['cancel'],
   ]);
 });

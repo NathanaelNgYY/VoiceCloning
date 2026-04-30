@@ -19,6 +19,18 @@ export function shouldSendLiveMicAudio({ phase, micInputEnabled }) {
   return Boolean(micInputEnabled) && isLiveInputPhase(phase);
 }
 
+export function getMicOffAction({ phase, hasPendingAudio }) {
+  if (phase === 'listening' && hasPendingAudio) {
+    return 'commit';
+  }
+
+  if (phase === 'listening' || phase === 'speaking') {
+    return 'pause';
+  }
+
+  return 'wait';
+}
+
 function ensurePhraseEnding(text) {
   if (/[.!?;:]$/.test(text)) return text;
   return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;

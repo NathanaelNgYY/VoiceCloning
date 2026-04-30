@@ -392,6 +392,11 @@ export default function InferencePage() {
     if (!modelsFetched || !selectedProfile?.complete || !selectedGPT || !selectedSoVITS) return;
 
     const loadKey = `${selectedGPT}::${selectedSoVITS}`;
+    if (!serverReady) {
+      autoLoadKeyRef.current = '';
+      return;
+    }
+
     if (selectionLoaded) {
       autoLoadKeyRef.current = loadKey;
       return;
@@ -405,6 +410,7 @@ export default function InferencePage() {
     selectedProfile,
     selectedGPT,
     selectedSoVITS,
+    serverReady,
     selectionLoaded,
     loading,
   ]);
