@@ -423,8 +423,11 @@ export default function InferencePage() {
   }, [currentExpName]);
 
   useEffect(() => {
-    if (!currentExpName || loadingTrainingAudio || trainingAudioFiles.length === 0 || refLocked) return;
-    if (uploadedRefFiles.some(file => file.serverPath === refAudioPath)) return;
+    const primaryIsUploaded = uploadedRefFiles.some(file => file.serverPath === refAudioPath);
+    const keepConfirmedSelection = refLocked && (primaryIsUploaded || activeReferencePresetId);
+
+    if (!currentExpName || loadingTrainingAudio || trainingAudioFiles.length === 0 || keepConfirmedSelection) return;
+    if (primaryIsUploaded) return;
     if (autoReferenceProfileRef.current === currentExpName && refAudioPath) return;
 
     const selection = chooseBestReferenceSet(trainingAudioFiles);
@@ -442,6 +445,8 @@ export default function InferencePage() {
         setPromptText(primary.transcript || '');
         setPromptLang(normalizeReferenceLanguage(primary.lang));
         setAuxRefAudios(aux);
+        setRefLocked(true);
+        setActiveReferencePresetId('');
         setPreview({
           path: primary.path,
           url,
@@ -450,7 +455,7 @@ export default function InferencePage() {
         });
         showNotice({
           title: 'Reference auto-selected',
-          message: `${primary.filename} is primary with ${aux.length} auxiliary clip${aux.length === 1 ? '' : 's'}.`,
+          message: `${primary.filename} is ready with ${aux.length} auxiliary clip${aux.length === 1 ? '' : 's'}.`,
           tone: 'success',
         });
       })
@@ -464,6 +469,7 @@ export default function InferencePage() {
     refLocked,
     uploadedRefFiles,
     refAudioPath,
+    activeReferencePresetId,
   ]);
 
   useEffect(() => {
@@ -787,6 +793,8 @@ export default function InferencePage() {
     setRefAudioFile({ name: file.filename });
     setRefAudioUrl(url);
     setPromptText(file.transcript);
+    setRefLocked(false);
+    setActiveReferencePresetId('');
     setPreview({
       path: file.path,
       url,
@@ -800,6 +808,8 @@ export default function InferencePage() {
   }
 
   async function handleToggleAuxRef(file) {
+    setRefLocked(false);
+    setActiveReferencePresetId('');
     setAuxRefAudios(prev => {
       const exists = prev.some(f => f.filename === file.filename);
       if (exists) return prev.filter(f => f.filename !== file.filename);
@@ -867,6 +877,8 @@ export default function InferencePage() {
           revokeIfBlobUrl(refAudioUrl);
           setRefAudioUrl(merged[0].localUrl);
           setRefAudioPath(merged[0].serverPath);
+          setRefLocked(false);
+          setActiveReferencePresetId('');
         }
         return merged;
       });
@@ -881,6 +893,8 @@ export default function InferencePage() {
     setRefAudioUrl(entry.localUrl);
     setRefAudioPath(entry.serverPath);
     setPromptText('');
+    setRefLocked(false);
+    setActiveReferencePresetId('');
     setPreview({
       path: entry.serverPath,
       url: entry.localUrl,
@@ -900,6 +914,8 @@ export default function InferencePage() {
           setRefAudioFile({ name: remaining[0].name });
           setRefAudioUrl(remaining[0].localUrl);
           setRefAudioPath(remaining[0].serverPath);
+          setRefLocked(false);
+          setActiveReferencePresetId('');
           setPreview({
             path: remaining[0].serverPath,
             url: remaining[0].localUrl,
@@ -911,6 +927,8 @@ export default function InferencePage() {
           revokeIfBlobUrl(refAudioUrl);
           setRefAudioUrl(null);
           setRefAudioPath('');
+          setRefLocked(false);
+          setActiveReferencePresetId('');
           setPreview({ path: '', url: null, name: '', role: 'primary' });
         }
         setPromptText('');

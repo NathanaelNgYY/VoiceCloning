@@ -11,14 +11,24 @@ import LivePage from './pages/LivePage.jsx';
 
 function GpuInstanceControl() {
   const [status, setStatus] = useState(null);
+  const [checking, setChecking] = useState(true);
   const [starting, setStarting] = useState(false);
 
   async function refreshStatus() {
+    setChecking(true);
     try {
       const res = await getInstanceStatus();
       setStatus(res.data);
-    } catch {
-      setStatus(null);
+    } catch (err) {
+      setStatus({
+        configured: true,
+        state: 'unavailable',
+        workerReady: false,
+        startable: false,
+        message: err.response?.data?.error || err.message || 'Could not check GPU instance status.',
+      });
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -60,7 +70,33 @@ function GpuInstanceControl() {
     }
   }
 
-  if (!status?.configured) return null;
+  if (checking && !status) {
+    return (
+      <button
+        type="button"
+        disabled
+        title="Checking the GPU instance status. The start button appears after this returns."
+        className="inline-flex h-10 cursor-wait items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-500"
+      >
+        <Power size={14} />
+        Checking GPU
+      </button>
+    );
+  }
+
+  if (!status?.configured) {
+    return (
+      <button
+        type="button"
+        disabled
+        title={status?.message || 'GPU instance control is not configured yet.'}
+        className="inline-flex h-10 cursor-not-allowed items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-500"
+      >
+        <Power size={14} />
+        GPU not configured
+      </button>
+    );
+  }
 
   const isReady = status.workerReady;
   const canStart = status.startable && !starting;
@@ -70,14 +106,20 @@ function GpuInstanceControl() {
       ? 'Start GPU'
       : starting || status.state === 'pending'
         ? 'Starting GPU'
+        : status.state === 'running'
+          ? 'GPU warming up'
         : `GPU ${status.state || 'unknown'}`;
+  const title = status.message
+    || (status.state === 'running' && !status.workerReady
+      ? 'The EC2 instance is running, but the GPU worker is still warming up. Wait a little and this will switch to ready.'
+      : label);
 
   return (
     <button
       type="button"
       onClick={handleStart}
       disabled={!canStart}
-      title={status.message || label}
+      title={title}
       className={cn(
         'inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold transition-colors',
         isReady

@@ -28,7 +28,7 @@ test('chooseBestReferenceSet prefers clean transcript-rich wav files and adds au
       transcript: 'Please keep this voice natural and steady for the assistant.',
       lang: 'en',
     },
-  ]);
+  ], { maxAux: 2 });
 
   assert.equal(result.primary.filename, 'clean_reference_02.wav');
   assert.deepEqual(result.aux.map((file) => file.filename), ['bright_best_aux.flac', 'short.wav']);
@@ -41,4 +41,45 @@ test('chooseBestReferenceSet returns no primary for an empty audio list', () => 
     aux: [],
     reason: 'No training audio clips are available.',
   });
+});
+
+test('chooseBestReferenceSet chooses five auxiliary clips by default', () => {
+  const files = [
+    {
+      filename: 'clean_reference.wav',
+      path: 'training/datasets/alex/denoised/clean_reference.wav',
+      transcript: 'The quick brown fox jumps over the lazy dog.',
+      lang: 'en',
+    },
+    ...Array.from({ length: 7 }, (_, index) => ({
+      filename: `steady_aux_${index + 1}.wav`,
+      path: `training/datasets/alex/denoised/steady_aux_${index + 1}.wav`,
+      transcript: `This is auxiliary reference clip number ${index + 1}.`,
+      lang: 'en',
+    })),
+  ];
+
+  const result = chooseBestReferenceSet(files);
+
+  assert.equal(result.primary.filename, 'clean_reference.wav');
+  assert.equal(result.aux.length, 5);
+});
+
+test('chooseBestReferenceSet prefers a fuller prompt over a tiny intro clip', () => {
+  const result = chooseBestReferenceSet([
+    {
+      filename: 'a_intro.wav',
+      path: 'training/datasets/alex/denoised/a_intro.wav',
+      transcript: 'My fellow Singaporeans',
+      lang: 'en',
+    },
+    {
+      filename: 'b_balanced.wav',
+      path: 'training/datasets/alex/denoised/b_balanced.wav',
+      transcript: 'The morning air was calm and clear as people gathered outside.',
+      lang: 'en',
+    },
+  ], { maxAux: 2 });
+
+  assert.equal(result.primary.filename, 'b_balanced.wav');
 });

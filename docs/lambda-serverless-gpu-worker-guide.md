@@ -61,6 +61,7 @@ GPU worker changes:
 - `GET /inference/progress/:sessionId`
 - `POST /inference/cancel`
 - `GET /inference/current`
+- `GET /activity/status`
 - S3 upload helper for generated final WAVs
 - CORS controlled by `CORS_ORIGIN`
 
@@ -428,7 +429,8 @@ GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net
 GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID
 GPU_INSTANCE_REGION=ap-northeast-2
-MODEL_SOURCE=gpu-worker
+GPU_IDLE_STOP_MINUTES=30
+MODEL_SOURCE=s3
 ARTIFACT_SOURCE=s3
 CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
@@ -445,13 +447,16 @@ The Lambda execution role also needs permission to read and start the GPU EC2 in
       "Effect": "Allow",
       "Action": [
         "ec2:DescribeInstances",
-        "ec2:StartInstances"
+        "ec2:StartInstances",
+        "ec2:StopInstances"
       ],
       "Resource": "*"
     }
   ]
 }
 ```
+
+`GPU_IDLE_STOP_MINUTES` controls automatic shutdown. `0` disables it. A good starting value is `30`, then adjust up or down based on your demo/workload pattern.
 
 Create once with CLI, replacing the role ARN. For the current Seoul Lambda, use `ap-northeast-2` and the deployed function name:
 
@@ -467,7 +472,7 @@ aws lambda create-function `
   --memory-size 256 `
   --role arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_LAMBDA_EXECUTION_ROLE `
   --zip-file fileb://.dist/voice-cloning-function-url.zip `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
 ```
 
 Update code after later changes:
@@ -487,7 +492,34 @@ aws lambda update-function-configuration `
   --profile account3 `
   --region ap-northeast-2 `
   --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+```
+
+Optional but recommended: add an EventBridge schedule so Lambda checks idleness without a user opening the app. This only stops the instance when `/activity/status` says the worker is not training or generating and has been idle longer than `GPU_IDLE_STOP_MINUTES`.
+
+```powershell
+$functionArn = "arn:aws:lambda:ap-northeast-2:YOUR_ACCOUNT_ID:function:Liu_Teng_Yu_Intern2026-Voice_Cloning_Project"
+
+aws events put-rule `
+  --profile account3 `
+  --region ap-northeast-2 `
+  --name voice-cloning-gpu-idle-stop `
+  --schedule-expression "rate(5 minutes)"
+
+aws lambda add-permission `
+  --profile account3 `
+  --region ap-northeast-2 `
+  --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
+  --statement-id AllowEventBridgeGpuIdleStop `
+  --action lambda:InvokeFunction `
+  --principal events.amazonaws.com `
+  --source-arn arn:aws:events:ap-northeast-2:YOUR_ACCOUNT_ID:rule/voice-cloning-gpu-idle-stop
+
+aws events put-targets `
+  --profile account3 `
+  --region ap-northeast-2 `
+  --rule voice-cloning-gpu-idle-stop `
+  --targets "Id"="1","Arn"="$functionArn","Input"="{\"rawPath\":\"/api/instance/idle-check\",\"requestContext\":{\"http\":{\"method\":\"POST\"}}}"
 ```
 
 Create the Function URL. The currently working setting is `NONE`:
@@ -540,7 +572,7 @@ Notes:
 - `GpuWorkerUrl` is what Lambda calls. For now, use the public ALB URL.
 - `GpuWorkerPublicUrl` is what the browser can use for direct artifact URLs if `ArtifactSource=gpu-worker`. With CloudFront behaviors, prefer the CloudFront URL here; with `ArtifactSource=s3`, it is not used for result playback.
 - `ArtifactSource=s3` means generated final WAVs and training audio URLs are served through S3 presigned URLs in deployed Lambda.
-- `ModelSource=gpu-worker` means `/api/models` reads the GPT and SoVITS checkpoints from the GPU server's `GPT_SOVITS_ROOT`, not from S3.
+- `ModelSource=s3` means `/api/models` reads GPT and SoVITS checkpoint names from S3, then downloads the selected pair to the GPU worker cache before loading them. `ModelSource=gpu-worker` is only for debugging the weights currently present on the GPU server's local disk.
 
 ## S3 Bucket Layout
 
@@ -602,7 +634,7 @@ aws lambda update-function-configuration `
   --region ap-northeast-2 `
   --function-name voice-cloning-api `
   --vpc-config SubnetIds=subnet-aaa,subnet-bbb,SecurityGroupIds=sg-lambda `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,MODEL_SOURCE=gpu-worker,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
 ```
 
 9. Security groups:
@@ -671,12 +703,13 @@ S3_REGION=ap-southeast-1
 S3_PREFIX=echolect/
 GPU_WORKER_URL=http://localhost:3001
 GPU_WORKER_PUBLIC_URL=http://localhost:3001
+GPU_IDLE_STOP_MINUTES=0
 CORS_ORIGIN=http://localhost:5173
-MODEL_SOURCE=gpu-worker
+MODEL_SOURCE=s3
 ARTIFACT_SOURCE=gpu-worker
 ```
 
-`MODEL_SOURCE=gpu-worker` makes local `/api/models` read GPT and SoVITS checkpoints from the GPU worker's `GPT_SOVITS_ROOT` instead of S3. Use the same value in the deployed Lambda Function URL environment. Set `MODEL_SOURCE=s3` only if you want the old S3 model-list behavior.
+`MODEL_SOURCE=s3` makes local `/api/models` read GPT and SoVITS checkpoints from S3, matching deployment. Set `MODEL_SOURCE=gpu-worker` only when you deliberately want to debug the model files currently present under the GPU worker's `GPT_SOVITS_ROOT`.
 
 `ARTIFACT_SOURCE=gpu-worker` makes local `/api/training-audio/...` and `/api/inference/result/...` return URLs served by the GPU worker instead of presigned S3 URLs. For deployed Lambda, keep `ArtifactSource=s3` when you want generated audio and training audio persisted through S3; use `ArtifactSource=gpu-worker` only if the browser can reach `GpuWorkerPublicUrl`.
 
@@ -760,7 +793,7 @@ Expected:
 
 - `/api/config` returns `{"storageMode":"s3","inferenceMode":"remote"}`
 - current-state endpoints return JSON, even when idle
-- `/api/models` returns `gpt` and `sovits` arrays from the GPU worker when `ModelSource=gpu-worker`
+- `/api/models` returns `gpt` and `sovits` arrays from S3 when `ModelSource=s3`
 
 GPU worker direct:
 

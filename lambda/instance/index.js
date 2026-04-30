@@ -2,6 +2,7 @@ import {
   EC2Client,
   DescribeInstancesCommand,
   StartInstancesCommand,
+  StopInstancesCommand,
 } from '@aws-sdk/client-ec2';
 import { ok, err, preflight } from '../shared/cors.js';
 
@@ -15,6 +16,11 @@ function instanceRegion() {
 
 function workerUrl() {
   return (process.env.GPU_WORKER_URL || '').replace(/\/+$/u, '');
+}
+
+function idleStopMinutes() {
+  const value = Number.parseFloat(process.env.GPU_IDLE_STOP_MINUTES || '0');
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function mockInitialState() {
@@ -89,6 +95,25 @@ function statusPayload({ id, state, workerReady, started = false, previousState 
   }
 
   return payload;
+}
+
+async function getWorkerActivityStatus() {
+  const baseUrl = workerUrl();
+  if (!baseUrl) {
+    throw new Error('GPU_WORKER_URL is not configured.');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  try {
+    const response = await fetch(`${baseUrl}/activity/status`, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Worker activity status returned ${response.status}`);
+    }
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function mockStateRecord() {
@@ -234,6 +259,95 @@ async function startInstance() {
   };
 }
 
+async function stopInstanceIfIdle() {
+  const thresholdMinutes = idleStopMinutes();
+  if (thresholdMinutes <= 0) {
+    return {
+      checked: false,
+      stopped: false,
+      reason: 'disabled',
+      idleStopMinutes: 0,
+    };
+  }
+
+  const id = instanceId();
+  if (!id) {
+    return {
+      checked: false,
+      stopped: false,
+      reason: 'unconfigured',
+      ...unconfiguredStatus(),
+      idleStopMinutes: thresholdMinutes,
+    };
+  }
+
+  const ec2 = createEc2Client();
+  const state = await describeInstance(ec2, id);
+  if (state !== 'running') {
+    return {
+      checked: true,
+      stopped: false,
+      reason: `instance-${state}`,
+      instanceId: id,
+      state,
+      idleStopMinutes: thresholdMinutes,
+    };
+  }
+
+  let activity;
+  try {
+    activity = await getWorkerActivityStatus();
+  } catch (error) {
+    return {
+      checked: true,
+      stopped: false,
+      reason: 'worker-unreachable',
+      instanceId: id,
+      state,
+      idleStopMinutes: thresholdMinutes,
+      error: error.message,
+    };
+  }
+
+  if (activity?.busy) {
+    return {
+      checked: true,
+      stopped: false,
+      reason: 'worker-busy',
+      instanceId: id,
+      state,
+      idleStopMinutes: thresholdMinutes,
+      activity,
+    };
+  }
+
+  const thresholdMs = thresholdMinutes * 60 * 1000;
+  const idleMs = Number.isFinite(Number(activity?.idleMs)) ? Number(activity.idleMs) : 0;
+  if (idleMs < thresholdMs) {
+    return {
+      checked: true,
+      stopped: false,
+      reason: 'idle-threshold-not-met',
+      instanceId: id,
+      state,
+      idleStopMinutes: thresholdMinutes,
+      activity,
+    };
+  }
+
+  await ec2.send(new StopInstancesCommand({ InstanceIds: [id] }));
+  return {
+    checked: true,
+    stopped: true,
+    reason: 'idle-timeout',
+    instanceId: id,
+    state: 'stopping',
+    previousState: state,
+    idleStopMinutes: thresholdMinutes,
+    activity,
+  };
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return preflight();
@@ -256,6 +370,10 @@ export const handler = async (event) => {
         };
       }
       return ok(result.body);
+    }
+
+    if ((method === 'POST' || method === 'GET') && routePath.endsWith('/instance/idle-check')) {
+      return ok(await stopInstanceIfIdle());
     }
 
     return err(404, 'Not found');

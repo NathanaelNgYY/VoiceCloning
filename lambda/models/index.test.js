@@ -131,3 +131,69 @@ test('models select uses local GPU paths when MODEL_SOURCE is gpu-worker', async
     globalThis.fetch = previousFetch;
   }
 });
+
+test('models select downloads S3 model keys when MODEL_SOURCE is s3', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url, body });
+
+    if (String(url).endsWith('/models/download')) {
+      const filename = body.s3Key.replace(/\\/g, '/').split('/').pop();
+      return new Response(JSON.stringify({
+        localPath: `/tmp/model_cache/${filename}`,
+        filename,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      loaded: { weightsPath: body.weightsPath },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const { handler } = await import(`./index.js?s3-select=${Date.now()}`);
+    await withEnv({
+      MODEL_SOURCE: 's3',
+      GPU_WORKER_URL: 'http://localhost:3001',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/models/select',
+        body: JSON.stringify({
+          gptKey: 'models/user-models/gpt/trump.ckpt',
+          sovitsKey: 'models/user-models/sovits/trump.pth',
+        }),
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(calls, [
+        {
+          url: 'http://localhost:3001/models/download',
+          body: { s3Key: 'models/user-models/sovits/trump.pth' },
+        },
+        {
+          url: 'http://localhost:3001/inference/weights/sovits',
+          body: { weightsPath: '/tmp/model_cache/trump.pth' },
+        },
+        {
+          url: 'http://localhost:3001/models/download',
+          body: { s3Key: 'models/user-models/gpt/trump.ckpt' },
+        },
+        {
+          url: 'http://localhost:3001/inference/weights/gpt',
+          body: { weightsPath: '/tmp/model_cache/trump.ckpt' },
+        },
+      ]);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

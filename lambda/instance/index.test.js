@@ -222,3 +222,130 @@ test('instance start is a no-op when the GPU instance is already running', async
     delete globalThis.__voiceCloningEc2Client;
   }
 });
+
+test('idle check stops a running GPU after configured idle minutes', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.endsWith('/activity/status')) {
+      return new Response(JSON.stringify({
+        busy: false,
+        idleMs: 11 * 60 * 1000,
+        lastActivityAt: Date.now() - (11 * 60 * 1000),
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      if (command.constructor.name === 'DescribeInstancesCommand') {
+        return {
+          Reservations: [{
+            Instances: [{
+              InstanceId: 'i-idle',
+              State: { Name: 'running' },
+            }],
+          }],
+        };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?idleStop=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-idle',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(calls, ['DescribeInstancesCommand', 'StopInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.checked, true);
+      assert.equal(body.stopped, true);
+      assert.equal(body.reason, 'idle-timeout');
+      assert.equal(body.idleStopMinutes, 10);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
+test('idle check does not stop a busy running GPU', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.endsWith('/activity/status')) {
+      return new Response(JSON.stringify({
+        busy: true,
+        idleMs: 60 * 60 * 1000,
+        lastActivityAt: Date.now() - (60 * 60 * 1000),
+        inferenceStatus: 'generating',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      return {
+        Reservations: [{
+          Instances: [{
+            InstanceId: 'i-busy',
+            State: { Name: 'running' },
+          }],
+        }],
+      };
+    },
+  };
+
+  const { handler } = await import(`./index.js?idleBusy=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-busy',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(calls, ['DescribeInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.checked, true);
+      assert.equal(body.stopped, false);
+      assert.equal(body.reason, 'worker-busy');
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});

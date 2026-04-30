@@ -6,10 +6,12 @@ import modelsRoutes from './routes/models.js';
 import transcribeRoutes from './routes/transcribe.js';
 import inferenceRoutes from './routes/inference.js';
 import artifactRoutes from './routes/artifacts.js';
+import activityRoutes from './routes/activity.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { processManager } from './services/processManager.js';
 import { sseManager } from './services/sseManager.js';
 import { trainingState } from './services/trainingState.js';
+import { activityState } from './services/activityState.js';
 
 const app = express();
 
@@ -22,6 +24,13 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 app.use(cors({ origin: CORS_ORIGIN }));
 app.use(express.json());
 
+app.use((req, _res, next) => {
+  if (req.path !== '/healthz' && req.path !== '/activity/status') {
+    activityState.mark();
+  }
+  next();
+});
+
 app.get('/healthz', (_req, res) => {
   res.json({ ok: true, service: 'gpu-worker', timestamp: Date.now() });
 });
@@ -31,6 +40,7 @@ app.use('/', modelsRoutes);
 app.use('/', transcribeRoutes);
 app.use('/', inferenceRoutes);
 app.use('/', artifactRoutes);
+app.use('/', activityRoutes);
 
 const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
   console.log(`[gpu-worker] Running on http://${WORKER_HOST}:${WORKER_PORT}`);

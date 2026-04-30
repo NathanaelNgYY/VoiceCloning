@@ -10,6 +10,13 @@ test('local server routes REST API paths to Lambda handlers', () => {
   assert.equal(route.lambdaPath, '/api/inference/generate');
 });
 
+test('local server routes GPU instance idle checks to the instance handler', () => {
+  const route = findRoute('POST', '/api/instance/idle-check');
+
+  assert.equal(route.name, 'InstanceFunction');
+  assert.equal(route.lambdaPath, '/api/instance/idle-check');
+});
+
 test('local server builds Function URL style events', async () => {
   const request = new Request('http://localhost:3000/api/ref-audio?filePath=audio%2Fref.wav', {
     method: 'GET',

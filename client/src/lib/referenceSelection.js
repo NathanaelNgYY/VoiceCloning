@@ -18,6 +18,8 @@ function transcriptScore(transcript = '') {
 
   const wordCount = clean.split(' ').filter(Boolean).length;
   if (wordCount < 3) return 4;
+  if (wordCount <= 5) return 22;
+  if (wordCount <= 18) return 42;
   if (wordCount <= 24) return 36;
   if (wordCount <= 45) return 24;
   return 8;
@@ -44,7 +46,7 @@ function scoreReferenceClip(file) {
   return score;
 }
 
-export function chooseBestReferenceSet(files, { maxAux = 2 } = {}) {
+export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   const candidates = Array.isArray(files)
     ? files.filter((file) => file?.path && file?.filename)
     : [];
