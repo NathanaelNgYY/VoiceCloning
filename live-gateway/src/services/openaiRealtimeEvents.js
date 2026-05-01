@@ -1,5 +1,7 @@
+import { preprocessText } from './textPreprocessor.js';
+
 const DEFAULT_SYSTEM_PROMPT =
-  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.';
+  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English. Use commas to create natural rhythm in longer sentences, and em dashes — like this — for mid-sentence pauses. Use question marks on genuine questions.';
 
 function cleanText(value) {
   return String(value || '').trim();
@@ -189,7 +191,7 @@ export class RealtimeEventMapper {
     this.completed.add(key);
     this.buffers.delete(key);
 
-    return text ? [{ type: 'assistant.text.done', text }] : [];
+    return text ? [{ type: 'assistant.text.done', text: preprocessText(text) }] : [];
   }
 
   mapResponseDone(event) {
@@ -226,7 +228,7 @@ export class RealtimeEventMapper {
     }
     this.buffers.delete(key);
 
-    return text ? [{ type: 'assistant.text.done', text }] : [];
+    return text ? [{ type: 'assistant.text.done', text: preprocessText(text) }] : [];
   }
 
   mapError(event) {
