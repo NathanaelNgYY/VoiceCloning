@@ -11,7 +11,7 @@ This is the short context file to read first when starting new development on th
 - Latest relevant commit: `90055cb feat: add fast live phrase playback mode`.
 - Training and normal Inference paths should stay untouched unless a shared route boundary requires it.
 - Current deployed REST Lambda is `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in Seoul (`ap-northeast-2`), while the shared S3 bucket remains in Singapore (`ap-southeast-1`).
-- Current working Function URL auth is `NONE`. `AWS_IAM` with CloudFront Lambda Function URL OAC was configured but still failed with a SigV4 signature mismatch, so treat that as a later hardening task.
+- Function URL auth target is `AWS_IAM` behind CloudFront Lambda Function URL OAC. The frontend shared Axios client now sends `x-amz-content-sha256` for JSON mutating requests, and Lambda CORS allows that header, which is required for signed POST routes.
 
 ## What The Live Feature Does Now
 
@@ -94,6 +94,7 @@ Current test networking:
 - CloudFront proxies `/api/*` to the Lambda Function URL origin, so the browser does not call the raw Function URL directly.
 - The Lambda Function URL origin is `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`, HTTPS only, with blank origin path.
 - The `/api/*` behavior uses `CachingDisabled` and `AllViewerExceptHostHeader`.
+- For `AWS_IAM` Function URL auth with CloudFront OAC, JSON `POST` routes require `x-amz-content-sha256`. `client/src/services/api.js` adds it automatically for JSON `POST`/`PUT`/`PATCH`/`DELETE`.
 - The GPU ALB is HTTP-only for the current test setup.
 - On the GPU EC2, both services run from the GitHub clone under the `ubuntu` user, with `gpu-worker.service` and `live-gateway.service`.
 - The GPU EC2 instance profile already has access to the project S3 bucket/prefix.
@@ -189,7 +190,7 @@ Keep `S3Region=ap-southeast-1` even though Lambda is in `ap-northeast-2`. The S3
 
 Do not pass `VpcSubnetIds` or `VpcSecurityGroupIds` while Lambda calls the public ALB. Add those only after the GPU worker moves behind private networking.
 
-The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront. Current Function URL auth is `NONE` for the working deployment; the intended secure target is `AWS_IAM` once the CloudFront OAC signature mismatch is resolved or replaced by API Gateway HTTP API.
+The Lambda function uses Node.js 20.x with handler `index.handler`. It is packaged with `npm run package:function-url`, uploaded as a normal Lambda zip, and exposed through a Lambda Function URL behind CloudFront. Use Function URL `AWS_IAM` with CloudFront Lambda Function URL OAC for the secure path. If POST routes return a SigV4 signature mismatch, confirm the request includes `x-amz-content-sha256`, the Lambda CORS response allows that header, and the `/api/*` CloudFront behavior uses `AllViewerExceptHostHeader`.
 
 `GpuIdleStopMinutes` only defines the idle threshold. Lambda does not run on a timer by itself; EventBridge must call `/api/instance/idle-check` periodically. Manual `curl -X POST https://d3dghqhnk7aoku.cloudfront.net/api/instance/idle-check` proves the stop path, but automatic shutdown requires the EventBridge rule and target in the deployment guide.
 
@@ -336,6 +337,8 @@ Lambda Function URL:
   - `POST /api/live/tts-sentence`: fast phrase/sentence synthesis.
 - `lambda/transcribe/index.js`
   - `POST /api/transcribe`: still used by normal Inference reference-audio transcription. Keep it.
+- `lambda/shared/cors.js`
+  - Allows `x-amz-content-sha256` so browser preflight succeeds for CloudFront OAC-signed Lambda Function URL POST requests.
 
 Frontend:
 
@@ -353,6 +356,10 @@ Frontend:
   - Handles chat messages, user transcription display, OpenAI assistant text, cloned audio generation, playback, and interruption.
   - Full mode calls `synthesize()` -> `/api/inference`.
   - Fast mode calls `synthesizeSentence()` -> `/api/live/tts-sentence`.
+
+- `client/src/services/api.js`
+  - Shared Axios client for REST calls.
+  - Hashes JSON bodies and sends `x-amz-content-sha256` for mutating methods, which CloudFront OAC needs when signing POST requests to a Lambda Function URL using `AWS_IAM`.
 
 - `client/src/hooks/liveConversation.js`
   - Pure helpers for English params, punctuation phrase splitting, chat message updates, and selected playback lookup.
@@ -421,6 +428,13 @@ Code paths should not reference the removed Live-only Faster Whisper flow.
 - CloudFront likely returned `index.html` instead of forwarding the WebSocket upgrade.
 - Ensure CloudFront behavior `/api/live/chat/realtime` points to the GPU ALB origin and has higher priority than `/api/*`.
 - Ensure the GPU ALB listener rule `/api/live/chat/realtime` points to the `live-gateway:3002` target group.
+
+`POST /api/*` returns Lambda signature mismatch
+
+- This usually means CloudFront OAC signed the Lambda Function URL request but the POST payload hash was missing or mismatched.
+- Confirm the browser request includes `x-amz-content-sha256`.
+- Confirm Lambda preflight allows `x-amz-content-sha256`.
+- Confirm `/api/*` uses `AllViewerExceptHostHeader` so the viewer `Host` header is not forwarded to the Lambda Function URL origin.
 
 Previous audio replays when user speaks again
 

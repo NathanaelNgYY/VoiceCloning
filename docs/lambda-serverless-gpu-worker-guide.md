@@ -10,7 +10,7 @@ This guide explains the new deployment shape:
 - Live chatbot WebSocket: `live-gateway` process on the same GPU EC2, running on port `3002`
 - Current test networking target: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, and only `/api/live/chat/realtime` path-routes to `live-gateway:3002`
 - Storage handoff: S3 bucket in Singapore (`ap-southeast-1`), even when Lambda and GPU compute run in Seoul (`ap-northeast-2`)
-- Current Function URL auth status: `NONE` is the working deployment setting. `AWS_IAM` with CloudFront Lambda Function URL OAC was configured but still returned SigV4 signature mismatch errors, so it needs a later hardening pass.
+- Function URL auth target: `AWS_IAM` behind CloudFront Lambda Function URL OAC. JSON `POST`/`PUT`/`PATCH`/`DELETE` requests must include `x-amz-content-sha256`; the frontend now adds this automatically through the shared Axios client.
 
 Current known AWS resources:
 
@@ -31,7 +31,7 @@ Current known AWS resources:
 - CloudFront distribution ID: `E2KTGN0G56FW71`.
 - Lambda function: `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in `ap-northeast-2`.
 - Lambda Function URL host: `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`.
-- Lambda Function URL auth: currently `NONE` because `AWS_IAM` + CloudFront OAC signing is not yet stable.
+- Lambda Function URL auth: use `AWS_IAM` when the origin is protected by CloudFront Lambda Function URL OAC. For emergency debugging only, `NONE` can prove whether a failure is OAC/signature-related.
 
 AWS references worth keeping open:
 
@@ -70,6 +70,7 @@ Frontend changes:
 - `VITE_API_BASE_URL`: REST API origin; in deployed CloudFront testing, use the CloudFront domain because `/api/*` is proxied to the Lambda Function URL origin
 - `VITE_GPU_WORKER_URL`: browser-facing origin for SSE and WebSocket path routing; with CloudFront behaviors, use the CloudFront domain, not the raw HTTP ALB URL
 - `VITE_LIVE_GATEWAY_URL`: normally omitted; only set this if live-gateway uses a different public origin
+- `client/src/services/api.js`: automatically hashes JSON request bodies for mutating methods and sends `x-amz-content-sha256`, which CloudFront OAC needs when signing `POST` requests to a Lambda Function URL using `AWS_IAM`.
 
 ## Traffic Flow
 
@@ -317,11 +318,12 @@ For the S3 origin, keep the existing OAI permission model. For the Lambda Functi
 
 Current Lambda Function URL access status:
 
-- Working setting: Function URL `AuthType` is `NONE`.
-- Intended secure setting: Function URL `AuthType` should be `AWS_IAM` with a CloudFront Lambda Function URL OAC and request signing enabled.
-- Current blocker: the `AWS_IAM` + OAC setup reached the Lambda Function URL but failed with `The request signature we calculated does not match the signature you provided`.
+- Recommended setting: Function URL `AuthType` is `AWS_IAM`.
+- CloudFront requirement: attach a Lambda Function URL OAC, set signing behavior to sign requests, and leave `Do not override authorization header` unchecked.
+- POST requirement: JSON `POST`/`PUT`/`PATCH`/`DELETE` requests need `x-amz-content-sha256`. The frontend shared Axios client now computes this from the exact JSON body string before sending.
+- Lambda CORS requirement: `Access-Control-Allow-Headers` must include `x-amz-content-sha256`; `lambda/shared/cors.js` includes it.
 - Existing resource-based policy already allows `cloudfront.amazonaws.com` to call `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` from `arn:aws:cloudfront::329599637774:distribution/E2KTGN0G56FW71`.
-- Revisit this later by either rebuilding the OAC/origin signing setup again or moving `/api/*` to API Gateway HTTP API in front of Lambda.
+- Debug fallback only: temporarily switching Function URL `AuthType` to `NONE` can separate app bugs from IAM/OAC signing bugs, but do not keep this as the secure production mode.
 
 ### Behaviors
 
@@ -332,7 +334,7 @@ Order matters. Put the most specific behaviors above broader ones:
 | `1` | `/api/live/chat/realtime` | `gpu-worker-alb-origin` | Caching disabled | Forward WebSocket headers or use `AllViewer` | Must be above `/api/*`; routes to `live-gateway:3002` at ALB |
 | `2` | `/train/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-worker:3001` |
 | `3` | `/inference/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-worker:3001` |
-| `4` | `/api/*` | `lambda-function-url-origin` | Caching disabled | `AllViewerExceptHostHeader` | REST Lambda Function URL proxied through CloudFront |
+| `4` | `/api/*` | `lambda-function-url-origin` | Caching disabled | `AllViewerExceptHostHeader` | REST Lambda Function URL proxied through CloudFront; must forward `x-amz-content-sha256` for signed POST requests |
 | default | `*` | `spa-s3-origin` | normal SPA/static policy | existing setting | React app |
 
 For `/api/live/chat/realtime`, CloudFront must forward WebSocket upgrade headers. If you use a managed policy, start with `AllViewer`. If you create a custom origin request policy, include at least:
@@ -346,7 +348,7 @@ For `/api/live/chat/realtime`, CloudFront must forward WebSocket upgrade headers
 - `Sec-WebSocket-Protocol`
 - `Sec-WebSocket-Extensions`
 
-For `/api/*` to Lambda Function URL, prefer `AllViewerExceptHostHeader`. Forwarding the CloudFront viewer `Host` header to the default `lambda-url` domain can cause origin routing issues.
+For `/api/*` to Lambda Function URL, prefer `AllViewerExceptHostHeader`. Forwarding the CloudFront viewer `Host` header to the default `lambda-url` domain can cause origin routing issues. If you create a custom origin request policy instead of the managed one, forward `Origin`, `Content-Type`, and `x-amz-content-sha256` at minimum for browser JSON POST requests.
 
 ### Error Pages
 
@@ -417,7 +419,7 @@ Create the Lambda function manually in the AWS console or with AWS CLI. Use:
 - Timeout: `120` seconds for normal REST calls; increase if your supervisor wants longer synchronous calls
 - Memory: `256` MB or higher
 - Function URL: enabled
-- Function URL auth: currently `NONE` for the working deployment. `AWS_IAM` is the intended locked-down setup, but CloudFront OAC signing currently fails with a SigV4 mismatch.
+- Function URL auth: `AWS_IAM` for the locked-down CloudFront OAC setup. Use `NONE` only as a short debugging fallback when isolating OAC/signature issues.
 
 Environment variables:
 
@@ -436,6 +438,8 @@ CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
 Do not set `GPU_INSTANCE_MOCK_STATE` in deployed Lambda. That variable is only for local UI testing.
+
+The Lambda CORS helper must allow `x-amz-content-sha256`. This repo does that in `lambda/shared/cors.js`. Without this allowed header, browser preflight can block signed JSON `POST` requests before they reach CloudFront/Lambda.
 
 The Lambda execution role also needs permission to read and start the GPU EC2 instance:
 
@@ -585,27 +589,27 @@ Expected after the worker has been idle longer than the threshold:
 }
 ```
 
-Create the Function URL. The currently working setting is `NONE`:
+Create the Function URL with IAM auth:
 
 ```powershell
 aws lambda create-function-url-config `
   --profile account3 `
   --region ap-northeast-2 `
   --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
-  --auth-type NONE
+  --auth-type AWS_IAM
 ```
 
-For the later secure retry, switch the Function URL back to `AWS_IAM` only after the CloudFront Lambda Function URL OAC path is confirmed healthy.
+If you temporarily switch to `NONE` while debugging, switch back to `AWS_IAM` after the CloudFront Lambda Function URL OAC path is confirmed healthy.
 
 Add the Function URL as a CloudFront origin:
 
 1. Copy the Function URL domain only, currently `fxeoewfr5wdic5dfxtrlsylonq0bvkdy.lambda-url.ap-northeast-2.on.aws`.
 2. Create a CloudFront origin using that domain, HTTPS only, origin path blank.
-3. Attach a Lambda Function URL OAC and enable request signing.
+3. Attach a Lambda Function URL OAC and enable request signing. Use origin type `Lambda`, signing behavior `Sign requests`, and leave `Do not override authorization header` unchecked.
 4. Point the `/api/*` behavior to this origin.
 5. Keep `/api/live/chat/realtime` above `/api/*`, because Live WebSocket goes to the GPU ALB, not Lambda.
 
-Allow CloudFront to invoke the Function URL when using the intended `AWS_IAM` setup. These permissions already exist for the current distribution, but the signed OAC path is still failing and is not the current working mode:
+Allow CloudFront to invoke the Function URL when using `AWS_IAM`. These permissions already exist for the current distribution:
 
 ```powershell
 $distributionArn = "arn:aws:cloudfront::329599637774:distribution/E2KTGN0G56FW71"
@@ -915,6 +919,7 @@ curl "$GPU/healthz"
 Browser network checks:
 
 - Normal REST calls go to CloudFront `/api/*`, then CloudFront forwards to the Lambda Function URL origin.
+- JSON `POST` requests include `x-amz-content-sha256`; check the request headers in DevTools if POST routes fail with a SigV4 signature mismatch.
 - Training SSE goes to `VITE_GPU_WORKER_URL/train/progress/<sessionId>`.
 - Inference SSE goes to `VITE_GPU_WORKER_URL/inference/progress/<sessionId>`.
 - Live chatbot WebSocket goes to `wss://.../api/live/chat/realtime`.
@@ -931,3 +936,19 @@ Lambda Function URLs remove the old gateway integration layer, but long GPU jobs
 `POST /api/inference` is still present for compatibility with Live Full and short direct synthesis, but long text should prefer the streaming flow.
 
 Lambda Function URLs are HTTP endpoints; they do not let Lambda own a raw long-lived bidirectional WebSocket. That is why `/api/live/chat/realtime` runs in `live-gateway` on the GPU EC2 instead of Lambda.
+
+## Function URL OAC Troubleshooting
+
+If `GET /api/config` works through CloudFront but JSON `POST` routes fail with:
+
+```json
+{"message":"The request signature we calculated does not match the signature you provided. Check your AWS Secret Access Key and signing method. Consult the service documentation for details."}
+```
+
+check these in order:
+
+1. The frontend request includes `x-amz-content-sha256`.
+2. Lambda CORS allows `x-amz-content-sha256`.
+3. The `/api/*` behavior uses `AllViewerExceptHostHeader` or an equivalent policy that does not forward the viewer `Host`.
+4. The Lambda Function URL origin has OAC origin type `Lambda`, signing behavior `Sign requests`, and `Do not override authorization header` unchecked.
+5. The Lambda resource policy has both `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` for the CloudFront distribution ARN.
