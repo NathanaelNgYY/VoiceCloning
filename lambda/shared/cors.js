@@ -2,7 +2,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': CORS_ORIGIN,
-  'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-amz-content-sha256',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
 };
 

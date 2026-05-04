@@ -5,6 +5,68 @@ const api = axios.create({
   baseURL: API_BASE_URL,
 });
 
+const METHODS_REQUIRING_PAYLOAD_HASH = new Set(['post', 'put', 'patch', 'delete']);
+
+function isSpecialBody(data) {
+  return (
+    (typeof FormData !== 'undefined' && data instanceof FormData)
+    || (typeof Blob !== 'undefined' && data instanceof Blob)
+    || (typeof File !== 'undefined' && data instanceof File)
+    || (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer)
+    || (typeof URLSearchParams !== 'undefined' && data instanceof URLSearchParams)
+  );
+}
+
+function isJsonBody(data) {
+  if (data == null) return true;
+  if (isSpecialBody(data)) return false;
+  if (typeof data === 'string') return true;
+  if (typeof data === 'number' || typeof data === 'boolean') return true;
+  if (Array.isArray(data)) return true;
+  return Object.prototype.toString.call(data) === '[object Object]';
+}
+
+function serializeJsonBody(data) {
+  if (data == null) return '';
+  if (typeof data === 'string') return data;
+  return JSON.stringify(data);
+}
+
+function setHeader(headers, name, value) {
+  if (typeof headers.set === 'function') {
+    headers.set(name, value);
+    return;
+  }
+  headers[name] = value;
+}
+
+async function sha256Hex(text) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('Web Crypto SHA-256 is unavailable; cannot sign Lambda Function URL POST body');
+  }
+
+  const bytes = new TextEncoder().encode(text);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+api.interceptors.request.use(async (config) => {
+  const method = String(config.method || 'get').toLowerCase();
+  if (!METHODS_REQUIRING_PAYLOAD_HASH.has(method) || !isJsonBody(config.data)) {
+    return config;
+  }
+
+  const body = serializeJsonBody(config.data);
+  config.data = body;
+  config.transformRequest = [(data) => data];
+  config.headers = config.headers || {};
+  setHeader(config.headers, 'Content-Type', 'application/json');
+  setHeader(config.headers, 'x-amz-content-sha256', await sha256Hex(body));
+  return config;
+});
+
 // Initialize storage mode on first import (non-blocking)
 getStorageMode();
 
