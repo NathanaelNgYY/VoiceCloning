@@ -32,6 +32,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     model = OPENAI_REALTIME_MODEL,
     systemPrompt = OPENAI_REALTIME_SYSTEM_PROMPT,
     vadMode = OPENAI_REALTIME_VAD,
+    language = 'en',
     WebSocketClass = WebSocket,
   } = {}) {
     super();
@@ -39,6 +40,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.model = model;
     this.systemPrompt = systemPrompt;
     this.vadMode = vadMode;
+    this.language = language;
     this.WebSocketClass = WebSocketClass;
     this.socket = null;
     this.mapper = new RealtimeEventMapper();
@@ -83,6 +85,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
       this.sendOpenAi(buildRealtimeSessionUpdate({
         systemPrompt: this.systemPrompt,
         vadMode: this.vadMode,
+        language: this.language,
       }));
     });
 

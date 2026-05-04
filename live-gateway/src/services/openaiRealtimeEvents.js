@@ -1,5 +1,13 @@
 import { preprocessText } from './textPreprocessor.js';
 
+const REALTIME_LANGUAGES = {
+  en: { code: 'en', name: 'English' },
+  zh: { code: 'zh', name: 'Chinese' },
+};
+const LANGUAGE_INSTRUCTION_RE =
+  /\b(?:always\s+)?respond\s+only\s+in\s+(?:english|chinese)\.?\s*/gi;
+const LANGUAGE_ONLY_RE = /\b(?:english|chinese)\s+only\.?\s*/gi;
+
 const DEFAULT_SYSTEM_PROMPT =
   'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English. Use commas to create natural rhythm in longer sentences, and em dashes — like this — for mid-sentence pauses. Use question marks on genuine questions.';
 
@@ -7,12 +15,23 @@ function cleanText(value) {
   return String(value || '').trim();
 }
 
-function englishOnlyPrompt(systemPrompt) {
+export function normalizeRealtimeLanguage(language) {
+  return language === REALTIME_LANGUAGES.zh.code
+    ? REALTIME_LANGUAGES.zh.code
+    : REALTIME_LANGUAGES.en.code;
+}
+
+function languageOnlyPrompt(systemPrompt, language) {
+  const languageConfig = REALTIME_LANGUAGES[normalizeRealtimeLanguage(language)];
   const prompt = cleanText(systemPrompt) || DEFAULT_SYSTEM_PROMPT;
-  if (/only in English|English only/i.test(prompt)) {
-    return prompt;
-  }
-  return `${prompt} Always respond only in English.`;
+  const neutralPrompt = cleanText(
+    prompt
+      .replace(LANGUAGE_INSTRUCTION_RE, '')
+      .replace(LANGUAGE_ONLY_RE, '')
+      .replace(/\s+/g, ' ')
+  );
+  const basePrompt = neutralPrompt || 'You are a casual, helpful assistant. Keep replies concise and conversational.';
+  return `${basePrompt} Always respond only in ${languageConfig.name}.`;
 }
 
 function responseKey(event) {
@@ -52,7 +71,9 @@ export function buildClientEvent(type, payload = {}) {
 export function buildRealtimeSessionUpdate({
   systemPrompt = DEFAULT_SYSTEM_PROMPT,
   vadMode = 'semantic_vad',
+  language = REALTIME_LANGUAGES.en.code,
 } = {}) {
+  const languageCode = normalizeRealtimeLanguage(language);
   const turnDetection = vadMode === 'server_vad'
     ? {
         type: 'server_vad',
@@ -73,7 +94,7 @@ export function buildRealtimeSessionUpdate({
     type: 'session.update',
     session: {
       type: 'realtime',
-      instructions: englishOnlyPrompt(systemPrompt),
+      instructions: languageOnlyPrompt(systemPrompt, languageCode),
       output_modalities: ['text'],
       audio: {
         input: {
@@ -83,7 +104,7 @@ export function buildRealtimeSessionUpdate({
           },
           transcription: {
             model: 'gpt-4o-mini-transcribe',
-            language: 'en',
+            language: languageCode,
           },
           noise_reduction: {
             type: 'near_field',

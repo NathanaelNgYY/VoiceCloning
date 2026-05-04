@@ -1,12 +1,17 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { CORS_ORIGIN } from '../config.js';
 import { OpenAiRealtimeBridge } from '../services/openaiRealtimeBridge.js';
+import { normalizeRealtimeLanguage } from '../services/openaiRealtimeEvents.js';
 
 export const LIVE_CHAT_PATH = '/api/live/chat/realtime';
 
 export function parseRequestUrl(req) {
   const host = req.headers.host || 'localhost';
   return new URL(req.url || '/', 'http://' + host);
+}
+
+export function getLiveChatLanguage(url) {
+  return normalizeRealtimeLanguage(url.searchParams.get('language') || '');
 }
 
 export function originAllowed(origin, options = {}) {
@@ -118,8 +123,11 @@ export function attachLiveChatSocket(server) {
     });
   });
 
-  wss.on('connection', (browserSocket) => {
-    const bridge = new OpenAiRealtimeBridge();
+  wss.on('connection', (browserSocket, req) => {
+    const url = parseRequestUrl(req);
+    const bridge = new OpenAiRealtimeBridge({
+      language: getLiveChatLanguage(url),
+    });
     activeClients.set(browserSocket, bridge);
 
     bridge.on('app-event', (payload) => {

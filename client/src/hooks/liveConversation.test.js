@@ -31,6 +31,14 @@ test('buildLiveReplyParams forces English assistant text for full inference', ()
   });
 });
 
+test('buildLiveReplyParams uses the selected live language for cloned voice text', () => {
+  const params = buildLiveReplyParams('Ni hao.', {
+    ref_audio_path: 'refs/sample.wav',
+  }, 'zh');
+
+  assert.equal(params.text_lang, 'zh');
+});
+
 test('chat messages keep stable ids and can be patched immutably', () => {
   const message = createChatMessage({
     id: 'msg-1',
@@ -57,6 +65,13 @@ test('splitLiveReplyPhrases splits punctuation for immediate voice playback', ()
     'Hello there!',
     'How are you?',
     'I am ready.',
+  ]);
+});
+
+test('splitLiveReplyPhrases splits Chinese punctuation for fast playback', () => {
+  assert.deepEqual(splitLiveReplyPhrases('你好！我可以帮你。'), [
+    '你好！',
+    '我可以帮你。',
   ]);
 });
 

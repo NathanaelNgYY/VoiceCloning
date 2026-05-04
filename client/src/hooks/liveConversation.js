@@ -3,9 +3,28 @@ export const LIVE_REPLY_MODES = {
   full: 'full',
   phrases: 'phrases',
 };
+export const LIVE_LANGUAGES = {
+  en: 'en',
+  zh: 'zh',
+};
+export const LIVE_LANGUAGE_OPTIONS = [
+  { value: LIVE_LANGUAGES.en, label: 'English', replyLabel: 'English replies' },
+  { value: LIVE_LANGUAGES.zh, label: 'Chinese', replyLabel: 'Chinese replies' },
+];
+
+export function normalizeLiveLanguage(language) {
+  return language === LIVE_LANGUAGES.zh ? LIVE_LANGUAGES.zh : LIVE_LANGUAGES.en;
+}
+
+export function getLiveLanguageConfig(language) {
+  const value = normalizeLiveLanguage(language);
+  return LIVE_LANGUAGE_OPTIONS.find((option) => option.value === value) || LIVE_LANGUAGE_OPTIONS[0];
+}
 
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
+const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
+const PHRASE_SPLIT_RE = /[^.!?;:。！？；：]+[.!?;:。！？；：]+|[^.!?;:。！？；：]+$/gu;
 
 export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
@@ -41,7 +60,7 @@ export function getMicOffAction({ phase, hasPendingAudio }) {
 }
 
 function ensurePhraseEnding(text) {
-  if (/[.!?;:]$/.test(text)) return text;
+  if (PHRASE_END_RE.test(text)) return text;
   return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;
 }
 
@@ -49,16 +68,16 @@ export function splitLiveReplyPhrases(text) {
   const clean = cleanLiveText(text);
   if (!clean) return [];
 
-  const matches = clean.match(/[^.!?;:]+[.!?;:]+|[^.!?;:]+$/g) || [clean];
+  const matches = clean.match(PHRASE_SPLIT_RE) || [clean];
   return matches
     .map((part) => ensurePhraseEnding(part.trim()))
     .filter(Boolean);
 }
 
-export function buildLiveReplyParams(text, refParams = {}) {
+export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
   return {
     text: cleanLiveText(text),
-    text_lang: LIVE_TEXT_LANG,
+    text_lang: normalizeLiveLanguage(language),
     ref_audio_path: refParams.ref_audio_path,
     prompt_text: refParams.prompt_text || '',
     prompt_lang: refParams.prompt_lang || 'en',
@@ -66,8 +85,8 @@ export function buildLiveReplyParams(text, refParams = {}) {
   };
 }
 
-export function buildLiveSentenceParams(text, refParams = {}) {
-  return buildLiveReplyParams(text, refParams);
+export function buildLiveSentenceParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
+  return buildLiveReplyParams(text, refParams, language);
 }
 
 export function createChatMessage({

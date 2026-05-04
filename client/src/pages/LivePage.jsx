@@ -2,8 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getCurrentInference, getInferenceStatus } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
+import {
+  LIVE_LANGUAGE_OPTIONS,
+  getLiveLanguageConfig,
+  normalizeLiveLanguage,
+} from '../hooks/liveConversation.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
 import {
@@ -146,6 +153,7 @@ export default function LivePage({ replyMode = 'full' }) {
   const [serverReady, setServerReady] = useState(false);
   const [loadedVoiceName, setLoadedVoiceName] = useState('');
   const [refParams, setRefParams] = useState(null);
+  const [selectedLanguage, setSelectedLanguage] = useState('en');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
 
@@ -200,7 +208,9 @@ export default function LivePage({ replyMode = 'full' }) {
     init();
   }, []);
 
-  const liveSpeech = useLiveSpeech({ refParams, replyMode });
+  const liveLanguage = normalizeLiveLanguage(selectedLanguage);
+  const liveLanguageConfig = getLiveLanguageConfig(liveLanguage);
+  const liveSpeech = useLiveSpeech({ refParams, replyMode, language: liveLanguage });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
 
   useEffect(() => {
@@ -250,7 +260,7 @@ export default function LivePage({ replyMode = 'full' }) {
       ? 'Mic off. Voice chat is still open.'
       : '') ||
     {
-      idle: 'Ready for an English voice chat.',
+      idle: `Ready for a ${liveLanguageConfig.label} voice chat.`,
       connecting: 'Connecting to the live assistant...',
       listening: liveSpeech.isMicInputEnabled ? 'Listening...' : 'Mic off. Voice chat is still open.',
       thinking: 'Thinking...',
@@ -261,7 +271,7 @@ export default function LivePage({ replyMode = 'full' }) {
         : 'Preparing cloned voice reply...',
       stopping: 'Stopping conversation...',
     }[liveSpeech.phase] ||
-    'Ready for an English voice chat.';
+    `Ready for a ${liveLanguageConfig.label} voice chat.`;
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -301,8 +311,8 @@ export default function LivePage({ replyMode = 'full' }) {
                   </h2>
                   <p className="text-xs text-muted-foreground">
                     {isFastMode
-                      ? 'English replies, phrase-by-phrase cloned voice'
-                      : 'English replies, full cloned voice output'}
+                      ? `${liveLanguageConfig.replyLabel}, phrase-by-phrase cloned voice`
+                      : `${liveLanguageConfig.replyLabel}, full cloned voice output`}
                   </p>
                 </div>
               </div>
@@ -321,8 +331,8 @@ export default function LivePage({ replyMode = 'full' }) {
                 <h3 className="mt-4 text-lg font-semibold text-slate-950">Start speaking when ready.</h3>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
                   {isFastMode
-                    ? 'The assistant will listen, reply in English text, then play cloned voice phrases in order as they become ready.'
-                    : 'The assistant will listen, reply in English text, then generate one complete cloned voice response.'}
+                    ? `The assistant will listen, reply in ${liveLanguageConfig.label} text, then play cloned voice phrases in order as they become ready.`
+                    : `The assistant will listen, reply in ${liveLanguageConfig.label} text, then generate one complete cloned voice response.`}
                 </p>
               </div>
             ) : (
@@ -435,7 +445,28 @@ export default function LivePage({ replyMode = 'full' }) {
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Language</p>
-                <p className="mt-1 text-slate-800">English only</p>
+                <div className="mt-2">
+                  <Label className="sr-only" htmlFor="live-language">Language</Label>
+                  <Select
+                    value={liveLanguage}
+                    onValueChange={setSelectedLanguage}
+                    disabled={isConversationActive}
+                  >
+                    <SelectTrigger id="live-language" className="h-10 rounded-xl border-slate-200 bg-slate-50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LIVE_LANGUAGE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Select before starting so transcripts and replies stay in one language.
+                  </p>
+                </div>
               </div>
             </div>
           </div>

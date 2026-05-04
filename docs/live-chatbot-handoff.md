@@ -1,6 +1,6 @@
 # Live Chatbot Handoff
 
-Last updated: 2026-04-30
+Last updated: 2026-05-04
 
 This is the short context file to read first when starting new development on the Live chatbot work.
 
@@ -22,21 +22,21 @@ There are now two Live modes:
 - `/live` / `Live Full`
   - Chatbot layout.
   - User speaks.
-  - OpenAI Realtime listens with VAD, keeps session memory, transcribes user speech for display, and generates English assistant text.
+  - OpenAI Realtime listens with VAD, keeps session memory, transcribes user speech for display in the selected language, and generates assistant text in that same selected language.
   - The full assistant text is sent once to `POST /api/inference`.
   - Existing long-text inference handles punctuation/chunk splitting internally and returns one complete WAV.
 
 - `/live-fast` / `Live Fast`
   - Same chatbot layout.
   - User speaks.
-  - OpenAI Realtime generates English assistant text.
+  - OpenAI Realtime generates assistant text in the selected language.
   - Frontend splits assistant text by punctuation.
   - Each phrase is sent to `POST /api/live/tts-sentence`.
   - Phrase audio is generated and played in order. The next phrase only starts after the previous phrase audio ends.
 
 ## Important UX Rules
 
-- Assistant replies must be English-only for now.
+- Assistant replies and displayed user transcripts follow the Live page language selector. Current supported choices are English and Chinese.
 - Only cloned GPT-SoVITS audio is played. OpenAI audio output is not requested and not played.
 - While cloned voice is playing, audio input to OpenAI is paused so assistant TTS is not fed back into the next user turn.
 - If the user speaks during cloned playback, the browser uses local mic level as a barge-in signal: local cloned playback is interrupted, input resumes, and the speech becomes the next user turn.
@@ -152,7 +152,7 @@ Required for Live chatbot:
 OPENAI_API_KEY=your_backend_only_key
 OPENAI_REALTIME_MODEL=gpt-realtime
 OPENAI_REALTIME_VAD=semantic_vad
-OPENAI_REALTIME_SYSTEM_PROMPT=You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.
+OPENAI_REALTIME_SYSTEM_PROMPT=You are a casual, helpful assistant. Keep replies concise and conversational.
 PORT=3002
 CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
@@ -315,6 +315,7 @@ Live gateway:
 
 - `live-gateway/src/routes/liveChat.js`
   - Browser-facing WebSocket endpoint: `/api/live/chat/realtime`.
+  - Reads the optional `language` query value and defaults unsupported values to English.
   - Forwards browser audio/control messages to OpenAI bridge.
   - Production origin handling allows same-origin and configured CORS origins.
 
@@ -326,7 +327,8 @@ Live gateway:
 - `live-gateway/src/services/openaiRealtimeEvents.js`
   - Builds Realtime `session.update`.
   - Uses text output only with `output_modalities: ['text']`.
-  - Configures input transcription with `gpt-4o-mini-transcribe`, language `en`.
+  - Configures input transcription with `gpt-4o-mini-transcribe`, using the selected Live language (`en` or `zh`).
+  - Appends the selected-language reply instruction, so old English-only env prompts do not override Chinese mode.
   - Do not re-add `max_output_tokens` in `session.update`; it caused Realtime parameter issues.
 
 Lambda Function URL:
@@ -362,11 +364,12 @@ Frontend:
   - Hashes JSON bodies and sends `x-amz-content-sha256` for mutating methods, which CloudFront OAC needs when signing POST requests to a Lambda Function URL using `AWS_IAM`.
 
 - `client/src/hooks/liveConversation.js`
-  - Pure helpers for English params, punctuation phrase splitting, chat message updates, and selected playback lookup.
+  - Pure helpers for selected-language TTS params, punctuation phrase splitting, chat message updates, and selected playback lookup.
   - `findSelectedPlayback()` intentionally does not fall back to old audio. This prevents previous WAV replay when a new reply is still generating.
 
 - `client/src/services/liveChatSocket.js`
   - Browser WebSocket wrapper.
+  - Sends the selected language as a WebSocket query param for the Realtime session.
 
 - `client/src/lib/runtimeConfig.js`
   - `resolveWsPath()` derives `ws://` or `wss://` from `VITE_LIVE_GATEWAY_URL`, then `VITE_GPU_WORKER_URL`, then `VITE_API_BASE_URL`/same-origin.

@@ -12,6 +12,7 @@ import {
   findSelectedPlayback,
   getMicOffAction,
   isLiveInputPhase,
+  normalizeLiveLanguage,
   splitLiveReplyPhrases,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
@@ -90,8 +91,13 @@ function encodeOpenAiAudioChunk(input, inputSampleRate) {
   return pcm16Base64(downsampled);
 }
 
-export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } = {}) {
+export function useLiveSpeech({
+  refParams,
+  replyMode = LIVE_REPLY_MODES.full,
+  language = 'en',
+} = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
+  const liveLanguage = normalizeLiveLanguage(language);
   const [phase, setPhaseState] = useState('idle');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [messages, setMessages] = useState([]);
@@ -363,7 +369,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     patchMessage(messageId, { status: 'generating_voice', error: null });
 
     try {
-      const blob = await synthesizeWithRetry(buildLiveReplyParams(text, refParams));
+      const blob = await synthesizeWithRetry(buildLiveReplyParams(text, refParams, liveLanguage));
       if (
         isCancelledRef.current ||
         runId !== runIdRef.current ||
@@ -431,7 +437,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
 
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
         const blob = await synthesizeSentenceWithRetry(
-          buildLiveSentenceParams(phrases[index], refParams)
+          buildLiveSentenceParams(phrases[index], refParams, liveLanguage)
         );
 
         if (
@@ -888,6 +894,7 @@ export function useLiveSpeech({ refParams, replyMode = LIVE_REPLY_MODES.full } =
     }
 
     const socket = createLiveChatSocket({
+      language: liveLanguage,
       onOpen: () => {
         if (runId === runIdRef.current) {
           setNotice('Connected. Preparing live chat...');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleBrowserMessage, originAllowed } from './liveChat.js';
+import { getLiveChatLanguage, handleBrowserMessage, originAllowed } from './liveChat.js';
 
 test('originAllowed accepts configured production origin and same-origin upgrades', () => {
   assert.equal(originAllowed('https://app.example.com', {
@@ -22,6 +22,12 @@ test('originAllowed rejects untrusted production origins', () => {
     corsOrigin: 'https://app.example.com',
     requestHost: 'live.example.com',
   }), false);
+});
+
+test('getLiveChatLanguage accepts supported language query values and defaults to English', () => {
+  assert.equal(getLiveChatLanguage(new URL('http://localhost/api/live/chat/realtime?language=zh')), 'zh');
+  assert.equal(getLiveChatLanguage(new URL('http://localhost/api/live/chat/realtime?language=ja')), 'en');
+  assert.equal(getLiveChatLanguage(new URL('http://localhost/api/live/chat/realtime')), 'en');
 });
 
 test('handleBrowserMessage forwards browser controls to bridge methods', () => {

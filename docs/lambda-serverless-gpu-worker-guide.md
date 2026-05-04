@@ -156,7 +156,7 @@ CORS_ORIGIN=https://YOUR_CLOUDFRONT_DOMAIN \
 OPENAI_API_KEY=sk-... \
 OPENAI_REALTIME_MODEL=gpt-realtime \
 OPENAI_REALTIME_VAD=semantic_vad \
-OPENAI_REALTIME_SYSTEM_PROMPT="You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English." \
+OPENAI_REALTIME_SYSTEM_PROMPT="You are a casual, helpful assistant. Keep replies concise and conversational." \
 npm start
 ```
 
@@ -169,7 +169,7 @@ CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 OPENAI_API_KEY=
 OPENAI_REALTIME_MODEL=gpt-realtime
 OPENAI_REALTIME_VAD=semantic_vad
-OPENAI_REALTIME_SYSTEM_PROMPT="You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English."
+OPENAI_REALTIME_SYSTEM_PROMPT="You are a casual, helpful assistant. Keep replies concise and conversational."
 ```
 
 Recommended `systemd` setup:

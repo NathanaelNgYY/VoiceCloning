@@ -2,8 +2,16 @@ import { resolveWsPath } from '@/lib/runtimeConfig';
 
 const LIVE_CHAT_SOCKET_PATH = '/api/live/chat/realtime';
 
-export function createLiveChatSocket({ onOpen, onMessage, onError, onClose } = {}) {
-  const socket = new WebSocket(resolveWsPath(LIVE_CHAT_SOCKET_PATH));
+function withLanguageParam(path, language) {
+  const url = new URL(path);
+  if (language) {
+    url.searchParams.set('language', language);
+  }
+  return url.toString();
+}
+
+export function createLiveChatSocket({ language = 'en', onOpen, onMessage, onError, onClose } = {}) {
+  const socket = new WebSocket(withLanguageParam(resolveWsPath(LIVE_CHAT_SOCKET_PATH), language));
 
   socket.addEventListener('open', (event) => {
     onOpen?.(event);

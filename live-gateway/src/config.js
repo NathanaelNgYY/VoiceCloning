@@ -40,7 +40,7 @@ loadOptionalEnvFile(CONFIG_FILE);
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 export const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
 export const OPENAI_REALTIME_SYSTEM_PROMPT = process.env.OPENAI_REALTIME_SYSTEM_PROMPT
-  || 'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.';
+  || 'You are a casual, helpful assistant. Keep replies concise and conversational.';
 export const OPENAI_REALTIME_VAD = process.env.OPENAI_REALTIME_VAD || 'semantic_vad';
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 export const PORT = Number.parseInt(process.env.PORT || '3002', 10);
