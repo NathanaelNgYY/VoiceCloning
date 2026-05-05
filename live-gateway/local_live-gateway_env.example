@@ -1,0 +1,8 @@
+﻿NODE_ENV=development
+PORT=3002
+CORS_ORIGIN=http://localhost:5173
+OPENAI_API_KEY= 
+OPENAI_REALTIME_VAD=semantic_vad
+OPENAI_REALTIME_SYSTEM_PROMPT=You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.
+
+#local only
