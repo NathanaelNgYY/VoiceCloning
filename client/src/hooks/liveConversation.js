@@ -25,6 +25,60 @@ export function getLiveTtsLanguage(language) {
   return normalizeLiveLanguage(language) === LIVE_LANGUAGES.zh ? 'all_zh' : LIVE_LANGUAGES.en;
 }
 
+const ENGLISH_NUMBER_WORDS = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+const ENGLISH_TENS_WORDS = new Set([
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+]);
+const ENGLISH_ONES_WORDS = new Set([
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+]);
+const ENGLISH_NUMBER_WORD_RE =
+  /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\s]+(?:one|two|three|four|five|six|seven|eight|nine))?\b/gi;
+const LATIN_WORD_RE = /\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b/g;
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
 const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
@@ -32,6 +86,37 @@ const PHRASE_SPLIT_RE = /[^.!?;:。！？；：]+[.!?;:。！？；：]+|[^.!?;:
 
 export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function englishNumberWordsToDigits(match) {
+  const words = match.toLowerCase().split(/[-\s]+/u).filter(Boolean);
+  if (words.length === 1) {
+    return String(ENGLISH_NUMBER_WORDS[words[0]]);
+  }
+  if (
+    words.length === 2
+    && ENGLISH_TENS_WORDS.has(words[0])
+    && ENGLISH_ONES_WORDS.has(words[1])
+  ) {
+    return String(ENGLISH_NUMBER_WORDS[words[0]] + ENGLISH_NUMBER_WORDS[words[1]]);
+  }
+  return match;
+}
+
+function cleanChineseTtsText(text) {
+  return cleanLiveText(text)
+    .replace(ENGLISH_NUMBER_WORD_RE, englishNumberWordsToDigits)
+    .replace(LATIN_WORD_RE, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([,，.。!?！？;；:：、%])\s*/gu, '$1')
+    .replace(/([\u3400-\u9FFF])\s+([\u3400-\u9FFF])/gu, '$1$2')
+    .trim();
+}
+
+export function cleanLiveTtsText(text, language = LIVE_TEXT_LANG) {
+  return normalizeLiveLanguage(language) === LIVE_LANGUAGES.zh
+    ? cleanChineseTtsText(text)
+    : cleanLiveText(text);
 }
 
 export function isLiveInputPhase(phase) {
@@ -80,7 +165,7 @@ export function splitLiveReplyPhrases(text) {
 
 export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
   return {
-    text: cleanLiveText(text),
+    text: cleanLiveTtsText(text, language),
     text_lang: getLiveTtsLanguage(language),
     ref_audio_path: refParams.ref_audio_path,
     prompt_text: refParams.prompt_text || '',

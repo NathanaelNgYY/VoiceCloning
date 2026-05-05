@@ -10,5 +10,6 @@ test('buildRealtimeSessionUpdate uses selected Chinese for replies and transcrip
 
   assert.equal(update.session.audio.input.transcription.language, 'zh');
   assert.match(update.session.instructions, /only in Chinese/i);
+  assert.match(update.session.instructions, /Do not include English words/i);
   assert.doesNotMatch(update.session.instructions, /only in English/i);
 });

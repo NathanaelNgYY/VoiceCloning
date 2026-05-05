@@ -39,6 +39,18 @@ test('buildLiveReplyParams maps selected Chinese to GPT-SoVITS all-Chinese text 
   assert.equal(params.text_lang, 'all_zh');
 });
 
+test('buildLiveReplyParams removes Latin words from selected Chinese TTS text', () => {
+  const params = buildLiveReplyParams(
+    '气温在thirty度左右，湿度在seventy%到eighty%。',
+    { ref_audio_path: 'refs/sample.wav' },
+    'zh'
+  );
+
+  assert.equal(params.text, '气温在30度左右，湿度在70%到80%。');
+  assert.doesNotMatch(params.text, /[A-Za-z]/);
+  assert.equal(params.text_lang, 'all_zh');
+});
+
 test('chat messages keep stable ids and can be patched immutably', () => {
   const message = createChatMessage({
     id: 'msg-1',

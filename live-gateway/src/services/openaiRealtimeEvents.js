@@ -23,6 +23,9 @@ export function normalizeRealtimeLanguage(language) {
 
 function languageOnlyPrompt(systemPrompt, language) {
   const languageConfig = REALTIME_LANGUAGES[normalizeRealtimeLanguage(language)];
+  const languageInstruction = languageConfig.code === REALTIME_LANGUAGES.zh.code
+    ? 'Always respond only in Chinese. Use Simplified Chinese characters. Do not include English words, Latin letters, pinyin, or English number words; write numbers as Arabic numerals or Chinese characters.'
+    : `Always respond only in ${languageConfig.name}.`;
   const prompt = cleanText(systemPrompt) || DEFAULT_SYSTEM_PROMPT;
   const neutralPrompt = cleanText(
     prompt
@@ -31,7 +34,7 @@ function languageOnlyPrompt(systemPrompt, language) {
       .replace(/\s+/g, ' ')
   );
   const basePrompt = neutralPrompt || 'You are a casual, helpful assistant. Keep replies concise and conversational.';
-  return `${basePrompt} Always respond only in ${languageConfig.name}.`;
+  return `${basePrompt} ${languageInstruction}`;
 }
 
 function responseKey(event) {
