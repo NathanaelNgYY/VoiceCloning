@@ -41,8 +41,13 @@ router.post('/train', (req, res) => {
       asrModel: config.asrModel,
     });
   }).catch((err) => {
-    trainingState.setError(err.message || 'Pipeline failed');
-    sseManager.send(sessionId, 'error', { message: err.message || 'Pipeline failed' });
+    if (err.message === 'SSE client did not connect in time') {
+      trainingState.clear();
+      sseManager.clearSession(sessionId);
+    } else {
+      trainingState.setError(err.message || 'Pipeline failed');
+      sseManager.send(sessionId, 'error', { message: err.message || 'Pipeline failed' });
+    }
   }).finally(() => {
     sessions.delete(sessionId);
   });

@@ -9,7 +9,7 @@ class SSEManager {
     this.buffers.set(sessionId, []);
   }
 
-  waitForClient(sessionId, timeoutMs = 5000) {
+  waitForClient(sessionId, timeoutMs = 15000) {
     if (this.clients.has(sessionId)) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -77,6 +77,11 @@ class SSEManager {
     if (buffer) {
       buffer.push({ event, data });
     }
+  }
+
+  clearSession(sessionId) {
+    this.buffers.delete(sessionId);
+    this.waiters.delete(sessionId);
   }
 
   hasClient(sessionId) {
