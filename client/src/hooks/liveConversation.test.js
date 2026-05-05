@@ -31,12 +31,12 @@ test('buildLiveReplyParams forces English assistant text for full inference', ()
   });
 });
 
-test('buildLiveReplyParams uses the selected live language for cloned voice text', () => {
+test('buildLiveReplyParams maps selected Chinese to GPT-SoVITS all-Chinese text mode', () => {
   const params = buildLiveReplyParams('Ni hao.', {
     ref_audio_path: 'refs/sample.wav',
   }, 'zh');
 
-  assert.equal(params.text_lang, 'zh');
+  assert.equal(params.text_lang, 'all_zh');
 });
 
 test('chat messages keep stable ids and can be patched immutably', () => {

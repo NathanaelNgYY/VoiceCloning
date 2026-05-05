@@ -37,6 +37,7 @@ There are now two Live modes:
 ## Important UX Rules
 
 - Assistant replies and displayed user transcripts follow the Live page language selector. Current supported choices are English and Chinese.
+- The browser sends `en`/`zh` to `live-gateway` for OpenAI Realtime transcription/reply control. For GPT-SoVITS TTS, selected Chinese is sent as `text_lang: all_zh` so cloned-voice text is treated as Chinese instead of mixed Chinese/English segmentation.
 - Only cloned GPT-SoVITS audio is played. OpenAI audio output is not requested and not played.
 - While cloned voice is playing, audio input to OpenAI is paused so assistant TTS is not fed back into the next user turn.
 - If the user speaks during cloned playback, the browser uses local mic level as a barge-in signal: local cloned playback is interrupted, input resumes, and the speech becomes the next user turn.
@@ -365,6 +366,7 @@ Frontend:
 
 - `client/src/hooks/liveConversation.js`
   - Pure helpers for selected-language TTS params, punctuation phrase splitting, chat message updates, and selected playback lookup.
+  - Maps UI Chinese (`zh`) to GPT-SoVITS `all_zh` for TTS payloads while keeping Realtime language selection as `zh`.
   - `findSelectedPlayback()` intentionally does not fall back to old audio. This prevents previous WAV replay when a new reply is still generating.
 
 - `client/src/services/liveChatSocket.js`

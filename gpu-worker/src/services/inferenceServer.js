@@ -38,12 +38,17 @@ function buildStatus({ ready, error = null, loaded, managed }) {
   };
 }
 
-function extractErrorMessage(payload, fallback) {
+export function extractErrorMessage(payload, fallback) {
   if (typeof payload === 'string') {
     return payload;
   }
   if (payload && typeof payload === 'object') {
-    return payload.message || payload.detail || payload.error || fallback;
+    return payload.Exception
+      || payload.exception
+      || payload.message
+      || payload.detail
+      || payload.error
+      || fallback;
   }
   return fallback;
 }

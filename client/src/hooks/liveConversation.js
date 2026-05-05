@@ -21,6 +21,10 @@ export function getLiveLanguageConfig(language) {
   return LIVE_LANGUAGE_OPTIONS.find((option) => option.value === value) || LIVE_LANGUAGE_OPTIONS[0];
 }
 
+export function getLiveTtsLanguage(language) {
+  return normalizeLiveLanguage(language) === LIVE_LANGUAGES.zh ? 'all_zh' : LIVE_LANGUAGES.en;
+}
+
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
 const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
@@ -77,7 +81,7 @@ export function splitLiveReplyPhrases(text) {
 export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
   return {
     text: cleanLiveText(text),
-    text_lang: normalizeLiveLanguage(language),
+    text_lang: getLiveTtsLanguage(language),
     ref_audio_path: refParams.ref_audio_path,
     prompt_text: refParams.prompt_text || '',
     prompt_lang: refParams.prompt_lang || 'en',

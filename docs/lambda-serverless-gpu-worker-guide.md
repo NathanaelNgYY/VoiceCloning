@@ -925,6 +925,10 @@ Browser network checks:
 - Live chatbot WebSocket goes to `wss://.../api/live/chat/realtime`.
 - Fast phrase TTS calls `POST /api/live/tts-sentence` through CloudFront to the Lambda Function URL and receives `audio/wav`.
 
+Chinese Live TTS uses GPT-SoVITS `text_lang: all_zh`. The UI and OpenAI Realtime session still use `zh`; only the GPT-SoVITS payload uses `all_zh` to avoid mixed-language segmentation for selected Chinese replies.
+
+When debugging GPT-SoVITS directly on the GPU host, prefer `gpu-worker` on `127.0.0.1:3001` for app-equivalent tests because it resolves S3 reference-audio keys into local cached files. A direct `127.0.0.1:9880/tts` request bypasses that resolver and relative `training/datasets/...wav` paths can fail with `not exists`.
+
 ## Important Limits
 
 Lambda Function URLs remove the old gateway integration layer, but long GPU jobs should still avoid a single synchronous browser -> CloudFront -> Lambda request. Keep long inference on the existing async flow:
