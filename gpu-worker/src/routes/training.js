@@ -64,13 +64,13 @@ router.post('/train/stop', (req, res) => {
   }
   const killed = processManager.kill(sessionId);
   if (killed) {
-    trainingState.setStatus('stopped');
     sseManager.send(sessionId, 'error', { message: 'Training stopped by user' });
-    sessions.delete(sessionId);
-    res.json({ message: 'Training stopped' });
-  } else {
-    res.status(404).json({ error: 'No running process found' });
   }
+  // Always clear state so a page reload doesn't restore a stale error.
+  trainingState.clear();
+  sseManager.clearSession(sessionId);
+  sessions.delete(sessionId);
+  res.json({ message: 'Training stopped' });
 });
 
 router.get('/train/current', (_req, res) => {
