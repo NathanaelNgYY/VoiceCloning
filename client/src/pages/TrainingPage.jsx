@@ -34,7 +34,7 @@ export default function TrainingPage() {
   const [uploadError, setUploadError] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  const { logs, steps, pipelineStatus, error, connect, disconnect, hydrate } = useSSE();
+  const { logs, steps, pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
   const restoredSessionRef = useRef(null);
   const noticeTimeoutRef = useRef(null);
   const previousStatusRef = useRef(null);
@@ -188,17 +188,13 @@ export default function TrainingPage() {
     if (!sessionId) return;
     try {
       await stopTraining(sessionId);
-      disconnect();
-      hydrate({
-        initialLogs: logs,
-        initialSteps: steps,
-        initialStatus: 'stopped',
-        initialError: 'Training stopped by user',
-      });
+      reset();
+      setSessionId(null);
+      restoredSessionRef.current = null;
       showNotice({
         title: 'Training stopped',
         message: 'The current run has been stopped. You can adjust the setup and start again whenever you are ready.',
-        tone: 'error',
+        tone: 'success',
       });
     } catch (err) {
       console.error('Failed to stop training:', err);
