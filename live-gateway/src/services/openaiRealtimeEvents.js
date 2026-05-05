@@ -175,7 +175,7 @@ export class RealtimeEventMapper {
         return this.mapResponseDone(event);
 
       case 'error':
-        return [this.mapError(event)];
+        return this.mapErrorEvent(event);
 
       default:
         return [];
@@ -260,6 +260,13 @@ export class RealtimeEventMapper {
     this.buffers.delete(key);
 
     return text ? [{ type: 'assistant.text.done', text: this.preprocessAssistantText(text) }] : [];
+  }
+
+  mapErrorEvent(event) {
+    const message = cleanText(event.error?.message || event.message || '');
+    // Transient audio buffer errors — the session self-recovers, no need to surface these.
+    if (/buffer too small|audio buffer/i.test(message)) return [];
+    return [this.mapError(event)];
   }
 
   mapError(event) {
