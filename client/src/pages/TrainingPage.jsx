@@ -186,24 +186,22 @@ export default function TrainingPage() {
 
   async function handleStop() {
     if (!sessionId) return;
+    // Clear the UI immediately — don't wait for the API response.
+    // If the process already died (step error), stopTraining returns 404 and would
+    // never reach reset(), leaving the error state visible.
+    disconnect();
+    reset();
+    setSessionId(null);
+    restoredSessionRef.current = null;
+    showNotice({
+      title: 'Training stopped',
+      message: 'The current run has been stopped. You can adjust the setup and start again whenever you are ready.',
+      tone: 'success',
+    });
     try {
-      disconnect(); // close SSE before the stop request so the process-killed error event can't race in
       await stopTraining(sessionId);
-      reset();
-      setSessionId(null);
-      restoredSessionRef.current = null;
-      showNotice({
-        title: 'Training stopped',
-        message: 'The current run has been stopped. You can adjust the setup and start again whenever you are ready.',
-        tone: 'success',
-      });
     } catch (err) {
       console.error('Failed to stop training:', err);
-      showNotice({
-        title: 'Stop request failed',
-        message: 'The training run could not be stopped right now. Please try again.',
-        tone: 'error',
-      });
     }
   }
 
