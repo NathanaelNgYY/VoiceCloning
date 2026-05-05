@@ -187,6 +187,7 @@ export default function TrainingPage() {
   async function handleStop() {
     if (!sessionId) return;
     try {
+      disconnect(); // close SSE before the stop request so the process-killed error event can't race in
       await stopTraining(sessionId);
       reset();
       setSessionId(null);
