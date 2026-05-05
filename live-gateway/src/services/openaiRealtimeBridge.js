@@ -43,7 +43,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.language = language;
     this.WebSocketClass = WebSocketClass;
     this.socket = null;
-    this.mapper = new RealtimeEventMapper();
+    this.mapper = new RealtimeEventMapper({ language: this.language });
     this.closed = false;
     this.inputPaused = false;
     this.hasPendingAudio = false;

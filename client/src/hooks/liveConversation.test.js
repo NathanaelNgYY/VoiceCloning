@@ -41,14 +41,25 @@ test('buildLiveReplyParams maps selected Chinese to GPT-SoVITS all-Chinese text 
 
 test('buildLiveReplyParams removes Latin words from selected Chinese TTS text', () => {
   const params = buildLiveReplyParams(
-    '气温在thirty度左右，湿度在seventy%到eighty%。',
+    '气温在thirty度左右，湿度在seventy%到eighty%，Singapore feels hot。',
     { ref_audio_path: 'refs/sample.wav' },
     'zh'
   );
 
   assert.equal(params.text, '气温在30度左右，湿度在70%到80%。');
-  assert.doesNotMatch(params.text, /[A-Za-z]/);
+  assert.doesNotMatch(params.text, /\p{Script=Latin}/u);
   assert.equal(params.text_lang, 'all_zh');
+});
+
+test('buildLiveReplyParams removes non-ASCII Latin letters from selected Chinese TTS text', () => {
+  const params = buildLiveReplyParams(
+    '今天AI café Ｓｉｎｇａｐｏｒｅ天气不错。',
+    { ref_audio_path: 'refs/sample.wav' },
+    'zh'
+  );
+
+  assert.equal(params.text, '今天天气不错。');
+  assert.doesNotMatch(params.text, /\p{Script=Latin}/u);
 });
 
 test('chat messages keep stable ids and can be patched immutably', () => {

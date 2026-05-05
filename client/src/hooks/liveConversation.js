@@ -78,7 +78,7 @@ const ENGLISH_ONES_WORDS = new Set([
 ]);
 const ENGLISH_NUMBER_WORD_RE =
   /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\s]+(?:one|two|three|four|five|six|seven|eight|nine))?\b/gi;
-const LATIN_WORD_RE = /\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b/g;
+const LATIN_WORD_RE = /\p{Script=Latin}+(?:[-'’]\p{Script=Latin}+)*/gu;
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
 const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
@@ -109,6 +109,7 @@ function cleanChineseTtsText(text) {
     .replace(LATIN_WORD_RE, '')
     .replace(/\s+/g, ' ')
     .replace(/\s*([,，.。!?！？;；:：、%])\s*/gu, '$1')
+    .replace(/[,，、;；:：]+([.。!?！？])/gu, '$1')
     .replace(/([\u3400-\u9FFF])\s+([\u3400-\u9FFF])/gu, '$1$2')
     .trim();
 }

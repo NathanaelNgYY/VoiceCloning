@@ -39,6 +39,7 @@ There are now two Live modes:
 - Assistant replies and displayed user transcripts follow the Live page language selector. Current supported choices are English and Chinese.
 - The browser sends `en`/`zh` to `live-gateway` for OpenAI Realtime transcription/reply control. For GPT-SoVITS TTS, selected Chinese is sent as `text_lang: all_zh` so cloned-voice text is treated as Chinese instead of mixed Chinese/English segmentation.
 - Chinese TTS payload text is sanitized before GPT-SoVITS: common English number words are converted to digits and remaining Latin words are removed. This prevents GPT-SoVITS `all_zh` from falling back into mixed-language detection when OpenAI emits text such as `thirty度` or `seventy%`.
+- `live-gateway` must not run the English text preprocessor on Chinese replies. In Chinese mode, assistant numbers should remain digits/Chinese characters; in English mode, normal English number/acronym preprocessing still applies.
 - Only cloned GPT-SoVITS audio is played. OpenAI audio output is not requested and not played.
 - While cloned voice is playing, audio input to OpenAI is paused so assistant TTS is not fed back into the next user turn.
 - If the user speaks during cloned playback, the browser uses local mic level as a barge-in signal: local cloned playback is interrupted, input resumes, and the speech becomes the next user turn.
@@ -331,6 +332,7 @@ Live gateway:
   - Uses text output only with `output_modalities: ['text']`.
   - Configures input transcription with `gpt-4o-mini-transcribe`, using the selected Live language (`en` or `zh`).
   - Appends the selected-language reply instruction, so old English-only env prompts do not override Chinese mode.
+  - Applies English text preprocessing only in English mode. Chinese mode keeps digits as digits to avoid injecting English words before GPT-SoVITS.
   - Do not re-add `max_output_tokens` in `session.update`; it caused Realtime parameter issues.
 
 Lambda Function URL:

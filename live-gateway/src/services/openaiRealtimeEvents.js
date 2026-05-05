@@ -120,9 +120,16 @@ export function buildRealtimeSessionUpdate({
 }
 
 export class RealtimeEventMapper {
-  constructor() {
+  constructor({ language = REALTIME_LANGUAGES.en.code } = {}) {
+    this.language = normalizeRealtimeLanguage(language);
     this.buffers = new Map();
     this.completed = new Set();
+  }
+
+  preprocessAssistantText(text) {
+    return this.language === REALTIME_LANGUAGES.zh.code
+      ? text
+      : preprocessText(text);
   }
 
   map(event) {
@@ -215,7 +222,7 @@ export class RealtimeEventMapper {
     this.completed.add(key);
     this.buffers.delete(key);
 
-    return text ? [{ type: 'assistant.text.done', text: preprocessText(text) }] : [];
+    return text ? [{ type: 'assistant.text.done', text: this.preprocessAssistantText(text) }] : [];
   }
 
   mapResponseDone(event) {
@@ -252,7 +259,7 @@ export class RealtimeEventMapper {
     }
     this.buffers.delete(key);
 
-    return text ? [{ type: 'assistant.text.done', text: preprocessText(text) }] : [];
+    return text ? [{ type: 'assistant.text.done', text: this.preprocessAssistantText(text) }] : [];
   }
 
   mapError(event) {
