@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --mode lambda-local",
-    "dev:lambda": "vite --mode lambda-local --host 0.0.0.0 --port 5173 --strictPort",
-    "dev:deployed-env": "vite",
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "vite build",
     "preview": "vite preview"
   },

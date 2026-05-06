@@ -458,7 +458,7 @@ During backend/debugging work, use only this SPA fallback:
 
 Do not add `403 -> /index.html -> 200`. A global 403 rewrite hides real Lambda Function URL, OAC, S3, and permissions errors by returning the React app HTML. Keep 403 visible so backend/security problems are debuggable.
 
-For user-facing demos after backend checks are done, a temporary `403 -> /index.html -> 200` fallback can make direct refreshes on React routes such as `/inference` work with the S3 REST origin. Remove or disable it again when debugging CloudFront/Lambda/S3 access problems.
+For user-facing demos after backend checks are done, a temporary `403 -> /index.html -> 200` fallback can make direct refreshes on React routes such as `/live-fast` work with the S3 REST origin. Remove or disable it again when debugging CloudFront/Lambda/S3 access problems.
 
 ## Lambda Deployment
 
@@ -535,7 +535,7 @@ ARTIFACT_SOURCE=s3
 CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
-Do not set `GPU_INSTANCE_MOCK_STATE` in deployed Lambda. That variable is only for local UI testing.
+The old `GPU_INSTANCE_MOCK_STATE` local UI path has been removed. Configure a real `GPU_INSTANCE_ID` and test GPU start/status against the cloud services.
 
 The Lambda CORS helper must allow `x-amz-content-sha256`. This repo does that in `lambda/shared/cors.js`. Without this allowed header, browser preflight can block signed JSON `POST` requests before they reach CloudFront/Lambda.
 
@@ -884,98 +884,36 @@ No deployment env should use the GPU EC2 public IP directly. Use:
 
 The GPU EC2 public IP is only useful for administrative access, such as temporary SSH, unless you replace SSH with SSM Session Manager.
 
-## Local Testing
+## Cloud-Connected Frontend Testing
 
-You can test the Lambda migration locally with four terminals. This does not require AWS deployment tools. It still uses real S3, so your shell must have AWS credentials that can read/write the configured bucket.
+Local mock and Lambda-local testing have been removed from the normal workflow. For frontend testing, run the React dev server and let it call the deployed CloudFront/Lambda/GPU services directly.
 
-First create `lambda/local.env`:
-
-```bash
-cd lambda
-cp local.env.example local.env
-```
-
-Edit `lambda/local.env` if your bucket, prefix, region, or GPU worker URL differ:
+Use `client/.env` with the CloudFront target:
 
 ```env
-PORT=3000
-S3_BUCKET=interns2026-small-projects-bucket-shared
-S3_REGION=ap-southeast-1
-S3_PREFIX=echolect/
-GPU_WORKER_URL=http://localhost:3001
-GPU_WORKER_PUBLIC_URL=http://localhost:3001
-GPU_IDLE_STOP_MINUTES=0
-CORS_ORIGIN=http://localhost:5173
-MODEL_SOURCE=s3
-ARTIFACT_SOURCE=gpu-worker
+PROXY_TARGET=https://d3dghqhnk7aoku.cloudfront.net
+VITE_GPU_WORKER_URL=
+VITE_LIVE_GATEWAY_URL=https://d3dghqhnk7aoku.cloudfront.net
 ```
 
-`MODEL_SOURCE=s3` makes local `/api/models` read GPT and SoVITS checkpoints from S3, matching deployment. Set `MODEL_SOURCE=gpu-worker` only when you deliberately want to debug the model files currently present under the GPU worker's `GPT_SOVITS_ROOT`.
-
-`ARTIFACT_SOURCE=gpu-worker` makes local `/api/training-audio/...` and `/api/inference/result/...` return URLs served by the GPU worker instead of presigned S3 URLs. For deployed Lambda, keep `ArtifactSource=s3` when you want generated audio and training audio persisted through S3; use `ArtifactSource=gpu-worker` only if the browser can reach `GpuWorkerPublicUrl`.
-
-Terminal 1: GPU worker REST/SSE service:
-
-```bash
-cd gpu-worker
-npm install
-$env:GPT_SOVITS_ROOT="C:\path\to\GPT-SoVITS"
-$env:S3_BUCKET="interns2026-small-projects-bucket-shared"
-$env:S3_REGION="ap-southeast-1"
-$env:S3_PREFIX="echolect/"
-$env:CORS_ORIGIN="http://localhost:5173"
-npm run dev
-```
-
-Terminal 2: Live WebSocket gateway:
-
-```bash
-cd live-gateway
-npm install
-$env:OPENAI_API_KEY="sk-..."
-$env:CORS_ORIGIN="http://localhost:5173"
-$env:PORT="3002"
-npm run dev
-```
-
-Terminal 3: Lambda-local REST shim:
-
-```bash
-cd lambda
-npm install
-npm run dev
-```
-
-Terminal 4: React app in Lambda-local mode:
+Run the frontend:
 
 ```bash
 cd client
 npm install
-npm run dev:lambda
+npm run dev
 ```
 
 Then open `http://localhost:5173`.
 
-Local URL map:
+Dev URL map:
 
-- REST API: `http://localhost:3000/api/*`
-- GPU Worker SSE: `http://localhost:3001/train/progress/*` and `http://localhost:3001/inference/progress/*`
-- Live chatbot WebSocket: `ws://localhost:3002/api/live/chat/realtime`
-- Frontend: `http://localhost:5173`
+- REST API: browser calls `/api/*`; Vite proxies it to `PROXY_TARGET`.
+- Training SSE: browser calls `/train/progress/*`; Vite proxies it to `PROXY_TARGET`.
+- Live chatbot WebSocket: browser opens `wss://d3dghqhnk7aoku.cloudfront.net/api/live/chat/realtime`.
+- Frontend: `http://localhost:5173`.
 
-Quick checks:
-
-```bash
-curl http://localhost:3000/api/config
-curl http://localhost:3001/healthz
-curl http://localhost:3002/healthz
-```
-
-Expected:
-
-- Lambda-local config returns `{"storageMode":"s3","inferenceMode":"remote"}`
-- GPU worker health returns `service: "gpu-worker"`
-- Live gateway health returns `service: "voice-cloning-live-gateway"`
+Keep the GPU EC2, `gpu-worker.service`, `live-gateway.service`, Lambda Function URL, CloudFront behaviors, and S3 bucket configured exactly as deployment uses them. This is intentionally closer to the real release path than the old fake local stack.
 
 ## Smoke Tests
 
@@ -1035,7 +973,7 @@ Lambda Function URLs remove the old gateway integration layer, but long GPU jobs
 - direct browser SSE to `/inference/progress/:sessionId`
 - `GET /api/inference/result/:sessionId`
 
-`POST /api/inference` is still present for compatibility with Live Full and short direct synthesis, but long text should prefer the streaming flow.
+`POST /api/inference` is still present for backend compatibility and short direct synthesis, but user-facing long text should prefer the streaming flow.
 
 Lambda Function URLs are HTTP endpoints; they do not let Lambda own a raw long-lived bidirectional WebSocket. That is why `/api/live/chat/realtime` runs in `live-gateway` on the GPU EC2 instead of Lambda.
 

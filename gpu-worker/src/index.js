@@ -9,16 +9,13 @@ import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { processManager } from './services/processManager.js';
-import { sseManager } from './services/sseManager.js';
-import { trainingState } from './services/trainingState.js';
 import { activityState } from './services/activityState.js';
+import { recordTrainingLog } from './services/trainingLogger.js';
 
 const app = express();
 
 processManager.on('log', ({ sessionId, stream, data }) => {
-  const payload = { stream, data, timestamp: Date.now() };
-  trainingState.appendLog(payload);
-  sseManager.send(sessionId, 'log', payload);
+  recordTrainingLog(sessionId, { stream, data });
 });
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 app.use(cors({ origin: CORS_ORIGIN }));

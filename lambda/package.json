@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node localServer.js",
     "package:function-url": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-function-url.ps1",
     "test": "node --test \"**/*.test.js\""
   },

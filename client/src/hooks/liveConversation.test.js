@@ -39,6 +39,27 @@ test('buildLiveReplyParams maps selected Chinese to GPT-SoVITS all-Chinese text 
   assert.equal(params.text_lang, 'all_zh');
 });
 
+test('buildLiveReplyParams carries Live Fast inference controls without changing split logic', () => {
+  const params = buildLiveReplyParams('Hello.', {
+    ref_audio_path: 'refs/sample.wav',
+    prompt_text: 'reference words',
+    prompt_lang: 'en',
+    aux_ref_audio_paths: ['refs/aux-a.wav'],
+    top_k: 12,
+    top_p: 0.75,
+    temperature: 0.65,
+    repetition_penalty: 1.2,
+    speed_factor: 0.9,
+  });
+
+  assert.equal(params.top_k, 12);
+  assert.equal(params.top_p, 0.75);
+  assert.equal(params.temperature, 0.65);
+  assert.equal(params.repetition_penalty, 1.2);
+  assert.equal(params.speed_factor, 0.9);
+  assert.deepEqual(splitLiveReplyPhrases('One. Two.'), ['One.', 'Two.']);
+});
+
 test('buildLiveReplyParams removes Latin words from selected Chinese TTS text', () => {
   const params = buildLiveReplyParams(
     '气温在thirty度左右，湿度在seventy%到eighty%，Singapore feels hot。',

@@ -9,7 +9,7 @@ This is the short context file to read first when starting new development on th
 - Current working branch during this handoff: `deployment-with-changes`.
 - The Live chatbot feature history is also on `chatbot-integrationV1`.
 - Latest relevant commit: `90055cb feat: add fast live phrase playback mode`.
-- Training and normal Inference paths should stay untouched unless a shared route boundary requires it.
+- Training and Live Fast are the only frontend surfaces. Inference logic stays available behind the existing endpoints, but the Inference tab and Live Full route are no longer user-facing.
 - Current deployed REST Lambda is `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in Seoul (`ap-northeast-2`), while the shared S3 bucket remains in Singapore (`ap-southeast-1`).
 - Function URL auth target is `AWS_IAM` behind CloudFront Lambda Function URL OAC. The frontend shared Axios client now sends `x-amz-content-sha256` for JSON mutating requests, and Lambda CORS allows that header, which is required for signed POST routes.
 
@@ -17,17 +17,12 @@ This is the short context file to read first when starting new development on th
 
 The old Live path no longer uses Live-only Faster Whisper. The browser streams microphone audio to `live-gateway`, `live-gateway` owns an OpenAI Realtime session, OpenAI returns text, and GPT-SoVITS produces the only audible assistant voice.
 
-There are now two Live modes:
-
-- `/live` / `Live Full`
-  - Chatbot layout.
-  - User speaks.
-  - OpenAI Realtime listens with VAD, keeps session memory, transcribes user speech for display in the selected language, and generates assistant text in that same selected language.
-  - The full assistant text is sent once to `POST /api/inference`.
-  - Existing long-text inference handles punctuation/chunk splitting internally and returns one complete WAV.
+There is now one user-facing Live mode:
 
 - `/live-fast` / `Live Fast`
-  - Same chatbot layout.
+  - User chooses a trained model from a dropdown and clicks Save voice.
+  - The page auto-selects the best trained primary reference plus up to five auxiliary clips.
+  - Additional settings let the user override reference clips and inference controls such as speed, top_k, top_p, temperature, and repetition penalty.
   - User speaks.
   - OpenAI Realtime generates assistant text in the selected language.
   - Frontend splits assistant text by punctuation.
@@ -210,7 +205,7 @@ CloudFront error pages:
 
 - During backend debugging, keep only `404 -> /index.html -> 200` for React routes.
 - Do not use `403 -> /index.html -> 200` while debugging Lambda Function URL/OAC/S3 permissions; it hides real access failures behind the React app.
-- For short user-facing demos after backend checks are done, `403 -> /index.html -> 200` can be temporarily restored so direct refreshes on React routes such as `/inference` work with the S3 REST origin.
+- For short user-facing demos after backend checks are done, `403 -> /index.html -> 200` can be temporarily restored so direct refreshes on React routes such as `/live-fast` work with the S3 REST origin.
 
 ## Frontend Env
 
@@ -338,7 +333,7 @@ Live gateway:
 Lambda Function URL:
 
 - `lambda/inference/index.js`
-  - `POST /api/inference`: full-reply WAV generation through long-text inference.
+  - Existing inference endpoints remain for backend compatibility and model readiness/status.
 - `lambda/live/index.js`
   - `POST /api/live/tts-sentence`: fast phrase/sentence synthesis.
 - `lambda/transcribe/index.js`
@@ -349,19 +344,16 @@ Lambda Function URL:
 Frontend:
 
 - `client/src/App.jsx`
-  - Adds nav/routes:
-    - `/live` as `Live Full`
-    - `/live-fast` as `Live Fast`
+  - User-facing nav/routes are `/` for Training and `/live-fast` for Live Fast. `/live` and `/inference` redirect to `/live-fast`.
 
 - `client/src/pages/LivePage.jsx`
-  - Shared chatbot UI for both modes.
-  - Receives `replyMode="full"` or `replyMode="phrases"`.
+  - Live Fast chatbot UI.
+  - Owns the trained model dropdown, Save voice action, trained-reference picker, and inference controls.
 
 - `client/src/hooks/useLiveSpeech.js`
   - Streams mic PCM to backend.
   - Handles chat messages, user transcription display, OpenAI assistant text, cloned audio generation, playback, and interruption.
-  - Full mode calls `synthesize()` -> `/api/inference`.
-  - Fast mode calls `synthesizeSentence()` -> `/api/live/tts-sentence`.
+  - Live Fast calls `synthesizeSentence()` -> `/api/live/tts-sentence`.
 
 - `client/src/services/api.js`
   - Shared Axios client for REST calls.
@@ -405,7 +397,7 @@ npm --prefix client run build
 
 Expected current results:
 
-- Client helper/reference tests: 14 passing when run with `node --test client/src/hooks/liveConversation.test.js client/src/lib/referenceSelection.test.js`.
+- Client helper/reference tests cover `client/src/hooks/liveConversation.test.js`, `client/src/lib/referenceSelection.test.js`, `client/src/lib/liveFastSetup.test.js`, and `client/src/lib/trainingValidation.test.js`.
 - Live gateway tests: 5 passing.
 - Client production build passes.
 

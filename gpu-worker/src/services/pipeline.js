@@ -13,6 +13,7 @@ import { trainingState } from './trainingState.js';
 import { generateSoVITSConfig, generateGPTConfig } from './configGenerator.js';
 import { STEPS } from './trainingSteps.js';
 import { downloadPrefix, uploadDirectory, uploadFile } from './s3Sync.js';
+import { recordTrainingLog } from './trainingLogger.js';
 
 function sendStep(sessionId, stepIndex, status, detail) {
   trainingState.setStepStatus(stepIndex, status, detail || '');
@@ -55,10 +56,9 @@ function mergePartFiles(dir, baseName, ext) {
 
 function skipStep(sessionId, stepIndex, reason) {
   sendStep(sessionId, stepIndex, 'skipped', reason);
-  sseManager.send(sessionId, 'log', {
+  recordTrainingLog(sessionId, {
     stream: 'stdout',
     data: `Skipping "${STEPS[stepIndex]}": ${reason}\n`,
-    timestamp: Date.now(),
   });
   completeStep(sessionId, stepIndex, 0);
   return 'skipped';
@@ -106,10 +106,9 @@ export function cleanupLocalTrainingArtifacts({
   }
 
   if (sessionId && removed.length > 0) {
-    sseManager.send(sessionId, 'log', {
+    recordTrainingLog(sessionId, {
       stream: 'stdout',
       data: `Cleaned local training artifacts after S3 upload:\n${removed.map(item => `- ${item.label}: ${item.dir}`).join('\n')}\n`,
-      timestamp: Date.now(),
     });
   }
 
@@ -142,17 +141,15 @@ export async function runPipelineWithS3(sessionId, {
   }
 
   // ── S3 Sync Down ──
-  sseManager.send(sessionId, 'log', {
+  recordTrainingLog(sessionId, {
     stream: 'stdout',
     data: `Downloading training audio from S3: ${rawAudioPrefix}\n`,
-    timestamp: Date.now(),
   });
 
   const downloadCount = await downloadPrefix(rawAudioPrefix, rawDir);
-  sseManager.send(sessionId, 'log', {
+  recordTrainingLog(sessionId, {
     stream: 'stdout',
     data: `Downloaded ${downloadCount} files from S3\n`,
-    timestamp: Date.now(),
   });
 
   if (downloadCount === 0) {
@@ -331,10 +328,9 @@ export async function runPipelineWithS3(sessionId, {
     }
 
     // ── S3 Sync Up ──
-    sseManager.send(sessionId, 'log', {
+    recordTrainingLog(sessionId, {
       stream: 'stdout',
       data: 'Uploading results to S3...\n',
-      timestamp: Date.now(),
     });
 
     const s3DataPrefix = `training/datasets/${expName}/`;
@@ -343,19 +339,17 @@ export async function runPipelineWithS3(sessionId, {
     await uploadDirectory(sovitsWeightsDir, `models/user-models/sovits/`);
     await uploadDirectory(gptWeightsDir, `models/user-models/gpt/`);
 
-    sseManager.send(sessionId, 'log', {
+    recordTrainingLog(sessionId, {
       stream: 'stdout',
       data: 'S3 upload complete\n',
-      timestamp: Date.now(),
     });
 
     try {
       cleanupLocalTrainingArtifacts({ localExpDir, logsDir, sessionId });
     } catch (cleanupErr) {
-      sseManager.send(sessionId, 'log', {
+      recordTrainingLog(sessionId, {
         stream: 'stderr',
         data: `S3 upload succeeded, but local training cleanup failed: ${cleanupErr.message}\n`,
-        timestamp: Date.now(),
       });
       console.warn('[gpu-worker] Local training cleanup failed:', cleanupErr);
     }

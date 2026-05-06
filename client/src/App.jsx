@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Navigate, Routes, Route, NavLink } from 'react-router-dom';
 import { Activity, Power } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { getInstanceStatus, startInstance } from './services/api.js';
 import TrainingPage from './pages/TrainingPage.jsx';
-import InferencePage from './pages/InferencePage.jsx';
 import LivePage from './pages/LivePage.jsx';
 
 function GpuInstanceControl() {
@@ -153,7 +152,7 @@ export default function App() {
                     Voice Cloning Studio
                   </h1>
                   <p className="text-xs text-muted-foreground">
-                    GPT-SoVITS Training & Inference
+                    GPT-SoVITS Training & Live Fast
                   </p>
                 </div>
               </div>
@@ -177,52 +176,6 @@ export default function App() {
                 {({ isActive }) => (
                   <>
                     <span>Training</span>
-                    <span
-                      className={cn(
-                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
-                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
-                      )}
-                    />
-                  </>
-                )}
-              </NavLink>
-              <NavLink
-                to="/inference"
-                className={({ isActive }) =>
-                  cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
-                    isActive
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <span>Inference</span>
-                    <span
-                      className={cn(
-                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
-                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
-                      )}
-                    />
-                  </>
-                )}
-              </NavLink>
-              <NavLink
-                to="/live"
-                className={({ isActive }) =>
-                  cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
-                    isActive
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <span>Live Full</span>
                     <span
                       className={cn(
                         "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
@@ -263,9 +216,10 @@ export default function App() {
         <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
           <Routes>
             <Route path="/" element={<TrainingPage />} />
-            <Route path="/inference" element={<InferencePage />} />
-            <Route path="/live" element={<LivePage replyMode="full" />} />
             <Route path="/live-fast" element={<LivePage replyMode="phrases" />} />
+            <Route path="/inference" element={<Navigate to="/live-fast" replace />} />
+            <Route path="/live" element={<Navigate to="/live-fast" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
 

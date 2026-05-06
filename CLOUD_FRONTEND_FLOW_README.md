@@ -104,8 +104,7 @@ Order matters. `/api/live/chat/realtime` must be matched before the broader `/ap
 | `client/src/services/sse.js` | Opens `EventSource` connections for training and inference progress. |
 | `client/src/services/liveChatSocket.js` | Opens the live chatbot WebSocket. |
 | `client/src/pages/TrainingPage.jsx` | Uploads training audio and starts/stops training. |
-| `client/src/pages/InferencePage.jsx` | Loads models, manages reference audio, transcribes reference clips, and generates speech. |
-| `client/src/pages/LivePage.jsx` | Runs the live voice chatbot UI. |
+| `client/src/pages/LivePage.jsx` | Runs the Live Fast chatbot UI, model save dropdown, trained-reference picker, and inference settings. |
 | `client/src/hooks/useLiveSpeech.js` | Handles microphone capture, live WebSocket messages, cloned voice playback, and barge-in behavior. |
 
 ## 5. Lambda Entry Point and Routing
@@ -334,13 +333,13 @@ Lambda forwards that to:
 POST /train/stop
 ```
 
-### D. Model Selection and Loading
+### D. Live Fast Model Selection and Loading
 
 Code path:
 
 ```text
-InferencePage.jsx -> getModels()
-InferencePage.jsx -> selectModels()
+LivePage.jsx -> getModels()
+LivePage.jsx -> selectModels()
 ```
 
 Flow:
@@ -352,7 +351,7 @@ GET /api/models
 ```
 
 2. Lambda either lists S3 model files or asks the GPU worker for local model files, depending on backend env.
-3. User selects a GPT checkpoint and a SoVITS checkpoint.
+3. User selects a trained voice profile from the Live Fast dropdown and clicks Save.
 4. Frontend calls:
 
 ```text
@@ -369,31 +368,15 @@ POST /inference/weights/gpt
 
 7. GPU worker talks to the local GPT-SoVITS inference service.
 
-### E. Reference Audio and Transcription
+### E. Live Fast Reference Selection
 
-Reference upload:
-
-```text
-InferencePage.jsx -> uploadRefAudio()
-POST /api/upload-ref/presign
-Browser PUT to S3
-POST /api/upload-ref/confirm
-```
-
-Reference transcription:
+Live Fast loads processed training clips for the selected model:
 
 ```text
-InferencePage.jsx -> transcribeAudio()
-POST /api/transcribe
+GET /api/training-audio/:expName
 ```
 
-Lambda forwards transcription to the GPU worker:
-
-```text
-POST /transcribe
-```
-
-The GPU worker downloads the S3 audio file locally, runs the transcription script, and returns transcript text/language.
+The frontend picks the best trained primary reference plus up to five auxiliary clips using `client/src/lib/referenceSelection.js`. Users can open Additional settings to override the primary clip, auxiliary clips, reference transcript, reference language, and inference controls.
 
 ### F. Long Text Inference
 
@@ -450,50 +433,7 @@ Lambda forwards to:
 POST /inference/cancel
 ```
 
-### G. Live Full Mode
-
-Route:
-
-```text
-/live
-```
-
-Code path:
-
-```text
-LivePage.jsx -> useLiveSpeech({ replyMode: 'full' })
-useLiveSpeech.js -> createLiveChatSocket()
-liveChatSocket.js -> WebSocket('/api/live/chat/realtime')
-```
-
-Flow:
-
-1. Browser opens a WebSocket:
-
-```text
-wss://d3dghqhnk7aoku.cloudfront.net/api/live/chat/realtime
-```
-
-2. CloudFront routes it to GPU ALB -> `live-gateway:3002`.
-3. `live-gateway` opens a backend OpenAI Realtime session.
-4. Browser streams microphone chunks to `live-gateway`.
-5. OpenAI Realtime returns user transcript and assistant text.
-6. In Live Full mode, the full assistant text is sent through the normal inference endpoint:
-
-```text
-POST /api/inference
-```
-
-7. Lambda forwards to GPU worker:
-
-```text
-POST /inference
-```
-
-8. GPU worker returns one complete WAV.
-9. Browser plays the cloned voice audio.
-
-### H. Live Fast Mode
+### G. Live Fast Mode
 
 Route:
 
@@ -641,17 +581,15 @@ If you want to review how the frontend interacts with the rest of the cloud syst
    - Shows the live WebSocket URL.
 5. `client/src/pages/TrainingPage.jsx`
    - Shows the training user flow.
-6. `client/src/pages/InferencePage.jsx`
-   - Shows model loading, reference audio, transcription, and generation.
-7. `client/src/pages/LivePage.jsx` and `client/src/hooks/useLiveSpeech.js`
+6. `client/src/pages/LivePage.jsx` and `client/src/hooks/useLiveSpeech.js`
    - Shows live chatbot behavior.
-8. `lambda/router.js`
+7. `lambda/router.js`
    - Shows which `/api/*` routes Lambda supports.
-9. `lambda/*/index.js`
+8. `lambda/*/index.js`
    - Shows what each Lambda route does.
-10. `gpu-worker/src/routes/*.js`
+9. `gpu-worker/src/routes/*.js`
    - Shows what runs on the GPU EC2 worker.
-11. `live-gateway/src/routes/liveChat.js`
+10. `live-gateway/src/routes/liveChat.js`
    - Shows the live WebSocket bridge.
 
 ## 13. One-Sentence Summary

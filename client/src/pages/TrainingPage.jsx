@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import AudioUploader from '../components/AudioUploader.jsx';
 import FloatingNotice from '../components/FloatingNotice.jsx';
 import ProgressTracker from '../components/ProgressTracker.jsx';
-import LogViewer from '../components/LogViewer.jsx';
 import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
+import { validateTrainingStart } from '@/lib/trainingValidation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,7 +34,7 @@ export default function TrainingPage() {
   const [uploadError, setUploadError] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  const { logs, steps, pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
+  const { steps, pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
   const restoredSessionRef = useRef(null);
   const noticeTimeoutRef = useRef(null);
   const previousStatusRef = useRef(null);
@@ -129,7 +129,7 @@ export default function TrainingPage() {
       if (pipelineStatus === 'complete') {
         showNotice({
           title: 'Training complete',
-          message: 'Your checkpoints are ready. You can review the logs or move to inference when you are ready.',
+          message: 'Your checkpoints are ready. Open Live Fast, choose the new model, and save it before chatting.',
           tone: 'success',
         });
       } else if (pipelineStatus === 'error') {
@@ -145,8 +145,26 @@ export default function TrainingPage() {
   }, [pipelineStatus, error]);
 
   async function handleStart() {
-    if (!expName.trim()) return alert('Enter an experiment name');
-    if (files.length === 0) return alert('Upload audio files first');
+    const validation = validateTrainingStart({
+      expName,
+      files,
+      batchSize,
+      sovitsEpochs,
+      gptEpochs,
+      sovitsSaveEvery,
+      gptSaveEvery,
+      asrLanguage,
+    });
+    if (!validation.valid) {
+      const message = validation.errors.join(' ');
+      setUploadError(message);
+      showNotice({
+        title: 'Check training setup',
+        message,
+        tone: 'error',
+      });
+      return;
+    }
 
     setUploadError(null);
 
@@ -474,7 +492,7 @@ export default function TrainingPage() {
                   <Badge variant="destructive">Error</Badge>
                 )}
               </div>
-              <CardDescription>Follow the full training path from source preparation to SoVITS and GPT checkpoints.</CardDescription>
+              <CardDescription>Follow the full training path from source preparation to SoVITS and GPT checkpoints. Backend logs are emitted by the GPU worker for CloudWatch collection.</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -537,24 +555,6 @@ export default function TrainingPage() {
               </span>
             )}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* 04 Logs */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
-              4
-            </Badge>
-            <div>
-              <CardTitle className="font-display text-2xl">Logs</CardTitle>
-              <CardDescription>Real-time training output</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-6">
-          <LogViewer logs={logs} />
         </CardContent>
       </Card>
     </div>

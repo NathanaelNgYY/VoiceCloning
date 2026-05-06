@@ -172,6 +172,11 @@ export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_
     prompt_text: refParams.prompt_text || '',
     prompt_lang: refParams.prompt_lang || 'en',
     aux_ref_audio_paths: refParams.aux_ref_audio_paths || [],
+    ...(refParams.top_k !== undefined ? { top_k: refParams.top_k } : {}),
+    ...(refParams.top_p !== undefined ? { top_p: refParams.top_p } : {}),
+    ...(refParams.temperature !== undefined ? { temperature: refParams.temperature } : {}),
+    ...(refParams.repetition_penalty !== undefined ? { repetition_penalty: refParams.repetition_penalty } : {}),
+    ...(refParams.speed_factor !== undefined ? { speed_factor: refParams.speed_factor } : {}),
   };
 }
 

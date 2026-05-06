@@ -1,6 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { getCurrentInference, getInferenceStatus } from '../services/api.js';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  getInferenceStatus,
+  getModels,
+  getTrainingAudioFiles,
+  selectModels,
+} from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
 import {
   LIVE_LANGUAGE_OPTIONS,
@@ -9,26 +13,39 @@ import {
 } from '../hooks/liveConversation.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
+import { chooseBestReferenceSet } from '@/lib/referenceSelection';
+import { buildVoiceProfiles } from '@/lib/voiceProfiles';
+import {
+  DEFAULT_LIVE_FAST_SETTINGS,
+  buildLiveFastRefParams,
+} from '@/lib/liveFastSetup';
 import {
   Activity,
   Bot,
+  Check,
+  ChevronRight,
   CircleAlert,
   Download,
   Loader2,
   Mic,
   MicOff,
   PlayCircle,
+  RefreshCw,
+  Save,
+  SlidersHorizontal,
   Square,
   UserRound,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-
-const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
 
 function messageStatusText(message) {
   if (message.role === 'user') {
@@ -47,6 +64,15 @@ function messageStatusText(message) {
     interrupted: 'Interrupted',
     error: 'Failed',
   }[message.status] || 'Reply';
+}
+
+function fallbackName(filePath) {
+  return (filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
+}
+
+function normalizeReferenceLanguage(lang) {
+  const value = String(lang || '').trim().toLowerCase();
+  return ['en', 'zh', 'ja', 'ko', 'auto'].includes(value) ? value : 'en';
 }
 
 function ChatBubble({ message, selected, onPlay }) {
@@ -97,10 +123,10 @@ function ChatBubble({ message, selected, onPlay }) {
                   part.status === 'ready' || part.status === 'played'
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : part.status === 'generating'
-                    ? 'border-sky-200 bg-sky-50 text-sky-700'
-                    : part.status === 'error'
-                    ? 'border-destructive/20 bg-destructive/5 text-destructive'
-                    : 'border-slate-200 bg-slate-50 text-slate-500'
+                      ? 'border-sky-200 bg-sky-50 text-sky-700'
+                      : part.status === 'error'
+                        ? 'border-destructive/20 bg-destructive/5 text-destructive'
+                        : 'border-slate-200 bg-slate-50 text-slate-500'
                 )}
               >
                 {part.index}: {part.status}
@@ -148,70 +174,214 @@ function ChatBubble({ message, selected, onPlay }) {
   );
 }
 
-export default function LivePage({ replyMode = 'full' }) {
-  const isFastMode = replyMode === 'phrases';
+export default function LivePage({ replyMode = 'phrases' }) {
+  const [gptModels, setGptModels] = useState([]);
+  const [sovitsModels, setSovitsModels] = useState([]);
+  const [modelsFetched, setModelsFetched] = useState(false);
+  const [modelError, setModelError] = useState('');
+  const [selectedPersonKey, setSelectedPersonKey] = useState('');
+  const [loadedGPTPath, setLoadedGPTPath] = useState('');
+  const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
   const [serverReady, setServerReady] = useState(false);
-  const [loadedVoiceName, setLoadedVoiceName] = useState('');
-  const [refParams, setRefParams] = useState(null);
+  const [savingModel, setSavingModel] = useState(false);
+
+  const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
+  const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
+  const [refAudioPath, setRefAudioPath] = useState('');
+  const [promptText, setPromptText] = useState('');
+  const [promptLang, setPromptLang] = useState('en');
+  const [auxRefAudios, setAuxRefAudios] = useState([]);
+  const [referenceMessage, setReferenceMessage] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+
+  const [speed, setSpeed] = useState(DEFAULT_LIVE_FAST_SETTINGS.speed);
+  const [topK, setTopK] = useState(DEFAULT_LIVE_FAST_SETTINGS.topK);
+  const [topP, setTopP] = useState(DEFAULT_LIVE_FAST_SETTINGS.topP);
+  const [temperature, setTemperature] = useState(DEFAULT_LIVE_FAST_SETTINGS.temperature);
+  const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const autoReferenceKeyRef = useRef('');
 
-  useEffect(() => {
-    async function init() {
-      try {
-        const statusRes = await getInferenceStatus();
-        setServerReady(Boolean(statusRes.data.ready));
-        const loaded = statusRes.data.loaded;
-        if (loaded?.sovitsPath) {
-          const name =
-            loaded.sovitsPath.replace(/\\/g, '/').split('/').pop()?.replace(/\.pth$/i, '') || '';
-          setLoadedVoiceName(name);
-        }
-      } catch {
-        setServerReady(false);
-      }
-
-      try {
-        const currentRes = await getCurrentInference();
-        const params = currentRes.data?.params;
-        if (params?.ref_audio_path) {
-          setRefParams({
-            ref_audio_path: params.ref_audio_path,
-            prompt_text: params.prompt_text || '',
-            prompt_lang: params.prompt_lang || 'en',
-            aux_ref_audio_paths: params.aux_ref_audio_paths || [],
-          });
-          return;
-        }
-      } catch {
-        // Fall through to localStorage.
-      }
-
-      try {
-        const raw = window.localStorage.getItem(INFERENCE_DRAFT_KEY);
-        if (raw) {
-          const draft = JSON.parse(raw);
-          if (draft.refAudioPath) {
-            setRefParams({
-              ref_audio_path: draft.refAudioPath,
-              prompt_text: draft.promptText || '',
-              prompt_lang: draft.promptLang || 'en',
-              aux_ref_audio_paths: (draft.auxRefAudios || []).map((file) => file.path),
-            });
-          }
-        }
-      } catch {
-        // Ignore stale local draft data.
-      }
-    }
-    init();
-  }, []);
+  const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
+  const availableProfiles = useMemo(() => voiceProfiles.filter((profile) => profile.complete), [voiceProfiles]);
+  const selectedProfile = availableProfiles.find((profile) => profile.key === selectedPersonKey) || null;
+  const selectedGPT = selectedProfile?.gptModel?.path || '';
+  const selectedSoVITS = selectedProfile?.sovitsModel?.path || '';
+  const selectedExpName = selectedProfile?.expName || '';
+  const loadedProfile = availableProfiles.find((profile) =>
+    profile.gptModel?.path === loadedGPTPath && profile.sovitsModel?.path === loadedSoVITSPath
+  ) || null;
 
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
   const liveLanguageConfig = getLiveLanguageConfig(liveLanguage);
-  const liveSpeech = useLiveSpeech({ refParams, replyMode, language: liveLanguage });
+  const liveRefParams = useMemo(() => buildLiveFastRefParams({
+    primaryPath: refAudioPath,
+    promptText,
+    promptLang,
+    auxRefAudios,
+    settings: {
+      speed,
+      topK,
+      topP,
+      temperature,
+      repPenalty,
+    },
+  }), [refAudioPath, promptText, promptLang, auxRefAudios, speed, topK, topP, temperature, repPenalty]);
+
+  const liveSpeech = useLiveSpeech({ refParams: liveRefParams, replyMode, language: liveLanguage });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
+  const isConversationActive = liveSpeech.phase !== 'idle';
+
+  async function fetchModels() {
+    setModelsFetched(false);
+    try {
+      const res = await getModels();
+      setGptModels(res.data.gpt || []);
+      setSovitsModels(res.data.sovits || []);
+      setModelError('');
+    } catch (err) {
+      setModelError(err.response?.data?.error || err.message || 'Failed to load trained models.');
+    } finally {
+      setModelsFetched(true);
+    }
+  }
+
+  async function checkStatus() {
+    try {
+      const res = await getInferenceStatus();
+      setServerReady(Boolean(res.data.ready));
+      setLoadedGPTPath(res.data.loaded?.gptPath || '');
+      setLoadedSoVITSPath(res.data.loaded?.sovitsPath || '');
+    } catch {
+      setServerReady(false);
+      setLoadedGPTPath('');
+      setLoadedSoVITSPath('');
+    }
+  }
+
+  function applyBestReference(files = trainingAudioFiles) {
+    const selection = chooseBestReferenceSet(files);
+    if (!selection.primary) {
+      setRefAudioPath('');
+      setPromptText('');
+      setPromptLang('en');
+      setAuxRefAudios([]);
+      setReferenceMessage(selection.reason);
+      return;
+    }
+
+    setRefAudioPath(selection.primary.path);
+    setPromptText(selection.primary.transcript || '');
+    setPromptLang(normalizeReferenceLanguage(selection.primary.lang));
+    setAuxRefAudios(selection.aux);
+    setReferenceMessage(`${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
+  }
+
+  async function handleSaveModel() {
+    if (!selectedProfile || isConversationActive) return;
+    setSavingModel(true);
+    setModelError('');
+    try {
+      await selectModels(selectedGPT, selectedSoVITS);
+      setLoadedGPTPath(selectedGPT);
+      setLoadedSoVITSPath(selectedSoVITS);
+      setServerReady(true);
+      setReferenceMessage('Voice model saved. Reference clips are selected from this trained model.');
+    } catch (err) {
+      setModelError(err.response?.data?.error || err.message || 'Could not save this voice model.');
+    } finally {
+      setSavingModel(false);
+    }
+  }
+
+  function handlePrimaryReferenceChange(path) {
+    const file = trainingAudioFiles.find((item) => item.path === path);
+    if (!file) return;
+    setRefAudioPath(file.path);
+    setPromptText(file.transcript || '');
+    setPromptLang(normalizeReferenceLanguage(file.lang));
+    setAuxRefAudios((current) => current.filter((item) => item.path !== file.path).slice(0, 5));
+    setReferenceMessage(`${file.filename} is now the primary reference.`);
+  }
+
+  function handleAuxToggle(file, checked) {
+    if (!file?.path || file.path === refAudioPath) return;
+    setAuxRefAudios((current) => {
+      const withoutFile = current.filter((item) => item.path !== file.path);
+      if (!checked) return withoutFile;
+      return [...withoutFile, file].slice(0, 5);
+    });
+  }
+
+  useEffect(() => {
+    fetchModels();
+    checkStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!modelsFetched || availableProfiles.length === 0) {
+      return;
+    }
+
+    const currentStillExists = availableProfiles.some((profile) => profile.key === selectedPersonKey);
+    if (currentStillExists) return;
+
+    const loadedMatch = availableProfiles.find((profile) =>
+      profile.gptModel?.path === loadedGPTPath && profile.sovitsModel?.path === loadedSoVITSPath
+    );
+    setSelectedPersonKey((loadedMatch || availableProfiles[0]).key);
+  }, [modelsFetched, availableProfiles, selectedPersonKey, loadedGPTPath, loadedSoVITSPath]);
+
+  useEffect(() => {
+    if (!selectedExpName) {
+      setTrainingAudioFiles([]);
+      return;
+    }
+
+    let ignore = false;
+    setLoadingTrainingAudio(true);
+    getTrainingAudioFiles(selectedExpName)
+      .then((res) => {
+        if (!ignore) {
+          setTrainingAudioFiles(res.data.files || []);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setTrainingAudioFiles([]);
+          setReferenceMessage('Could not load reference clips for this trained model.');
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setLoadingTrainingAudio(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [selectedExpName]);
+
+  useEffect(() => {
+    if (!selectedExpName || loadingTrainingAudio || trainingAudioFiles.length === 0) return;
+    if (autoReferenceKeyRef.current === selectedExpName) return;
+    autoReferenceKeyRef.current = selectedExpName;
+    applyBestReference(trainingAudioFiles);
+  }, [selectedExpName, loadingTrainingAudio, trainingAudioFiles]);
+
+  useEffect(() => {
+    function handleGpuReady() {
+      fetchModels();
+      checkStatus();
+    }
+
+    window.addEventListener('voice-cloning-gpu-ready', handleGpuReady);
+    return () => window.removeEventListener('voice-cloning-gpu-ready', handleGpuReady);
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -235,8 +405,8 @@ export default function LivePage({ replyMode = 'full' }) {
     audio.play().catch(() => {});
   }, [liveSpeech.audioSrc, liveSpeech.selectedReplyId, playbackReady]);
 
-  const isReady = serverReady && Boolean(refParams);
-  const isConversationActive = liveSpeech.phase !== 'idle';
+  const isReady = serverReady && Boolean(liveRefParams);
+  const selectedModelSaved = Boolean(serverReady && selectedGPT && selectedSoVITS && selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath);
   const isListening = liveSpeech.isMicInputEnabled
     && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
   const canBargeIn = liveSpeech.isMicInputEnabled || liveSpeech.isBargeInArmed;
@@ -260,7 +430,7 @@ export default function LivePage({ replyMode = 'full' }) {
       ? 'Mic off. Voice chat is still open.'
       : '') ||
     {
-      idle: `Ready for a ${liveLanguageConfig.label} voice chat.`,
+      idle: `Ready for a ${liveLanguageConfig.label} Live Fast chat.`,
       connecting: 'Connecting to the live assistant...',
       listening: liveSpeech.isMicInputEnabled ? 'Listening...' : 'Mic off. Voice chat is still open.',
       thinking: 'Thinking...',
@@ -268,53 +438,35 @@ export default function LivePage({ replyMode = 'full' }) {
         ? canBargeIn
           ? 'Playing cloned voice reply. Speak to interrupt.'
           : 'Playing cloned voice reply...'
-        : 'Preparing cloned voice reply...',
+        : 'Preparing cloned voice phrase...',
       stopping: 'Stopping conversation...',
     }[liveSpeech.phase] ||
-    `Ready for a ${liveLanguageConfig.label} voice chat.`;
+    `Ready for a ${liveLanguageConfig.label} Live Fast chat.`;
 
   return (
     <div className="animate-fade-in space-y-6">
       {!isReady && (
         <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          {!serverReady ? (
-            <>
-              No voice model is loaded.{' '}
-              <Link to="/inference" className="font-semibold underline">
-                Go to Inference
-              </Link>{' '}
-              to load one first.
-            </>
-          ) : (
-            <>
-              No reference audio found.{' '}
-              <Link to="/inference" className="font-semibold underline">
-                Go to Inference
-              </Link>{' '}
-              and generate at least once to set a reference.
-            </>
-          )}
+          {availableProfiles.length === 0
+            ? 'No complete trained models were found yet. Train a voice first, then return to Live Fast.'
+            : !selectedModelSaved
+              ? 'Choose a trained model and click Save voice before starting Live Fast.'
+              : 'Reference clips are still loading. The best trained clip will be selected automatically.'}
         </div>
       )}
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_330px]">
         <div className="flex min-h-[640px] flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sky-100 text-sky-700">
-                  <Bot size={18} />
-                </div>
-                <div>
-                  <h2 className="text-base font-semibold text-slate-950">
-                    {isFastMode ? 'Live Fast Voice Chat' : 'Live Voice Chat'}
-                  </h2>
-                  <p className="text-xs text-muted-foreground">
-                    {isFastMode
-                      ? `${liveLanguageConfig.replyLabel}, phrase-by-phrase cloned voice`
-                      : `${liveLanguageConfig.replyLabel}, full cloned voice output`}
-                  </p>
-                </div>
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+                <Bot size={18} />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">Live Fast Voice Chat</h2>
+                <p className="text-xs text-muted-foreground">
+                  {liveLanguageConfig.replyLabel}, phrase-by-phrase cloned voice
+                </p>
               </div>
             </div>
             <Badge className="border border-slate-200 bg-slate-50 text-slate-700 shadow-none">
@@ -330,9 +482,7 @@ export default function LivePage({ replyMode = 'full' }) {
                 </div>
                 <h3 className="mt-4 text-lg font-semibold text-slate-950">Start speaking when ready.</h3>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                  {isFastMode
-                    ? `The assistant will listen, reply in ${liveLanguageConfig.label} text, then play cloned voice phrases in order as they become ready.`
-                    : `The assistant will listen, reply in ${liveLanguageConfig.label} text, then generate one complete cloned voice response.`}
+                  The assistant listens, replies in {liveLanguageConfig.label}, then plays cloned voice phrases as they become ready.
                 </p>
               </div>
             ) : (
@@ -364,8 +514,8 @@ export default function LivePage({ replyMode = 'full' }) {
                   {canBargeIn && liveSpeech.phase === 'speaking'
                     ? 'Speak over playback to stop it and start your next turn.'
                     : liveSpeech.isMicInputEnabled
-                    ? 'Mic input is available when the assistant is listening.'
-                    : 'Mic input is off; voice playback can continue.'}
+                      ? 'Mic input is available when the assistant is listening.'
+                      : 'Mic input is off; voice playback can continue.'}
                 </p>
               </div>
 
@@ -404,10 +554,10 @@ export default function LivePage({ replyMode = 'full' }) {
                       : isConversationActive && !liveSpeech.isMicInputEnabled
                         ? 'cursor-pointer border-slate-300 bg-slate-50 text-slate-500 shadow-[0_0_0_8px_rgba(100,116,139,0.12)] active:scale-95'
                         : isListening
-                        ? 'border-red-400 bg-red-50 text-red-600 shadow-[0_0_0_8px_rgba(239,68,68,0.15)]'
-                        : isConversationActive
-                        ? 'cursor-pointer border-slate-300 bg-white text-slate-700 shadow-[0_0_0_8px_rgba(100,116,139,0.12)] active:scale-95'
-                        : 'cursor-pointer border-sky-300 bg-sky-50 text-sky-700 shadow-[0_18px_50px_-20px_rgba(14,165,233,0.5)] hover:shadow-[0_18px_50px_-20px_rgba(14,165,233,0.7)] active:scale-95'
+                          ? 'border-red-400 bg-red-50 text-red-600 shadow-[0_0_0_8px_rgba(239,68,68,0.15)]'
+                          : isConversationActive
+                            ? 'cursor-pointer border-slate-300 bg-white text-slate-700 shadow-[0_0_0_8px_rgba(100,116,139,0.12)] active:scale-95'
+                            : 'cursor-pointer border-sky-300 bg-sky-50 text-sky-700 shadow-[0_18px_50px_-20px_rgba(14,165,233,0.5)] hover:shadow-[0_18px_50px_-20px_rgba(14,165,233,0.7)] active:scale-95'
                   )}
                   onClick={liveSpeech.toggle}
                   disabled={buttonDisabled}
@@ -428,53 +578,86 @@ export default function LivePage({ replyMode = 'full' }) {
           <div className="rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center gap-2">
               <Activity size={16} className="text-sky-600" />
-              <h3 className="text-sm font-semibold text-slate-950">Voice setup</h3>
+              <h3 className="text-sm font-semibold text-slate-950">Voice model</h3>
             </div>
-            <div className="space-y-3 text-sm">
+            <div className="space-y-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model</p>
-                <p className="mt-1 text-slate-800">{serverReady ? loadedVoiceName || 'Loaded' : 'Not loaded'}</p>
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Trained model</Label>
+                <Select
+                  value={selectedPersonKey}
+                  onValueChange={(value) => {
+                    setSelectedPersonKey(value);
+                    autoReferenceKeyRef.current = '';
+                  }}
+                  disabled={isConversationActive || availableProfiles.length === 0}
+                >
+                  <SelectTrigger className="mt-2 h-11 rounded-xl border-slate-200 bg-slate-50">
+                    <SelectValue placeholder={modelsFetched ? 'Select a model' : 'Loading models...'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableProfiles.map((profile) => (
+                      <SelectItem key={profile.key} value={profile.key}>
+                        {profile.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reference</p>
-                <p className="mt-1 break-all text-slate-800">
-                  {refParams?.ref_audio_path
-                    ? refParams.ref_audio_path.replace(/\\/g, '/').split('/').pop()
-                    : 'Not selected'}
+
+              <Button
+                type="button"
+                className="w-full rounded-xl"
+                onClick={handleSaveModel}
+                disabled={!selectedProfile || savingModel || isConversationActive || selectedModelSaved}
+              >
+                {savingModel ? <Loader2 size={14} className="animate-spin" /> : selectedModelSaved ? <Check size={14} /> : <Save size={14} />}
+                {selectedModelSaved ? 'Voice saved' : savingModel ? 'Saving...' : 'Save voice'}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full rounded-xl border-slate-200"
+                onClick={() => {
+                  fetchModels();
+                  checkStatus();
+                }}
+                disabled={isConversationActive}
+              >
+                <RefreshCw size={14} />
+                Refresh models
+              </Button>
+
+              {modelError && (
+                <p className="rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  {modelError}
                 </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Language</p>
-                <div className="mt-2">
-                  <Label className="sr-only" htmlFor="live-language">Language</Label>
-                  <Select
-                    value={liveLanguage}
-                    onValueChange={setSelectedLanguage}
-                    disabled={isConversationActive}
-                  >
-                    <SelectTrigger id="live-language" className="h-10 rounded-xl border-slate-200 bg-slate-50">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {LIVE_LANGUAGE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    Select before starting so transcripts and replies stay in one language.
-                  </p>
-                </div>
+              )}
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
+                Loaded: {loadedProfile?.displayName || (serverReady ? 'Existing model' : 'No model loaded')}
               </div>
             </div>
           </div>
 
-          <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
-            {isFastMode
-              ? 'The assistant waits for your phrase to finish, writes one reply, splits it by punctuation, then generates and plays each cloned voice phrase in order.'
-              : 'The assistant waits for your phrase to finish, writes one reply, then sends the full text through the normal inference pipeline for one complete cloned voice audio.'}
+          <div className="rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm">
+            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chat language</Label>
+            <Select
+              value={liveLanguage}
+              onValueChange={setSelectedLanguage}
+              disabled={isConversationActive}
+            >
+              <SelectTrigger className="mt-2 h-11 rounded-xl border-slate-200 bg-slate-50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LIVE_LANGUAGE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {!liveSpeech.speechApiAvailable && (
@@ -484,6 +667,190 @@ export default function LivePage({ replyMode = 'full' }) {
           )}
         </aside>
       </section>
+
+      <Collapsible open={showSettings} onOpenChange={setShowSettings}>
+        <div className="rounded-[24px] border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal size={17} className="text-sky-600" />
+              <div>
+                <h3 className="text-sm font-semibold text-slate-950">Additional settings</h3>
+                <p className="text-xs text-muted-foreground">
+                  Reference and inference controls for Live Fast.
+                </p>
+              </div>
+            </div>
+            <CollapsibleTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2 rounded-xl border-slate-200 text-muted-foreground">
+                <ChevronRight
+                  size={14}
+                  className={cn('transition-transform', showSettings && 'rotate-90')}
+                />
+                {showSettings ? 'Hide' : 'Open'}
+              </Button>
+            </CollapsibleTrigger>
+          </div>
+
+          <CollapsibleContent>
+            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="space-y-4 rounded-[18px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">Reference from trained clips</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      The best primary and up to five auxiliary clips are selected automatically.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl border-slate-200 bg-white"
+                    onClick={() => applyBestReference()}
+                    disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || isConversationActive}
+                  >
+                    <Check size={14} />
+                    Use best
+                  </Button>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Primary reference</Label>
+                  <Select
+                    value={refAudioPath}
+                    onValueChange={handlePrimaryReferenceChange}
+                    disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || isConversationActive}
+                  >
+                    <SelectTrigger className="mt-2 h-11 rounded-xl border-slate-200 bg-white">
+                      <SelectValue placeholder={loadingTrainingAudio ? 'Loading reference clips...' : 'Select primary reference'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {trainingAudioFiles.map((file) => (
+                        <SelectItem key={file.path} value={file.path}>
+                          {file.filename}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Auxiliary references</Label>
+                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-3">
+                    {trainingAudioFiles.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {loadingTrainingAudio ? 'Loading trained clips...' : 'No trained clips found for this model yet.'}
+                      </p>
+                    ) : (
+                      trainingAudioFiles
+                        .filter((file) => file.path !== refAudioPath)
+                        .map((file) => {
+                          const checked = auxRefAudios.some((item) => item.path === file.path);
+                          return (
+                            <label key={file.path} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={(value) => handleAuxToggle(file, Boolean(value))}
+                                disabled={isConversationActive || (!checked && auxRefAudios.length >= 5)}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-mono text-xs">{file.filename}</span>
+                                {file.transcript && (
+                                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{file.transcript}</span>
+                                )}
+                              </span>
+                            </label>
+                          );
+                        })
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Selected {auxRefAudios.length}/5 auxiliary clips. Primary: {refAudioPath ? fallbackName(refAudioPath) : 'none'}.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+                  <div>
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Primary transcript</Label>
+                    <Textarea
+                      className="mt-2 min-h-[110px] rounded-xl border-slate-200 bg-white leading-6"
+                      value={promptText}
+                      onChange={(event) => setPromptText(event.target.value)}
+                      disabled={isConversationActive}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reference language</Label>
+                    <Select value={promptLang} onValueChange={setPromptLang} disabled={isConversationActive}>
+                      <SelectTrigger className="mt-2 h-11 rounded-xl border-slate-200 bg-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="en">English</SelectItem>
+                        <SelectItem value="zh">Chinese</SelectItem>
+                        <SelectItem value="ja">Japanese</SelectItem>
+                        <SelectItem value="ko">Korean</SelectItem>
+                        <SelectItem value="auto">Auto Detect</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {referenceMessage && (
+                  <p className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                    {referenceMessage}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-4 rounded-[18px] border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-950">Inference controls</p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Speed</Label>
+                      <span className="font-mono text-sm font-semibold">{speed.toFixed(1)}x</span>
+                    </div>
+                    <Slider min={0.5} max={2.0} step={0.1} value={[speed]} onValueChange={([value]) => setSpeed(value)} disabled={isConversationActive} />
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Top K</Label>
+                      <span className="font-mono text-sm font-semibold">{topK}</span>
+                    </div>
+                    <Slider min={1} max={50} step={1} value={[topK]} onValueChange={([value]) => setTopK(value)} disabled={isConversationActive} />
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Top P</Label>
+                      <span className="font-mono text-sm font-semibold">{topP.toFixed(2)}</span>
+                    </div>
+                    <Slider min={0} max={1} step={0.05} value={[topP]} onValueChange={([value]) => setTopP(value)} disabled={isConversationActive} />
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Temperature</Label>
+                      <span className="font-mono text-sm font-semibold">{temperature.toFixed(2)}</span>
+                    </div>
+                    <Slider min={0} max={1} step={0.05} value={[temperature]} onValueChange={([value]) => setTemperature(value)} disabled={isConversationActive} />
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 md:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Repetition Penalty</Label>
+                      <span className="font-mono text-sm font-semibold">{repPenalty.toFixed(2)}</span>
+                    </div>
+                    <Slider min={1.0} max={2.0} step={0.05} value={[repPenalty]} onValueChange={([value]) => setRepPenalty(value)} disabled={isConversationActive} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
 
       <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} />
     </div>

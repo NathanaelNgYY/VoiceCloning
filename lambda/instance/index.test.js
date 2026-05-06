@@ -41,8 +41,8 @@ test('instance status reports unconfigured local-safe mode without an EC2 id', a
   });
 });
 
-test('mock instance status can show a stopped local GPU without an EC2 id', async () => {
-  const { handler } = await import(`./index.js?mockStatus=${Date.now()}`);
+test('GPU instance mock env is ignored without a real EC2 id', async () => {
+  const { handler } = await import(`./index.js?mockIgnored=${Date.now()}`);
 
   await withEnv({
     GPU_INSTANCE_ID: '',
@@ -56,71 +56,13 @@ test('mock instance status can show a stopped local GPU without an EC2 id', asyn
 
     assert.equal(response.statusCode, 200);
     assert.deepEqual(JSON.parse(response.body), {
-      configured: true,
-      instanceId: 'local-mock-gpu',
-      mock: true,
-      state: 'stopped',
+      configured: false,
+      state: 'unconfigured',
       workerReady: false,
-      startable: true,
-      started: false,
-      message: 'Local mock GPU instance is stopped.',
+      startable: false,
+      message: 'GPU instance control is not configured.',
     });
   });
-});
-
-test('mock instance start transitions local GPU to ready without calling EC2', async () => {
-  const previousMockState = globalThis.__voiceCloningMockInstanceState;
-  globalThis.__voiceCloningMockInstanceState = undefined;
-  globalThis.__voiceCloningEc2Client = {
-    async send() {
-      throw new Error('EC2 should not be called in mock mode');
-    },
-  };
-
-  const { handler } = await import(`./index.js?mockStart=${Date.now()}`);
-
-  try {
-    await withEnv({
-      GPU_INSTANCE_ID: '',
-      GPU_INSTANCE_MOCK_STATE: 'stopped',
-      GPU_INSTANCE_MOCK_READY_DELAY_MS: '0',
-      GPU_WORKER_URL: 'http://localhost:3001',
-    }, async () => {
-      const startResponse = await handler({
-        requestContext: { http: { method: 'POST' } },
-        rawPath: '/api/instance/start',
-      });
-
-      assert.equal(startResponse.statusCode, 200);
-      assert.deepEqual(JSON.parse(startResponse.body), {
-        configured: true,
-        instanceId: 'local-mock-gpu',
-        mock: true,
-        state: 'running',
-        previousState: 'stopped',
-        workerReady: true,
-        startable: false,
-        started: true,
-        message: 'Local mock GPU instance is ready.',
-      });
-
-      const statusResponse = await handler({
-        requestContext: { http: { method: 'GET' } },
-        rawPath: '/api/instance/status',
-      });
-
-      assert.equal(statusResponse.statusCode, 200);
-      assert.equal(JSON.parse(statusResponse.body).state, 'running');
-      assert.equal(JSON.parse(statusResponse.body).workerReady, true);
-    });
-  } finally {
-    if (previousMockState === undefined) {
-      delete globalThis.__voiceCloningMockInstanceState;
-    } else {
-      globalThis.__voiceCloningMockInstanceState = previousMockState;
-    }
-    delete globalThis.__voiceCloningEc2Client;
-  }
 });
 
 test('instance start only calls EC2 start when the user-triggered request finds a stopped instance', async () => {
