@@ -11,6 +11,7 @@ import { inferenceServer } from './services/inferenceServer.js';
 import { processManager } from './services/processManager.js';
 import { activityState } from './services/activityState.js';
 import { recordTrainingLog } from './services/trainingLogger.js';
+import { buildCorsOriginOption } from './services/corsOrigin.js';
 
 const app = express();
 
@@ -18,7 +19,7 @@ processManager.on('log', ({ sessionId, stream, data }) => {
   recordTrainingLog(sessionId, { stream, data });
 });
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
-app.use(cors({ origin: CORS_ORIGIN }));
+app.use(cors({ origin: buildCorsOriginOption(CORS_ORIGIN) }));
 app.use(express.json());
 
 app.use((req, _res, next) => {

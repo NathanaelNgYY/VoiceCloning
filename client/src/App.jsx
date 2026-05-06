@@ -4,6 +4,7 @@ import { Activity, Power } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { getInstanceStatus, startInstance } from './services/api.js';
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
@@ -135,6 +136,8 @@ function GpuInstanceControl() {
 }
 
 export default function App() {
+  const appConfig = APP_MODE_CONFIG;
+
   return (
     <TooltipProvider>
       <div className="flex min-h-screen flex-col bg-background">
@@ -152,7 +155,7 @@ export default function App() {
                     Voice Cloning Studio
                   </h1>
                   <p className="text-xs text-muted-foreground">
-                    GPT-SoVITS Training & Live Fast
+                    {appConfig.subtitle}
                   </p>
                 </div>
               </div>
@@ -161,53 +164,33 @@ export default function App() {
 
             {/* Navigation */}
             <nav className="mt-4 flex items-center gap-7 border-b border-slate-200/80">
-              <NavLink
-                to="/"
-                end
-                className={({ isActive }) =>
-                  cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
-                    isActive
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <span>Training</span>
-                    <span
-                      className={cn(
-                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
-                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
-                      )}
-                    />
-                  </>
-                )}
-              </NavLink>
-              <NavLink
-                to="/live-fast"
-                className={({ isActive }) =>
-                  cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
-                    isActive
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <span>Live Fast</span>
-                    <span
-                      className={cn(
-                        "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
-                        isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
-                      )}
-                    />
-                  </>
-                )}
-              </NavLink>
+              {appConfig.navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    cn(
+                      "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                      isActive
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span>{item.label}</span>
+                      <span
+                        className={cn(
+                          "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
+                          isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
+                        )}
+                      />
+                    </>
+                  )}
+                </NavLink>
+              ))}
             </nav>
           </div>
         </header>
@@ -215,11 +198,25 @@ export default function App() {
         {/* Main content */}
         <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
           <Routes>
-            <Route path="/" element={<TrainingPage />} />
-            <Route path="/live-fast" element={<LivePage replyMode="phrases" />} />
-            <Route path="/inference" element={<Navigate to="/live-fast" replace />} />
-            <Route path="/live" element={<Navigate to="/live-fast" replace />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route
+              path="/"
+              element={
+                appConfig.showTraining
+                  ? <TrainingPage />
+                  : <Navigate to={appConfig.defaultPath} replace />
+              }
+            />
+            <Route
+              path="/live-fast"
+              element={
+                appConfig.showLiveFast
+                  ? <LivePage replyMode="phrases" />
+                  : <Navigate to={appConfig.defaultPath} replace />
+              }
+            />
+            <Route path="/inference" element={<Navigate to={appConfig.defaultPath} replace />} />
+            <Route path="/live" element={<Navigate to={appConfig.defaultPath} replace />} />
+            <Route path="*" element={<Navigate to={appConfig.defaultPath} replace />} />
           </Routes>
         </main>
 

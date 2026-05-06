@@ -1,4 +1,4 @@
-import { err, preflight } from './shared/cors.js';
+import { applyCors, err, preflight } from './shared/cors.js';
 
 export const ROUTES = [
   { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
@@ -44,16 +44,16 @@ export async function dispatch(event) {
   const pathname = getPath(event);
 
   if (method === 'OPTIONS') {
-    return preflight();
+    return preflight(event);
   }
 
   const route = findRoute(method, pathname);
   if (!route) {
-    return err(404, `No Lambda route for ${method} ${pathname}`);
+    return err(404, `No Lambda route for ${method} ${pathname}`, event);
   }
 
   const handler = await getRouteHandler(route);
-  return handler({
+  const normalizedEvent = {
     ...event,
     rawPath: pathname,
     requestContext: {
@@ -64,5 +64,7 @@ export async function dispatch(event) {
         path: pathname,
       },
     },
-  });
+  };
+
+  return applyCors(await handler(normalizedEvent), normalizedEvent);
 }

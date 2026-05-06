@@ -33,6 +33,11 @@ export function originAllowed(origin, options = {}) {
     return true;
   }
 
+  const allowedOrigins = String(corsOrigin || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
   try {
     const originHost = new URL(origin).host.toLowerCase();
     if (requestHost && originHost === String(requestHost).toLowerCase()) {
@@ -42,7 +47,7 @@ export function originAllowed(origin, options = {}) {
     return false;
   }
 
-  return origin === corsOrigin;
+  return allowedOrigins.includes(origin);
 }
 
 export function rejectUpgrade(socket, response) {

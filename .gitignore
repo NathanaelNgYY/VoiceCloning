@@ -1,5 +1,7 @@
 node_modules/
 dist/
+client/dist-training/
+client/dist-live-fast/
 .dist/
 .env
 .claude/

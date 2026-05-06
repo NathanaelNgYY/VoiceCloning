@@ -6,14 +6,14 @@ This document does not describe local mock mode.
 
 ## 1. High-Level Cloud Architecture
 
-In the cloud version, the browser only needs to know the CloudFront domain.
+In the cloud version, each frontend app only needs to know its own CloudFront domain. Training and Live Fast are built as separate bundles, but both distributions route backend paths to the same Lambda Function URL, GPU ALB, and S3-backed model/audio data.
 
 ```text
 Browser / React frontend
   |
   v
 CloudFront
-  |-- React static files -> S3 frontend build
+  |-- React static files -> S3 frontend build for this app
   |-- /api/* REST calls -> Lambda Function URL
   |-- /train/progress/* SSE -> GPU ALB -> gpu-worker:3001
   |-- /inference/progress/* SSE -> GPU ALB -> gpu-worker:3001
@@ -36,14 +36,12 @@ The browser should not call the raw Lambda Function URL or the raw HTTP GPU ALB 
 
 The important frontend environment variables are read in `client/src/lib/runtimeConfig.js`.
 
-For cloud mode, they should point to CloudFront:
+For the split CloudFront deployment, leave REST/SSE/WSS base URLs unset so the app uses same-origin paths on whichever CloudFront distribution served it:
 
 ```env
-VITE_API_BASE_URL=https://d3dghqhnk7aoku.cloudfront.net
-VITE_GPU_WORKER_URL=https://d3dghqhnk7aoku.cloudfront.net
-# Optional only if live-gateway has a separate public origin:
-# VITE_LIVE_GATEWAY_URL=https://YOUR_LIVE_GATEWAY_DOMAIN
 VITE_APP_BASENAME=/
+VITE_APP_MODE=training
+# or: VITE_APP_MODE=live-fast
 ```
 
 What those values do:
@@ -54,6 +52,7 @@ What those values do:
 | `VITE_GPU_WORKER_URL` | `resolveWorkerPath()` | Base origin for browser streaming routes such as training and inference SSE. |
 | `VITE_LIVE_GATEWAY_URL` | `resolveWsPath()` | Optional separate origin for the live WebSocket. Usually left unset so it uses `VITE_GPU_WORKER_URL`. |
 | `VITE_APP_BASENAME` | React Router | Router base path. Usually `/`. |
+| `VITE_APP_MODE` | `client/src/lib/appMode.js` | `training` exposes only Training. `live-fast` exposes only Live Fast. Missing/unknown keeps the combined local app. |
 
 Important detail: `client/src/services/api.js` creates one shared Axios client with:
 
@@ -64,7 +63,7 @@ baseURL: API_BASE_URL
 `API_BASE_URL` resolves to:
 
 ```text
-https://d3dghqhnk7aoku.cloudfront.net/api
+/api
 ```
 
 So this frontend call:
@@ -76,7 +75,7 @@ api.post('/train', params)
 becomes this browser request:
 
 ```text
-POST https://d3dghqhnk7aoku.cloudfront.net/api/train
+POST https://<current-cloudfront-domain>/api/train
 ```
 
 ## 3. CloudFront Path Responsibilities
@@ -85,7 +84,7 @@ CloudFront is the public entry point. It routes requests by path:
 
 | Browser path | CloudFront target | Why |
 | --- | --- | --- |
-| `/` and frontend assets | S3 frontend build | Serves the React app. |
+| `/` and frontend assets | S3 frontend build | Serves the app-specific React bundle. |
 | `/api/live/chat/realtime` | GPU ALB -> `live-gateway:3002` | WebSocket path for live chatbot audio/text conversation. |
 | `/train/progress/*` | GPU ALB -> `gpu-worker:3001` | Server-Sent Events for live training logs/progress. |
 | `/inference/progress/*` | GPU ALB -> `gpu-worker:3001` | Server-Sent Events for long inference progress. |
@@ -99,6 +98,7 @@ Order matters. `/api/live/chat/realtime` must be matched before the broader `/ap
 | --- | --- |
 | `client/src/main.jsx` | Starts React and wraps the app in `BrowserRouter`. |
 | `client/src/App.jsx` | Defines the main pages and the top-right GPU instance button. |
+| `client/src/lib/appMode.js` | Gates the deployed build to Training-only, Live-Fast-only, or combined local mode. |
 | `client/src/lib/runtimeConfig.js` | Converts frontend env vars into REST, SSE, and WebSocket URLs. |
 | `client/src/services/api.js` | Main REST API client used by the pages. |
 | `client/src/services/sse.js` | Opens `EventSource` connections for training and inference progress. |
@@ -477,7 +477,7 @@ Lambda is best for short request/response REST work. SSE and WebSocket connectio
 
 ## 10. CORS and Signed POST Detail
 
-Because the frontend calls CloudFront from the browser, backend responses must allow the frontend origin through CORS.
+Because the frontend calls CloudFront from the browser, backend responses must allow the frontend origin through CORS. In the split deployment, set `CORS_ORIGIN`/`CorsOrigin` to both CloudFront domains as a comma-separated list, for example `https://TRAINING_DOMAIN,https://LIVE_FAST_DOMAIN`.
 
 Lambda CORS headers are in:
 

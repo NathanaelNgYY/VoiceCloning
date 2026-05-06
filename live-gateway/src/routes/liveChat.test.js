@@ -16,6 +16,20 @@ test('originAllowed accepts configured production origin and same-origin upgrade
   }), true);
 });
 
+test('originAllowed accepts either CloudFront from a comma-separated production list', () => {
+  assert.equal(originAllowed('https://training.example.com', {
+    nodeEnv: 'production',
+    corsOrigin: 'https://training.example.com,https://live-fast.example.com',
+    requestHost: 'live.example.com',
+  }), true);
+
+  assert.equal(originAllowed('https://live-fast.example.com', {
+    nodeEnv: 'production',
+    corsOrigin: 'https://training.example.com,https://live-fast.example.com',
+    requestHost: 'live.example.com',
+  }), true);
+});
+
 test('originAllowed rejects untrusted production origins', () => {
   assert.equal(originAllowed('https://bad.example.com', {
     nodeEnv: 'production',

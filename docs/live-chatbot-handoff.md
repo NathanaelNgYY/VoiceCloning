@@ -1,15 +1,15 @@
 # Live Chatbot Handoff
 
-Last updated: 2026-05-04
+Last updated: 2026-05-06
 
 This is the short context file to read first when starting new development on the Live chatbot work.
 
 ## Current Branch State
 
-- Current working branch during this handoff: `deployment-with-changes`.
+- Current working branch during this handoff: `deployment-split-change`.
 - The Live chatbot feature history is also on `chatbot-integrationV1`.
 - Latest relevant commit: `90055cb feat: add fast live phrase playback mode`.
-- Training and Live Fast are the only frontend surfaces. Inference logic stays available behind the existing endpoints, but the Inference tab and Live Full route are no longer user-facing.
+- Training and Live Fast are the only frontend surfaces. They can be built as separate frontend apps with `VITE_APP_MODE=training` and `VITE_APP_MODE=live-fast`. Inference logic stays available behind the existing endpoints, but the Inference tab and Live Full route are no longer user-facing.
 - Current deployed REST Lambda is `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in Seoul (`ap-northeast-2`), while the shared S3 bucket remains in Singapore (`ap-southeast-1`).
 - Function URL auth target is `AWS_IAM` behind CloudFront Lambda Function URL OAC. The frontend shared Axios client now sends `x-amz-content-sha256` for JSON mutating requests, and Lambda CORS allows that header, which is required for signed POST routes.
 
@@ -81,8 +81,8 @@ Current test networking:
 - Public subnets are `VoiClo-Gpu-Seoul-subnet-public1-ap-northeast-2a` and `VoiClo-Gpu-Seoul-subnet-public2-ap-northeast-2b`.
 - GPU EC2 is in `VoiClo-Gpu-Seoul-subnet-public1-ap-northeast-2a`.
 - ALB is `voice-gpu-alb`, internet-facing, HTTP-only port `80`, DNS `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com`.
-- Frontend S3 bucket is `interns2026-small-projects-bucket-shared`, under prefix `echolect/dist/`.
-- CloudFront distribution ID is `E2KTGN0G56FW71`.
+- Frontend S3 bucket is `interns2026-small-projects-bucket-shared`. The split frontend prefixes are `echolect/dist-training/` and `echolect/dist-live-fast/`.
+- Existing CloudFront distribution ID is `E2KTGN0G56FW71`; use it for one app and create a second distribution for the other app if separate URLs are required.
 - The ALB having two public subnets is normal; ALB nodes span availability zones even if the GPU target is currently one EC2 instance in one subnet.
 - ALB default action routes to `gpu-worker:3001`.
 - Required ALB path rule: `/api/live/chat/realtime` routes to `live-gateway:3002`.
@@ -123,13 +123,14 @@ ALB listener rules:
 
 Do not add ALB rules for `/train/progress/*`, `/inference/progress/*`, `/models`, or `/training-audio/*`; the default `gpu-worker:3001` target group handles those.
 
-Frontend Lambda deployment uses:
+Frontend Lambda deployment uses same-origin paths for each app:
 
 ```env
-VITE_API_BASE_URL=https://d3dghqhnk7aoku.cloudfront.net
-VITE_GPU_WORKER_URL=https://d3dghqhnk7aoku.cloudfront.net
-# Optional only if live gateway has a separate origin:
-# VITE_LIVE_GATEWAY_URL=https://YOUR_LIVE_GATEWAY_DOMAIN
+VITE_APP_BASENAME=/
+VITE_APP_MODE=training
+# or: VITE_APP_MODE=live-fast
+# Leave VITE_API_BASE_URL, VITE_GPU_WORKER_URL, and VITE_LIVE_GATEWAY_URL unset
+# unless the browser must call a different public origin.
 ```
 
 Lambda deploy params can still use the raw public ALB URL for `GpuWorkerUrl`, because Lambda is server-side and is not affected by browser mixed-content rules.
@@ -152,7 +153,7 @@ OPENAI_REALTIME_MODEL=gpt-realtime
 OPENAI_REALTIME_VAD=semantic_vad
 OPENAI_REALTIME_SYSTEM_PROMPT=You are a casual, helpful assistant. Keep replies concise and conversational.
 PORT=3002
-CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ```
 
 `gpu-worker` does not need `OPENAI_API_KEY`; OpenAI Realtime belongs to `live-gateway`.
@@ -175,10 +176,10 @@ S3Bucket=interns2026-small-projects-bucket-shared
 S3Region=ap-southeast-1
 S3Prefix=echolect/
 GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
-GpuWorkerPublicUrl=https://d3dghqhnk7aoku.cloudfront.net
+GpuWorkerPublicUrl=https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ModelSource=s3
 ArtifactSource=s3
-CorsOrigin=https://d3dghqhnk7aoku.cloudfront.net
+CorsOrigin=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 GpuInstanceId=i-03f258d470a2fa73f
 GpuInstanceRegion=ap-northeast-2
 GpuIdleStopMinutes=30
@@ -211,20 +212,18 @@ CloudFront error pages:
 
 Frontend cloud template: `client/.env.frontend.deployment`
 
-Production frontend env should point REST, SSE, and WSS at CloudFront. CloudFront then routes `/api/*` to the Lambda Function URL origin and GPU streaming/WebSocket paths to the GPU ALB:
+Production frontend env should normally leave REST, SSE, and WSS origins unset. The browser calls the same CloudFront distribution that served the app, and CloudFront routes `/api/*` to Lambda and streaming/WebSocket paths to the GPU ALB:
 
 ```env
-VITE_API_BASE_URL=https://d3dghqhnk7aoku.cloudfront.net
-VITE_GPU_WORKER_URL=https://d3dghqhnk7aoku.cloudfront.net
-# Optional only if live gateway has a separate origin:
-# VITE_LIVE_GATEWAY_URL=https://YOUR_LIVE_GATEWAY_DOMAIN
 VITE_APP_BASENAME=/
+VITE_APP_MODE=training
+# or: VITE_APP_MODE=live-fast
 ```
 
-Do not add `/api` to either base URL. The app derives:
+Do not add `/api` to any configured base URL. With same-origin split builds, the app derives:
 
-- `https://.../api/...`
-- `ws://.../api/live/chat/realtime` or `wss://.../api/live/chat/realtime`
+- `/api/...`
+- `wss://<current-cloudfront-domain>/api/live/chat/realtime`
 
 For local development, these can still point at localhost, but for deployed CloudFront testing they should use the CloudFront domain.
 
@@ -251,7 +250,7 @@ INFERENCE_PORT=9880
 S3_BUCKET=interns2026-small-projects-bucket-shared
 S3_REGION=ap-southeast-1
 S3_PREFIX=echolect/
-CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ```
 
 The GPU worker does not need `OPENAI_API_KEY`. Only `live-gateway` talks to OpenAI Realtime.
@@ -346,6 +345,9 @@ Frontend:
 - `client/src/App.jsx`
   - User-facing nav/routes are `/` for Training and `/live-fast` for Live Fast. `/live` and `/inference` redirect to `/live-fast`.
 
+- `client/src/lib/appMode.js`
+  - Uses `VITE_APP_MODE` to build Training-only, Live-Fast-only, or combined local routing.
+
 - `client/src/pages/LivePage.jsx`
   - Live Fast chatbot UI.
   - Owns the trained model dropdown, Save voice action, trained-reference picker, and inference controls.
@@ -392,14 +394,15 @@ Use these before saying the Live work is good:
 ```powershell
 node --test client/src/hooks/liveConversation.test.js
 npm --prefix live-gateway test
-npm --prefix client run build
+npm --prefix client run build:training
+npm --prefix client run build:live-fast
 ```
 
 Expected current results:
 
-- Client helper/reference tests cover `client/src/hooks/liveConversation.test.js`, `client/src/lib/referenceSelection.test.js`, `client/src/lib/liveFastSetup.test.js`, and `client/src/lib/trainingValidation.test.js`.
-- Live gateway tests: 5 passing.
-- Client production build passes.
+- Client helper/reference tests cover `client/src/hooks/liveConversation.test.js`, `client/src/lib/referenceSelection.test.js`, `client/src/lib/liveFastSetup.test.js`, `client/src/lib/trainingValidation.test.js`, and `client/src/lib/appMode.test.js`.
+- Live gateway tests pass.
+- Training and Live Fast production builds pass.
 
 Useful grep checks:
 

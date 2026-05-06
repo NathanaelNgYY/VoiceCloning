@@ -119,7 +119,7 @@ INFERENCE_PORT=9880 \
 S3_BUCKET=interns2026-small-projects-bucket-shared \
 S3_REGION=ap-southeast-1 \
 S3_PREFIX=echolect/ \
-CORS_ORIGIN=https://YOUR_CLOUDFRONT_DOMAIN \
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN \
 npm start
 ```
 
@@ -135,7 +135,7 @@ INFERENCE_PORT=9880
 S3_BUCKET=interns2026-small-projects-bucket-shared
 S3_REGION=ap-southeast-1
 S3_PREFIX=echolect/
-CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ```
 
 GPT-SoVITS itself runs separately on the same EC2:
@@ -153,7 +153,7 @@ cd ~/VoiceCloning/live-gateway
 npm install
 NODE_ENV=production \
 PORT=3002 \
-CORS_ORIGIN=https://YOUR_CLOUDFRONT_DOMAIN \
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN \
 OPENAI_API_KEY=sk-... \
 OPENAI_REALTIME_MODEL=gpt-realtime \
 OPENAI_REALTIME_VAD=semantic_vad \
@@ -166,7 +166,7 @@ The deployment env file for `live-gateway.service` should contain:
 ```env
 NODE_ENV=production
 PORT=3002
-CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 OPENAI_API_KEY=
 OPENAI_REALTIME_MODEL=gpt-realtime
 OPENAI_REALTIME_VAD=semantic_vad
@@ -532,7 +532,7 @@ GPU_INSTANCE_REGION=ap-northeast-2
 GPU_IDLE_STOP_MINUTES=30
 MODEL_SOURCE=s3
 ARTIFACT_SOURCE=s3
-CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ```
 
 The old `GPU_INSTANCE_MOCK_STATE` local UI path has been removed. Configure a real `GPU_INSTANCE_ID` and test GPU start/status against the cloud services.
@@ -574,7 +574,7 @@ aws lambda create-function `
   --memory-size 256 `
   --role arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_LAMBDA_EXECUTION_ROLE `
   --zip-file fileb://.dist/voice-cloning-function-url.zip `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
 ```
 
 Update code after later changes:
@@ -594,7 +594,7 @@ aws lambda update-function-configuration `
   --profile account3 `
   --region ap-northeast-2 `
   --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
 ```
 
 Required for automatic GPU shutdown: add an EventBridge schedule so Lambda checks idleness without a user opening the app. `GPU_IDLE_STOP_MINUTES` only sets the idle threshold inside Lambda. It does not run a timer by itself.
@@ -799,7 +799,7 @@ aws lambda update-function-configuration `
   --region ap-northeast-2 `
   --function-name voice-cloning-api `
   --vpc-config SubnetIds=subnet-aaa,subnet-bbb,SecurityGroupIds=sg-lambda `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://d3dghqhnk7aoku.cloudfront.net}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
 ```
 
 9. Security groups:
@@ -820,27 +820,32 @@ For future scalability, prefer routing Lambda through the internal ALB instead o
 
 ## Frontend Deployment
 
-Create or update the frontend production env. Because CloudFront proxies both `/api/*` and the GPU SSE/WSS paths, the browser can use the CloudFront domain for both base URLs:
+Create or update the frontend production env. Because each CloudFront distribution proxies its own `/api/*` and GPU SSE/WSS paths, the split deployment should use same-origin frontend URLs. Build one Training bundle and one Live Fast bundle:
 
 ```env
-VITE_API_BASE_URL=https://d3dghqhnk7aoku.cloudfront.net
-VITE_GPU_WORKER_URL=https://d3dghqhnk7aoku.cloudfront.net
-# Optional only if live gateway has a separate origin:
-# VITE_LIVE_GATEWAY_URL=https://YOUR_LIVE_GATEWAY_DOMAIN
 VITE_APP_BASENAME=/
+VITE_APP_MODE=training
+# or: VITE_APP_MODE=live-fast
+# Leave VITE_API_BASE_URL, VITE_GPU_WORKER_URL, and VITE_LIVE_GATEWAY_URL unset
+# unless the browser must call a different public origin.
 ```
 
-Build and upload:
+Build and upload both frontend apps to separate S3 prefixes:
 
 ```bash
 cd client
 npm install
-npm run build
-aws s3 sync dist/ s3://interns2026-small-projects-bucket-shared/echolect/dist/ --delete
-aws cloudfront create-invalidation --distribution-id E2KTGN0G56FW71 --paths "/*"
+npm run build:training
+npm run build:live-fast
+aws s3 sync dist-training/ s3://interns2026-small-projects-bucket-shared/echolect/dist-training/ --delete
+aws s3 sync dist-live-fast/ s3://interns2026-small-projects-bucket-shared/echolect/dist-live-fast/ --delete
+aws cloudfront create-invalidation --distribution-id TRAINING_DISTRIBUTION_ID --paths "/*"
+aws cloudfront create-invalidation --distribution-id LIVE_FAST_DISTRIBUTION_ID --paths "/*"
 ```
 
-Frontend-only changes, such as UI text, retry timing, mic controls, replay buttons, and local live-chat state handling, need only the build/sync/invalidation commands above.
+Point the Training CloudFront S3 origin path at `/echolect/dist-training`. Point the Live Fast CloudFront S3 origin path at `/echolect/dist-live-fast`. Both distributions can reuse the same Lambda Function URL origin and GPU ALB origin so Training writes to S3 and Live Fast reads the same S3 model/reference outputs.
+
+Frontend-only changes, such as UI text, route gating, mic controls, replay buttons, and local live-chat state handling, need only the build/sync/invalidation commands above.
 
 Changes under `live-gateway/` need a GPU EC2 service restart after pulling the code:
 
