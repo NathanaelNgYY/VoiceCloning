@@ -64,6 +64,58 @@ function skipStep(sessionId, stepIndex, reason) {
   return 'skipped';
 }
 
+function assertSafeCleanupTarget(targetPath, allowedRoot) {
+  if (!targetPath) {
+    throw new Error('Cleanup target path is required');
+  }
+  if (!allowedRoot) {
+    throw new Error('Cleanup allowed root path is required');
+  }
+
+  const resolved = path.resolve(targetPath);
+  const root = path.resolve(allowedRoot);
+  const relative = path.relative(root, resolved);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to cleanup path outside allowed cleanup root: ${targetPath}`);
+  }
+
+  return resolved;
+}
+
+export function cleanupLocalTrainingArtifacts({
+  localExpDir,
+  logsDir,
+  sessionId,
+  localTempRoot = LOCAL_TEMP_ROOT,
+  logsRoot = path.join(GPT_SOVITS_ROOT, 'logs'),
+} = {}) {
+  const targets = [
+    { label: 'training scratch', dir: localExpDir, root: localTempRoot },
+    { label: 'training logs/features/checkpoints', dir: logsDir, root: logsRoot },
+  ];
+  const removed = [];
+
+  for (const target of targets) {
+    const resolved = assertSafeCleanupTarget(target.dir, target.root);
+    if (!fs.existsSync(resolved)) {
+      continue;
+    }
+
+    fs.rmSync(resolved, { recursive: true, force: true });
+    removed.push({ ...target, dir: resolved });
+  }
+
+  if (sessionId && removed.length > 0) {
+    sseManager.send(sessionId, 'log', {
+      stream: 'stdout',
+      data: `Cleaned local training artifacts after S3 upload:\n${removed.map(item => `- ${item.label}: ${item.dir}`).join('\n')}\n`,
+      timestamp: Date.now(),
+    });
+  }
+
+  return removed;
+}
+
 export async function runPipelineWithS3(sessionId, {
   expName,
   s3Prefix: rawAudioPrefix,
@@ -296,6 +348,17 @@ export async function runPipelineWithS3(sessionId, {
       data: 'S3 upload complete\n',
       timestamp: Date.now(),
     });
+
+    try {
+      cleanupLocalTrainingArtifacts({ localExpDir, logsDir, sessionId });
+    } catch (cleanupErr) {
+      sseManager.send(sessionId, 'log', {
+        stream: 'stderr',
+        data: `S3 upload succeeded, but local training cleanup failed: ${cleanupErr.message}\n`,
+        timestamp: Date.now(),
+      });
+      console.warn('[gpu-worker] Local training cleanup failed:', cleanupErr);
+    }
 
     trainingState.setStatus('complete');
     sseManager.send(sessionId, 'pipeline-complete', { success: true });
