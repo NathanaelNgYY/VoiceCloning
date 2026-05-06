@@ -566,7 +566,68 @@ client/src/services/api.js
 
 That is why JSON `POST` calls like `/api/train`, `/api/models/select`, and `/api/inference/generate` work through the signed CloudFront -> Lambda Function URL path.
 
-## 11. Quick Code Review Guide
+## 11. GPU Worker Local Storage Cleanup
+
+S3 is the canonical storage location for uploaded training audio and trained model artifacts, but GPT-SoVITS still needs local EC2 disk while a training job is running.
+
+During training, the GPU worker writes temporary data, extracted features, logs, and checkpoints under paths such as:
+
+```text
+/opt/gpt-sovits/worker_temp/<EXP_NAME>
+/opt/gpt-sovits/logs/<EXP_NAME>
+```
+
+After a successful training run, the GPU worker uploads the final artifacts to S3:
+
+```text
+s3://<bucket>/<prefix>/models/user-models/gpt/
+s3://<bucket>/<prefix>/models/user-models/sovits/
+```
+
+Only after those S3 uploads succeed, the GPU worker deletes the current experiment's local training scratch and log directories:
+
+```text
+/opt/gpt-sovits/worker_temp/<EXP_NAME>
+/opt/gpt-sovits/logs/<EXP_NAME>
+```
+
+The cleanup intentionally does not delete the model download cache or local model-weight folders:
+
+```text
+/opt/gpt-sovits/worker_temp/model_cache
+/opt/gpt-sovits/GPT_weights_v2
+/opt/gpt-sovits/SoVITS_weights_v2
+```
+
+Those are managed separately by the EC2 daily cleanup job. The current production policy is to clear those local caches daily so the next model load downloads fresh copies from S3:
+
+```sh
+rm -rf /opt/gpt-sovits/worker_temp/model_cache/*
+rm -rf /opt/gpt-sovits/GPT_weights_v2/*
+rm -rf /opt/gpt-sovits/SoVITS_weights_v2/*
+```
+
+Before manually deleting training directories, check that no training process is running:
+
+```sh
+ps aux | grep -E 's1_train|s2_train|python' | grep -v grep
+```
+
+To verify successful post-training cleanup for a completed experiment:
+
+```sh
+EXP_NAME="YourExperimentName"
+
+test ! -d /opt/gpt-sovits/worker_temp/$EXP_NAME && echo "worker_temp cleaned"
+test ! -d /opt/gpt-sovits/logs/$EXP_NAME && echo "logs cleaned"
+
+aws s3 ls s3://interns2026-small-projects-bucket-shared/echolect/models/user-models/gpt/ | tail
+aws s3 ls s3://interns2026-small-projects-bucket-shared/echolect/models/user-models/sovits/ | tail
+```
+
+This keeps EC2 disk usage bounded while preserving S3 as the source of truth for trained models.
+
+## 12. Quick Code Review Guide
 
 If you want to review how the frontend interacts with the rest of the cloud system, start in this order:
 
@@ -593,6 +654,6 @@ If you want to review how the frontend interacts with the rest of the cloud syst
 11. `live-gateway/src/routes/liveChat.js`
    - Shows the live WebSocket bridge.
 
-## 12. One-Sentence Summary
+## 13. One-Sentence Summary
 
 The React frontend talks to CloudFront; CloudFront routes normal REST calls to Lambda, long-lived progress streams and live WebSocket traffic to the GPU ALB, Lambda uses S3 plus the GPU worker for heavy work, and the GPU EC2 runs GPT-SoVITS plus the live OpenAI Realtime gateway.

@@ -1,6 +1,6 @@
 # Lambda Serverless Backend + GPU Worker Guide
 
-Last updated: 2026-04-30
+Last updated: 2026-05-06
 
 This guide explains the new deployment shape:
 
@@ -63,6 +63,7 @@ GPU worker changes:
 - `GET /inference/current`
 - `GET /activity/status`
 - S3 upload helper for generated final WAVs
+- Post-training local artifact cleanup after successful S3 upload
 - CORS controlled by `CORS_ORIGIN`
 
 Frontend changes:
@@ -219,6 +220,103 @@ sudo systemctl enable --now live-gateway
 sudo systemctl status gpu-worker
 sudo systemctl status live-gateway
 ```
+
+### GPU Worker Local Cleanup And Cache Refresh
+
+S3 is the source of truth for uploaded training audio and trained models. The GPU EC2 still uses local disk while training and inference are running, so local cleanup is split into two layers.
+
+The GPU worker now performs post-training cleanup after a successful run:
+
+1. Training writes scratch data, extracted features, logs, and checkpoints locally.
+2. The GPU worker uploads final outputs to S3.
+3. Only after the S3 upload succeeds, the GPU worker deletes:
+
+```text
+/opt/gpt-sovits/worker_temp/<EXP_NAME>
+/opt/gpt-sovits/logs/<EXP_NAME>
+```
+
+The GPU worker does not delete the inference model cache or local model weight folders during the training completion path. Those are cleaned by a daily EC2 cron job so the next model load refreshes from S3:
+
+```text
+/opt/gpt-sovits/worker_temp/model_cache
+/opt/gpt-sovits/GPT_weights_v2
+/opt/gpt-sovits/SoVITS_weights_v2
+```
+
+Install the daily local cache refresh job on the GPU EC2:
+
+```bash
+sudo tee /etc/cron.daily/gpt-sovits-local-cleanup >/dev/null <<'EOF'
+#!/bin/sh
+set -eu
+
+if pgrep -f 's1_train.py|s2_train.py' >/dev/null 2>&1; then
+  echo "Training is running; skipping GPT-SoVITS cleanup."
+  exit 0
+fi
+
+echo "Cleaning GPT-SoVITS local model caches..."
+
+rm -rf /opt/gpt-sovits/worker_temp/model_cache/*
+rm -rf /opt/gpt-sovits/GPT_weights_v2/*
+rm -rf /opt/gpt-sovits/SoVITS_weights_v2/*
+
+df -h /
+EOF
+
+sudo chmod +x /etc/cron.daily/gpt-sovits-local-cleanup
+```
+
+Verify that the daily refresh job is registered:
+
+```bash
+sudo run-parts --test /etc/cron.daily | grep gpt-sovits-local-cleanup
+```
+
+Verify that the daily refresh job deletes local cache files:
+
+```bash
+sudo mkdir -p /opt/gpt-sovits/worker_temp/model_cache
+sudo mkdir -p /opt/gpt-sovits/GPT_weights_v2
+sudo mkdir -p /opt/gpt-sovits/SoVITS_weights_v2
+
+sudo touch /opt/gpt-sovits/worker_temp/model_cache/test-cache.ckpt
+sudo touch /opt/gpt-sovits/GPT_weights_v2/test-gpt.ckpt
+sudo touch /opt/gpt-sovits/SoVITS_weights_v2/test-sovits.pth
+
+sudo ls -lah /opt/gpt-sovits/worker_temp/model_cache
+sudo ls -lah /opt/gpt-sovits/GPT_weights_v2
+sudo ls -lah /opt/gpt-sovits/SoVITS_weights_v2
+
+sudo /etc/cron.daily/gpt-sovits-local-cleanup
+
+sudo ls -lah /opt/gpt-sovits/worker_temp/model_cache
+sudo ls -lah /opt/gpt-sovits/GPT_weights_v2
+sudo ls -lah /opt/gpt-sovits/SoVITS_weights_v2
+df -h /
+```
+
+Expected result: the test files are gone, the directories still exist, and root disk free space does not decrease.
+
+Verify that post-training cleanup happens after S3 upload:
+
+```bash
+EXP_NAME="YourExperimentName"
+
+# During training, these directories should exist and may grow.
+sudo du -sh /opt/gpt-sovits/worker_temp/$EXP_NAME /opt/gpt-sovits/logs/$EXP_NAME 2>/dev/null
+
+# After the UI reports successful training completion, local experiment data should be gone.
+test ! -d /opt/gpt-sovits/worker_temp/$EXP_NAME && echo "worker_temp cleaned" || echo "worker_temp still exists"
+test ! -d /opt/gpt-sovits/logs/$EXP_NAME && echo "logs cleaned" || echo "logs still exists"
+
+# The final trained models should remain available in S3.
+aws s3 ls s3://interns2026-small-projects-bucket-shared/echolect/models/user-models/gpt/ | tail
+aws s3 ls s3://interns2026-small-projects-bucket-shared/echolect/models/user-models/sovits/ | tail
+```
+
+If the local experiment directories still exist after a completed training run, confirm that the GPU EC2 has pulled the latest `gpu-worker` code and restarted `gpu-worker.service`.
 
 ## ALB Routing
 
