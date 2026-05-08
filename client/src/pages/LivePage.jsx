@@ -184,6 +184,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
   const [serverReady, setServerReady] = useState(false);
   const [savingModel, setSavingModel] = useState(false);
+  const [pendingAutoLoad, setPendingAutoLoad] = useState(false);
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
   const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
@@ -338,6 +339,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
       if (match) {
         urlVoiceKeyRef.current = '';
         setSelectedPersonKey(match.key);
+        setPendingAutoLoad(true);
         return;
       }
     }
@@ -350,6 +352,33 @@ export default function LivePage({ replyMode = 'phrases' }) {
     );
     setSelectedPersonKey((loadedMatch || availableProfiles[0]).key);
   }, [modelsFetched, availableProfiles, selectedPersonKey, loadedGPTPath, loadedSoVITSPath]);
+
+  useEffect(() => {
+    if (!pendingAutoLoad || !serverReady || !selectedProfile?.complete || isConversationActive || savingModel) return;
+    const gptPath = selectedProfile.gptModel?.path;
+    const sovitsPath = selectedProfile.sovitsModel?.path;
+    if (!gptPath || !sovitsPath) return;
+    if (loadedGPTPath === gptPath && loadedSoVITSPath === sovitsPath) {
+      setPendingAutoLoad(false);
+      return;
+    }
+    setPendingAutoLoad(false);
+    setSavingModel(true);
+    setModelError('');
+    selectModels(gptPath, sovitsPath)
+      .then(() => {
+        setLoadedGPTPath(gptPath);
+        setLoadedSoVITSPath(sovitsPath);
+        setServerReady(true);
+        setReferenceMessage('Voice model loaded. Ready to start a conversation.');
+      })
+      .catch((err) => {
+        setModelError(err.response?.data?.error || err.message || 'Could not auto-load this voice model.');
+      })
+      .finally(() => {
+        setSavingModel(false);
+      });
+  }, [pendingAutoLoad, serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, savingModel]);
 
   useEffect(() => {
     if (!selectedExpName) {
