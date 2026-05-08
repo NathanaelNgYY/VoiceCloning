@@ -360,8 +360,18 @@ export async function runPipelineWithS3(sessionId, {
     sseManager.send(sessionId, 'pipeline-complete', { success: true });
 
     if (email) {
-      sendTrainingCompleteEmail(email, expName).catch((emailErr) => {
-        console.warn('[gpu-worker] Training complete email failed (non-fatal):', emailErr.message);
+      sendTrainingCompleteEmail(email, expName).then(() => {
+        recordTrainingLog(sessionId, {
+          stream: 'stdout',
+          data: `Notification email sent to ${email}\n`,
+        });
+      }).catch((emailErr) => {
+        const errMsg = emailErr.message || String(emailErr);
+        console.warn('[gpu-worker] Training complete email failed (non-fatal):', errMsg);
+        recordTrainingLog(sessionId, {
+          stream: 'stderr',
+          data: `Email notification failed: ${errMsg}\n`,
+        });
       });
     }
   } catch (err) {
