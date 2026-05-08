@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import AudioUploader from '../components/AudioUploader.jsx';
 import FloatingNotice from '../components/FloatingNotice.jsx';
-import ProgressTracker from '../components/ProgressTracker.jsx';
 import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 import { validateTrainingStart } from '@/lib/trainingValidation';
@@ -13,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronRight, Play, Square, AlertCircle, Activity, AudioLines } from 'lucide-react';
+import { ChevronRight, Play, Square, AlertCircle, Activity, AudioLines, Mail } from 'lucide-react';
 import Spinner from '../components/Spinner.jsx';
 import { cn } from '@/lib/utils';
 
@@ -21,6 +20,7 @@ const NOTICE_TIMEOUT_MS = 4200;
 
 export default function TrainingPage() {
   const [expName, setExpName] = useState('');
+  const [email, setEmail] = useState('');
   const [files, setFiles] = useState([]);
   const [batchSize, setBatchSize] = useState(2);
   const [sovitsEpochs, setSovitsEpochs] = useState(20);
@@ -34,14 +34,13 @@ export default function TrainingPage() {
   const [uploadError, setUploadError] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  const { steps, pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
+  const { pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
   const restoredSessionRef = useRef(null);
   const noticeTimeoutRef = useRef(null);
   const previousStatusRef = useRef(null);
   const noticesReadyRef = useRef(false);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
-  const completedSteps = steps.filter((step) => step.status === 'done').length;
   const statusLabel = pipelineStatus === 'running'
     ? 'Training in progress'
     : pipelineStatus === 'waiting'
@@ -129,13 +128,13 @@ export default function TrainingPage() {
       if (pipelineStatus === 'complete') {
         showNotice({
           title: 'Training complete',
-          message: 'Your checkpoints are ready. Open Live Fast, choose the new model, and save it before chatting.',
+          message: 'Your checkpoints are ready. Open the inference studio to use your new voice.',
           tone: 'success',
         });
       } else if (pipelineStatus === 'error') {
         showNotice({
           title: 'Training needs attention',
-          message: error || 'The pipeline stopped before finishing. Check the logs to see which step needs attention.',
+          message: error || 'The pipeline stopped before finishing.',
           tone: 'error',
         });
       }
@@ -147,6 +146,7 @@ export default function TrainingPage() {
   async function handleStart() {
     const validation = validateTrainingStart({
       expName,
+      email,
       files,
       batchSize,
       sovitsEpochs,
@@ -175,6 +175,7 @@ export default function TrainingPage() {
 
       const res = await startTraining({
         expName,
+        email,
         batchSize,
         sovitsEpochs,
         gptEpochs,
@@ -188,7 +189,7 @@ export default function TrainingPage() {
       connect(res.data.sessionId, { initialStatus: 'waiting' });
       showNotice({
         title: 'Training started',
-        message: 'Your files are uploaded and the pipeline is preparing the first step.',
+        message: "Training has started — we'll email you when it's done.",
         tone: 'success',
       });
     } catch (err) {
@@ -204,9 +205,6 @@ export default function TrainingPage() {
 
   async function handleStop() {
     if (!sessionId) return;
-    // Clear the UI immediately — don't wait for the API response.
-    // If the process already died (step error), stopTraining returns 404 and would
-    // never reach reset(), leaving the error state visible.
     disconnect();
     reset();
     setSessionId(null);
@@ -241,7 +239,7 @@ export default function TrainingPage() {
               Start here to train a voice model from your clips, your settings, and a clear step-by-step pipeline.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
-              Give your run a name, upload the source audio you want to learn from, choose the training settings, then follow all 8 stages and the live logs from this page.
+              Give your run a name, upload the source audio you want to learn from, enter your email, and hit Start Training. We'll notify you when it's done.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-3">
@@ -251,9 +249,6 @@ export default function TrainingPage() {
               </Badge>
               <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
                 Step 1: upload your source clips
-              </Badge>
-              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                Step 2: review the 8-stage pipeline
               </Badge>
             </div>
           </div>
@@ -268,10 +263,10 @@ export default function TrainingPage() {
             </div>
 
             <div className="rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Current Focus</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight">{isRunning ? 'Watch the pipeline' : 'Get your run ready'}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Status</p>
+              <p className="mt-3 text-2xl font-semibold tracking-tight">{isRunning ? 'Training running' : 'Ready to start'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {isRunning ? 'Stay here to watch each stage finish, or come back later and the progress will still be restored.' : 'Start with the experiment name and source clips, then move on to the settings below.'}
+                {isRunning ? "Your voice is being trained. We'll email you when it's ready." : 'Fill in your name, upload clips, and enter your email to get started.'}
               </p>
             </div>
           </div>
@@ -287,7 +282,7 @@ export default function TrainingPage() {
             </Badge>
             <div>
               <CardTitle className="font-display text-2xl">Setup</CardTitle>
-              <CardDescription>Name this run and upload the clips you want the model to learn from.</CardDescription>
+              <CardDescription>Name this run, upload your clips, and enter your email to get notified when training is done.</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -304,22 +299,42 @@ export default function TrainingPage() {
             </div>
 
             <div className="space-y-2">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Experiment Name
-            </Label>
-            <Input
-              className="h-12 rounded-2xl border-slate-200 bg-white shadow-sm"
-              placeholder="e.g. my_voice_model"
-              value={expName}
-              onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-              disabled={isRunning}
-            />
-            {expName && (
-              <p className="font-mono text-xs text-muted-foreground">
-                Letters, numbers, hyphens, underscores only
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Experiment Name
+              </Label>
+              <Input
+                className="h-12 rounded-2xl border-slate-200 bg-white shadow-sm"
+                placeholder="e.g. my_voice_model"
+                value={expName}
+                onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+                disabled={isRunning}
+              />
+              {expName && (
+                <p className="font-mono text-xs text-muted-foreground">
+                  Letters, numbers, hyphens, underscores only
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Notification Email
+              </Label>
+              <div className="relative">
+                <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="email"
+                  className="h-12 rounded-2xl border-slate-200 bg-white pl-10 shadow-sm"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isRunning}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                We'll send you an email when your voice model is ready.
               </p>
-            )}
-          </div>
+            </div>
 
             <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Quick Summary</p>
@@ -329,12 +344,8 @@ export default function TrainingPage() {
                   <span className="min-w-0 text-right font-semibold text-slate-800">{files.length} file{files.length === 1 ? '' : 's'}</span>
                 </div>
                 <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-                  <span>Pipeline</span>
+                  <span>Status</span>
                   <span className="min-w-0 text-right font-semibold text-slate-800">{statusLabel}</span>
-                </div>
-                <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-                  <span>Next step</span>
-                  <span className="min-w-0 text-right font-semibold text-slate-800">{isRunning ? 'Watch the active stage' : 'Upload source clips'}</span>
                 </div>
               </div>
             </div>
@@ -345,6 +356,40 @@ export default function TrainingPage() {
               Training Audio
             </Label>
             <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
+          </div>
+
+          <div className="flex items-center gap-4 lg:col-span-2">
+            {!isRunning ? (
+              <Button
+                onClick={handleStart}
+                disabled={uploading || isRunning}
+                size="lg"
+                className="rounded-2xl shadow-[0_20px_50px_-28px_rgba(14,165,233,0.75)]"
+              >
+                {uploading ? (
+                  <>
+                    <Spinner size={14} className="text-primary-foreground" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Play size={14} />
+                    Start Training
+                  </>
+                )}
+              </Button>
+            ) : (
+              <Button variant="destructive" size="lg" className="rounded-2xl" onClick={handleStop}>
+                <Square size={14} />
+                Stop Training
+              </Button>
+            )}
+
+            {error && (
+              <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
+                {error}
+              </span>
+            )}
           </div>
 
           {uploadError && (
@@ -469,92 +514,6 @@ export default function TrainingPage() {
               </div>
             </CollapsibleContent>
           </Collapsible>
-        </CardContent>
-      </Card>
-
-      {/* 03 Pipeline */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
-              3
-            </Badge>
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <CardTitle className="font-display text-2xl">Pipeline</CardTitle>
-                {pipelineStatus === 'running' && (
-                  <Badge className="animate-pulse-dot">Running</Badge>
-                )}
-                {pipelineStatus === 'complete' && (
-                  <Badge variant="success">Complete</Badge>
-                )}
-                {pipelineStatus === 'error' && (
-                  <Badge variant="destructive">Error</Badge>
-                )}
-              </div>
-              <CardDescription>Follow the full training path from source preparation to SoVITS and GPT checkpoints. Backend logs are emitted by the GPU worker for CloudWatch collection.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6 p-6">
-          <div className="flex flex-wrap gap-3">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/85 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Progress</p>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-800">{completedSteps}/{steps.length}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/85 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Batch</p>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-800">{batchSize}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/85 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Language</p>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-800">{asrLanguage.toUpperCase()}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,rgba(248,250,252,0.95),rgba(240,249,255,0.92))] px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">View</p>
-              <p className="mt-2 text-sm font-semibold tracking-tight text-slate-800">
-                Everything stays visible here so you can follow the full run at a glance.
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-[24px] border border-slate-200 bg-white/90 p-4 shadow-sm">
-            <ProgressTracker steps={steps} />
-          </div>
-
-          <div className="flex items-center gap-4">
-            {!isRunning ? (
-              <Button
-                onClick={handleStart}
-                disabled={uploading || isRunning}
-                size="lg"
-                className="rounded-2xl shadow-[0_20px_50px_-28px_rgba(14,165,233,0.75)]"
-              >
-                {uploading ? (
-                  <>
-                    <Spinner size={14} className="text-primary-foreground" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <Play size={14} />
-                    Start Training
-                  </>
-                )}
-              </Button>
-            ) : (
-              <Button variant="destructive" size="lg" className="rounded-2xl" onClick={handleStop}>
-                <Square size={14} />
-                Stop Training
-              </Button>
-            )}
-
-            {error && (
-              <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
-                {error}
-              </span>
-            )}
-          </div>
         </CardContent>
       </Card>
     </div>
