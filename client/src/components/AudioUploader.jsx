@@ -43,10 +43,10 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
       {/* Drop zone */}
       <div
         className={cn(
-          "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-8 py-12 text-center transition-all",
+          "flex min-h-[280px] cursor-pointer flex-col items-center justify-center rounded-[18px] border-2 border-dashed px-8 py-12 text-center transition-all",
           dragOver
-            ? "border-primary/50 bg-primary/5 shadow-sm"
-            : "border-border bg-slate-50 hover:border-primary/30 hover:bg-muted/50",
+            ? "border-primary/70 bg-primary/5 shadow-sm"
+            : "border-sky-200 bg-slate-50/70 hover:border-primary/50 hover:bg-sky-50/60",
           disabled && "cursor-not-allowed opacity-40"
         )}
         onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragOver(true); }}
@@ -57,9 +57,9 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
         <Upload
           className={cn(
             "mb-3 transition-colors",
-            dragOver ? "text-primary" : "text-muted-foreground"
+            dragOver ? "text-primary" : "text-primary"
           )}
-          size={30}
+          size={36}
         />
         <p className={cn(
           "text-sm font-semibold transition-colors",
