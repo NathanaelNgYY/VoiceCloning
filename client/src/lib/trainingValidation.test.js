@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { validateTrainingStart } from './trainingValidation.js';
 
 const wavFile = { name: 'voice_sample.wav', type: 'audio/wav', size: 8 * 1024 * 1024 };
+const validEmail = 'user@example.com';
 
-test('validateTrainingStart accepts a named run with supported audio and bounded settings', () => {
+test('validateTrainingStart accepts a named run with supported audio, bounded settings, and valid email', () => {
   const result = validateTrainingStart({
     expName: 'demo_voice_01',
+    email: validEmail,
     files: [wavFile],
     batchSize: 2,
     sovitsEpochs: 20,
@@ -20,25 +22,26 @@ test('validateTrainingStart accepts a named run with supported audio and bounded
 });
 
 test('validateTrainingStart rejects missing or unsafe experiment names before upload', () => {
-  assert.deepEqual(validateTrainingStart({ expName: '', files: [wavFile] }), {
+  assert.deepEqual(validateTrainingStart({ expName: '', email: validEmail, files: [wavFile] }), {
     valid: false,
     errors: ['Enter an experiment name.'],
   });
 
-  assert.deepEqual(validateTrainingStart({ expName: '../voice', files: [wavFile] }), {
+  assert.deepEqual(validateTrainingStart({ expName: '../voice', email: validEmail, files: [wavFile] }), {
     valid: false,
     errors: ['Experiment name may only contain letters, numbers, dots, dashes, and underscores.'],
   });
 });
 
 test('validateTrainingStart rejects empty or unsupported training audio input', () => {
-  assert.deepEqual(validateTrainingStart({ expName: 'voice', files: [] }), {
+  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: validEmail, files: [] }), {
     valid: false,
     errors: ['Upload at least one training audio file.'],
   });
 
   assert.deepEqual(validateTrainingStart({
     expName: 'voice',
+    email: validEmail,
     files: [{ name: 'notes.txt', type: 'text/plain', size: 100 }],
   }), {
     valid: false,
@@ -49,6 +52,7 @@ test('validateTrainingStart rejects empty or unsupported training audio input', 
 test('validateTrainingStart rejects out-of-range training settings', () => {
   const result = validateTrainingStart({
     expName: 'voice',
+    email: validEmail,
     files: [wavFile],
     batchSize: 0,
     sovitsEpochs: 0,
@@ -67,4 +71,26 @@ test('validateTrainingStart rejects out-of-range training settings', () => {
     'GPT save interval must be between 1 and 10.',
     'ASR language must be English, Chinese, Japanese, Korean, or Auto Detect.',
   ]);
+});
+
+test('validateTrainingStart rejects missing email', () => {
+  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: '', files: [wavFile] }), {
+    valid: false,
+    errors: ['Enter a valid email address to receive training notifications.'],
+  });
+});
+
+test('validateTrainingStart rejects malformed email addresses', () => {
+  const result = validateTrainingStart({ expName: 'voice', email: 'notanemail', files: [wavFile] });
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errors, ['Enter a valid email address to receive training notifications.']);
+});
+
+test('validateTrainingStart accepts email with subdomain and plus addressing', () => {
+  const result = validateTrainingStart({
+    expName: 'voice',
+    email: 'user+tag@mail.example.co.uk',
+    files: [wavFile],
+  });
+  assert.deepEqual(result, { valid: true, errors: [] });
 });
