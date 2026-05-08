@@ -4,6 +4,7 @@ import { sseManager } from '../services/sseManager.js';
 import { processManager } from '../services/processManager.js';
 import { runPipelineWithS3, STEPS } from '../services/pipeline.js';
 import { trainingState } from '../services/trainingState.js';
+import { activityState } from '../services/activityState.js';
 
 const router = Router();
 const sessions = new Map();
@@ -69,6 +70,7 @@ router.post('/train/stop', (req, res) => {
   }
   const killed = processManager.kill(sessionId);
   if (killed) {
+    activityState.mark();
     sseManager.send(sessionId, 'error', { message: 'Training stopped by user' });
   }
   trainingState.clear();

@@ -1,4 +1,5 @@
 import { STEPS } from './trainingSteps.js';
+import { activityState } from './activityState.js';
 
 const MAX_LOGS = 2000;
 
@@ -25,6 +26,7 @@ class TrainingState {
   }
 
   resetForNewSession({ sessionId, expName }) {
+    activityState.mark();
     this.state = {
       ...this.getInitialState(),
       sessionId,
@@ -39,6 +41,7 @@ class TrainingState {
   }
 
   appendLog(log) {
+    activityState.mark();
     this.state.logs.push(log);
     if (this.state.logs.length > MAX_LOGS) {
       this.state.logs = this.state.logs.slice(-MAX_LOGS);
@@ -46,6 +49,7 @@ class TrainingState {
   }
 
   setStatus(status) {
+    activityState.mark();
     this.state.status = status;
     if (['complete', 'error', 'stopped'].includes(status)) {
       this.state.endedAt = Date.now();
@@ -53,12 +57,14 @@ class TrainingState {
   }
 
   setStepStatus(stepIndex, status, detail = '') {
+    activityState.mark();
     this.state.steps = this.state.steps.map((step) =>
       step.index === stepIndex ? { ...step, status, detail } : step
     );
   }
 
   setError(message) {
+    activityState.mark();
     this.state.error = message;
     this.state.status = 'error';
     this.state.endedAt = Date.now();

@@ -966,6 +966,13 @@ export function cancelSession(sessionId) {
   return false;
 }
 
+export function hasActiveInferenceSession(sessionId = null) {
+  if (sessionId) {
+    return activeSessions.has(sessionId);
+  }
+  return activeSessions.size > 0;
+}
+
 function getSessionDir(sessionId) {
   return path.join(TEMP_DIR, 'inference', sessionId);
 }

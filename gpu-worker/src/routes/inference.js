@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { LOCAL_TEMP_ROOT } from '../config.js';
 import { downloadFile } from '../services/s3Sync.js';
 import { inferenceServer } from '../services/inferenceServer.js';
+import { activityState } from '../services/activityState.js';
 import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
@@ -94,6 +95,7 @@ router.get('/inference/status', async (_req, res) => {
 router.post('/inference/start', async (_req, res) => {
   try {
     const status = await inferenceServer.start();
+    activityState.mark();
     res.json(status);
   } catch (err) {
     res.status(500).json({
@@ -108,6 +110,7 @@ router.post('/inference/start', async (_req, res) => {
 router.post('/inference/stop', (_req, res) => {
   try {
     const status = inferenceServer.stop();
+    activityState.mark();
     res.json(status);
   } catch (err) {
     res.status(500).json({
@@ -130,6 +133,7 @@ router.post('/inference/weights/gpt', async (req, res) => {
 
   try {
     const status = await inferenceServer.setGPTWeights(weightsPath);
+    activityState.mark();
     res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -147,6 +151,7 @@ router.post('/inference/weights/sovits', async (req, res) => {
 
   try {
     const status = await inferenceServer.setSoVITSWeights(weightsPath);
+    activityState.mark();
     res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -160,8 +165,10 @@ router.post('/inference/tts', async (req, res) => {
       return res.status(503).json({ error: status.error || 'Inference server is not ready' });
     }
 
+    activityState.mark();
     const resolvedParams = await resolveRefAudioParams(req.body);
     const audioBuffer = await inferenceServer.synthesize(resolvedParams);
+    activityState.mark();
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': audioBuffer.length,
@@ -188,6 +195,7 @@ router.post('/inference', async (req, res) => {
       return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
     }
 
+    activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
     const { audioBuffer, chunks } = await synthesizeLongText(resolvedParams, {
       maxChunkLength: 280,
@@ -195,6 +203,7 @@ router.post('/inference', async (req, res) => {
       chunkJoinPauseMs: 120,
       retryCount: 2,
     });
+    activityState.mark();
 
     res.set({
       'Content-Type': 'audio/wav',
