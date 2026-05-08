@@ -349,9 +349,9 @@ export default function InferencePage() {
 
     if (urlVoiceKeyRef.current) {
       const targetKey = urlVoiceKeyRef.current;
-      urlVoiceKeyRef.current = '';
-      const match = profiles.find(p => p.key === targetKey);
+      const match = profiles.find(p => p.key === targetKey && p.complete);
       if (match) {
+        urlVoiceKeyRef.current = '';
         setSelectedPersonKey(match.key);
         showNotice({
           title: `Voice "${match.displayName}" selected`,
@@ -360,6 +360,7 @@ export default function InferencePage() {
         });
         return;
       }
+      // Keep ref populated so a subsequent model refresh (fetchModels) can still auto-select
       showNotice({
         title: 'Voice not found yet',
         message: `"${targetKey}" may still be uploading to S3. Refresh in a moment.`,
