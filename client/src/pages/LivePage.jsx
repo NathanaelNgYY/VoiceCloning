@@ -27,6 +27,7 @@ import {
   DEFAULT_LIVE_FAST_SETTINGS,
   buildLiveFastRefParams,
 } from '@/lib/liveFastSetup';
+import { shouldLoadSelectedProfile } from '@/lib/modelLoading';
 import {
   Activity,
   Bot,
@@ -39,7 +40,6 @@ import {
   MicOff,
   PlayCircle,
   RefreshCw,
-  Save,
   SlidersHorizontal,
   Square,
   UserRound,
@@ -183,8 +183,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [loadedGPTPath, setLoadedGPTPath] = useState('');
   const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
   const [serverReady, setServerReady] = useState(false);
-  const [savingModel, setSavingModel] = useState(false);
-  const [pendingAutoLoad, setPendingAutoLoad] = useState(false);
+  const [loadingModel, setLoadingModel] = useState(false);
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
   const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
@@ -205,6 +204,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const autoReferenceKeyRef = useRef('');
+  const autoLoadAttemptKeyRef = useRef('');
   const urlVoiceKeyRef = useRef('');
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
@@ -282,20 +282,22 @@ export default function LivePage({ replyMode = 'phrases' }) {
     setReferenceMessage(`${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
   }
 
-  async function handleSaveModel() {
+  async function loadSelectedModel({ auto = false } = {}) {
     if (!selectedProfile || isConversationActive) return;
-    setSavingModel(true);
+    setLoadingModel(true);
     setModelError('');
     try {
       await selectModels(selectedGPT, selectedSoVITS);
       setLoadedGPTPath(selectedGPT);
       setLoadedSoVITSPath(selectedSoVITS);
       setServerReady(true);
-      setReferenceMessage('Voice model saved. Reference clips are selected from this trained model.');
+      setReferenceMessage(auto
+        ? 'Voice model loaded. Reference clips are selected from this trained model.'
+        : 'Voice model loaded. Reference clips are selected from this trained model.');
     } catch (err) {
-      setModelError(err.response?.data?.error || err.message || 'Could not save this voice model.');
+      setModelError(err.response?.data?.error || err.message || 'Could not load this voice model.');
     } finally {
-      setSavingModel(false);
+      setLoadingModel(false);
     }
   }
 
@@ -339,7 +341,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
       if (match) {
         urlVoiceKeyRef.current = '';
         setSelectedPersonKey(match.key);
-        setPendingAutoLoad(true);
+        autoLoadAttemptKeyRef.current = '';
         return;
       }
     }
@@ -347,38 +349,29 @@ export default function LivePage({ replyMode = 'phrases' }) {
     const currentStillExists = availableProfiles.some((profile) => profile.key === selectedPersonKey);
     if (currentStillExists) return;
 
-    const loadedMatch = availableProfiles.find((profile) =>
-      profile.gptModel?.path === loadedGPTPath && profile.sovitsModel?.path === loadedSoVITSPath
-    );
-    setSelectedPersonKey((loadedMatch || availableProfiles[0]).key);
+    setSelectedPersonKey(availableProfiles[0].key);
   }, [modelsFetched, availableProfiles, selectedPersonKey, loadedGPTPath, loadedSoVITSPath]);
 
   useEffect(() => {
-    if (!pendingAutoLoad || !serverReady || !selectedProfile?.complete || isConversationActive || savingModel) return;
-    const gptPath = selectedProfile.gptModel?.path;
-    const sovitsPath = selectedProfile.sovitsModel?.path;
-    if (!gptPath || !sovitsPath) return;
-    if (loadedGPTPath === gptPath && loadedSoVITSPath === sovitsPath) {
-      setPendingAutoLoad(false);
+    if (!shouldLoadSelectedProfile({
+      serverReady,
+      selectedProfile,
+      loadedGPTPath,
+      loadedSoVITSPath,
+      isConversationActive,
+      loadingModel,
+    })) {
       return;
     }
-    setPendingAutoLoad(false);
-    setSavingModel(true);
-    setModelError('');
-    selectModels(gptPath, sovitsPath)
-      .then(() => {
-        setLoadedGPTPath(gptPath);
-        setLoadedSoVITSPath(sovitsPath);
-        setServerReady(true);
-        setReferenceMessage('Voice model loaded. Ready to start a conversation.');
-      })
-      .catch((err) => {
-        setModelError(err.response?.data?.error || err.message || 'Could not auto-load this voice model.');
-      })
-      .finally(() => {
-        setSavingModel(false);
-      });
-  }, [pendingAutoLoad, serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, savingModel]);
+
+    const gptPath = selectedProfile.gptModel.path;
+    const sovitsPath = selectedProfile.sovitsModel.path;
+    const loadKey = `${gptPath}::${sovitsPath}`;
+    if (autoLoadAttemptKeyRef.current === loadKey) return;
+
+    autoLoadAttemptKeyRef.current = loadKey;
+    loadSelectedModel({ auto: true });
+  }, [serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel]);
 
   useEffect(() => {
     if (!selectedExpName) {
@@ -450,8 +443,8 @@ export default function LivePage({ replyMode = 'phrases' }) {
     audio.play().catch(() => {});
   }, [liveSpeech.audioSrc, liveSpeech.selectedReplyId, playbackReady]);
 
-  const isReady = serverReady && Boolean(liveRefParams);
-  const selectedModelSaved = Boolean(serverReady && selectedGPT && selectedSoVITS && selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath);
+  const selectedModelLoaded = Boolean(serverReady && selectedGPT && selectedSoVITS && selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath);
+  const isReady = selectedModelLoaded && Boolean(liveRefParams);
   const isListening = liveSpeech.isMicInputEnabled
     && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
   const canBargeIn = liveSpeech.isMicInputEnabled || liveSpeech.isBargeInArmed;
@@ -494,8 +487,8 @@ export default function LivePage({ replyMode = 'phrases' }) {
         <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
           {availableProfiles.length === 0
             ? 'No complete trained models were found yet. Train a voice first, then return to Live Fast.'
-            : !selectedModelSaved
-              ? 'Choose a trained model and click Save voice before starting Live Fast.'
+            : !selectedModelLoaded
+              ? 'Choose a trained model and it will load automatically before starting Live Fast.'
               : 'Reference clips are still loading. The best trained clip will be selected automatically.'}
         </div>
       )}
@@ -632,7 +625,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
                   value={selectedPersonKey}
                   onValueChange={(value) => {
                     setSelectedPersonKey(value);
+                    setModelError('');
                     autoReferenceKeyRef.current = '';
+                    autoLoadAttemptKeyRef.current = '';
                   }}
                   disabled={isConversationActive || availableProfiles.length === 0}
                 >
@@ -649,25 +644,28 @@ export default function LivePage({ replyMode = 'phrases' }) {
                 </Select>
               </div>
 
-              <Button
-                type="button"
-                className="w-full rounded-xl"
-                onClick={handleSaveModel}
-                disabled={!selectedProfile || savingModel || isConversationActive || selectedModelSaved}
-              >
-                {savingModel ? <Loader2 size={14} className="animate-spin" /> : selectedModelSaved ? <Check size={14} /> : <Save size={14} />}
-                {selectedModelSaved ? 'Voice saved' : savingModel ? 'Saving...' : 'Save voice'}
-              </Button>
+              <div className={cn(
+                "flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold",
+                selectedModelLoaded
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : loadingModel
+                    ? "border-sky-200 bg-sky-50 text-sky-700"
+                    : "border-slate-200 bg-slate-50 text-slate-600"
+              )}>
+                {loadingModel ? <Loader2 size={14} className="animate-spin" /> : selectedModelLoaded ? <Check size={14} /> : <Activity size={14} />}
+                {selectedModelLoaded ? 'Voice loaded' : loadingModel ? 'Loading voice...' : 'Select a model to load it'}
+              </div>
 
               <Button
                 type="button"
                 variant="outline"
                 className="w-full rounded-xl border-slate-200"
                 onClick={() => {
+                  autoLoadAttemptKeyRef.current = '';
                   fetchModels();
                   checkStatus();
                 }}
-                disabled={isConversationActive}
+                disabled={isConversationActive || loadingModel}
               >
                 <RefreshCw size={14} />
                 Refresh models

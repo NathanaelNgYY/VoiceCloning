@@ -43,10 +43,10 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
       {/* Drop zone */}
       <div
         className={cn(
-          "flex cursor-pointer flex-col items-center justify-center rounded-[26px] border-2 border-dashed px-8 py-12 text-center transition-all",
+          "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-8 py-12 text-center transition-all",
           dragOver
-            ? "border-primary/50 bg-primary/5 shadow-[0_20px_40px_-28px_rgba(14,165,233,0.75)]"
-            : "border-border bg-[linear-gradient(135deg,rgba(255,255,255,0.95),rgba(240,249,255,0.7))] hover:border-primary/30 hover:bg-muted/50",
+            ? "border-primary/50 bg-primary/5 shadow-sm"
+            : "border-border bg-slate-50 hover:border-primary/30 hover:bg-muted/50",
           disabled && "cursor-not-allowed opacity-40"
         )}
         onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragOver(true); }}
@@ -87,7 +87,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
           {/* File count header */}
           <div className="mb-3 flex items-center justify-between border-b border-slate-200/80 pb-2">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="rounded-full text-xs">
+              <Badge variant="secondary" className="rounded-md text-xs">
                 {files.length} file{files.length !== 1 ? 's' : ''}
               </Badge>
             </div>
@@ -97,7 +97,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
           </div>
 
           {/* File items */}
-          <ScrollArea className="max-h-[220px] rounded-[22px] border border-slate-200 bg-white">
+          <ScrollArea className="max-h-[220px] rounded-lg border border-slate-200 bg-white">
             <div className="flex flex-col divide-y divide-slate-200/80">
               {files.map((f, i) => (
                 <div
@@ -117,7 +117,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
                   </div>
                   <button
                     className={cn(
-                      "ml-2 shrink-0 rounded-xl p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
+                      "ml-2 shrink-0 rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
                       disabled && "cursor-not-allowed"
                     )}
                     onClick={(e) => { e.stopPropagation(); removeFile(i); }}

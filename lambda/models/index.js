@@ -17,6 +17,24 @@ function isWorkerUnavailableError(error) {
     || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
 }
 
+export function toModelSummary(object) {
+  const lastModified = object.lastModified instanceof Date
+    ? object.lastModified.toISOString()
+    : object.lastModified || null;
+  const mtimeMs = object.lastModified instanceof Date
+    ? object.lastModified.getTime()
+    : Date.parse(object.lastModified || '');
+
+  return {
+    name: path.basename(object.key),
+    key: object.key,
+    path: object.key,
+    ...(typeof object.size === 'number' ? { size: object.size } : {}),
+    ...(lastModified ? { lastModified } : {}),
+    ...(Number.isFinite(mtimeMs) ? { mtimeMs } : {}),
+  };
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return preflight();
@@ -49,10 +67,10 @@ export const handler = async (event) => {
       ]);
       const gpt = gptObjects
         .filter((object) => object.key.endsWith('.ckpt'))
-        .map((object) => ({ name: path.basename(object.key), key: object.key, path: object.key }));
+        .map(toModelSummary);
       const sovits = sovitsObjects
         .filter((object) => object.key.endsWith('.pth'))
-        .map((object) => ({ name: path.basename(object.key), key: object.key, path: object.key }));
+        .map(toModelSummary);
       return ok({ gpt, sovits });
     }
 

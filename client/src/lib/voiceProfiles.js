@@ -6,6 +6,33 @@ function getBasename(filePath) {
   return (filePath || '').replace(/\\/g, '/').split('/').pop() || '';
 }
 
+function getModelModifiedAt(model) {
+  const candidates = [
+    model?.mtimeMs,
+    model?.modifiedAt,
+    model?.updatedAt,
+    model?.createdAt,
+    model?.lastModified,
+  ];
+
+  for (const value of candidates) {
+    if (value == null || value === '') continue;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (value instanceof Date) {
+      const time = value.getTime();
+      if (Number.isFinite(time)) return time;
+    }
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
 function parseModelCandidate(model, type) {
   const basename = model?.name || getBasename(model?.path);
   const pattern = type === 'gpt'
@@ -22,6 +49,7 @@ function parseModelCandidate(model, type) {
       personKey: normalizePersonKey(fallbackName),
       epoch: -1,
       step: -1,
+      modifiedAt: getModelModifiedAt(model),
     };
   }
 
@@ -32,6 +60,7 @@ function parseModelCandidate(model, type) {
     personKey: normalizePersonKey(match[1]),
     epoch: Number(match[2] || 0),
     step: Number(match[3] || 0),
+    modifiedAt: getModelModifiedAt(model),
   };
 }
 
@@ -80,6 +109,11 @@ export function buildVoiceProfiles(gptModels, sovitsModels) {
       const sortedSoVITSCandidates = [...profile.sovitsCandidates].sort(compareModelCandidates);
       const bestGPT = sortedGPTCandidates[0] || null;
       const bestSoVITS = sortedSoVITSCandidates[0] || null;
+      const recentAt = Math.max(
+        0,
+        ...sortedGPTCandidates.map(candidate => candidate.modifiedAt || 0),
+        ...sortedSoVITSCandidates.map(candidate => candidate.modifiedAt || 0)
+      );
 
       return {
         key: profile.key,
@@ -91,12 +125,16 @@ export function buildVoiceProfiles(gptModels, sovitsModels) {
         sovitsEpoch: bestSoVITS?.epoch ?? null,
         gptCandidates: sortedGPTCandidates,
         sovitsCandidates: sortedSoVITSCandidates,
+        recentAt,
         complete: Boolean(bestGPT?.model && bestSoVITS?.model),
       };
     })
     .sort((a, b) => {
       if (a.complete !== b.complete) {
         return Number(b.complete) - Number(a.complete);
+      }
+      if ((b.recentAt || 0) !== (a.recentAt || 0)) {
+        return (b.recentAt || 0) - (a.recentAt || 0);
       }
       return a.displayName.localeCompare(b.displayName);
     });

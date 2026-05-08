@@ -12,7 +12,7 @@ const refAudioCache = path.join(LOCAL_TEMP_ROOT, 'ref_audio_cache');
 const localGptWeightsDir = path.join(GPT_SOVITS_ROOT, 'GPT_weights_v2');
 const localSoVitsWeightsDir = path.join(GPT_SOVITS_ROOT, 'SoVITS_weights_v2');
 
-function listWeightFiles(dir, extension) {
+export function listWeightFiles(dir, extension) {
   if (!dir || !fs.existsSync(dir)) {
     return [];
   }
@@ -22,11 +22,15 @@ function listWeightFiles(dir, extension) {
     .sort()
     .map((filename) => {
       const filePath = path.join(dir, filename);
+      const stats = fs.statSync(filePath);
       return {
         name: filename,
         path: filePath,
         key: filePath,
         source: 'gpu-worker',
+        size: stats.size,
+        lastModified: stats.mtime.toISOString(),
+        mtimeMs: stats.mtimeMs,
       };
     });
 }

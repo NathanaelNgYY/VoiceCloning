@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { toModelSummary } from './index.js';
 
 function withEnv(values, fn) {
   const previous = {};
@@ -20,6 +21,23 @@ function withEnv(values, fn) {
       }
     });
 }
+
+test('toModelSummary includes object modification metadata for frontend recency sorting', () => {
+  const lastModified = new Date('2026-05-08T03:14:00.000Z');
+
+  assert.deepEqual(toModelSummary({
+    key: 'models/user-models/gpt/latestVoice-e10.ckpt',
+    size: 2048,
+    lastModified,
+  }), {
+    name: 'latestVoice-e10.ckpt',
+    key: 'models/user-models/gpt/latestVoice-e10.ckpt',
+    path: 'models/user-models/gpt/latestVoice-e10.ckpt',
+    size: 2048,
+    lastModified: lastModified.toISOString(),
+    mtimeMs: lastModified.getTime(),
+  });
+});
 
 test('models handler can list models from GPU worker instead of S3', async () => {
   const calls = [];
