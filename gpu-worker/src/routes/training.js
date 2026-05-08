@@ -9,7 +9,7 @@ const router = Router();
 const sessions = new Map();
 
 router.post('/train', (req, res) => {
-  const { expName, config = {} } = req.body;
+  const { expName, email = '', config = {} } = req.body;
 
   if (!expName) {
     return res.status(400).json({ error: 'expName is required' });
@@ -21,7 +21,7 @@ router.post('/train', (req, res) => {
   const sessionId = uuidv4();
   const s3Prefix = `training/datasets/${expName}/raw/`;
 
-  sessions.set(sessionId, { expName, startedAt: Date.now() });
+  sessions.set(sessionId, { expName, email, startedAt: Date.now() });
   trainingState.resetForNewSession({ sessionId, expName });
   sseManager.prepareSession(sessionId);
 
@@ -31,6 +31,7 @@ router.post('/train', (req, res) => {
     trainingState.setStatus('running');
     return runPipelineWithS3(sessionId, {
       expName,
+      email,
       s3Prefix,
       batchSize: config.batchSize,
       sovitsEpochs: config.sovitsEpochs,
@@ -66,7 +67,6 @@ router.post('/train/stop', (req, res) => {
   if (killed) {
     sseManager.send(sessionId, 'error', { message: 'Training stopped by user' });
   }
-  // Always clear state so a page reload doesn't restore a stale error.
   trainingState.clear();
   sseManager.clearSession(sessionId);
   sessions.delete(sessionId);
