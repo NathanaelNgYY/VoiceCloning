@@ -108,13 +108,23 @@ CloudFront origins:
 - Lambda Function URL origin for `/api/*` REST requests.
 - GPU ALB origin for SSE and the Live WebSocket.
 
-CloudFront behavior order:
+CloudFront behavior order for the split app URLs:
+
+Training CloudFront:
+
+1. `/train/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
+2. `/api/*` -> Lambda Function URL origin
+3. default `*` -> S3/frontend origin with origin path `/echolect/dist-training`
+
+Live Fast CloudFront:
 
 1. `/api/live/chat/realtime` -> GPU ALB origin -> ALB routes to `live-gateway:3002`
-2. `/train/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
-3. `/inference/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
-4. `/api/*` -> Lambda Function URL origin
-5. default `*` -> S3/frontend origin
+2. `/api/*` -> Lambda Function URL origin
+3. default `*` -> S3/frontend origin with origin path `/echolect/dist-live-fast`
+
+Optional compatibility behavior on either distribution:
+
+- `/inference/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
 
 ALB listener rules:
 

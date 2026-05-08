@@ -82,15 +82,17 @@ POST https://<current-cloudfront-domain>/api/train
 
 CloudFront is the public entry point. It routes requests by path:
 
-| Browser path | CloudFront target | Why |
-| --- | --- | --- |
-| `/` and frontend assets | S3 frontend build | Serves the app-specific React bundle. |
-| `/api/live/chat/realtime` | GPU ALB -> `live-gateway:3002` | WebSocket path for live chatbot audio/text conversation. |
-| `/train/progress/*` | GPU ALB -> `gpu-worker:3001` | Server-Sent Events for live training logs/progress. |
-| `/inference/progress/*` | GPU ALB -> `gpu-worker:3001` | Server-Sent Events for long inference progress. |
-| `/api/*` | Lambda Function URL | Normal REST API requests. |
+| Distribution | Browser path | CloudFront target | Why |
+| --- | --- | --- | --- |
+| Training | `/` and frontend assets | S3 origin path `/echolect/dist-training` | Serves the Training-only React bundle. |
+| Training | `/train/progress/*` | GPU ALB -> `gpu-worker:3001` | Server-Sent Events for live training progress. |
+| Training | `/api/*` | Lambda Function URL | Upload, train, model listing, and instance control REST calls. |
+| Live Fast | `/` and frontend assets | S3 origin path `/echolect/dist-live-fast` | Serves the Live-Fast-only React bundle. |
+| Live Fast | `/api/live/chat/realtime` | GPU ALB -> `live-gateway:3002` | WebSocket path for live chatbot audio/text conversation. |
+| Live Fast | `/api/*` | Lambda Function URL | Model loading, trained-reference listing, and phrase TTS REST calls. |
+| Optional | `/inference/progress/*` | GPU ALB -> `gpu-worker:3001` | Compatibility for backend inference endpoints; not user-facing now. |
 
-Order matters. `/api/live/chat/realtime` must be matched before the broader `/api/*` behavior. Otherwise CloudFront may send the WebSocket to Lambda or return the React `index.html`, which breaks the WebSocket upgrade.
+Order matters on the Live Fast distribution. `/api/live/chat/realtime` must be matched before the broader `/api/*` behavior. Otherwise CloudFront may send the WebSocket to Lambda or return the React `index.html`, which breaks the WebSocket upgrade.
 
 ## 4. Important Frontend Files
 

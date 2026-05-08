@@ -845,6 +845,15 @@ aws cloudfront create-invalidation --distribution-id LIVE_FAST_DISTRIBUTION_ID -
 
 Point the Training CloudFront S3 origin path at `/echolect/dist-training`. Point the Live Fast CloudFront S3 origin path at `/echolect/dist-live-fast`. Both distributions can reuse the same Lambda Function URL origin and GPU ALB origin so Training writes to S3 and Live Fast reads the same S3 model/reference outputs.
 
+Split CloudFront routing map:
+
+| Distribution | Default S3 origin path | Required backend behaviors |
+| --- | --- | --- |
+| Training CloudFront | `/echolect/dist-training` | `/api/*` -> Lambda Function URL, `/train/progress/*` -> GPU ALB |
+| Live Fast CloudFront | `/echolect/dist-live-fast` | `/api/live/chat/realtime` -> GPU ALB, `/api/*` -> Lambda Function URL |
+
+Keep `/api/live/chat/realtime` above `/api/*` on the Live Fast distribution. You can keep `/inference/progress/*` on either distribution for backend compatibility, but it is no longer user-facing. The Training distribution does not need the Live WebSocket behavior unless you want both distributions to be fully interchangeable for debugging.
+
 Frontend-only changes, such as UI text, route gating, mic controls, replay buttons, and local live-chat state handling, need only the build/sync/invalidation commands above.
 
 Changes under `live-gateway/` need a GPU EC2 service restart after pulling the code:
