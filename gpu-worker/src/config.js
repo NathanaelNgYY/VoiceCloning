@@ -53,6 +53,7 @@ export const GPT_SOVITS_ROOT = rawGptSovitsRoot ? path.resolve(rawGptSovitsRoot)
 export const S3_BUCKET = readEnv('S3_BUCKET');
 export const S3_REGION = readEnv('S3_REGION');
 export const S3_PREFIX = readEnv('S3_PREFIX') || '';
+export const SES_FROM_EMAIL = readEnv('SES_FROM_EMAIL');
 export const WORKER_PORT = parseIntegerEnv(readEnv('WORKER_PORT'), 3001);
 export const WORKER_HOST = readEnv('WORKER_HOST') || '0.0.0.0';
 export const INFERENCE_HOST = readEnv('INFERENCE_HOST') || '127.0.0.1';
