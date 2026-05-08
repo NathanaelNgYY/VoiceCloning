@@ -168,10 +168,9 @@ export default function TrainingPage() {
 
     setUploadError(null);
 
+    setUploading(true);
     try {
-      setUploading(true);
       await uploadFiles(expName, files);
-      setUploading(false);
 
       const res = await startTraining({
         expName,
@@ -193,13 +192,14 @@ export default function TrainingPage() {
         tone: 'success',
       });
     } catch (err) {
-      setUploading(false);
       setUploadError(err.response?.data?.error || err.message);
       showNotice({
         title: 'Training could not start',
         message: err.response?.data?.error || err.message,
         tone: 'error',
       });
+    } finally {
+      setUploading(false);
     }
   }
 
