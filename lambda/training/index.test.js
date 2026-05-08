@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handler } from './index.js';
 
-test('training handler forwards start requests to the GPU worker with nested config', async () => {
+test('training handler forwards start requests to the GPU worker with nested config and email', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
@@ -20,6 +20,7 @@ test('training handler forwards start requests to the GPU worker with nested con
       rawPath: '/api/train',
       body: JSON.stringify({
         expName: 'demo',
+        email: 'user@test.com',
         batchSize: 2,
         sovitsEpochs: 4,
         gptEpochs: 3,
@@ -31,12 +32,40 @@ test('training handler forwards start requests to the GPU worker with nested con
     assert.equal(calls[0].url, 'http://gpu-worker.local:3001/train');
     assert.deepEqual(JSON.parse(calls[0].options.body), {
       expName: 'demo',
+      email: 'user@test.com',
       config: {
         batchSize: 2,
         sovitsEpochs: 4,
         gptEpochs: 3,
       },
     });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('training handler forwards start requests without email when email is omitted', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({ expName: 'demo' }),
+    });
+
+    const sentBody = JSON.parse(calls[0].options.body);
+    assert.equal(sentBody.expName, 'demo');
+    assert.equal(sentBody.email, undefined);
   } finally {
     globalThis.fetch = previousFetch;
   }
