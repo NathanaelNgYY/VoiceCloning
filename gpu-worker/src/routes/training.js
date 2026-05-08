@@ -14,6 +14,10 @@ router.post('/train', (req, res) => {
   if (!expName) {
     return res.status(400).json({ error: 'expName is required' });
   }
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+  if (email && !EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
   if (sessions.size > 0 || processManager.hasRunningProcesses()) {
     return res.status(409).json({ error: 'A training pipeline is already running' });
   }
