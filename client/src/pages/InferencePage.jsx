@@ -102,6 +102,7 @@ export default function InferencePage() {
   const skipNextCompletionToastRef = useRef(false);
   const autoLoadKeyRef = useRef('');
   const autoReferenceProfileRef = useRef('');
+  const urlVoiceKeyRef = useRef('');
 
   const inference = useInferenceSSE();
   const voiceProfiles = buildVoiceProfiles(gptModels, sovitsModels);
@@ -157,6 +158,12 @@ export default function InferencePage() {
     : '';
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const voiceParam = params.get('voice');
+    if (voiceParam) {
+      urlVoiceKeyRef.current = voiceParam.toLowerCase().replace(/[\s_-]+/g, '');
+    }
+
     restoreDraft();
     restoreReferencePresets();
     fetchModels();
@@ -338,6 +345,26 @@ export default function InferencePage() {
         setSelectedPersonKey('');
       }
       return;
+    }
+
+    if (urlVoiceKeyRef.current) {
+      const targetKey = urlVoiceKeyRef.current;
+      urlVoiceKeyRef.current = '';
+      const match = profiles.find(p => p.key === targetKey);
+      if (match) {
+        setSelectedPersonKey(match.key);
+        showNotice({
+          title: `Voice "${match.displayName}" selected`,
+          message: 'Loading model — this may take a moment.',
+          tone: 'success',
+        });
+        return;
+      }
+      showNotice({
+        title: 'Voice not found yet',
+        message: `"${targetKey}" may still be uploading to S3. Refresh in a moment.`,
+        tone: 'error',
+      });
     }
 
     const selectionStillValid = profiles.some(
