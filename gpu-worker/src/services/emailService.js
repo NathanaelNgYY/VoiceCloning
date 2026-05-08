@@ -3,6 +3,11 @@ import { SES_FROM_EMAIL, S3_REGION } from '../config.js';
 
 const INFERENCE_BASE_URL = 'https://doovx82fh9tfs.cloudfront.net';
 
+function escapeHtml(str) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return String(str).replace(/[&<>"']/g, c => map[c]);
+}
+
 export async function sendTrainingCompleteEmail(email, expName, { sesClient, fromEmail } = {}) {
   const sender = fromEmail !== undefined ? fromEmail : SES_FROM_EMAIL;
 
@@ -22,7 +27,7 @@ export async function sendTrainingCompleteEmail(email, expName, { sesClient, fro
     '',
   ].join('\n');
 
-  const html = `<p>Training is complete for voice <strong>${expName}</strong>.</p>`
+  const html = `<p>Training is complete for voice <strong>${escapeHtml(expName)}</strong>.</p>`
     + `<p>Visit your inference studio here:<br>`
     + `<a href="${inferenceUrl}">${inferenceUrl}</a></p>`;
 
