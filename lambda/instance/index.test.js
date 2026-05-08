@@ -230,7 +230,7 @@ test('idle check stops a running GPU after configured idle minutes', async () =>
   }
 });
 
-test('idle check does not stop a busy running GPU', async () => {
+test('idle check does not stop a recently active busy running GPU', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
@@ -238,8 +238,8 @@ test('idle check does not stop a busy running GPU', async () => {
     if (value.endsWith('/activity/status')) {
       return new Response(JSON.stringify({
         busy: true,
-        idleMs: 60 * 60 * 1000,
-        lastActivityAt: Date.now() - (60 * 60 * 1000),
+        idleMs: 2 * 60 * 1000,
+        lastActivityAt: Date.now() - (2 * 60 * 1000),
         inferenceStatus: 'generating',
       }), {
         status: 200,
@@ -285,6 +285,72 @@ test('idle check does not stop a busy running GPU', async () => {
       assert.equal(body.checked, true);
       assert.equal(body.stopped, false);
       assert.equal(body.reason, 'worker-busy');
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
+test('idle check stops a stale busy GPU after configured idle minutes', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.endsWith('/activity/status')) {
+      return new Response(JSON.stringify({
+        busy: true,
+        idleMs: 60 * 60 * 1000,
+        lastActivityAt: Date.now() - (60 * 60 * 1000),
+        trainingStatus: 'running',
+        inferenceStatus: 'idle',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      if (command.constructor.name === 'DescribeInstancesCommand') {
+        return {
+          Reservations: [{
+            Instances: [{
+              InstanceId: 'i-stale-busy',
+              State: { Name: 'running' },
+            }],
+          }],
+        };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?staleBusy=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-stale-busy',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(calls, ['DescribeInstancesCommand', 'StopInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.checked, true);
+      assert.equal(body.stopped, true);
+      assert.equal(body.reason, 'stale-busy-timeout');
     });
   } finally {
     globalThis.fetch = previousFetch;

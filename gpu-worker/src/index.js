@@ -9,7 +9,6 @@ import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { processManager } from './services/processManager.js';
-import { activityState } from './services/activityState.js';
 import { recordTrainingLog } from './services/trainingLogger.js';
 import { buildCorsOriginOption } from './services/corsOrigin.js';
 
@@ -21,13 +20,6 @@ processManager.on('log', ({ sessionId, stream, data }) => {
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 app.use(cors({ origin: buildCorsOriginOption(CORS_ORIGIN) }));
 app.use(express.json());
-
-app.use((req, _res, next) => {
-  if (req.path !== '/healthz' && req.path !== '/activity/status') {
-    activityState.mark();
-  }
-  next();
-});
 
 app.get('/healthz', (_req, res) => {
   res.json({ ok: true, service: 'gpu-worker', timestamp: Date.now() });

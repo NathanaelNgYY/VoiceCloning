@@ -1,3 +1,5 @@
+import { activityState } from './activityState.js';
+
 class InferenceState {
   constructor() {
     this.state = this.getInitialState();
@@ -19,6 +21,7 @@ class InferenceState {
   }
 
   resetForNewSession({ sessionId, params }) {
+    activityState.mark();
     this.state = {
       ...this.getInitialState(),
       sessionId,
@@ -29,12 +32,14 @@ class InferenceState {
   }
 
   setGenerating({ totalChunks = 0 } = {}) {
+    activityState.mark();
     this.state.status = 'generating';
     this.state.totalChunks = totalChunks;
     this.state.error = null;
   }
 
   setChunkStart({ index, text, totalChunks }) {
+    activityState.mark();
     this.state.status = 'generating';
     this.state.currentChunkText = text || '';
     if (typeof totalChunks === 'number') {
@@ -46,6 +51,7 @@ class InferenceState {
   }
 
   setChunkComplete({ index, totalChunks }) {
+    activityState.mark();
     this.state.status = 'generating';
     this.state.currentChunkText = '';
     this.state.completedChunks = typeof index === 'number'
@@ -57,6 +63,7 @@ class InferenceState {
   }
 
   setComplete() {
+    activityState.mark();
     this.state.status = 'complete';
     this.state.currentChunkText = '';
     this.state.error = null;
@@ -65,6 +72,7 @@ class InferenceState {
   }
 
   setError(message, status = 'error') {
+    activityState.mark();
     this.state.status = status;
     this.state.currentChunkText = '';
     this.state.error = message || null;

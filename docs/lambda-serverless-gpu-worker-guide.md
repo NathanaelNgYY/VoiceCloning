@@ -601,6 +601,8 @@ Required for automatic GPU shutdown: add an EventBridge schedule so Lambda check
 
 The rule below calls the Lambda every five minutes. The actual shutdown happens only when `/activity/status` says the worker is not training or generating and has been idle longer than `GPU_IDLE_STOP_MINUTES`. With `GPU_IDLE_STOP_MINUTES=30`, stop time is roughly 30 to 35 minutes after last activity. With `GPU_IDLE_STOP_MINUTES=1` for testing, stop time is roughly 1 to 6 minutes.
 
+The GPU worker activity timer is refreshed only by real worker-side progress or active work, such as a running training subprocess, an active streaming inference session, direct synthesis, model load/start/stop operations, training logs, or training/inference state transitions. Passive frontend traffic does not refresh the timer: frontend restore calls like `/train/current` and `/inference/current`, inference status polling, model list reads, and SSE progress connections are ignored. ALB `GET /healthz` is also ignored. EventBridge/Lambda `GET /activity/status` is passive while the worker is idle. It refreshes the timer only when the worker can prove active work is present, such as a running training subprocess or active inference session; a stale `waiting`/`running`/`generating` status by itself does not keep the EC2 instance alive. If Lambda sees a busy worker whose `idleMs` is already past `GPU_IDLE_STOP_MINUTES`, it treats that as stale busy state and stops the instance.
+
 ```powershell
 $profile = "account3"
 $region = "ap-northeast-2"

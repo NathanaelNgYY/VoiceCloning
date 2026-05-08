@@ -211,7 +211,10 @@ async function stopInstanceIfIdle() {
     };
   }
 
-  if (activity?.busy) {
+  const thresholdMs = thresholdMinutes * 60 * 1000;
+  const idleMs = Number.isFinite(Number(activity?.idleMs)) ? Number(activity.idleMs) : 0;
+
+  if (activity?.busy && idleMs < thresholdMs) {
     return {
       checked: true,
       stopped: false,
@@ -223,8 +226,6 @@ async function stopInstanceIfIdle() {
     };
   }
 
-  const thresholdMs = thresholdMinutes * 60 * 1000;
-  const idleMs = Number.isFinite(Number(activity?.idleMs)) ? Number(activity.idleMs) : 0;
   if (idleMs < thresholdMs) {
     return {
       checked: true,
@@ -241,7 +242,7 @@ async function stopInstanceIfIdle() {
   return {
     checked: true,
     stopped: true,
-    reason: 'idle-timeout',
+    reason: activity?.busy ? 'stale-busy-timeout' : 'idle-timeout',
     instanceId: id,
     state: 'stopping',
     previousState: state,
