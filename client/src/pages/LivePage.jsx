@@ -204,6 +204,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const autoReferenceKeyRef = useRef('');
+  const urlVoiceKeyRef = useRef('');
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((profile) => profile.complete), [voiceProfiles]);
@@ -317,6 +318,11 @@ export default function LivePage({ replyMode = 'phrases' }) {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const voiceParam = params.get('voice');
+    if (voiceParam) {
+      urlVoiceKeyRef.current = voiceParam.toLowerCase().replace(/[\s_-]+/g, '');
+    }
     fetchModels();
     checkStatus();
   }, []);
@@ -324,6 +330,16 @@ export default function LivePage({ replyMode = 'phrases' }) {
   useEffect(() => {
     if (!modelsFetched || availableProfiles.length === 0) {
       return;
+    }
+
+    if (urlVoiceKeyRef.current) {
+      const targetKey = urlVoiceKeyRef.current;
+      const match = availableProfiles.find((profile) => profile.key === targetKey);
+      if (match) {
+        urlVoiceKeyRef.current = '';
+        setSelectedPersonKey(match.key);
+        return;
+      }
     }
 
     const currentStillExists = availableProfiles.some((profile) => profile.key === selectedPersonKey);
