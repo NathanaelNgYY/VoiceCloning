@@ -1,5 +1,4 @@
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { SES_FROM_EMAIL, S3_REGION } from '../config.js';
+import nodemailer from 'nodemailer';
 
 const INFERENCE_BASE_URL = 'https://doovx82fh9tfs.cloudfront.net';
 
@@ -8,38 +7,47 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, c => map[c]);
 }
 
-export async function sendTrainingCompleteEmail(email, expName, { sesClient, fromEmail } = {}) {
-  const sender = fromEmail !== undefined ? fromEmail : SES_FROM_EMAIL;
+function createTransport() {
+  const user = process.env.EMAIL_USER;
+  const pass = process.env.EMAIL_PASS;
+  const host = process.env.EMAIL_HOST || 'smtp.gmail.com';
+  const port = Number(process.env.EMAIL_PORT) || 587;
 
-  if (!sender) {
-    console.warn('[gpu-worker] SES_FROM_EMAIL not configured — skipping training complete email');
+  if (!user || !pass) {
+    return null;
+  }
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+}
+
+export async function sendTrainingCompleteEmail(email, expName) {
+  const transport = createTransport();
+  const from = process.env.EMAIL_FROM || process.env.EMAIL_USER;
+
+  if (!transport || !from) {
+    console.warn('[gpu-worker] EMAIL_USER/EMAIL_PASS not configured — skipping training complete email');
     return;
   }
 
   const inferenceUrl = `${INFERENCE_BASE_URL}?voice=${encodeURIComponent(expName)}`;
-  const client = sesClient || new SESClient({ region: S3_REGION || 'ap-southeast-1' });
 
-  const plainText = [
-    `Training is complete for voice "${expName}".`,
-    '',
-    'Visit your inference studio here:',
-    inferenceUrl,
-    '',
-  ].join('\n');
-
-  const html = `<p>Training is complete for voice <strong>${escapeHtml(expName)}</strong>.</p>`
-    + `<p>Visit your inference studio here:<br>`
-    + `<a href="${inferenceUrl}">${inferenceUrl}</a></p>`;
-
-  await client.send(new SendEmailCommand({
-    Source: sender,
-    Destination: { ToAddresses: [email] },
-    Message: {
-      Subject: { Data: `Your voice model is ready: ${expName}` },
-      Body: {
-        Text: { Data: plainText },
-        Html: { Data: html },
-      },
-    },
-  }));
+  await transport.sendMail({
+    from,
+    to: email,
+    subject: `Your voice model is ready: ${expName}`,
+    text: [
+      `Training is complete for voice "${expName}".`,
+      '',
+      'Visit your inference studio here:',
+      inferenceUrl,
+    ].join('\n'),
+    html: `<p>Training is complete for voice <strong>${escapeHtml(expName)}</strong>.</p>`
+      + `<p>Visit your inference studio here:<br>`
+      + `<a href="${inferenceUrl}">${inferenceUrl}</a></p>`,
+  });
 }
