@@ -378,7 +378,7 @@ export default function InferencePage() {
           && profile.gptModel?.path === loadedGPTPath
           && profile.sovitsModel?.path === loadedSoVITSPath
       );
-      const fallback = loadedMatch || profiles.find(profile => profile.complete) || profiles[0];
+      const fallback = profiles.find(profile => profile.complete) || loadedMatch || profiles[0];
       if (fallback?.key && fallback.key !== selectedPersonKey) {
         setSelectedPersonKey(fallback.key);
       }
@@ -821,6 +821,18 @@ export default function InferencePage() {
     }
   }
 
+  function handleSelectGPTPath(nextPath) {
+    autoLoadKeyRef.current = '';
+    setModelError(null);
+    setSelectedGPTPath(nextPath);
+  }
+
+  function handleSelectSoVITSPath(nextPath) {
+    autoLoadKeyRef.current = '';
+    setModelError(null);
+    setSelectedSoVITSPath(nextPath);
+  }
+
   async function handleSelectTrainingAudio(file) {
     const url = await getTrainingAudioUrl(currentExpName, file.filename);
     setRefAudioPath(file.path);
@@ -1136,8 +1148,8 @@ export default function InferencePage() {
             selectedProfile={selectedProfile}
             selectedGPTPath={selectedGPTPath}
             selectedSoVITSPath={selectedSoVITSPath}
-            onGPTChange={setSelectedGPTPath}
-            onSoVITSChange={setSelectedSoVITSPath}
+            onGPTChange={handleSelectGPTPath}
+            onSoVITSChange={handleSelectSoVITSPath}
             selectedGPTCandidate={selectedGPTCandidate}
             selectedSoVITSCandidate={selectedSoVITSCandidate}
           />
@@ -1145,7 +1157,7 @@ export default function InferencePage() {
           <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
             {selectedProfile
               ? `The server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'} for this profile.`
-              : 'Choose a speaker first; complete profiles load automatically for generation.'}
+              : 'Choose a speaker first; complete profiles are sorted newest first and load automatically for generation.'}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

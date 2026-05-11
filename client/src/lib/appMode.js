@@ -18,7 +18,7 @@ export function getAppModeConfig(value) {
   }
 
   if (showLiveFast) {
-    navItems.push({ label: 'Live Fast', to: '/live-fast', end: false });
+    navItems.push({ label: 'Live Fast', to: showTraining ? '/live-fast' : '/', end: !showTraining });
   }
 
   return {
@@ -26,7 +26,7 @@ export function getAppModeConfig(value) {
     showTraining,
     showLiveFast,
     navItems,
-    defaultPath: showTraining ? '/' : '/live-fast',
+    defaultPath: '/',
     subtitle: showTraining && showLiveFast
       ? 'GPT-SoVITS Training & Live Fast'
       : showTraining

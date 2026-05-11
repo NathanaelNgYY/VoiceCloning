@@ -11,3 +11,5 @@ nul
 CLAUDE.md
 .env.example
 local.env
+AGENTS.md
+config.toml

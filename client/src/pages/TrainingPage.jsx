@@ -222,74 +222,29 @@ export default function TrainingPage() {
   }
 
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in space-y-6">
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
-      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_38%,#0f766e_100%)] px-6 py-7 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:px-8 lg:px-10">
-        <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,rgba(125,211,252,0.35),transparent_55%)]" />
-        <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
-        <div className="absolute bottom-0 right-8 h-48 w-48 rounded-full bg-emerald-300/15 blur-3xl" />
-
-        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.85fr)] lg:items-end">
-          <div>
-            <Badge className="border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white shadow-none">
-              Training Pipeline
-            </Badge>
-            <h2 className="mt-5 max-w-3xl font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Start here to train a voice model from your clips, your settings, and a clear step-by-step pipeline.
-            </h2>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
-              Give your run a name, upload the source audio you want to learn from, enter your email, and hit Start Training. We'll notify you when it's done.
-            </p>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                <Activity size={12} className="mr-1.5" />
-                {statusLabel}
-              </Badge>
-              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                Step 1: upload your source clips
-              </Badge>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-[24px] border border-white/12 bg-white/10 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Experiment</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight">{expName || 'Untitled project'}</p>
-              <p className="mt-2 text-sm leading-6 text-white/72">
-                {expName ? 'This name helps you find the dataset, checkpoints, and logs for this run later.' : 'Give this run a short name before you start so the checkpoints stay organized.'}
-              </p>
-            </div>
-
-            <div className="rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Status</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight">{isRunning ? 'Training running' : 'Ready to start'}</p>
-              <p className="mt-2 text-sm leading-6 text-white/72">
-                {isRunning ? "Your voice is being trained. We'll email you when it's ready." : 'Fill in your name, upload clips, and enter your email to get started.'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* 01 Setup */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
+      <Card className="overflow-hidden rounded-[22px] border border-sky-100/90 bg-white shadow-[0_24px_70px_-48px_rgba(15,23,42,0.45)]">
+        <CardHeader className="px-6 pb-5 pt-6">
+          <div className="flex items-start gap-4">
+            <Badge variant="secondary" className="h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-base font-semibold text-slate-900">
               1
             </Badge>
             <div>
-              <CardTitle className="font-display text-2xl">Setup</CardTitle>
-              <CardDescription>Name this run, upload your clips, and enter your email to get notified when training is done.</CardDescription>
+              <CardTitle className="font-display text-2xl font-semibold tracking-tight text-slate-950">Setup</CardTitle>
+              <CardDescription className="mt-1 text-sm leading-6 text-slate-600">
+                Name this run, upload your clips, and enter your email to get notified when training is done.
+              </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-          <div className="space-y-6 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
+        <CardContent className="space-y-6 px-6 pb-6">
+          <div className="grid items-start gap-5 lg:grid-cols-[minmax(300px,0.6fr)_minmax(420px,1fr)]">
+          <div className="space-y-6 rounded-[20px] border border-slate-200 bg-slate-50/50 p-5 shadow-sm">
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-primary shadow-sm">
                 <AudioLines size={20} />
               </div>
               <div>
@@ -303,7 +258,7 @@ export default function TrainingPage() {
                 Experiment Name
               </Label>
               <Input
-                className="h-12 rounded-2xl border-slate-200 bg-white shadow-sm"
+                className="h-12 rounded-xl border-slate-200 bg-white shadow-sm"
                 placeholder="e.g. my_voice_model"
                 value={expName}
                 onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
@@ -324,7 +279,7 @@ export default function TrainingPage() {
                 <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="email"
-                  className="h-12 rounded-2xl border-slate-200 bg-white pl-10 shadow-sm"
+                  className="h-12 rounded-xl border-slate-200 bg-white pl-10 shadow-sm"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -336,8 +291,8 @@ export default function TrainingPage() {
               </p>
             </div>
 
-            <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Quick Summary</p>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Quick Summary</p>
               <div className="mt-4 space-y-3 text-sm text-slate-600">
                 <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
                   <span>Dataset</span>
@@ -351,65 +306,71 @@ export default function TrainingPage() {
             </div>
           </div>
 
-          <div className="space-y-2 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(240,249,255,0.74))] p-5">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <div className="space-y-2 rounded-[20px] border border-slate-200 bg-white p-6 shadow-sm">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Training Audio
             </Label>
             <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
           </div>
+          </div>
 
-          <div className="flex items-center gap-4 lg:col-span-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {!isRunning ? (
               <Button
                 onClick={handleStart}
                 disabled={uploading || isRunning}
                 size="lg"
-                className="rounded-2xl shadow-[0_20px_50px_-28px_rgba(14,165,233,0.75)]"
+                className="h-14 min-w-[190px] rounded-2xl bg-primary px-7 text-base shadow-[0_18px_38px_-20px_rgba(14,165,233,0.85)]"
               >
                 {uploading ? (
                   <>
-                    <Spinner size={14} className="text-primary-foreground" />
+                    <Spinner size={16} className="text-primary-foreground" />
                     Uploading...
                   </>
                 ) : (
                   <>
-                    <Play size={14} />
+                    <Play size={16} />
                     Start Training
                   </>
                 )}
               </Button>
             ) : (
-              <Button variant="destructive" size="lg" className="rounded-2xl" onClick={handleStop}>
-                <Square size={14} />
+              <Button variant="destructive" size="lg" className="h-14 min-w-[190px] rounded-2xl px-7 text-base" onClick={handleStop}>
+                <Square size={16} />
                 Stop Training
               </Button>
             )}
 
+            <Badge className="border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-emerald-700 shadow-none">
+              <Activity size={12} className="mr-1.5" />
+              {statusLabel}
+            </Badge>
+
             {error && (
-              <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
+              <span className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
                 {error}
               </span>
             )}
-          </div>
 
-          {uploadError && (
-            <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive lg:col-span-2">
-              <AlertCircle size={16} />
-              {uploadError}
-            </div>
-          )}
+            {uploadError && (
+              <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <AlertCircle size={16} />
+                {uploadError}
+              </div>
+              )}
+          </div>
         </CardContent>
       </Card>
 
-      {/* 02 Configuration */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
+      {/* 02 Additional Settings */}
+      <Card className="overflow-hidden rounded-[22px] border border-sky-100/90 bg-white shadow-[0_24px_70px_-54px_rgba(15,23,42,0.4)]">
+        <CardHeader className="px-6 pb-5 pt-6">
+          <div className="flex items-start gap-4">
+            <Badge variant="secondary" className="h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-base font-semibold text-slate-900">
               2
             </Badge>
             <div>
-              <CardTitle className="font-display text-2xl">Configuration</CardTitle>
+              <CardTitle className="font-display text-2xl">Additional Settings</CardTitle>
               <CardDescription>Choose the language, checkpoint cadence, and training length before you start.</CardDescription>
             </div>
           </div>
@@ -417,18 +378,18 @@ export default function TrainingPage() {
         <CardContent className="p-6">
           <Collapsible open={showSettings} onOpenChange={setShowSettings}>
             <CollapsibleTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2 rounded-2xl border-slate-200 text-muted-foreground">
+              <Button variant="outline" size="sm" className="gap-2 rounded-md border-slate-200 text-muted-foreground">
                 <ChevronRight
                   size={14}
                   className={cn("transition-transform", showSettings && "rotate-90")}
                 />
-                {showSettings ? 'Hide' : 'Show'} advanced settings
+                {showSettings ? 'Hide' : 'Show'} additional settings
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-x-10">
                 {/* Batch Size */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Batch Size</Label>
                     <span className="font-mono text-sm font-semibold">{batchSize}</span>
@@ -442,10 +403,10 @@ export default function TrainingPage() {
                 </div>
 
                 {/* ASR Language */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                   <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">ASR Language</Label>
                   <Select value={asrLanguage} onValueChange={setAsrLanguage} disabled={isRunning}>
-                    <SelectTrigger className="rounded-2xl border-slate-200 bg-white"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="rounded-md border-slate-200 bg-white"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="en">English</SelectItem>
                       <SelectItem value="zh">Chinese</SelectItem>
@@ -457,7 +418,7 @@ export default function TrainingPage() {
                 </div>
 
                 {/* SoVITS Epochs */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SoVITS Epochs</Label>
                     <span className="font-mono text-sm font-semibold">{sovitsEpochs}</span>
@@ -471,7 +432,7 @@ export default function TrainingPage() {
                 </div>
 
                 {/* GPT Epochs */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">GPT Epochs</Label>
                     <span className="font-mono text-sm font-semibold">{gptEpochs}</span>
@@ -485,7 +446,7 @@ export default function TrainingPage() {
                 </div>
 
                 {/* SoVITS Save Interval */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SoVITS Save Interval</Label>
                     <span className="font-mono text-sm font-semibold">every {sovitsSaveEvery}ep</span>
@@ -499,7 +460,7 @@ export default function TrainingPage() {
                 </div>
 
                 {/* GPT Save Interval */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">GPT Save Interval</Label>
                     <span className="font-mono text-sm font-semibold">every {gptSaveEvery}ep</span>

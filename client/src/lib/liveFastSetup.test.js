@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_LIVE_FAST_SETTINGS,
+  buildLiveFastReferencePreviewItems,
   buildLiveFastRefParams,
   normalizeLiveFastSettings,
 } from './liveFastSetup.js';
@@ -54,4 +55,67 @@ test('buildLiveFastRefParams uses trained primary, five aux clips, and inference
     temperature: 0.6,
     repetition_penalty: 1.25,
   });
+});
+
+test('buildLiveFastReferencePreviewItems exposes the selected primary and auxiliaries for playback', () => {
+  const items = buildLiveFastReferencePreviewItems({
+    primaryPath: 'training/datasets/alex/denoised/ref.wav',
+    promptText: 'Fallback transcript',
+    trainingAudioFiles: [
+      {
+        path: 'training/datasets/alex/denoised/ref.wav',
+        filename: 'ref.wav',
+        transcript: 'Primary transcript',
+      },
+      {
+        path: 'training/datasets/alex/denoised/aux.wav',
+        filename: 'aux.wav',
+        transcript: 'Aux transcript',
+      },
+    ],
+    auxRefAudios: [
+      {
+        path: 'training/datasets/alex/denoised/aux.wav',
+        filename: 'aux.wav',
+      },
+    ],
+  });
+
+  assert.deepEqual(items, [
+    {
+      role: 'primary',
+      path: 'training/datasets/alex/denoised/ref.wav',
+      filename: 'ref.wav',
+      transcript: 'Primary transcript',
+    },
+    {
+      role: 'auxiliary',
+      path: 'training/datasets/alex/denoised/aux.wav',
+      filename: 'aux.wav',
+      transcript: 'Aux transcript',
+    },
+  ]);
+});
+
+test('buildLiveFastReferencePreviewItems falls back to path names when training metadata is not loaded', () => {
+  assert.deepEqual(buildLiveFastReferencePreviewItems({
+    primaryPath: 'training/datasets/alex/denoised/ref.wav',
+    promptText: 'Typed prompt',
+    auxRefAudios: [
+      { path: 'training/datasets/alex/denoised/aux.wav' },
+    ],
+  }), [
+    {
+      role: 'primary',
+      path: 'training/datasets/alex/denoised/ref.wav',
+      filename: 'ref.wav',
+      transcript: 'Typed prompt',
+    },
+    {
+      role: 'auxiliary',
+      path: 'training/datasets/alex/denoised/aux.wav',
+      filename: 'aux.wav',
+      transcript: '',
+    },
+  ]);
 });
