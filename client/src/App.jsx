@@ -203,7 +203,9 @@ export default function App() {
               element={
                 appConfig.showTraining
                   ? <TrainingPage />
-                  : <Navigate to={appConfig.defaultPath} replace />
+                  : appConfig.showLiveFast
+                    ? <LivePage replyMode="phrases" />
+                    : <Navigate to={appConfig.defaultPath} replace />
               }
             />
             <Route

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getInferenceStatus,
   getModels,
+  getTrainingAudioUrl,
   getTrainingAudioFiles,
   selectModels,
 } from '../services/api.js';
@@ -25,6 +26,7 @@ import { chooseBestReferenceSet } from '@/lib/referenceSelection';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
 import {
   DEFAULT_LIVE_FAST_SETTINGS,
+  buildLiveFastReferencePreviewItems,
   buildLiveFastRefParams,
 } from '@/lib/liveFastSetup';
 import { shouldLoadSelectedProfile } from '@/lib/modelLoading';
@@ -192,6 +194,14 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [promptLang, setPromptLang] = useState('en');
   const [auxRefAudios, setAuxRefAudios] = useState([]);
   const [referenceMessage, setReferenceMessage] = useState('');
+  const [previewReference, setPreviewReference] = useState({
+    path: '',
+    url: null,
+    filename: '',
+    role: '',
+  });
+  const [referenceAudioUrls, setReferenceAudioUrls] = useState({});
+  const [loadingPreviewPath, setLoadingPreviewPath] = useState('');
   const [showSettings, setShowSettings] = useState(false);
 
   const [speed, setSpeed] = useState(DEFAULT_LIVE_FAST_SETTINGS.speed);
@@ -203,9 +213,11 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const referencePreviewAudioRef = useRef(null);
   const autoReferenceKeyRef = useRef('');
   const autoLoadAttemptKeyRef = useRef('');
   const urlVoiceKeyRef = useRef('');
+  const previewRequestRef = useRef(0);
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((profile) => profile.complete), [voiceProfiles]);
@@ -232,6 +244,12 @@ export default function LivePage({ replyMode = 'phrases' }) {
       repPenalty,
     },
   }), [refAudioPath, promptText, promptLang, auxRefAudios, speed, topK, topP, temperature, repPenalty]);
+  const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
+    primaryPath: refAudioPath,
+    promptText,
+    trainingAudioFiles,
+    auxRefAudios,
+  }), [refAudioPath, promptText, trainingAudioFiles, auxRefAudios]);
 
   const liveSpeech = useLiveSpeech({ refParams: liveRefParams, replyMode, language: liveLanguage });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
@@ -319,6 +337,175 @@ export default function LivePage({ replyMode = 'phrases' }) {
       return [...withoutFile, file].slice(0, 5);
     });
   }
+
+  async function handlePreviewReference(item) {
+    if (!item?.path || !selectedExpName) return;
+
+    const filename = item.filename || fallbackName(item.path);
+    const url = referenceAudioUrls[item.path];
+
+    if (!url) {
+      setReferenceMessage(`${filename} is still loading for playback. Try again in a moment.`);
+      return;
+    }
+
+    setPreviewReference({
+      path: item.path,
+      url,
+      filename,
+      role: item.role,
+    });
+    setReferenceMessage('');
+
+    const audio = referencePreviewAudioRef.current;
+    if (!audio) return;
+
+    if (audio.getAttribute('src') !== url) {
+      audio.src = url;
+      audio.load();
+    }
+
+    audio.play().catch(() => {
+      setReferenceMessage(`Use the audio controls below to play ${filename}.`);
+    });
+  }
+
+  useEffect(() => {
+    if (!selectedExpName || trainingAudioFiles.length === 0) {
+      setReferenceAudioUrls({});
+      setLoadingPreviewPath('');
+      return;
+    }
+
+    let ignore = false;
+    const requestId = previewRequestRef.current + 1;
+    previewRequestRef.current = requestId;
+    setLoadingPreviewPath('all');
+
+    Promise.all(trainingAudioFiles.map(async (item) => {
+      try {
+        const filename = item.filename || fallbackName(item.path);
+        const url = await getTrainingAudioUrl(selectedExpName, filename);
+        return [item.path, url];
+      } catch {
+        return [item.path, null];
+      }
+    }))
+      .then((entries) => {
+        if (ignore || previewRequestRef.current !== requestId) return;
+        setReferenceAudioUrls(Object.fromEntries(entries.filter(([, url]) => Boolean(url))));
+      })
+      .finally(() => {
+        if (!ignore && previewRequestRef.current === requestId) {
+          setLoadingPreviewPath('');
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [selectedExpName, trainingAudioFiles]);
+
+  useEffect(() => {
+    if (!previewReference.path) return;
+    if (!trainingAudioFiles.some((item) => item.path === previewReference.path)) {
+      const audio = referencePreviewAudioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      }
+
+      setPreviewReference({
+        path: '',
+        url: null,
+        filename: '',
+        role: '',
+      });
+    }
+  }, [trainingAudioFiles, previewReference.path]);
+
+  useEffect(() => {
+    if (!previewReference.path) return;
+    const nextUrl = referenceAudioUrls[previewReference.path];
+    if (!nextUrl) {
+      const audio = referencePreviewAudioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      }
+      setPreviewReference({
+        path: '',
+        url: null,
+        filename: '',
+        role: '',
+      });
+      return;
+    }
+
+    setPreviewReference((current) => (
+      current.url === nextUrl ? current : { ...current, url: nextUrl }
+    ));
+  }, [referenceAudioUrls, previewReference.path]);
+
+  useEffect(() => {
+    if (!previewReference.url) {
+      const audio = referencePreviewAudioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      }
+      return;
+    }
+
+    const audio = referencePreviewAudioRef.current;
+    if (audio && audio.getAttribute('src') !== previewReference.url) {
+      audio.src = previewReference.url;
+      audio.load();
+    }
+  }, [previewReference.url]);
+
+  useEffect(() => {
+    if (trainingAudioFiles.length > 0) return;
+
+    const audio = referencePreviewAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+
+    setPreviewReference({
+      path: '',
+      url: null,
+      filename: '',
+      role: '',
+    });
+    setReferenceAudioUrls({});
+    setLoadingPreviewPath('');
+  }, [trainingAudioFiles.length]);
+
+  useEffect(() => {
+    return () => {
+      const audio = referencePreviewAudioRef.current;
+      if (audio) {
+        audio.pause();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadingPreviewPath !== 'all') return;
+    const timeoutId = window.setTimeout(() => {
+      if (loadingPreviewPath === 'all') {
+        setLoadingPreviewPath('');
+      }
+    }, 8000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadingPreviewPath]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -759,22 +946,44 @@ export default function LivePage({ replyMode = 'phrases' }) {
 
                 <div>
                   <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Primary reference</Label>
-                  <Select
-                    value={refAudioPath}
-                    onValueChange={handlePrimaryReferenceChange}
-                    disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || isConversationActive}
-                  >
-                    <SelectTrigger className="mt-2 h-11 rounded-xl border-slate-200 bg-white">
-                      <SelectValue placeholder={loadingTrainingAudio ? 'Loading reference clips...' : 'Select primary reference'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {trainingAudioFiles.map((file) => (
-                        <SelectItem key={file.path} value={file.path}>
-                          {file.filename}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="mt-2 grid grid-cols-[minmax(0,1fr)_44px] gap-2">
+                    <Select
+                      value={refAudioPath}
+                      onValueChange={handlePrimaryReferenceChange}
+                      disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || isConversationActive}
+                    >
+                      <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white">
+                        <SelectValue placeholder={loadingTrainingAudio ? 'Loading reference clips...' : 'Select primary reference'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {trainingAudioFiles.map((file) => (
+                          <SelectItem key={file.path} value={file.path}>
+                            {file.filename}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {(() => {
+                      const primaryItem = selectedReferenceItems.find((item) => item.role === 'primary');
+                      const primaryUrl = primaryItem ? referenceAudioUrls[primaryItem.path] : null;
+                      const primaryLoading = Boolean(primaryItem) && loadingPreviewPath === 'all' && !primaryUrl;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewReference(primaryItem)}
+                          disabled={!primaryItem || !primaryUrl || primaryLoading}
+                          aria-label={primaryItem ? `Play ${primaryItem.filename}` : 'Play primary reference'}
+                          title={primaryItem && primaryUrl ? `Play ${primaryItem.filename}` : 'Primary reference audio is loading'}
+                          className={cn(
+                            'flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-sky-600 transition-colors hover:border-sky-300 hover:bg-sky-50 disabled:cursor-wait disabled:opacity-50',
+                            previewReference.path === primaryItem?.path && 'border-sky-300 bg-sky-50'
+                          )}
+                        >
+                          {primaryLoading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={18} />}
+                        </button>
+                      );
+                    })()}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -789,8 +998,17 @@ export default function LivePage({ replyMode = 'phrases' }) {
                         .filter((file) => file.path !== refAudioPath)
                         .map((file) => {
                           const checked = auxRefAudios.some((item) => item.path === file.path);
+                          const itemUrl = referenceAudioUrls[file.path];
+                          const isLoadingPreview = (loadingPreviewPath === 'all' && !itemUrl) || loadingPreviewPath === file.path;
+                          const isPreviewed = previewReference.path === file.path;
+                          const previewItem = {
+                            role: checked ? 'auxiliary' : 'preview',
+                            path: file.path,
+                            filename: file.filename,
+                            transcript: file.transcript || '',
+                          };
                           return (
-                            <label key={file.path} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                            <div key={file.path} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
                               <Checkbox
                                 checked={checked}
                                 onCheckedChange={(value) => handleAuxToggle(file, Boolean(value))}
@@ -802,7 +1020,20 @@ export default function LivePage({ replyMode = 'phrases' }) {
                                   <span className="mt-0.5 block truncate text-xs text-muted-foreground">{file.transcript}</span>
                                 )}
                               </span>
-                            </label>
+                              <button
+                                type="button"
+                                onClick={() => handlePreviewReference(previewItem)}
+                                disabled={!selectedExpName || !itemUrl || isLoadingPreview}
+                                aria-label={`Play ${file.filename}`}
+                                title={itemUrl ? `Play ${file.filename}` : `${file.filename} is loading`}
+                                className={cn(
+                                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-sky-600 transition-colors hover:border-sky-300 hover:bg-sky-50 disabled:cursor-wait disabled:opacity-50',
+                                  isPreviewed && 'border-sky-300 bg-sky-50'
+                                )}
+                              >
+                                {isLoadingPreview ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={15} />}
+                              </button>
+                            </div>
                           );
                         })
                     )}
@@ -810,6 +1041,26 @@ export default function LivePage({ replyMode = 'phrases' }) {
                   <p className="text-xs text-muted-foreground">
                     Selected {auxRefAudios.length}/5 auxiliary clips. Primary: {refAudioPath ? fallbackName(refAudioPath) : 'none'}.
                   </p>
+                </div>
+
+                <div className={cn('border-t border-slate-200 pt-3', !previewReference.url && 'hidden')}>
+                  {previewReference.url && (
+                    <p className="truncate text-[11px] font-medium text-muted-foreground">
+                      Previewing {previewReference.role === 'auxiliary' ? 'auxiliary' : previewReference.role === 'primary' ? 'primary' : 'clip'}: {previewReference.filename}
+                    </p>
+                  )}
+                  <audio
+                    ref={referencePreviewAudioRef}
+                    className="mt-2 w-full"
+                    controls
+                    preload="metadata"
+                    onError={() => {
+                      if (previewReference.filename) {
+                        setReferenceMessage(`Could not play ${previewReference.filename}.`);
+                      }
+                    }}
+                    onPlay={() => setReferenceMessage('')}
+                  />
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">

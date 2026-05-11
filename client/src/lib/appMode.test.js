@@ -38,7 +38,11 @@ test('getAppModeConfig exposes only live fast in live-fast mode', () => {
 
   assert.equal(config.showTraining, false);
   assert.equal(config.showLiveFast, true);
-  assert.equal(config.defaultPath, '/live-fast');
+  assert.equal(config.defaultPath, '/');
+  assert.deepEqual(
+    config.navItems.map((item) => item.to),
+    ['/'],
+  );
   assert.deepEqual(
     config.navItems.map((item) => item.label),
     ['Live Fast'],

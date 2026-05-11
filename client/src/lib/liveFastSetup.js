@@ -51,3 +51,48 @@ export function buildLiveFastRefParams({
     repetition_penalty: normalized.repPenalty,
   };
 }
+
+function fallbackReferenceFilename(filePath) {
+  return String(filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
+}
+
+function normalizeReferencePreviewItem(file, role, transcriptFallback = '') {
+  if (!file?.path) return null;
+
+  return {
+    role,
+    path: file.path,
+    filename: file.filename || file.name || fallbackReferenceFilename(file.path),
+    transcript: file.transcript || transcriptFallback || '',
+  };
+}
+
+export function buildLiveFastReferencePreviewItems({
+  primaryPath = '',
+  promptText = '',
+  trainingAudioFiles = [],
+  auxRefAudios = [],
+} = {}) {
+  const trainingByPath = new Map(
+    Array.from(trainingAudioFiles || [])
+      .filter((file) => file?.path)
+      .map((file) => [file.path, file])
+  );
+  const items = [];
+
+  if (primaryPath) {
+    const primaryFile = trainingByPath.get(primaryPath) || { path: primaryPath };
+    const primaryItem = normalizeReferencePreviewItem(primaryFile, 'primary', promptText);
+    if (primaryItem) items.push(primaryItem);
+  }
+
+  for (const auxFile of Array.from(auxRefAudios || []).slice(0, 5)) {
+    if (!auxFile?.path || auxFile.path === primaryPath) continue;
+
+    const sourceFile = trainingByPath.get(auxFile.path) || auxFile;
+    const auxItem = normalizeReferencePreviewItem(sourceFile, 'auxiliary');
+    if (auxItem) items.push(auxItem);
+  }
+
+  return items;
+}
