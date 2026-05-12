@@ -1,7 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, Routes, Route, NavLink } from 'react-router-dom';
-import { Activity, Power } from 'lucide-react';
-import { Separator } from '@/components/ui/separator';
+import { Power } from 'lucide-react';
+
+function AnimatedBackground() {
+  return (
+    <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+      {/* Blue orb — top-left */}
+      <div className="absolute -left-40 -top-40 h-[560px] w-[560px] animate-orb-float-1 rounded-full bg-blue-400/30 blur-[110px]" />
+      {/* Violet orb — top-right */}
+      <div className="absolute -right-32 -top-24 h-[460px] w-[460px] animate-orb-float-2 rounded-full bg-violet-400/25 blur-[110px]" />
+      {/* Cyan orb — bottom-centre */}
+      <div className="absolute -bottom-32 left-1/2 h-[420px] w-[420px] -translate-x-1/2 animate-orb-float-3 rounded-full bg-sky-300/20 blur-[100px]" />
+    </div>
+  );
+}
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
@@ -75,10 +87,10 @@ function GpuInstanceControl() {
       <button
         type="button"
         disabled
-        title="Checking the GPU instance status. The start button appears after this returns."
-        className="inline-flex h-10 cursor-wait items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-500"
+        title="Checking the GPU instance status."
+        className="inline-flex h-8 cursor-wait items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-400"
       >
-        <Power size={14} />
+        <Power size={12} />
         Checking GPU
       </button>
     );
@@ -90,9 +102,9 @@ function GpuInstanceControl() {
         type="button"
         disabled
         title={status?.message || 'GPU instance control is not configured yet.'}
-        className="inline-flex h-10 cursor-not-allowed items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-500"
+        className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-400"
       >
-        <Power size={14} />
+        <Power size={12} />
         GPU not configured
       </button>
     );
@@ -111,7 +123,7 @@ function GpuInstanceControl() {
         : `GPU ${status.state || 'unknown'}`;
   const title = status.message
     || (status.state === 'running' && !status.workerReady
-      ? 'The EC2 instance is running, but the GPU worker is still warming up. Wait a little and this will switch to ready.'
+      ? 'The EC2 instance is running, but the GPU worker is still warming up.'
       : label);
 
   return (
@@ -121,15 +133,18 @@ function GpuInstanceControl() {
       disabled={!canStart}
       title={title}
       className={cn(
-        'inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold transition-colors',
+        'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors',
         isReady
           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
           : canStart
-            ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
-            : 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-500'
+            ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            : 'cursor-not-allowed border-slate-200 bg-white text-slate-400'
       )}
     >
-      <Power size={14} />
+      <span className={cn(
+        'h-2 w-2 rounded-full',
+        isReady ? 'bg-emerald-500' : canStart ? 'bg-slate-300' : 'bg-slate-200'
+      )} />
       {label}
     </button>
   );
@@ -140,30 +155,12 @@ export default function App() {
 
   return (
     <TooltipProvider>
-      <div className="flex min-h-screen flex-col bg-background">
-        {/* Header */}
-        <header className="sticky top-0 z-50 border-b border-white/60 bg-white/75 backdrop-blur-xl">
-          <div className="mx-auto max-w-6xl px-6">
-            {/* Title row */}
-            <div className="flex items-center justify-between pt-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-primary shadow-[0_18px_35px_-24px_rgba(14,165,233,0.85)]">
-                  <Activity className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
-                    Voice Cloning Studio
-                  </h1>
-                  <p className="text-xs text-muted-foreground">
-                    {appConfig.subtitle}
-                  </p>
-                </div>
-              </div>
-              <GpuInstanceControl />
-            </div>
-
-            {/* Navigation */}
-            <nav className="mt-4 flex items-center gap-7 border-b border-slate-200/80">
+      <div className="flex min-h-screen flex-col">
+        <AnimatedBackground />
+        {/* Minimal header */}
+        <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md">
+          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-8">
+            <nav className="flex items-center gap-1">
               {appConfig.navItems.map((item) => (
                 <NavLink
                   key={item.to}
@@ -171,32 +168,25 @@ export default function App() {
                   end={item.end}
                   className={({ isActive }) =>
                     cn(
-                      "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                      'rounded-lg px-3 py-1.5 text-sm font-medium transition-all',
                       isActive
-                        ? "text-foreground"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? 'bg-primary/10 text-primary font-semibold'
+                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
                     )
                   }
                 >
-                  {({ isActive }) => (
-                    <>
-                      <span>{item.label}</span>
-                      <span
-                        className={cn(
-                          "absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-colors",
-                          isActive ? "bg-primary" : "bg-transparent group-hover:bg-slate-200"
-                        )}
-                      />
-                    </>
-                  )}
+                  {item.label}
                 </NavLink>
               ))}
             </nav>
+            <GpuInstanceControl />
           </div>
+          {/* thin gradient accent line */}
+          <div className="h-px bg-gradient-to-r from-primary/30 via-violet-400/20 to-transparent" />
         </header>
 
         {/* Main content */}
-        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
+        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-8 py-8">
           <Routes>
             <Route
               path="/"
@@ -223,15 +213,10 @@ export default function App() {
         </main>
 
         {/* Footer */}
-        <footer className="mx-auto w-full max-w-6xl px-6">
-          <Separator />
+        <footer className="mx-auto w-full max-w-6xl border-t border-slate-100 px-8">
           <div className="flex items-center justify-between py-5">
-            <span className="text-xs text-muted-foreground">
-              Voice Cloning Studio
-            </span>
-            <span className="text-xs text-muted-foreground">
-              Built with GPT-SoVITS
-            </span>
+            <span className="text-xs text-slate-400">Voice Cloning Studio</span>
+            <span className="text-xs text-slate-400">Built with GPT-SoVITS</span>
           </div>
         </footer>
       </div>
