@@ -43,6 +43,7 @@ export default function TrainingPage() {
   const noticeTimeoutRef = useRef(null);
   const previousStatusRef = useRef(null);
   const noticesReadyRef = useRef(false);
+  const canvasRef = useRef(null);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
   const statusLabel = pipelineStatus === 'running'
@@ -143,6 +144,134 @@ export default function TrainingPage() {
     previousStatusRef.current = pipelineStatus;
   }, [pipelineStatus, error]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let rafId;
+    let dots = [];
+    const mouse = { x: -999, y: -999 };
+    let lastTime = null;
+
+    // Fix #7: hoist physics constants to useEffect scope
+    const REPEL = 90, SPRING = 0.12, DAMP = 0.75;
+
+    function buildGrid() {
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      canvas.width = W;
+      canvas.height = H;
+      lastTime = null;
+
+      // Fix #3: adapt spacing for high-DPI / 4K screens
+      const spacing = window.devicePixelRatio > 1.5 ? 48 : 32;
+      const cols = Math.floor(W / spacing) + 1;
+      const rows = Math.floor(H / spacing) + 1;
+      const offX = (W - (cols - 1) * spacing) / 2;
+      const offY = (H - (rows - 1) * spacing) / 2;
+
+      dots = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const ox = offX + c * spacing;
+          const oy = offY + r * spacing;
+          dots.push({ ox, oy, x: ox, y: oy, vx: 0, vy: 0 });
+        }
+      }
+    }
+
+    // Fix #1: delta-time compensation so physics is frame-rate independent
+    function draw(timestamp) {
+      const dt = lastTime === null ? 16.67 : timestamp - lastTime;
+      lastTime = timestamp;
+      const scale = dt / 16.67;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const d of dots) {
+        const dx = d.x - mouse.x;
+        const dy = d.y - mouse.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        d.vx += (d.ox - d.x) * SPRING * scale;
+        d.vy += (d.oy - d.y) * SPRING * scale;
+
+        if (dist < REPEL && dist > 0) {
+          const force = (REPEL - dist) / REPEL * 2.8 * scale;
+          d.vx += (dx / dist) * force;
+          d.vy += (dy / dist) * force;
+        }
+
+        d.vx *= Math.pow(DAMP, scale);
+        d.vy *= Math.pow(DAMP, scale);
+        d.x += d.vx;
+        d.y += d.vy;
+      }
+
+      // Fix #2: batch dots by colour bucket to reduce fillStyle thrashing
+      const buckets = new Array(11).fill(null).map(() => []);
+      for (const d of dots) {
+        const displaced = Math.sqrt((d.x - d.ox) ** 2 + (d.y - d.oy) ** 2);
+        const t = Math.min(displaced / 16, 1);
+        buckets[Math.round(t * 10)].push(d);
+      }
+      for (let i = 0; i <= 10; i++) {
+        const bucket = buckets[i];
+        if (bucket.length === 0) continue;
+        const t = i / 10;
+        const alpha = 0.35 + t * 0.45;
+        const radius = 1.2 + t * 1.4;
+        const r = Math.round(148 + t * (99 - 148));
+        const g = Math.round(163 + t * (102 - 163));
+        const b = Math.round(184 + t * (241 - 184));
+        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        ctx.beginPath();
+        for (const d of bucket) {
+          ctx.moveTo(d.x + radius, d.y);
+          ctx.arc(d.x, d.y, radius, 0, Math.PI * 2);
+        }
+        ctx.fill();
+      }
+
+      // Fix #4: guard against sentinel value -999, not > 0
+      if (mouse.x !== -999) {
+        const grd = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 70);
+        grd.addColorStop(0, 'rgba(99,102,241,0.10)');
+        grd.addColorStop(1, 'rgba(99,102,241,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, 70, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      rafId = requestAnimationFrame(draw);
+    }
+
+    function onMouseMove(e) {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+    }
+
+    // Debounce resize to avoid rapid grid rebuilds mid-frame
+    buildGrid();
+    rafId = requestAnimationFrame(draw);
+    window.addEventListener('mousemove', onMouseMove);
+    let resizeTimer;
+    function onResize() {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(buildGrid, 100);
+    }
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('mousemove', onMouseMove);
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   async function handleStart() {
     const validation = validateTrainingStart({
       expName, email, files, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage,
@@ -191,6 +320,11 @@ export default function TrainingPage() {
 
   return (
     <div className="animate-fade-in flex min-h-0 flex-1 flex-col justify-center py-8">
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'fixed', inset: 0, zIndex: -5, pointerEvents: 'none' }}
+        aria-hidden="true"
+      />
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
       {/* Page title */}

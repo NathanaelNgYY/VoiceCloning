@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Repel Grid — Design</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0f1117; color: #e2e8f0; font-family: system-ui, sans-serif; padding: 36px; max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 21px; font-weight: 700; color: #f8fafc; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: #64748b; margin-bottom: 32px; }
+  section { margin-bottom: 28px; }
+  h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #6366f1; margin-bottom: 12px; }
+  p { font-size: 14px; color: #94a3b8; line-height: 1.65; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+  .chip { background: #1e2330; border: 1px solid #2d3348; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #cbd5e1; flex: 1; min-width: 160px; }
+  .chip strong { display: block; color: #f1f5f9; font-size: 13px; margin-bottom: 3px; }
+  .chip code { font-family: monospace; font-size: 12px; color: #a5b4fc; }
+  .preview-wrap { border-radius: 14px; overflow: hidden; border: 1px solid #2d3348; position: relative; height: 220px; margin-top: 12px; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .preview-label { position: absolute; top: 10px; left: 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: #475569; pointer-events: none; }
+  .preview-hint { position: absolute; bottom: 10px; right: 14px; font-size: 11px; color: #475569; pointer-events: none; }
+  .file-tag { display: inline-block; background: #1e2330; border: 1px solid #2d3348; border-radius: 6px; padding: 2px 9px; font-family: monospace; font-size: 12px; color: #a5b4fc; }
+  .note { font-size: 12px; color: #475569; margin-top: 8px; font-style: italic; }
+  .green { color: #4ade80; }
+  .approve { margin-top: 32px; text-align: center; font-size: 13px; color: #64748b; }
+</style>
+</head>
+<body>
+
+<h1>Repel Grid — Design</h1>
+<p class="sub">Cursor-reactive dot grid for the Training page background</p>
+
+<section>
+  <h2>Live preview (light background)</h2>
+  <div class="preview-wrap">
+    <canvas id="demo"></canvas>
+    <div class="preview-label">Training page background</div>
+    <div class="preview-hint">Move mouse here ↗</div>
+  </div>
+  <p class="note">This matches the actual Training page colours — white background, slate dots, indigo glow on displacement.</p>
+</section>
+
+<section>
+  <h2>What changes</h2>
+  <p>One file only: <span class="file-tag">client/src/pages/TrainingPage.jsx</span></p>
+  <p style="margin-top:8px;">Two additions inside the existing component — no new files, no component edits:</p>
+  <div class="row" style="margin-top:12px;">
+    <div class="chip"><strong>1 — canvas ref + useEffect</strong>Sets up grid, animation loop, and <code>window mousemove</code> listener. Cleans up on unmount (cancel RAF + remove listener).</div>
+    <div class="chip"><strong>2 — &lt;canvas&gt; in JSX</strong><code>position:fixed; inset:0; z-index:-5; pointer-events:none</code> — sits above the orb layer (z‑10) but below all content.</div>
+  </div>
+</section>
+
+<section>
+  <h2>Physics parameters</h2>
+  <div class="row">
+    <div class="chip"><strong>Grid spacing</strong><code>32px</code> — ~600–900 dots at 1080p</div>
+    <div class="chip"><strong>Repel radius</strong><code>90px</code> — area of influence around cursor</div>
+    <div class="chip"><strong>Spring stiffness</strong><code>0.12</code> — snaps back quickly</div>
+    <div class="chip"><strong>Damping</strong><code>0.75</code> — damps velocity each frame</div>
+  </div>
+</section>
+
+<section>
+  <h2>Visual style</h2>
+  <div class="row">
+    <div class="chip"><strong>Dot colour</strong><code>rgba(148,163,184,0.35)</code> — slate-400, very subtle on white</div>
+    <div class="chip"><strong>Displaced colour</strong><code>rgba(99,102,241,0.7)</code> — indigo hint when pushed</div>
+    <div class="chip"><strong>Dot size</strong><code>1.2px</code> base, scales up slightly when displaced</div>
+    <div class="chip"><strong>Cursor glow</strong>Soft radial gradient (indigo, 70px radius) follows mouse</div>
+  </div>
+</section>
+
+<section>
+  <h2>Constraints respected</h2>
+  <p><span class="green">✓</span> Training page only — canvas mounts/unmounts with the route<br>
+  <span class="green">✓</span> No backend changes<br>
+  <span class="green">✓</span> No component files touched<br>
+  <span class="green">✓</span> pointer-events: none — zero interaction interference</p>
+</section>
+
+<p class="approve">Does this look right? Reply "yes" in the terminal to proceed to the spec.</p>
+
+<script>
+const canvas = document.getElementById('demo');
+const parent = canvas.parentElement;
+canvas.width = parent.offsetWidth;
+canvas.height = parent.offsetHeight;
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+let mouse = { x: -999, y: -999 };
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * (W / r.width);
+  mouse.y = (e.clientY - r.top) * (H / r.height);
+});
+canvas.addEventListener('mouseleave', () => { mouse.x = -999; mouse.y = -999; });
+
+const spacing = 32;
+const cols = Math.floor(W / spacing) + 1;
+const rows = Math.floor(H / spacing) + 1;
+const offX = (W - (cols - 1) * spacing) / 2;
+const offY = (H - (rows - 1) * spacing) / 2;
+const dots = [];
+for (let r = 0; r < rows; r++) {
+  for (let c = 0; c < cols; c++) {
+    const ox = offX + c * spacing, oy = offY + r * spacing;
+    dots.push({ ox, oy, x: ox, y: oy, vx: 0, vy: 0 });
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const REPEL = 90, SPRING = 0.12, DAMP = 0.75;
+  for (const d of dots) {
+    const dx = d.x - mouse.x, dy = d.y - mouse.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    d.vx += (d.ox - d.x) * SPRING;
+    d.vy += (d.oy - d.y) * SPRING;
+    if (dist < REPEL && dist > 0) {
+      const force = (REPEL - dist) / REPEL * 2.8;
+      d.vx += (dx / dist) * force;
+      d.vy += (dy / dist) * force;
+    }
+    d.vx *= DAMP; d.vy *= DAMP;
+    d.x += d.vx; d.y += d.vy;
+
+    const displaced = Math.sqrt((d.x - d.ox) ** 2 + (d.y - d.oy) ** 2);
+    const t = Math.min(displaced / 16, 1);
+    const alpha = 0.35 + t * 0.45;
+    const radius = 1.2 + t * 1.4;
+    const r = Math.round(148 + t * (99 - 148));
+    const g = Math.round(163 + t * (102 - 163));
+    const b = Math.round(184 + t * (241 - 184));
+    ctx.beginPath(); ctx.arc(d.x, d.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+    ctx.fill();
+  }
+
+  // cursor glow
+  if (mouse.x > 0) {
+    const g = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 70);
+    g.addColorStop(0, 'rgba(99,102,241,0.10)');
+    g.addColorStop(1, 'rgba(99,102,241,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 70, 0, Math.PI * 2); ctx.fill();
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
