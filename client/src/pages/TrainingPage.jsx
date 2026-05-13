@@ -152,6 +152,10 @@ export default function TrainingPage() {
     let rafId;
     let dots = [];
     const mouse = { x: -999, y: -999 };
+    let lastTime = null;
+
+    // Fix #7: hoist physics constants to useEffect scope
+    const REPEL = 90, SPRING = 0.12, DAMP = 0.75;
 
     function buildGrid() {
       const W = window.innerWidth;
@@ -159,7 +163,8 @@ export default function TrainingPage() {
       canvas.width = W;
       canvas.height = H;
 
-      const spacing = 32;
+      // Fix #3: adapt spacing for high-DPI / 4K screens
+      const spacing = window.devicePixelRatio > 1.5 ? 48 : 32;
       const cols = Math.floor(W / spacing) + 1;
       const rows = Math.floor(H / spacing) + 1;
       const offX = (W - (cols - 1) * spacing) / 2;
@@ -175,44 +180,62 @@ export default function TrainingPage() {
       }
     }
 
-    function draw() {
+    // Fix #1: delta-time compensation so physics is frame-rate independent
+    function draw(timestamp) {
+      const dt = lastTime === null ? 16.67 : timestamp - lastTime;
+      lastTime = timestamp;
+      const scale = dt / 16.67;
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const REPEL = 90, SPRING = 0.12, DAMP = 0.75;
       for (const d of dots) {
         const dx = d.x - mouse.x;
         const dy = d.y - mouse.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
-        d.vx += (d.ox - d.x) * SPRING;
-        d.vy += (d.oy - d.y) * SPRING;
+        d.vx += (d.ox - d.x) * SPRING * scale;
+        d.vy += (d.oy - d.y) * SPRING * scale;
 
         if (dist < REPEL && dist > 0) {
-          const force = (REPEL - dist) / REPEL * 2.8;
+          const force = (REPEL - dist) / REPEL * 2.8 * scale;
           d.vx += (dx / dist) * force;
           d.vy += (dy / dist) * force;
         }
 
-        d.vx *= DAMP;
-        d.vy *= DAMP;
+        d.vx *= Math.pow(DAMP, scale);
+        d.vy *= Math.pow(DAMP, scale);
         d.x += d.vx;
         d.y += d.vy;
+      }
 
+      // Fix #2: batch dots by colour bucket to reduce fillStyle thrashing
+      const buckets = new Array(11).fill(null).map(() => []);
+      for (const d of dots) {
         const displaced = Math.sqrt((d.x - d.ox) ** 2 + (d.y - d.oy) ** 2);
         const t = Math.min(displaced / 16, 1);
+        d._t = t;
+        buckets[Math.round(t * 10)].push(d);
+      }
+      for (let i = 0; i <= 10; i++) {
+        const bucket = buckets[i];
+        if (bucket.length === 0) continue;
+        const t = i / 10;
         const alpha = 0.35 + t * 0.45;
         const radius = 1.2 + t * 1.4;
         const r = Math.round(148 + t * (99 - 148));
         const g = Math.round(163 + t * (102 - 163));
         const b = Math.round(184 + t * (241 - 184));
-
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        ctx.beginPath();
+        for (const d of bucket) {
+          ctx.moveTo(d.x + radius, d.y);
+          ctx.arc(d.x, d.y, radius, 0, Math.PI * 2);
+        }
         ctx.fill();
       }
 
-      if (mouse.x > 0) {
+      // Fix #4: guard against sentinel value -999, not > 0
+      if (mouse.x !== -999) {
         const grd = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 70);
         grd.addColorStop(0, 'rgba(99,102,241,0.10)');
         grd.addColorStop(1, 'rgba(99,102,241,0)');
@@ -230,19 +253,17 @@ export default function TrainingPage() {
       mouse.y = e.clientY;
     }
 
-    function onResize() {
-      buildGrid();
-    }
-
+    // Fix #5: remove redundant onResize wrapper — pass buildGrid directly
+    // Fix #6: use RAF for the initial draw kickoff
     buildGrid();
-    draw();
+    rafId = requestAnimationFrame(draw);
     window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('resize', onResize);
+    window.addEventListener('resize', buildGrid);
 
     return () => {
       cancelAnimationFrame(rafId);
       window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('resize', onResize);
+      window.removeEventListener('resize', buildGrid);
     };
   }, []);
 
