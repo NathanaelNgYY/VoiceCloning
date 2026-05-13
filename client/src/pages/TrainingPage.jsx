@@ -253,8 +253,7 @@ export default function TrainingPage() {
       mouse.y = e.clientY;
     }
 
-    // Fix #5: remove redundant onResize wrapper — pass buildGrid directly
-    // Fix #6: use RAF for the initial draw kickoff
+    // Debounce resize to avoid rapid grid rebuilds mid-frame
     buildGrid();
     rafId = requestAnimationFrame(draw);
     window.addEventListener('mousemove', onMouseMove);
