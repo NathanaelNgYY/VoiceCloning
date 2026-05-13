@@ -162,6 +162,7 @@ export default function TrainingPage() {
       const H = window.innerHeight;
       canvas.width = W;
       canvas.height = H;
+      lastTime = null;
 
       // Fix #3: adapt spacing for high-DPI / 4K screens
       const spacing = window.devicePixelRatio > 1.5 ? 48 : 32;
@@ -213,7 +214,6 @@ export default function TrainingPage() {
       for (const d of dots) {
         const displaced = Math.sqrt((d.x - d.ox) ** 2 + (d.y - d.oy) ** 2);
         const t = Math.min(displaced / 16, 1);
-        d._t = t;
         buckets[Math.round(t * 10)].push(d);
       }
       for (let i = 0; i <= 10; i++) {
@@ -258,12 +258,18 @@ export default function TrainingPage() {
     buildGrid();
     rafId = requestAnimationFrame(draw);
     window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('resize', buildGrid);
+    let resizeTimer;
+    function onResize() {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(buildGrid, 100);
+    }
+    window.addEventListener('resize', onResize);
 
     return () => {
       cancelAnimationFrame(rafId);
       window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('resize', buildGrid);
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', onResize);
     };
   }, []);
 
