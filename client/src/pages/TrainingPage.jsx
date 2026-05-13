@@ -43,6 +43,7 @@ export default function TrainingPage() {
   const noticeTimeoutRef = useRef(null);
   const previousStatusRef = useRef(null);
   const noticesReadyRef = useRef(false);
+  const canvasRef = useRef(null);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
   const statusLabel = pipelineStatus === 'running'
@@ -143,6 +144,108 @@ export default function TrainingPage() {
     previousStatusRef.current = pipelineStatus;
   }, [pipelineStatus, error]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let rafId;
+    let dots = [];
+    const mouse = { x: -999, y: -999 };
+
+    function buildGrid() {
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      canvas.width = W;
+      canvas.height = H;
+
+      const spacing = 32;
+      const cols = Math.floor(W / spacing) + 1;
+      const rows = Math.floor(H / spacing) + 1;
+      const offX = (W - (cols - 1) * spacing) / 2;
+      const offY = (H - (rows - 1) * spacing) / 2;
+
+      dots = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const ox = offX + c * spacing;
+          const oy = offY + r * spacing;
+          dots.push({ ox, oy, x: ox, y: oy, vx: 0, vy: 0 });
+        }
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const REPEL = 90, SPRING = 0.12, DAMP = 0.75;
+      for (const d of dots) {
+        const dx = d.x - mouse.x;
+        const dy = d.y - mouse.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        d.vx += (d.ox - d.x) * SPRING;
+        d.vy += (d.oy - d.y) * SPRING;
+
+        if (dist < REPEL && dist > 0) {
+          const force = (REPEL - dist) / REPEL * 2.8;
+          d.vx += (dx / dist) * force;
+          d.vy += (dy / dist) * force;
+        }
+
+        d.vx *= DAMP;
+        d.vy *= DAMP;
+        d.x += d.vx;
+        d.y += d.vy;
+
+        const displaced = Math.sqrt((d.x - d.ox) ** 2 + (d.y - d.oy) ** 2);
+        const t = Math.min(displaced / 16, 1);
+        const alpha = 0.35 + t * 0.45;
+        const radius = 1.2 + t * 1.4;
+        const r = Math.round(148 + t * (99 - 148));
+        const g = Math.round(163 + t * (102 - 163));
+        const b = Math.round(184 + t * (241 - 184));
+
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        ctx.fill();
+      }
+
+      if (mouse.x > 0) {
+        const grd = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 70);
+        grd.addColorStop(0, 'rgba(99,102,241,0.10)');
+        grd.addColorStop(1, 'rgba(99,102,241,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, 70, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      rafId = requestAnimationFrame(draw);
+    }
+
+    function onMouseMove(e) {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+    }
+
+    function onResize() {
+      buildGrid();
+    }
+
+    buildGrid();
+    draw();
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   async function handleStart() {
     const validation = validateTrainingStart({
       expName, email, files, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage,
@@ -191,6 +294,11 @@ export default function TrainingPage() {
 
   return (
     <div className="animate-fade-in flex min-h-0 flex-1 flex-col justify-center py-8">
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'fixed', inset: 0, zIndex: -5, pointerEvents: 'none' }}
+        aria-hidden="true"
+      />
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
       {/* Page title */}
