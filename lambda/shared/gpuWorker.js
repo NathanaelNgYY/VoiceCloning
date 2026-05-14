@@ -14,12 +14,29 @@ function publicBaseUrl() {
   return url.replace(/\/+$/u, '');
 }
 
+function inferenceBaseUrl() {
+  const url = process.env.INFERENCE_WORKER_URL || process.env.GPU_WORKER_URL || '';
+  if (!url) {
+    throw new Error('GPU_WORKER_URL env var is not set');
+  }
+  return url.replace(/\/+$/u, '');
+}
+
+function inferencePublicBaseUrl() {
+  const url = process.env.INFERENCE_WORKER_PUBLIC_URL
+    || process.env.INFERENCE_WORKER_URL
+    || process.env.GPU_WORKER_PUBLIC_URL
+    || process.env.GPU_WORKER_URL
+    || '';
+  if (!url) {
+    throw new Error('No inference worker public URL configured');
+  }
+  return url.replace(/\/+$/u, '');
+}
+
 async function parseResponse(response) {
   const text = await response.text();
-  if (!text) {
-    return {};
-  }
-
+  if (!text) return {};
   try {
     return JSON.parse(text);
   } catch {
@@ -60,12 +77,53 @@ export async function gpuPostBinary(routePath, body = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-
   if (!response.ok) {
     const data = await parseResponse(response);
     throw new Error(data.error || data.message || `GPU Worker POST ${routePath} failed (${response.status})`);
   }
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'application/octet-stream',
+  };
+}
 
+export async function inferencePost(routePath, body = {}) {
+  const response = await fetch(`${inferenceBaseUrl()}${routePath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await parseResponse(response);
+  if (!response.ok) {
+    throw new Error(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`);
+  }
+  return data;
+}
+
+export async function inferenceGet(routePath) {
+  const response = await fetch(`${inferenceBaseUrl()}${routePath}`);
+  const data = await parseResponse(response);
+  if (!response.ok) {
+    throw new Error(data.error || data.message || `Inference Worker GET ${routePath} failed (${response.status})`);
+  }
+  return data;
+}
+
+export function inferencePublicUrl(routePath) {
+  const normalizedPath = routePath.startsWith('/') ? routePath : `/${routePath}`;
+  return `${inferencePublicBaseUrl()}${normalizedPath}`;
+}
+
+export async function inferencePostBinary(routePath, body = {}) {
+  const response = await fetch(`${inferenceBaseUrl()}${routePath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const data = await parseResponse(response);
+    throw new Error(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`);
+  }
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
     contentType: response.headers.get('content-type') || 'application/octet-stream',

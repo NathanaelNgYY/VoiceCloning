@@ -1,6 +1,6 @@
 import path from 'path';
 import { listObjects } from '../shared/s3.js';
-import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
+import { inferencePost, inferenceGet } from '../shared/gpuWorker.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 
 function modelSource() {
@@ -14,7 +14,7 @@ function useGpuWorkerModels() {
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
   return error instanceof TypeError
-    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
+    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var|INFERENCE_WORKER_URL/u.test(message);
 }
 
 export function toModelSummary(object) {
@@ -47,11 +47,9 @@ export const handler = async (event) => {
     if (method === 'GET' && routePath.endsWith('/models')) {
       if (useGpuWorkerModels()) {
         try {
-          return ok(await gpuGet('/models'));
+          return ok(await inferenceGet('/models'));
         } catch (error) {
-          if (!isWorkerUnavailableError(error)) {
-            throw error;
-          }
+          if (!isWorkerUnavailableError(error)) throw error;
           return ok({
             gpt: [],
             sovits: [],
@@ -88,10 +86,10 @@ export const handler = async (event) => {
       let lastStatus = null;
       if (useGpuWorkerModels()) {
         if (resolvedSovitsKey) {
-          lastStatus = await gpuPost('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
+          lastStatus = await inferencePost('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
         }
         if (resolvedGptKey) {
-          lastStatus = await gpuPost('/inference/weights/gpt', { weightsPath: resolvedGptKey });
+          lastStatus = await inferencePost('/inference/weights/gpt', { weightsPath: resolvedGptKey });
         }
         return ok({
           message: 'Models loaded successfully',
@@ -100,12 +98,12 @@ export const handler = async (event) => {
       }
 
       if (resolvedSovitsKey) {
-        const { localPath } = await gpuPost('/models/download', { s3Key: resolvedSovitsKey });
-        lastStatus = await gpuPost('/inference/weights/sovits', { weightsPath: localPath });
+        const { localPath } = await inferencePost('/models/download', { s3Key: resolvedSovitsKey });
+        lastStatus = await inferencePost('/inference/weights/sovits', { weightsPath: localPath });
       }
       if (resolvedGptKey) {
-        const { localPath } = await gpuPost('/models/download', { s3Key: resolvedGptKey });
-        lastStatus = await gpuPost('/inference/weights/gpt', { weightsPath: localPath });
+        const { localPath } = await inferencePost('/models/download', { s3Key: resolvedGptKey });
+        lastStatus = await inferencePost('/inference/weights/gpt', { weightsPath: localPath });
       }
 
       return ok({

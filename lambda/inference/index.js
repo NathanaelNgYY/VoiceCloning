@@ -1,12 +1,12 @@
 import { generatePresignedGetUrl } from '../shared/s3.js';
-import { gpuPost, gpuGet, gpuPostBinary, gpuPublicUrl } from '../shared/gpuWorker.js';
+import { inferencePost, inferenceGet, inferencePostBinary, inferencePublicUrl } from '../shared/gpuWorker.js';
 import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { corsHeaders, ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
   return error instanceof TypeError
-    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
+    || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var|INFERENCE_WORKER_URL/u.test(message);
 }
 
 function binaryWav(buffer, contentType = 'audio/wav') {
@@ -42,14 +42,14 @@ export const handler = async (event) => {
     if (method === 'POST' && routePath.endsWith('/inference')) {
       if (!body.text) return err(400, 'text is required');
       if (!body.ref_audio_path) return err(400, 'ref_audio_path is required');
-      const { buffer, contentType } = await gpuPostBinary('/inference', body);
+      const { buffer, contentType } = await inferencePostBinary('/inference', body);
       return binaryWav(buffer, contentType);
     }
 
     if (method === 'POST' && routePath.endsWith('/inference/generate')) {
       if (!body.text) return err(400, 'text is required');
       if (!body.ref_audio_path) return err(400, 'ref_audio_path is required');
-      return ok(await gpuPost('/inference/generate', body));
+      return ok(await inferencePost('/inference/generate', body));
     }
 
     if (method === 'GET' && routePath.includes('/inference/result/')) {
@@ -58,7 +58,7 @@ export const handler = async (event) => {
         return err(400, 'Invalid sessionId');
       }
       if (useGpuWorkerArtifacts()) {
-        return ok({ url: gpuPublicUrl(`/inference/result/${encodeURIComponent(sessionId)}`) });
+        return ok({ url: inferencePublicUrl(`/inference/result/${encodeURIComponent(sessionId)}`) });
       }
       const url = await generatePresignedGetUrl(`audio/output/${sessionId}/final.wav`);
       return ok({ url });
@@ -67,20 +67,18 @@ export const handler = async (event) => {
     if (method === 'POST' && routePath.endsWith('/inference/cancel')) {
       const { sessionId } = body;
       if (!sessionId) return err(400, 'sessionId is required');
-      return ok(await gpuPost('/inference/cancel', { sessionId }));
+      return ok(await inferencePost('/inference/cancel', { sessionId }));
     }
 
     if (method === 'POST' && routePath.endsWith('/inference/stop')) {
-      return ok(await gpuPost('/inference/stop', {}));
+      return ok(await inferencePost('/inference/stop', {}));
     }
 
     if (method === 'GET' && routePath.endsWith('/inference/current')) {
       try {
-        return ok(await gpuGet('/inference/current'));
+        return ok(await inferenceGet('/inference/current'));
       } catch (error) {
-        if (!isWorkerUnavailableError(error)) {
-          throw error;
-        }
+        if (!isWorkerUnavailableError(error)) throw error;
         return ok({
           sessionId: null,
           status: 'idle',
@@ -91,7 +89,7 @@ export const handler = async (event) => {
     }
 
     if (method === 'GET' && routePath.endsWith('/inference/status')) {
-      return ok(await gpuGet('/inference/status'));
+      return ok(await inferenceGet('/inference/status'));
     }
 
     return err(404, 'Not found');
