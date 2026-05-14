@@ -47,8 +47,8 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Manrope", "Inter", "system-ui", "-apple-system", "sans-serif"],
-        display: ["Space Grotesk", "Manrope", "system-ui", "sans-serif"],
+        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        display: ["Inter", "system-ui", "sans-serif"],
         mono: ["Geist Mono", "Consolas", "monospace"],
       },
       keyframes: {
@@ -72,6 +72,11 @@ export default {
           from: { height: "var(--radix-collapsible-content-height)" },
           to: { height: "0" },
         },
+        "orb-float": {
+          "0%, 100%": { opacity: "0.55", transform: "scale(1) translate(0px, 0px)" },
+          "33%":       { opacity: "0.75", transform: "scale(1.14) translate(28px, -22px)" },
+          "66%":       { opacity: "0.45", transform: "scale(0.92) translate(-18px, 24px)" },
+        },
       },
       animation: {
         "fade-in": "fade-in 0.4s ease",
@@ -79,6 +84,9 @@ export default {
         "pulse-dot": "pulse-dot 1.5s ease-in-out infinite",
         "collapsible-down": "collapsible-down 0.2s ease-out",
         "collapsible-up": "collapsible-up 0.2s ease-out",
+        "orb-float-1": "orb-float 10s ease-in-out infinite",
+        "orb-float-2": "orb-float 13s ease-in-out infinite 3.5s",
+        "orb-float-3": "orb-float 16s ease-in-out infinite 7s",
       },
     },
   },

@@ -34,7 +34,7 @@ export async function sendTrainingCompleteEmail(email, expName) {
     return;
   }
 
-  const inferenceUrl = `${INFERENCE_BASE_URL}/live-fast?voice=${encodeURIComponent(expName)}`;
+  const inferenceUrl = INFERENCE_BASE_URL;
 
   await transport.sendMail({
     from,
