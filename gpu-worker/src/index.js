@@ -2,12 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { WORKER_PORT, WORKER_HOST } from './config.js';
 import trainingRoutes from './routes/training.js';
-import modelsRoutes from './routes/models.js';
 import transcribeRoutes from './routes/transcribe.js';
-import inferenceRoutes from './routes/inference.js';
 import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
-import { inferenceServer } from './services/inferenceServer.js';
 import { processManager } from './services/processManager.js';
 import { recordTrainingLog } from './services/trainingLogger.js';
 import { buildCorsOriginOption } from './services/corsOrigin.js';
@@ -26,9 +23,7 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.use('/', trainingRoutes);
-app.use('/', modelsRoutes);
 app.use('/', transcribeRoutes);
-app.use('/', inferenceRoutes);
 app.use('/', artifactRoutes);
 app.use('/', activityRoutes);
 
@@ -51,8 +46,6 @@ function shutdown(signal) {
 
   shuttingDown = true;
   console.log(`[gpu-worker] Received ${signal}, shutting down...`);
-  inferenceServer.stop();
-
   server.close(() => {
     process.exit(0);
   });
