@@ -254,7 +254,7 @@ const SEMANTIC_UNITS = [
   'do not', 'does not', 'did not', 'is not', 'was not', 'are not',
 ];
 
-const NBSP = ' '; // non-breaking space used as internal sentinel
+const NBSP = '\u00A0'; // non-breaking space used as internal sentinel
 
 function protectSemanticUnits(text) {
   let result = text;
@@ -267,7 +267,7 @@ function protectSemanticUnits(text) {
 }
 
 function restoreSemanticUnits(text) {
-  return text.replace(/ /g, ' ');
+  return text.replace(/\u00A0/g, ' ');
 }
 
 function splitIntoSentences(text) {
@@ -361,7 +361,7 @@ export function splitTextIntoChunks(text, options = {}) {
     // Force a chunk boundary after any pause-worthy punctuation so silence is inserted between chunks
     const trimmed = current.trimEnd();
     const lastChar = trimmed.slice(-1);
-    const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('…');
+    const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
     if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
       chunks.push(trimmed);
       current = '';
@@ -600,17 +600,17 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   const last = trimmed[trimmed.length - 1] || '';
 
   // Ellipsis — trailing thought, moderate pause
-  if (tail.includes('...') || tail.includes('…')) return Math.round(basePauseMs * 1.5);
+  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 1.5);
   // Em dash / double dash — brief dramatic pause
-  if (last === '—' || tail.includes('--')) return Math.round(basePauseMs * 0.8);
+  if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 0.8);
   // Period, question mark, exclamation
-  if ('.!?。！？'.includes(last)) return Math.round(basePauseMs * 1.2);
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.2);
   // Colon
-  if (':：'.includes(last)) return Math.round(basePauseMs * 1.3);
+  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.3);
   // Semicolon
-  if (';；'.includes(last)) return Math.round(basePauseMs * 1.1);
+  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.1);
   // Comma — should be brief, not a full pause
-  if (',，'.includes(last)) return Math.round(basePauseMs * 0.7);
+  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.7);
   // No terminal punctuation — gentle transition
   return Math.round(basePauseMs * 0.6);
 }
@@ -621,11 +621,11 @@ function fadeForPunctuation(chunkText) {
   const tail = trimmed.slice(-3);
   const last = trimmed[trimmed.length - 1] || '';
 
-  if (tail.includes('...') || tail.includes('…')) return 60;
-  if (last === '—' || tail.includes('--')) return 40;
-  if ('.!?。！？'.includes(last)) return 30;
-  if (':;：；'.includes(last)) return 30;
-  if (',，'.includes(last)) return 20;
+  if (tail.includes('...') || tail.includes('\u2026')) return 60;
+  if (last === '\u2014' || tail.includes('--')) return 40;
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return 30;
+  if (':;\uff1a\uff1b'.includes(last)) return 30;
+  if (',\uff0c'.includes(last)) return 20;
   return 20; // no punctuation — almost seamless
 }
 
