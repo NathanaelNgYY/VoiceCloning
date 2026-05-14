@@ -17,7 +17,7 @@ function publicBaseUrl() {
 function inferenceBaseUrl() {
   const url = process.env.INFERENCE_WORKER_URL || process.env.GPU_WORKER_URL || '';
   if (!url) {
-    throw new Error('GPU_WORKER_URL env var is not set');
+    throw new Error('INFERENCE_WORKER_URL env var is not set');
   }
   return url.replace(/\/+$/u, '');
 }
