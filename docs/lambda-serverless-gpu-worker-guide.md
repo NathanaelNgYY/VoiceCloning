@@ -1,20 +1,20 @@
 # Lambda Serverless Backend + GPU Worker Guide
 
-Last updated: 2026-05-06
+Last updated: 2026-05-15
 
 This guide explains the new deployment shape:
 
 - React SPA: S3 + CloudFront
 - REST backend: AWS Lambda Function URL behind CloudFront
-- GPU work: existing GPU EC2, still running `gpu-worker` on port `3001`
+- GPU work: existing GPU EC2, now split between `gpu-worker` for training on port `3001` and `gpu-inference-worker` for inference on port `3003`
 - Live chatbot WebSocket: `live-gateway` process on the same GPU EC2, running on port `3002`
-- Current test networking target: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, and only `/api/live/chat/realtime` path-routes to `live-gateway:3002`
+- Current test networking target: one public GPU ALB; ALB default action goes to `gpu-worker:3001`, `/models*`, `/ref-audio*`, and `/inference*` path-route to `gpu-inference-worker:3003`, and `/api/live/chat/realtime` path-routes to `live-gateway:3002`
 - Storage handoff: S3 bucket in Singapore (`ap-southeast-1`), even when Lambda and GPU compute run in Seoul (`ap-northeast-2`)
 - Function URL auth target: `AWS_IAM` behind CloudFront Lambda Function URL OAC. JSON `POST`/`PUT`/`PATCH`/`DELETE` requests must include `x-amz-content-sha256`; the frontend now adds this automatically through the shared Axios client.
 
 Current known AWS resources:
 
-- GPU EC2: g6 instance in Seoul, running GPT-SoVITS, `gpu-worker`, and `live-gateway`.
+- GPU EC2: g6 instance in Seoul, running GPT-SoVITS, `gpu-worker`, `gpu-inference-worker`, and `live-gateway`.
 - GPU VPC: `VoiClo-Gpu-Seoul-vpc` (`vpc-0b81d044238fcee4d`) in `ap-northeast-2`.
 - Public subnets in the GPU VPC:
   - `VoiClo-Gpu-Seoul-subnet-public1-ap-northeast-2a`
@@ -24,9 +24,10 @@ Current known AWS resources:
 - GPU ALB: `voice-gpu-alb`, internet-facing, IPv4, HTTP listener on port `80`.
 - GPU ALB DNS: `voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com`.
 - GPU security group: `VoiClo-Gpu-Seoul-SG` (`sg-0806b2491f69f242e`).
-- Current GPU target group: `voice-gpu-worker`, instance target, HTTP port `3001`.
+- Training target group: `voice-gpu-worker`, instance target, HTTP port `3001`.
+- Inference target group: `voice-gpu-inference-worker`, instance target, HTTP port `3003`.
 - Live gateway target group: `voice-live-gateway`, instance target, HTTP port `3002`.
-- ALB listener rule: `/api/live/chat/realtime` forwards to `voice-live-gateway`; default action forwards everything else to `voice-gpu-worker`.
+- ALB listener rules: `/api/live/chat/realtime` forwards to `voice-live-gateway`, `/models*`, `/ref-audio*`, and `/inference*` forward to `voice-gpu-inference-worker`, and the default action forwards everything else to `voice-gpu-worker`.
 - Frontend S3 bucket: `interns2026-small-projects-bucket-shared`, under prefix `echolect/dist/`.
 - CloudFront distribution ID: `E2KTGN0G56FW71`.
 - Lambda function: `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` in `ap-northeast-2`.
@@ -55,16 +56,27 @@ New top-level packages:
 
 GPU worker changes:
 
+- `gpu-worker/` is now training-focused and remains the default worker target on port `3001`
 - `GET /train/current`
-- `POST /inference`
-- `POST /inference/generate`
-- `GET /inference/progress/:sessionId`
-- `POST /inference/cancel`
-- `GET /inference/current`
+- `POST /train`
+- `POST /train/stop`
+- `POST /transcribe`
+- `GET /training-audio/*`
 - `GET /activity/status`
-- S3 upload helper for generated final WAVs
 - Post-training local artifact cleanup after successful S3 upload
 - CORS controlled by `CORS_ORIGIN`
+
+New inference worker package:
+
+- `gpu-inference-worker/`
+  - Separate Node.js service on port `3003`
+  - Owns `/models*`, `/ref-audio*`, and `/inference*`
+  - Handles model loading, GPT-SoVITS inference, inference artifacts, and inference activity
+
+Lambda routing changes:
+
+- training routes still use `GPU_WORKER_URL`
+- inference and model routes use `INFERENCE_WORKER_URL`
 
 Frontend changes:
 
@@ -84,6 +96,7 @@ flowchart LR
   S3["S3 bucket"]
   Alb["Public GPU ALB"]
   Worker["gpu-worker :3001"]
+  Inference["gpu-inference-worker :3003"]
   Live["live-gateway :3002"]
   OpenAI["OpenAI Realtime"]
   Gpu["GPT-SoVITS / GPU"]
@@ -93,19 +106,20 @@ flowchart LR
   Cf -->|REST /api/*| FunctionUrl
   FunctionUrl --> Lambda
   Lambda --> S3
-  Lambda -->|same public ALB URL| Alb
+  Lambda -->|GPU_WORKER_URL and INFERENCE_WORKER_URL| Alb
   Alb -->|default action| Worker
   Cf -->|SSE /train/progress, /inference/progress| Alb
-  Alb --> Worker
+  Alb -->|/inference/progress/*| Inference
   Cf -->|WSS /api/live/chat/realtime| Alb
   Alb --> Live
   Live --> OpenAI
   Worker --> Gpu
+  Inference --> Gpu
 ```
 
 ## GPU EC2 Setup
 
-Run the existing GPU worker from the GitHub clone under the `ubuntu` user. In the current test setup, this is the ALB default target on port `3001`:
+Run the training worker from the GitHub clone under the `ubuntu` user. In the current split setup, this is the ALB default target on port `3001`:
 
 ```bash
 cd ~/VoiceCloning/gpu-worker
@@ -128,6 +142,41 @@ The deployment env file for `gpu-worker.service` should contain:
 ```env
 WORKER_HOST=0.0.0.0
 WORKER_PORT=3001
+GPT_SOVITS_ROOT=/opt/gpt-sovits
+PYTHON_EXEC=/opt/gpt-sovits/venv/bin/python
+INFERENCE_HOST=127.0.0.1
+INFERENCE_PORT=9880
+S3_BUCKET=interns2026-small-projects-bucket-shared
+S3_REGION=ap-southeast-1
+S3_PREFIX=echolect/
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
+```
+
+Run the inference worker as a second process on the same GPU EC2. If training and inference share one EC2 host, keep training on `3001` and inference on `3003`:
+
+```bash
+cd ~/VoiceCloning/gpu-inference-worker
+npm install
+NODE_ENV=production \
+GPT_SOVITS_ROOT=/opt/gpt-sovits \
+PYTHON_EXEC=/opt/gpt-sovits/venv/bin/python \
+WORKER_HOST=0.0.0.0 \
+WORKER_PORT=3003 \
+INFERENCE_HOST=127.0.0.1 \
+INFERENCE_PORT=9880 \
+S3_BUCKET=interns2026-small-projects-bucket-shared \
+S3_REGION=ap-southeast-1 \
+S3_PREFIX=echolect/ \
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN \
+npm start
+```
+
+The deployment env file for `gpu-inference-worker.service` should contain:
+
+```env
+NODE_ENV=production
+WORKER_HOST=0.0.0.0
+WORKER_PORT=3003
 GPT_SOVITS_ROOT=/opt/gpt-sovits
 PYTHON_EXEC=/opt/gpt-sovits/venv/bin/python
 INFERENCE_HOST=127.0.0.1
@@ -195,6 +244,25 @@ WantedBy=multi-user.target
 ```
 
 ```ini
+# /etc/systemd/system/gpu-inference-worker.service
+[Unit]
+Description=Voice Cloning GPU Inference Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/VoiceCloning/gpu-inference-worker
+EnvironmentFile=/home/ubuntu/VoiceCloning/gpu-inference-worker/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
 # /etc/systemd/system/live-gateway.service
 [Unit]
 Description=Voice Cloning Live Gateway
@@ -216,8 +284,10 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now gpu-worker
+sudo systemctl enable --now gpu-inference-worker
 sudo systemctl enable --now live-gateway
 sudo systemctl status gpu-worker
+sudo systemctl status gpu-inference-worker
 sudo systemctl status live-gateway
 ```
 
@@ -338,12 +408,14 @@ Create or confirm these target groups:
 | Target group | Target | Port | Health check |
 | --- | --- | ---: | --- |
 | `voice-gpu-worker` | GPU EC2 instance | `3001` | `GET /healthz` |
+| `voice-gpu-inference-worker` | same GPU EC2 instance | `3003` | `GET /healthz` |
 | `voice-live-gateway` | same GPU EC2 instance | `3002` | `GET /healthz` |
 
 Current screenshot state:
 
 - `voice-gpu-worker` already exists and points to port `3001`.
 - Its target is currently `Unused: Target is in the stopped state` because the EC2 instance was stopped when the screenshot was taken. This should become healthy after the GPU EC2 and `gpu-worker.service` are running.
+- `voice-gpu-inference-worker` should be created and registered on port `3003` if training and inference share one EC2 host.
 - `voice-live-gateway` still needs to be created and registered on port `3002`.
 
 ### ALB Listener Rules
@@ -353,9 +425,12 @@ Use one HTTP listener on port `80` while testing. Later, add HTTPS on port `443`
 | Priority | Condition | Action |
 | ---: | --- | --- |
 | `1` | Path is `/api/live/chat/realtime` | Forward to `voice-live-gateway` |
+| `2` | Path is `/models*` | Forward to `voice-gpu-inference-worker` |
+| `3` | Path is `/ref-audio*` | Forward to `voice-gpu-inference-worker` |
+| `4` | Path is `/inference*` | Forward to `voice-gpu-inference-worker` |
 | default | Everything else | Forward to `voice-gpu-worker` |
 
-Do not add ALB rules for `/train/progress/*`, `/inference/progress/*`, `/models`, `/healthz`, or `/training-audio/*`. Those should hit the default `gpu-worker:3001` target group.
+Keep `/train/progress/*`, `/healthz`, and `/training-audio/*` on the default training target group. Route `/models*`, `/ref-audio*`, and all `/inference*` paths to the inference target group so both browser SSE and Lambda inference/model calls reach `gpu-inference-worker`.
 
 Lambda can call the public ALB URL directly:
 
@@ -392,13 +467,13 @@ The live-gateway target group can still health check `GET /healthz` on port `300
 Current security group note: `sg-0806b2491f69f242e` is used for the GPU EC2 and ALB right now. This works for testing, but split it later into a dedicated ALB security group and a dedicated GPU EC2 security group:
 
 - ALB SG inbound: HTTP `80` from CloudFront/browser while testing; later HTTPS `443`.
-- ALB SG outbound: TCP `3001` and `3002` to the GPU EC2 SG.
-- GPU EC2 SG inbound: TCP `3001` and `3002` only from the ALB SG.
+- ALB SG outbound: TCP `3001`, `3002`, and `3003` to the GPU EC2 SG.
+- GPU EC2 SG inbound: TCP `3001`, `3002`, and `3003` only from the ALB SG.
 - GPU EC2 SG inbound: SSH `22` from your own IP only, if SSH is still needed.
 - GPU EC2 SG inbound: no rule for `9880`; GPT-SoVITS `api_v2.py` should stay local on `127.0.0.1:9880`.
 - Do not leave direct public inbound access to `3001`, `3002`, or `9880` in production.
 
-There is no separate inbound rule for SSE. Training/inference SSE is normal HTTP traffic from the browser to CloudFront, then CloudFront to the ALB on `80`/`443`, then the ALB forwards to `gpu-worker:3001`.
+There is no separate inbound rule for SSE. Training and inference SSE are normal HTTP traffic from the browser to CloudFront, then CloudFront to the ALB on `80` or `443`, then the ALB forwards `/train/progress/*` to the default training target group and `/inference/progress/*` to the inference target group.
 
 ## CloudFront Origins And Behaviors
 
@@ -431,7 +506,7 @@ Order matters. Put the most specific behaviors above broader ones:
 | ---: | --- | --- | --- | --- | --- |
 | `1` | `/api/live/chat/realtime` | `gpu-worker-alb-origin` | Caching disabled | Forward WebSocket headers or use `AllViewer` | Must be above `/api/*`; routes to `live-gateway:3002` at ALB |
 | `2` | `/train/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-worker:3001` |
-| `3` | `/inference/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-worker:3001` |
+| `3` | `/inference/progress/*` | `gpu-worker-alb-origin` | Caching disabled | Forward `Origin` at minimum | SSE to `gpu-inference-worker:3003` |
 | `4` | `/api/*` | `lambda-function-url-origin` | Caching disabled | `AllViewerExceptHostHeader` | REST Lambda Function URL proxied through CloudFront; must forward `x-amz-content-sha256` for signed POST requests |
 | default | `*` | `spa-s3-origin` | normal SPA/static policy | existing setting | React app |
 
@@ -527,6 +602,8 @@ S3_REGION=ap-southeast-1
 S3_PREFIX=echolect/
 GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 GPU_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net
+INFERENCE_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
+INFERENCE_WORKER_PUBLIC_URL=https://d3dghqhnk7aoku.cloudfront.net
 GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID
 GPU_INSTANCE_REGION=ap-northeast-2
 GPU_IDLE_STOP_MINUTES=30
@@ -534,6 +611,8 @@ MODEL_SOURCE=s3
 ARTIFACT_SOURCE=s3
 CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ```
+
+In the public-ALB split setup, `GPU_WORKER_URL` and `INFERENCE_WORKER_URL` can both use the same ALB base URL only if the ALB has path rules for `/models*`, `/ref-audio*`, and `/inference*` that forward to the inference target group. If you do not want to add those ALB rules, point `INFERENCE_WORKER_URL` directly at the inference worker host and port instead.
 
 The old `GPU_INSTANCE_MOCK_STATE` local UI path has been removed. Configure a real `GPU_INSTANCE_ID` and test GPU start/status against the cloud services.
 
@@ -574,7 +653,7 @@ aws lambda create-function `
   --memory-size 256 `
   --role arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_LAMBDA_EXECUTION_ROLE `
   --zip-file fileb://.dist/voice-cloning-function-url.zip `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,INFERENCE_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,INFERENCE_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
 ```
 
 Update code after later changes:
@@ -594,7 +673,7 @@ aws lambda update-function-configuration `
   --profile account3 `
   --region ap-northeast-2 `
   --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,INFERENCE_WORKER_URL=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com,INFERENCE_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,GPU_INSTANCE_ID=i-REPLACE_WITH_GPU_EC2_INSTANCE_ID,GPU_INSTANCE_REGION=ap-northeast-2,GPU_IDLE_STOP_MINUTES=30,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
 ```
 
 Required for automatic GPU shutdown: add an EventBridge schedule so Lambda checks idleness without a user opening the app. `GPU_IDLE_STOP_MINUTES` only sets the idle threshold inside Lambda. It does not run a timer by itself.
@@ -801,24 +880,24 @@ aws lambda update-function-configuration `
   --region ap-northeast-2 `
   --function-name voice-cloning-api `
   --vpc-config SubnetIds=subnet-aaa,subnet-bbb,SecurityGroupIds=sg-lambda `
-  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
+  --environment "Variables={S3_BUCKET=interns2026-small-projects-bucket-shared,S3_REGION=ap-southeast-1,S3_PREFIX=echolect/,GPU_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,GPU_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,INFERENCE_WORKER_URL=http://INTERNAL_GPU_ALB_DNS,INFERENCE_WORKER_PUBLIC_URL=https://LIVE_FAST_CLOUDFRONT_DOMAIN,MODEL_SOURCE=s3,ARTIFACT_SOURCE=s3,CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN}"
 ```
 
 9. Security groups:
 
-- Lambda security group outbound -> internal ALB security group TCP `80`, or GPU EC2 security group TCP `3001` for direct private-IP mode.
+- Lambda security group outbound -> internal ALB security group TCP `80`, or GPU EC2 security group TCP `3001` and `3003` for direct private-IP mode.
 - Internal ALB security group inbound from Lambda security group TCP `80`, if using internal ALB.
 - Public ALB security group inbound HTTPS `443` from CloudFront/browser traffic
-- GPU EC2 security group inbound from public ALB security group TCP `3001` and `3002`
-- GPU EC2 security group inbound from internal ALB security group TCP `3001` and `3002`, if using internal ALB.
-- GPU EC2 security group inbound from Lambda security group TCP `3001`, if using direct private-IP mode.
+- GPU EC2 security group inbound from public ALB security group TCP `3001`, `3002`, and `3003`
+- GPU EC2 security group inbound from internal ALB security group TCP `3001` and `3003`, if using internal ALB.
+- GPU EC2 security group inbound from Lambda security group TCP `3001` and `3003`, if using direct private-IP mode.
 
 If Lambda is VPC-attached, make sure it can still reach S3. Use either:
 
 - NAT Gateway / NAT instance for outbound internet access
 - S3 Gateway VPC Endpoint for private S3 access
 
-For future scalability, prefer routing Lambda through the internal ALB instead of directly to the EC2 private IP. For a single fixed GPU EC2 in the same VPC, direct private IP is acceptable if you are comfortable updating `GPU_WORKER_URL` whenever the instance is replaced.
+For future scalability, prefer routing Lambda through the internal ALB instead of directly to the EC2 private IP. For a single fixed GPU EC2 in the same VPC, direct private IP is acceptable if you are comfortable updating both `GPU_WORKER_URL` and `INFERENCE_WORKER_URL` whenever the instance is replaced.
 
 ## Frontend Deployment
 
@@ -892,6 +971,17 @@ sudo systemctl restart gpu-worker
 sudo systemctl status gpu-worker
 ```
 
+Changes under `gpu-inference-worker/` need the inference service restart:
+
+```bash
+cd ~/VoiceCloning
+git pull
+cd gpu-inference-worker
+npm install
+sudo systemctl restart gpu-inference-worker
+sudo systemctl status gpu-inference-worker
+```
+
 No deployment env should use the GPU EC2 public IP directly. Use:
 
 - CloudFront domain for browser-facing frontend/API/SSE/WSS.
@@ -929,7 +1019,7 @@ Dev URL map:
 - Live chatbot WebSocket: browser opens `wss://d3dghqhnk7aoku.cloudfront.net/api/live/chat/realtime`.
 - Frontend: `http://localhost:5173`.
 
-Keep the GPU EC2, `gpu-worker.service`, `live-gateway.service`, Lambda Function URL, CloudFront behaviors, and S3 bucket configured exactly as deployment uses them. This is intentionally closer to the real release path than the old fake local stack.
+Keep the GPU EC2, `gpu-worker.service`, `gpu-inference-worker.service`, `live-gateway.service`, Lambda Function URL, CloudFront behaviors, and S3 bucket configured exactly as deployment uses them. This is intentionally closer to the real release path than the old fake local stack.
 
 ## Smoke Tests
 

@@ -1,6 +1,6 @@
 # Live Chatbot Handoff
 
-Last updated: 2026-05-06
+Last updated: 2026-05-15
 
 This is the short context file to read first when starting new development on the Live chatbot work.
 
@@ -65,7 +65,7 @@ Unexpected server response: 200
 
 then CloudFront is returning the React `index.html` instead of forwarding the WebSocket upgrade to the backend.
 
-Current deployment fix: CloudFront must route `/api/live/chat/realtime` to the GPU ALB origin before the broader `/api/*` Lambda Function URL behavior. The GPU ALB then path-routes `/api/live/chat/realtime` to `live-gateway:3002`; its default action remains `gpu-worker:3001`.
+Current deployment fix: CloudFront must route `/api/live/chat/realtime` to the GPU ALB origin before the broader `/api/*` Lambda Function URL behavior. The GPU ALB then path-routes `/api/live/chat/realtime` to `live-gateway:3002`; its default action remains `gpu-worker:3001`, while `/models*`, `/ref-audio*`, and `/inference*` path-route to `gpu-inference-worker:3003`.
 
 Do not let SPA fallback rewrite `/api/live/chat/realtime` to `index.html`, and do not route this WebSocket path to the Lambda Function URL.
 
@@ -76,7 +76,7 @@ The REST backend can now move to Lambda Function URL behind CloudFront, but the 
 Current test networking:
 
 - GPU EC2 has a public ALB for now.
-- GPU EC2 is a g6 instance in Seoul and hosts GPT-SoVITS, `gpu-worker`, and `live-gateway`.
+- GPU EC2 is a g6 instance in Seoul and hosts GPT-SoVITS, `gpu-worker`, `gpu-inference-worker`, and `live-gateway`.
 - GPU VPC is `VoiClo-Gpu-Seoul-vpc` (`vpc-0b81d044238fcee4d`) in `ap-northeast-2`.
 - Public subnets are `VoiClo-Gpu-Seoul-subnet-public1-ap-northeast-2a` and `VoiClo-Gpu-Seoul-subnet-public2-ap-northeast-2b`.
 - GPU EC2 is in `VoiClo-Gpu-Seoul-subnet-public1-ap-northeast-2a`.
@@ -86,7 +86,8 @@ Current test networking:
 - The ALB having two public subnets is normal; ALB nodes span availability zones even if the GPU target is currently one EC2 instance in one subnet.
 - ALB default action routes to `gpu-worker:3001`.
 - Required ALB path rule: `/api/live/chat/realtime` routes to `live-gateway:3002`.
-- Lambda is not VPC-attached yet; Lambda calls the public GPU ALB URL through `GpuWorkerUrl`.
+- Required ALB inference rules: `/models*`, `/ref-audio*`, and `/inference*` route to `gpu-inference-worker:3003`.
+- Lambda is not VPC-attached yet; Lambda calls the public GPU ALB URL through `GpuWorkerUrl` for training and `InferenceWorkerUrl` for inference/model traffic.
 - CloudFront uses the same GPU ALB origin for SSE and WSS behaviors.
 - The React SPA is served from an S3 REST origin protected by OAI.
 - CloudFront proxies `/api/*` to the Lambda Function URL origin, so the browser does not call the raw Function URL directly.
@@ -94,12 +95,12 @@ Current test networking:
 - The `/api/*` behavior uses `CachingDisabled` and `AllViewerExceptHostHeader`.
 - For `AWS_IAM` Function URL auth with CloudFront OAC, JSON `POST` routes require `x-amz-content-sha256`. `client/src/services/api.js` adds it automatically for JSON `POST`/`PUT`/`PATCH`/`DELETE`.
 - The GPU ALB is HTTP-only for the current test setup.
-- On the GPU EC2, both services run from the GitHub clone under the `ubuntu` user, with `gpu-worker.service` and `live-gateway.service`.
+- On the GPU EC2, the services run from the GitHub clone under the `ubuntu` user, with `gpu-worker.service`, `gpu-inference-worker.service`, and `live-gateway.service`.
 - The GPU EC2 instance profile already has access to the project S3 bucket/prefix.
 - Current security group is shared by ALB and GPU EC2 (`sg-0806b2491f69f242e`). Split this later into separate ALB and instance security groups.
 - No frontend, Lambda, CloudFront, or ALB config should depend on the GPU EC2 public IP. Use CloudFront for browser traffic and ALB DNS for Lambda-to-GPU while testing.
-- There is no separate security-group inbound rule for SSE. SSE is normal HTTP traffic through CloudFront and the ALB, then the ALB forwards to `gpu-worker:3001`.
-- GPU EC2 SG should allow `3001` and `3002` only from the ALB SG, plus SSH `22` from your own IP if needed.
+- There is no separate security-group inbound rule for SSE. SSE is normal HTTP traffic through CloudFront and the ALB, then the ALB forwards `/train/progress/*` to `gpu-worker:3001` and `/inference/progress/*` to `gpu-inference-worker:3003`.
+- GPU EC2 SG should allow `3001`, `3002`, and `3003` only from the ALB SG, plus SSH `22` from your own IP if needed.
 - GPU EC2 SG should not expose `9880`; GPT-SoVITS `api_v2.py` should stay local on `127.0.0.1:9880`.
 
 CloudFront origins:
@@ -124,14 +125,17 @@ Live Fast CloudFront:
 
 Optional compatibility behavior on either distribution:
 
-- `/inference/progress/*` -> GPU ALB origin -> ALB default `gpu-worker:3001`
+- `/inference/progress/*` -> GPU ALB origin -> ALB path-routes to `gpu-inference-worker:3003`
 
 ALB listener rules:
 
 1. Path `/api/live/chat/realtime` -> live-gateway target group on port `3002`
-2. Default action -> gpu-worker target group on port `3001`
+2. Path `/models*` -> gpu-inference-worker target group on port `3003`
+3. Path `/ref-audio*` -> gpu-inference-worker target group on port `3003`
+4. Path `/inference*` -> gpu-inference-worker target group on port `3003`
+5. Default action -> gpu-worker target group on port `3001`
 
-Do not add ALB rules for `/train/progress/*`, `/inference/progress/*`, `/models`, or `/training-audio/*`; the default `gpu-worker:3001` target group handles those.
+Keep `/train/progress/*`, `/healthz`, and `/training-audio/*` on the default training target group. Route `/models*`, `/ref-audio*`, and `/inference*` to the inference target group so Lambda model calls and inference SSE reach `gpu-inference-worker`.
 
 Frontend Lambda deployment uses same-origin paths for each app:
 
@@ -143,7 +147,7 @@ VITE_APP_MODE=training
 # unless the browser must call a different public origin.
 ```
 
-Lambda deploy params can still use the raw public ALB URL for `GpuWorkerUrl`, because Lambda is server-side and is not affected by browser mixed-content rules.
+Lambda deploy params can still use the raw public ALB URL for both `GpuWorkerUrl` and `InferenceWorkerUrl`, because Lambda is server-side and is not affected by browser mixed-content rules. This only works if the ALB rules above are in place.
 
 ## Live Gateway Env
 
@@ -187,6 +191,8 @@ S3Region=ap-southeast-1
 S3Prefix=echolect/
 GpuWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 GpuWorkerPublicUrl=https://LIVE_FAST_CLOUDFRONT_DOMAIN
+InferenceWorkerUrl=http://voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
+InferenceWorkerPublicUrl=https://LIVE_FAST_CLOUDFRONT_DOMAIN
 ModelSource=s3
 ArtifactSource=s3
 CorsOrigin=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
@@ -207,10 +213,10 @@ Future production direction: move Lambda to Seoul (`ap-northeast-2`) and keep GP
 
 - CloudFront -> public ALB -> private GPU EC2 for browser SSE/WSS.
 - Lambda in Seoul VPC -> internal ALB -> private GPU EC2 for scalable REST-triggered GPU calls.
-- Simpler single-instance alternative: Lambda in Seoul VPC -> GPU EC2 private IP on `3001`.
+- Simpler single-instance alternative: Lambda in Seoul VPC -> GPU EC2 private IPs/ports on `3001` for training and `3003` for inference.
 - Private GPU EC2 -> S3 Gateway VPC Endpoint -> S3.
 
-Prefer Lambda calling the internal ALB for scalability. Direct private IP is acceptable for one fixed GPU EC2 in the same VPC, but `GPU_WORKER_URL` must be updated if the instance is replaced.
+Prefer Lambda calling the internal ALB for scalability. Direct private IP is acceptable for one fixed GPU EC2 in the same VPC, but both `GpuWorkerUrl` and `InferenceWorkerUrl` must be updated if the instance is replaced.
 
 CloudFront error pages:
 

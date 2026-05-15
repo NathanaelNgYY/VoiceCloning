@@ -363,7 +363,7 @@ npm ci --omit=dev
 
 ## 12. Create Environment Files
 
-Create `gpu-worker/.env`:
+Create `gpu-worker/.env` for the training worker:
 
 ```bash
 cat > ~/VoiceCloning/gpu-worker/.env <<'EOF'
@@ -394,6 +394,30 @@ EOF
 chmod 600 ~/VoiceCloning/gpu-worker/.env
 ```
 
+Create `gpu-inference-worker/.env` for the inference worker. If training and inference share one EC2 host, keep training on `3001` and run inference on `3003` so both services can listen at the same time:
+
+```bash
+cat > ~/VoiceCloning/gpu-inference-worker/.env <<'EOF'
+NODE_ENV=production
+WORKER_HOST=0.0.0.0
+WORKER_PORT=3003
+
+GPT_SOVITS_ROOT=/opt/gpt-sovits
+PYTHON_EXEC=/opt/gpt-sovits/venv/bin/python
+INFERENCE_HOST=127.0.0.1
+INFERENCE_PORT=9880
+LOCAL_TEMP_ROOT=/opt/gpt-sovits/worker_temp
+
+S3_BUCKET=interns2026-small-projects-bucket-shared
+S3_REGION=ap-southeast-1
+S3_PREFIX=echolect/
+
+CORS_ORIGIN=https://TRAINING_CLOUDFRONT_DOMAIN,https://LIVE_FAST_CLOUDFRONT_DOMAIN
+EOF
+
+chmod 600 ~/VoiceCloning/gpu-inference-worker/.env
+```
+
 Create `live-gateway/.env`:
 
 ```bash
@@ -415,7 +439,7 @@ Replace the CloudFront domains and OpenAI key before starting the services.
 
 ## 13. Create `systemd` Services
 
-Create `gpu-worker.service`:
+Create `gpu-worker.service` for training:
 
 ```bash
 sudo tee /etc/systemd/system/gpu-worker.service >/dev/null <<'EOF'
@@ -430,6 +454,32 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/VoiceCloning/gpu-worker
 EnvironmentFile=/home/ubuntu/VoiceCloning/gpu-worker/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+Create `gpu-inference-worker.service`:
+
+```bash
+sudo tee /etc/systemd/system/gpu-inference-worker.service >/dev/null <<'EOF'
+[Unit]
+Description=Voice Cloning GPU Inference Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/VoiceCloning/gpu-inference-worker
+EnvironmentFile=/home/ubuntu/VoiceCloning/gpu-inference-worker/.env
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
@@ -472,6 +522,7 @@ Enable and start:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now gpu-worker
+sudo systemctl enable --now gpu-inference-worker
 sudo systemctl enable --now live-gateway
 ```
 
@@ -479,6 +530,7 @@ Check status:
 
 ```bash
 sudo systemctl status gpu-worker --no-pager
+sudo systemctl status gpu-inference-worker --no-pager
 sudo systemctl status live-gateway --no-pager
 ```
 
@@ -486,6 +538,7 @@ View logs:
 
 ```bash
 journalctl -u gpu-worker -f
+journalctl -u gpu-inference-worker -f
 journalctl -u live-gateway -f
 ```
 
@@ -495,27 +548,29 @@ Run from the EC2 instance:
 
 ```bash
 curl http://127.0.0.1:3001/healthz
+curl http://127.0.0.1:3003/healthz
 curl http://127.0.0.1:3002/healthz
 ```
 
-Check that `gpu-worker` can see GPT-SoVITS:
+Check training and inference service ownership:
 
 ```bash
-curl http://127.0.0.1:3001/models
+curl http://127.0.0.1:3001/train/current
+curl http://127.0.0.1:3003/models
 ```
 
-Start the GPT-SoVITS inference API through the worker:
+Start GPT-SoVITS through the inference worker:
 
 ```bash
-curl -X POST http://127.0.0.1:3001/inference/start
-curl http://127.0.0.1:3001/inference/status
+curl -X POST http://127.0.0.1:3003/inference/start
+curl http://127.0.0.1:3003/inference/status
 curl -I http://127.0.0.1:9880/docs
 ```
 
 If `/inference/start` fails, inspect:
 
 ```bash
-journalctl -u gpu-worker -n 200 --no-pager
+journalctl -u gpu-inference-worker -n 200 --no-pager
 /opt/gpt-sovits/venv/bin/python - <<'PY'
 import torch
 print(torch.__version__)
@@ -531,8 +586,15 @@ Replace `ALB_DNS` with the GPU ALB DNS name:
 ALB_DNS=voice-gpu-alb-815777974.ap-northeast-2.elb.amazonaws.com
 
 curl "http://$ALB_DNS/healthz"
-curl "http://$ALB_DNS/models"
+curl "http://$ALB_DNS/train/current"
+curl "http://$ALB_DNS/inference/progress/test-session" -I
 ```
+
+For the split target groups, confirm:
+
+- default ALB action forwards to training on port `3001`
+- `/inference/progress/*` forwards to the inference target group on port `3003`
+- `/api/live/chat/realtime` forwards to port `3002`
 
 For the live WebSocket route, use a WebSocket client from your local machine or a temporary EC2 test tool. The ALB rule should send `/api/live/chat/realtime` to port `3002`.
 
@@ -550,17 +612,22 @@ git pull --ff-only origin deployment-split-change
 cd ~/VoiceCloning/gpu-worker
 npm ci --omit=dev
 
+cd ~/VoiceCloning/gpu-inference-worker
+npm ci --omit=dev
+
 cd ~/VoiceCloning/live-gateway
 npm ci --omit=dev
 
 sudo systemctl restart gpu-worker
+sudo systemctl restart gpu-inference-worker
 sudo systemctl restart live-gateway
 
 sudo systemctl status gpu-worker --no-pager
+sudo systemctl status gpu-inference-worker --no-pager
 sudo systemctl status live-gateway --no-pager
 ```
 
-If only `live-gateway/` changed, restart only `live-gateway`. If only `gpu-worker/` changed, restart only `gpu-worker`.
+If only `live-gateway/` changed, restart only `live-gateway`. If only `gpu-worker/` changed, restart only `gpu-worker`. If only `gpu-inference-worker/` changed, restart only `gpu-inference-worker`.
 
 ## 17. Troubleshooting Checklist
 
