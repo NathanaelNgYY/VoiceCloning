@@ -13,6 +13,7 @@ import {
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
+import { alignWords } from '../services/wordAligner.js';
 
 const router = Router();
 
@@ -169,9 +170,21 @@ router.post('/inference/tts', async (req, res) => {
     const resolvedParams = await resolveRefAudioParams(req.body);
     const audioBuffer = await inferenceServer.synthesize(resolvedParams);
     activityState.mark();
+
+    let wordTimestamps = null;
+    const ttsTempPath = path.join(LOCAL_TEMP_ROOT, `align_tts_${Date.now()}.wav`);
+    try {
+      fs.mkdirSync(path.dirname(ttsTempPath), { recursive: true });
+      fs.writeFileSync(ttsTempPath, audioBuffer);
+      wordTimestamps = await alignWords(ttsTempPath);
+    } finally {
+      try { fs.unlinkSync(ttsTempPath); } catch { /* ignore */ }
+    }
+
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': audioBuffer.length,
+      'X-Word-Timestamps': JSON.stringify(wordTimestamps),
     });
     res.send(audioBuffer);
   } catch (err) {
@@ -197,7 +210,7 @@ router.post('/inference', async (req, res) => {
 
     activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
-    const { audioBuffer, chunks } = await synthesizeLongText(resolvedParams, {
+    const { audioBuffer, chunks, wordTimestamps } = await synthesizeLongText(resolvedParams, {
       maxChunkLength: 280,
       maxSentencesPerChunk: 3,
       chunkJoinPauseMs: 120,
@@ -210,6 +223,7 @@ router.post('/inference', async (req, res) => {
       'Content-Length': audioBuffer.length,
       'X-Chunk-Count': String(chunks.length),
       'X-Chunk-Retries': String(chunks.reduce((sum, chunk) => sum + Math.max(0, chunk.attempts - 1), 0)),
+      'X-Word-Timestamps': JSON.stringify(wordTimestamps ?? null),
     });
     res.send(audioBuffer);
   } catch (err) {
