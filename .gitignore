@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.superpowers/
 client/dist-training/
 client/dist-live-fast/
 .dist/
