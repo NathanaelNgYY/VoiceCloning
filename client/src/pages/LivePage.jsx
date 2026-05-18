@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
 import { chooseBestReferenceSet } from '@/lib/referenceSelection';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
+import { findActiveWordIndex } from '@/lib/wordTimestamps';
 import {
   DEFAULT_LIVE_FAST_SETTINGS,
   buildLiveFastReferencePreviewItems,
@@ -69,11 +70,36 @@ function normalizeReferenceLanguage(lang) {
   return ['en', 'zh', 'ja', 'ko', 'auto'].includes(value) ? value : 'en';
 }
 
-function ChatBubble({ message, selected, onPlay }) {
+function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
   const isUser = message.role === 'user';
   const readyParts = (message.audioParts || []).filter((part) => part.audioUrl);
   const hasVoice = !isUser && (Boolean(message.audioUrl) || readyParts.length > 0);
   const isBusy = ['thinking', 'generating_voice', 'transcribing', 'listening'].includes(message.status);
+  const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  const wordTimestamps = !isUser ? (selectedPart?.wordTimestamps || message.wordTimestamps || null) : null;
+
+  useEffect(() => {
+    const audio = audioRef?.current;
+    if (!audio || !selected || !Array.isArray(wordTimestamps) || wordTimestamps.length === 0) {
+      setActiveWordIndex(-1);
+      return undefined;
+    }
+
+    const handleTimeUpdate = () => {
+      setActiveWordIndex(findActiveWordIndex(wordTimestamps, audio.currentTime));
+    };
+    const handleReset = () => setActiveWordIndex(-1);
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('ended', handleReset);
+    audio.addEventListener('pause', handleReset);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('ended', handleReset);
+      audio.removeEventListener('pause', handleReset);
+    };
+  }, [audioRef, selected, wordTimestamps]);
 
   return (
     <div className={cn('flex gap-2.5', isUser ? 'justify-end' : 'justify-start')}>
@@ -116,6 +142,19 @@ function ChatBubble({ message, selected, onPlay }) {
               )}>
                 {part.index}: {part.status}
               </span>
+            ))}
+          </div>
+        )}
+
+        {!isUser && Array.isArray(wordTimestamps) && wordTimestamps.length > 0 && (
+          <div className="mt-2 rounded-xl bg-slate-100/80 px-3 py-2 text-xs leading-6">
+            {wordTimestamps.map((item, index) => (
+              <React.Fragment key={`${item.word}-${item.start}-${index}`}>
+                <span className={index === activeWordIndex ? 'rounded-sm bg-yellow-200 px-0.5 text-slate-950' : undefined}>
+                  {item.word}
+                </span>
+                {index < wordTimestamps.length - 1 && ' '}
+              </React.Fragment>
             ))}
           </div>
         )}
@@ -572,7 +611,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
                   key={message.id}
                   message={message}
                   selected={liveSpeech.selectedReply?.id === message.id && liveSpeech.phase === 'speaking'}
+                  selectedPart={liveSpeech.selectedReply?.id === message.id ? liveSpeech.selectedAudioPart : null}
                   onPlay={liveSpeech.playReply}
+                  audioRef={audioRef}
                 />
               ))}
               <div ref={messagesEndRef} />
