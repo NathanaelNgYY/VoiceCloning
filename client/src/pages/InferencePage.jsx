@@ -1825,6 +1825,13 @@ export default function InferencePage({ directMode = false }) {
             wordTimestamps={directMode ? directWordTimestamps : inference.wordTimestamps}
             transcript={directMode ? text : inference.transcript}
           />
+          {directMode && audioBlob && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {Array.isArray(directWordTimestamps) && directWordTimestamps.length > 0
+                ? `Timestamps: ✓ ${directWordTimestamps.length} words received`
+                : 'Timestamps: not received — check EC2 logs (alignment may have failed)'}
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
