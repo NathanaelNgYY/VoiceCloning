@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getInferenceStatus,
   getModels,
@@ -147,15 +147,19 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
         )}
 
         {!isUser && Array.isArray(wordTimestamps) && wordTimestamps.length > 0 && (
-          <div className="mt-2 rounded-xl bg-slate-100/80 px-3 py-2 text-xs leading-6">
-            {wordTimestamps.map((item, index) => (
-              <React.Fragment key={`${item.word}-${item.start}-${index}`}>
-                <span className={index === activeWordIndex ? 'rounded-sm bg-yellow-200 px-0.5 text-slate-950' : undefined}>
-                  {item.word}
-                </span>
-                {index < wordTimestamps.length - 1 && ' '}
-              </React.Fragment>
-            ))}
+          <div className="mt-2 rounded-xl bg-slate-100/80 px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-end gap-x-1 gap-y-2">
+              {wordTimestamps.map((item, index) => (
+                <div key={`${item.word}-${item.start}-${index}`} className="inline-flex flex-col items-center gap-0.5">
+                  <span className={cn('font-mono text-[9px]', index === activeWordIndex ? 'text-amber-600' : 'text-slate-400')}>
+                    {(typeof item.start === 'number' && isFinite(item.start) ? item.start : 0).toFixed(2)}
+                  </span>
+                  <span className={index === activeWordIndex ? 'rounded-sm bg-yellow-200 px-0.5 text-slate-950' : undefined}>
+                    {item.word}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
