@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -86,7 +86,7 @@ export default function WordTimestampPlayer({
                       index === activeIndex ? 'text-amber-600' : 'text-slate-400'
                     )}
                   >
-                    {item.start.toFixed(2)}
+                    {(typeof item.start === 'number' && isFinite(item.start) ? item.start : 0).toFixed(2)}
                   </span>
                   <span
                     className={cn(
