@@ -11,7 +11,7 @@ import { buildCorsOriginOption } from './services/corsOrigin.js';
 const app = express();
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
-app.use(cors({ origin: buildCorsOriginOption(CORS_ORIGIN) }));
+app.use(cors({ origin: buildCorsOriginOption(CORS_ORIGIN), exposedHeaders: ['X-Word-Timestamps'] }));
 app.use(express.json());
 
 app.get('/healthz', (_req, res) => {

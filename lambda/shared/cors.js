@@ -25,6 +25,7 @@ export function buildCorsHeaders(eventOrOrigin) {
     'Access-Control-Allow-Origin': resolveCorsOrigin(getRequestOrigin(eventOrOrigin)),
     'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-amz-content-sha256',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Expose-Headers': 'X-Word-Timestamps',
     Vary: 'Origin',
   };
 }
@@ -33,6 +34,7 @@ export const corsHeaders = {
   'Access-Control-Allow-Origin': CORS_ORIGIN,
   'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-amz-content-sha256',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  'Access-Control-Expose-Headers': 'X-Word-Timestamps',
   Vary: 'Origin',
 };
 

@@ -178,6 +178,25 @@ export function transcribeAudio(filePath, language = 'auto') {
 
 // ── Inference ──
 
+function getResponseHeader(headers, name) {
+  const lowerName = name.toLowerCase();
+  if (typeof headers?.get === 'function') {
+    return headers.get(name) || headers.get(lowerName);
+  }
+  return headers?.[lowerName] || headers?.[name] || null;
+}
+
+function parseWordTimestampsHeader(headers) {
+  const value = getResponseHeader(headers, 'x-word-timestamps');
+  if (!value) return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 export async function synthesize(params) {
   const res = await api.post('/inference', params, {
     responseType: 'blob',
@@ -195,7 +214,10 @@ export async function synthesize(params) {
     throw new Error(message || `Request failed with status ${res.status}`);
   }
 
-  return new Blob([res.data], { type: 'audio/wav' });
+  return {
+    blob: new Blob([res.data], { type: 'audio/wav' }),
+    wordTimestamps: parseWordTimestampsHeader(res.headers),
+  };
 }
 
 export async function synthesizeSentence(params) {
@@ -215,7 +237,10 @@ export async function synthesizeSentence(params) {
     throw new Error(message || `Request failed with status ${res.status}`);
   }
 
-  return new Blob([res.data], { type: 'audio/wav' });
+  return {
+    blob: new Blob([res.data], { type: 'audio/wav' }),
+    wordTimestamps: parseWordTimestampsHeader(res.headers),
+  };
 }
 
 export function startGeneration(params) {
