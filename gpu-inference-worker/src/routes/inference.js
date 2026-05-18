@@ -172,7 +172,7 @@ router.post('/inference/tts', async (req, res) => {
     activityState.mark();
 
     let wordTimestamps = null;
-    const ttsTempPath = path.join(LOCAL_TEMP_ROOT, `align_tts_${Date.now()}.wav`);
+    const ttsTempPath = path.join(LOCAL_TEMP_ROOT, `align_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
     try {
       fs.mkdirSync(path.dirname(ttsTempPath), { recursive: true });
       fs.writeFileSync(ttsTempPath, audioBuffer);
@@ -184,7 +184,7 @@ router.post('/inference/tts', async (req, res) => {
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': audioBuffer.length,
-      'X-Word-Timestamps': JSON.stringify(wordTimestamps),
+      'X-Word-Timestamps': JSON.stringify(wordTimestamps ?? null),
     });
     res.send(audioBuffer);
   } catch (err) {
