@@ -5,6 +5,7 @@ import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
+import WordTimestampPlayer from '../components/WordTimestampPlayer.jsx';
 import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -1778,7 +1779,11 @@ export default function InferencePage() {
             </div>
           )}
 
-          <AudioPlayer audioBlob={audioBlob} />
+          <WordTimestampPlayer
+            audioBlob={audioBlob}
+            wordTimestamps={inference.wordTimestamps}
+            transcript={inference.transcript}
+          />
         </CardContent>
       </Card>
     </div>

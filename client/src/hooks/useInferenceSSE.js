@@ -7,6 +7,8 @@ export function useInferenceSSE() {
   const [completedChunks, setCompletedChunks] = useState(0);
   const [currentChunkText, setCurrentChunkText] = useState('');
   const [error, setError] = useState(null);
+  const [wordTimestamps, setWordTimestamps] = useState(null);
+  const [transcript, setTranscript] = useState('');
   const esRef = useRef(null);
 
   const hydrate = useCallback((initialState = {}) => {
@@ -23,6 +25,8 @@ export function useInferenceSSE() {
     setCompletedChunks(initialCompletedChunks);
     setCurrentChunkText(initialCurrentChunkText);
     setError(initialError);
+    setWordTimestamps(null);
+    setTranscript('');
   }, []);
 
   const connect = useCallback((sessionId, initialState = {}) => {
@@ -42,7 +46,8 @@ export function useInferenceSSE() {
     esRef.current = connectInferenceSSE(sessionId, {
       onStart(data) {
         setStatus('generating');
-        setTotalChunks(data.totalChunks);
+        setTotalChunks(data.totalChunks || 0);
+        setTranscript((data.chunks || []).map((chunk) => chunk.text).join(' '));
       },
       onChunkStart(data) {
         setStatus('generating');
@@ -51,9 +56,10 @@ export function useInferenceSSE() {
       onChunkComplete(data) {
         setCompletedChunks(data.index + 1);
       },
-      onComplete() {
+      onComplete(data) {
         setStatus('complete');
         setCurrentChunkText('');
+        setWordTimestamps(data?.wordTimestamps ?? null);
       },
       onError(data) {
         const isCancelled = data?.message?.includes('cancelled');
@@ -62,7 +68,7 @@ export function useInferenceSSE() {
         setCurrentChunkText('');
       },
     });
-  }, []);
+  }, [hydrate]);
 
   const disconnect = useCallback(() => {
     if (esRef.current) {
@@ -80,5 +86,17 @@ export function useInferenceSSE() {
     return () => disconnect();
   }, [disconnect]);
 
-  return { status, totalChunks, completedChunks, currentChunkText, error, connect, disconnect, hydrate, reset };
+  return {
+    status,
+    totalChunks,
+    completedChunks,
+    currentChunkText,
+    error,
+    wordTimestamps,
+    transcript,
+    connect,
+    disconnect,
+    hydrate,
+    reset,
+  };
 }
