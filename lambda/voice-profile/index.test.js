@@ -1,0 +1,193 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { createHandler } from './index.js';
+
+function createEvent({ method = 'GET', path = '/api/voice-profile/active', body, query } = {}) {
+  return {
+    requestContext: { http: { method } },
+    rawPath: path,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    queryStringParameters: query,
+  };
+}
+
+test('voice profile activate saves the full profile and marks it active', async () => {
+  const uploads = [];
+  const handler = createHandler({
+    readObject: async () => {
+      throw new Error('not used');
+    },
+    writeObject: async (key, payload, contentType) => {
+      uploads.push({
+        key,
+        contentType,
+        body: JSON.parse(payload.toString('utf-8')),
+      });
+    },
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'POST',
+    path: '/api/voice-profile/activate',
+    body: {
+      voiceProfileId: 'michael-tan-v1',
+      displayName: 'Michael Tan',
+      gptKey: 'models/user-models/gpt/michael-tan.ckpt',
+      sovitsKey: 'models/user-models/sovits/michael-tan.pth',
+      ref_audio_path: 'training/datasets/michael-tan/reference.wav',
+      prompt_text: 'Reference transcript',
+      prompt_lang: 'en',
+      aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
+      defaults: {
+        top_k: 5,
+        top_p: 0.85,
+        temperature: 0.7,
+        repetition_penalty: 1.35,
+        speed_factor: 1.0,
+      },
+    },
+  }));
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    voiceProfileId: 'michael-tan-v1',
+    displayName: 'Michael Tan',
+    activatedAt: '2026-05-18T10:00:00.000Z',
+  });
+  assert.deepEqual(uploads, [
+    {
+      key: 'voice-profiles/michael-tan-v1.json',
+      contentType: 'application/json',
+      body: {
+        voiceProfileId: 'michael-tan-v1',
+        displayName: 'Michael Tan',
+        gptKey: 'models/user-models/gpt/michael-tan.ckpt',
+        sovitsKey: 'models/user-models/sovits/michael-tan.pth',
+        ref_audio_path: 'training/datasets/michael-tan/reference.wav',
+        prompt_text: 'Reference transcript',
+        prompt_lang: 'en',
+        aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
+        defaults: {
+          top_k: 5,
+          top_p: 0.85,
+          temperature: 0.7,
+          repetition_penalty: 1.35,
+          speed_factor: 1.0,
+        },
+        updatedAt: '2026-05-18T10:00:00.000Z',
+      },
+    },
+    {
+      key: 'voice-profiles/active.json',
+      contentType: 'application/json',
+      body: {
+        voiceProfileId: 'michael-tan-v1',
+        displayName: 'Michael Tan',
+        gptKey: 'models/user-models/gpt/michael-tan.ckpt',
+        sovitsKey: 'models/user-models/sovits/michael-tan.pth',
+        ref_audio_path: 'training/datasets/michael-tan/reference.wav',
+        prompt_text: 'Reference transcript',
+        prompt_lang: 'en',
+        aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
+        defaults: {
+          top_k: 5,
+          top_p: 0.85,
+          temperature: 0.7,
+          repetition_penalty: 1.35,
+          speed_factor: 1.0,
+        },
+        updatedAt: '2026-05-18T10:00:00.000Z',
+        activatedAt: '2026-05-18T10:00:00.000Z',
+      },
+    },
+  ]);
+});
+
+test('voice profile activate rejects incomplete profile payloads', async () => {
+  const handler = createHandler({
+    readObject: async () => {
+      throw new Error('not used');
+    },
+    writeObject: async () => {
+      throw new Error('should not write');
+    },
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'POST',
+    path: '/api/voice-profile/activate',
+    body: {
+      voiceProfileId: 'michael-tan-v1',
+      displayName: 'Michael Tan',
+      gptKey: 'models/user-models/gpt/michael-tan.ckpt',
+      sovitsKey: 'models/user-models/sovits/michael-tan.pth',
+    },
+  }));
+
+  assert.equal(response.statusCode, 400);
+  assert.match(JSON.parse(response.body).error, /ref_audio_path is required/u);
+});
+
+test('voice profile active returns only summary data', async () => {
+  const handler = createHandler({
+    readObject: async (key) => {
+      assert.equal(key, 'voice-profiles/active.json');
+      return Buffer.from(JSON.stringify({
+        voiceProfileId: 'dr-lim-v1',
+        displayName: 'Dr Lim',
+        gptKey: 'models/user-models/gpt/dr-lim.ckpt',
+        sovitsKey: 'models/user-models/sovits/dr-lim.pth',
+        ref_audio_path: 'training/datasets/dr-lim/reference.wav',
+        prompt_text: 'Reference transcript',
+        prompt_lang: 'en',
+        aux_ref_audio_paths: [],
+        defaults: {
+          top_k: 5,
+          top_p: 0.85,
+          temperature: 0.7,
+          repetition_penalty: 1.35,
+          speed_factor: 1.0,
+        },
+        updatedAt: '2026-05-18T10:00:00.000Z',
+        activatedAt: '2026-05-18T10:00:00.000Z',
+      }), 'utf-8');
+    },
+    writeObject: async () => {
+      throw new Error('not used');
+    },
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'GET',
+    path: '/api/voice-profile/active',
+  }));
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    voiceProfileId: 'dr-lim-v1',
+    displayName: 'Dr Lim',
+    activatedAt: '2026-05-18T10:00:00.000Z',
+  });
+});
+
+test('voice profile active returns 404 when no active profile has been saved', async () => {
+  const handler = createHandler({
+    readObject: async () => null,
+    writeObject: async () => {
+      throw new Error('not used');
+    },
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'GET',
+    path: '/api/voice-profile/active',
+  }));
+
+  assert.equal(response.statusCode, 404);
+  assert.match(JSON.parse(response.body).error, /No active voice profile/u);
+});

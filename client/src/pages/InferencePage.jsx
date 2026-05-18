@@ -5,7 +5,7 @@ import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Activity, ChevronRight, RefreshCw, Upload, Play, X, Check, Pencil, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getStorageMode } from '@/lib/runtimeConfig';
 import {
   INFERENCE_REFERENCE_PRESETS_KEY,
   buildReferencePreset,
@@ -28,6 +29,7 @@ import {
 } from '@/lib/referencePresets';
 import { chooseBestReferenceSet } from '@/lib/referenceSelection';
 import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
+import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 
 const INFERENCE_DRAFT_KEY = 'voice-cloning-inference-draft';
 const NOTICE_TIMEOUT_MS = 4200;
@@ -58,6 +60,7 @@ export default function InferencePage() {
   const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
   const [serverReady, setServerReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [savingVoiceProfile, setSavingVoiceProfile] = useState(false);
   const [modelError, setModelError] = useState(null);
 
   const [refAudioPath, setRefAudioPath] = useState('');
@@ -1037,6 +1040,57 @@ export default function InferencePage() {
     }
   }
 
+  async function handleSaveVoiceProfile() {
+    if (!selectedProfile) {
+      return alert('Choose a voice profile first');
+    }
+    if (!selectionLoaded) {
+      return alert('Wait for the selected voice profile to finish loading first');
+    }
+    if (!refLocked) {
+      return alert('Confirm your reference audio selection first');
+    }
+
+    setSavingVoiceProfile(true);
+
+    try {
+      const storageMode = await getStorageMode();
+      const payload = buildVoiceProfilePayload({
+        displayName: selectedProfile.displayName,
+        selectedGPT,
+        selectedSoVITS,
+        refAudioPath,
+        promptText,
+        promptLang,
+        auxRefAudioPaths: selectedAuxReferences.map((reference) => reference.path),
+        defaults: {
+          top_k: topK,
+          top_p: topP,
+          temperature,
+          repetition_penalty: repPenalty,
+          speed_factor: speed,
+        },
+        storageMode,
+      });
+
+      const response = await activateVoiceProfile(payload);
+      const summary = response.data || {};
+      showNotice({
+        title: 'Voice profile saved',
+        message: `${summary.displayName || selectedProfile.displayName} is now saved as ${summary.voiceProfileId || payload.voiceProfileId}.`,
+        tone: 'success',
+      });
+    } catch (err) {
+      showNotice({
+        title: 'Could not save voice profile',
+        message: err.response?.data?.error || err.message || 'Saving failed.',
+        tone: 'error',
+      });
+    } finally {
+      setSavingVoiceProfile(false);
+    }
+  }
+
   useEffect(() => {
     if (inference.status === 'complete' && sessionIdRef.current) {
       getGenerationResult(sessionIdRef.current)
@@ -1518,7 +1572,7 @@ export default function InferencePage() {
               </div>
 
               {/* Confirm button */}
-              <div className="mt-6">
+              <div className="mt-6 flex flex-wrap gap-3">
                 <Button
                   className="rounded-2xl px-6"
                   onClick={() => {
@@ -1526,10 +1580,19 @@ export default function InferencePage() {
                     setRefLocked(true);
                     saveCurrentReferencePreset();
                   }}
-                  disabled={!refAudioPath}
+                  disabled={!refAudioPath || savingVoiceProfile}
                 >
                   <Check size={14} />
                   Confirm Selection
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-2xl border-slate-200 bg-white px-6"
+                  onClick={handleSaveVoiceProfile}
+                  disabled={!refLocked || !selectionLoaded || savingVoiceProfile}
+                >
+                  {savingVoiceProfile ? <Spinner size={14} /> : <Check size={14} />}
+                  {savingVoiceProfile ? 'Saving...' : 'Save Voice Profile'}
                 </Button>
               </div>
             </div>

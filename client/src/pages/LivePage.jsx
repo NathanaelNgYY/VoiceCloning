@@ -4,6 +4,7 @@ import {
   getModels,
   getTrainingAudioUrl,
   getTrainingAudioFiles,
+  activateVoiceProfile,
   selectModels,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
@@ -29,6 +30,8 @@ import {
   buildLiveFastRefParams,
 } from '@/lib/liveFastSetup';
 import { shouldLoadSelectedProfile } from '@/lib/modelLoading';
+import { getStorageMode } from '@/lib/runtimeConfig';
+import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
   Bot,
   Check,
@@ -167,6 +170,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
   const [serverReady, setServerReady] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
   const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
@@ -270,6 +274,44 @@ export default function LivePage({ replyMode = 'phrases' }) {
       setModelError(err.response?.data?.error || err.message || 'Could not load this voice model.');
     } finally {
       setLoadingModel(false);
+    }
+  }
+
+  async function saveSelectedVoiceProfile() {
+    if (!selectedProfile || !selectedGPT || !selectedSoVITS || !liveRefParams) return;
+
+    setSavingProfile(true);
+    setModelError('');
+
+    try {
+      const storageMode = await getStorageMode();
+      const payload = buildVoiceProfilePayload({
+        displayName: selectedProfile.displayName,
+        selectedGPT,
+        selectedSoVITS,
+        refAudioPath,
+        promptText,
+        promptLang,
+        auxRefAudioPaths: auxRefAudios.map((item) => item.path),
+        defaults: {
+          top_k: topK,
+          top_p: topP,
+          temperature,
+          repetition_penalty: repPenalty,
+          speed_factor: speed,
+        },
+        storageMode,
+      });
+
+      const response = await activateVoiceProfile(payload);
+      const summary = response.data || {};
+      setReferenceMessage(
+        `Saved voice profile ${summary.displayName || selectedProfile.displayName} (${summary.voiceProfileId || payload.voiceProfileId}).`,
+      );
+    } catch (err) {
+      setModelError(err.response?.data?.error || err.message || 'Could not save this voice profile.');
+    } finally {
+      setSavingProfile(false);
     }
   }
 
@@ -518,10 +560,21 @@ export default function LivePage({ replyMode = 'phrases' }) {
               }
               {selectedModelLoaded ? 'Ready' : loadingModel ? 'Loading...' : 'No model'}
             </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={saveSelectedVoiceProfile}
+              disabled={!isReady || isConversationActive || loadingModel || savingProfile}
+              className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
+            >
+              {savingProfile ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              {savingProfile ? 'Saving...' : 'Save voice'}
+            </Button>
             <button
               type="button"
               onClick={() => { autoLoadAttemptKeyRef.current = ''; fetchModels(); checkStatus(); }}
-              disabled={isConversationActive || loadingModel}
+              disabled={isConversationActive || loadingModel || savingProfile}
               title="Refresh models"
               className="text-slate-400 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
             >

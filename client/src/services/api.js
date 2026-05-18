@@ -162,6 +162,14 @@ export function selectModels(gptPath, sovitsPath) {
   return api.post('/models/select', { gptPath, sovitsPath });
 }
 
+export function activateVoiceProfile(profile) {
+  return api.post('/voice-profile/activate', profile);
+}
+
+export function getActiveVoiceProfile() {
+  return api.get('/voice-profile/active');
+}
+
 // ── Transcription ──
 
 export function transcribeAudio(filePath, language = 'auto') {
