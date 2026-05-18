@@ -72,21 +72,33 @@ export default function WordTimestampPlayer({
       </div>
 
       {(hasTimestamps || hasTranscript) && (
-        <div className="mb-4 rounded-2xl border border-white/80 bg-white/75 px-4 py-3 text-sm leading-7 text-slate-700 shadow-sm">
+        <div className="mb-4 rounded-2xl border border-white/80 bg-white/75 px-4 py-3 text-sm text-slate-700 shadow-sm">
           {hasTimestamps ? (
-            wordTimestamps.map((item, index) => (
-              <React.Fragment key={`${item.word}-${item.start}-${index}`}>
-                <span
-                  className={cn(
-                    'rounded px-0.5 transition-colors',
-                    index === activeIndex && 'bg-yellow-200 text-slate-950'
-                  )}
+            <div className="flex flex-wrap items-end gap-x-1 gap-y-2">
+              {wordTimestamps.map((item, index) => (
+                <div
+                  key={`${item.word}-${item.start}-${index}`}
+                  className="inline-flex flex-col items-center gap-0.5"
                 >
-                  {item.word}
-                </span>
-                {index < wordTimestamps.length - 1 && ' '}
-              </React.Fragment>
-            ))
+                  <span
+                    className={cn(
+                      'font-mono text-[9px]',
+                      index === activeIndex ? 'text-amber-600' : 'text-slate-400'
+                    )}
+                  >
+                    {item.start.toFixed(2)}
+                  </span>
+                  <span
+                    className={cn(
+                      'rounded px-0.5 transition-colors',
+                      index === activeIndex && 'bg-yellow-200 text-slate-950'
+                    )}
+                  >
+                    {item.word}
+                  </span>
+                </div>
+              ))}
+            </div>
           ) : (
             <span className="text-muted-foreground">{transcript}</span>
           )}
