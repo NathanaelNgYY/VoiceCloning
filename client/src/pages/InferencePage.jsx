@@ -6,7 +6,7 @@ import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
 import WordTimestampPlayer from '../components/WordTimestampPlayer.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -48,7 +48,7 @@ function normalizeReferenceLanguage(lang) {
   return langMap[lang] || 'en';
 }
 
-export default function InferencePage() {
+export default function InferencePage({ directMode = false }) {
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [selectedPersonKey, setSelectedPersonKey] = useState('');
@@ -92,6 +92,8 @@ export default function InferencePage() {
 
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
+  const [directWordTimestamps, setDirectWordTimestamps] = useState(null);
+  const [directSynthesizing, setDirectSynthesizing] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [referencePresets, setReferencePresets] = useState([]);
   const [activeReferencePresetId, setActiveReferencePresetId] = useState('');
@@ -1007,6 +1009,34 @@ export default function InferencePage() {
 
     setInferError(null);
 
+    if (directMode) {
+      setDirectSynthesizing(true);
+      setDirectWordTimestamps(null);
+      setAudioBlob(null);
+      try {
+        const { blob, wordTimestamps } = await synthesize({
+          text,
+          text_lang: textLang,
+          ref_audio_path: refAudioPath,
+          prompt_text: promptText,
+          prompt_lang: promptLang,
+          aux_ref_audio_paths: selectedAuxReferences.map((r) => r.path),
+          top_k: topK,
+          top_p: topP,
+          temperature,
+          repetition_penalty: repPenalty,
+          speed_factor: speed,
+        });
+        setAudioBlob(blob);
+        setDirectWordTimestamps(wordTimestamps);
+      } catch (err) {
+        setInferError(err.response?.data?.error || err.message);
+      } finally {
+        setDirectSynthesizing(false);
+      }
+      return;
+    }
+
     try {
       const res = await startGeneration({
         text,
@@ -1061,7 +1091,9 @@ export default function InferencePage() {
   }, [inference.status, inference.error]);
 
   const auxCount = selectedAuxReferences.length;
-  const isGenerationActive = inference.status === 'waiting' || inference.status === 'generating';
+  const isGenerationActive = directMode
+    ? directSynthesizing
+    : inference.status === 'waiting' || inference.status === 'generating';
 
   return (
     <div className="animate-fade-in space-y-8">
@@ -1722,7 +1754,7 @@ export default function InferencePage() {
                 size="lg"
                 className="rounded-2xl shadow-[0_20px_50px_-28px_rgba(14,165,233,0.75)]"
                 disabled={!selectionLoaded || !refLocked || !refAudioPath || !text.trim()}
-                onClick={() => { inference.reset(); handleGenerate(); }}
+                onClick={() => { if (!directMode) inference.reset(); handleGenerate(); }}
               >
                 <Play size={14} />
                 Generate Speech
@@ -1737,52 +1769,61 @@ export default function InferencePage() {
           ) : (
             /* Progress UI */
             <div className={cn(audioBlob && "mb-6")}>
-              {/* Progress bar */}
-              <div className="mb-4 flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-4">
-                <Progress
-                  value={inference.totalChunks > 0 ? (inference.completedChunks / inference.totalChunks) * 100 : 0}
-                  className="h-2 flex-1"
-                />
-                <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">
-                  {inference.completedChunks} / {inference.totalChunks}
-                </span>
-              </div>
-
-              {inference.status === 'waiting' && !inference.currentChunkText && (
-                <div className="mb-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3">
-                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Preparing session
-                  </span>
-                  <p className="text-sm italic text-muted-foreground">
-                    Reconnecting the stream and preparing chunk generation...
-                  </p>
+              {directMode ? (
+                <div className="flex items-center gap-3 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-4">
+                  <Spinner size={16} />
+                  <span className="text-sm text-muted-foreground">Synthesizing… this may take a moment</span>
                 </div>
-              )}
+              ) : (
+                <>
+                  {/* Progress bar */}
+                  <div className="mb-4 flex items-center gap-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-4">
+                    <Progress
+                      value={inference.totalChunks > 0 ? (inference.completedChunks / inference.totalChunks) * 100 : 0}
+                      className="h-2 flex-1"
+                    />
+                    <span className="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">
+                      {inference.completedChunks} / {inference.totalChunks}
+                    </span>
+                  </div>
 
-              {/* Current chunk text */}
-              {inference.currentChunkText && (
-                <div className="mb-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3">
-                  <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Synthesizing chunk {inference.completedChunks + 1}
-                  </span>
-                  <p className="text-sm italic text-muted-foreground">
-                    {inference.currentChunkText}
-                  </p>
-                </div>
-              )}
+                  {inference.status === 'waiting' && !inference.currentChunkText && (
+                    <div className="mb-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3">
+                      <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        Preparing session
+                      </span>
+                      <p className="text-sm italic text-muted-foreground">
+                        Reconnecting the stream and preparing chunk generation...
+                      </p>
+                    </div>
+                  )}
 
-              {/* Cancel button */}
-              <Button variant="outline" className="rounded-2xl border-slate-200" onClick={handleCancel}>
-                <Spinner size={14} />
-                Cancel Generation
-              </Button>
+                  {/* Current chunk text */}
+                  {inference.currentChunkText && (
+                    <div className="mb-4 rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-3">
+                      <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        Synthesizing chunk {inference.completedChunks + 1}
+                      </span>
+                      <p className="text-sm italic text-muted-foreground">
+                        {inference.currentChunkText}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Cancel button */}
+                  <Button variant="outline" className="rounded-2xl border-slate-200" onClick={handleCancel}>
+                    <Spinner size={14} />
+                    Cancel Generation
+                  </Button>
+                </>
+              )}
             </div>
           )}
 
           <WordTimestampPlayer
             audioBlob={audioBlob}
-            wordTimestamps={inference.wordTimestamps}
-            transcript={inference.transcript}
+            wordTimestamps={directMode ? directWordTimestamps : inference.wordTimestamps}
+            transcript={directMode ? text : inference.transcript}
           />
         </CardContent>
       </Card>

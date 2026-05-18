@@ -20,7 +20,7 @@ import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { getInstanceStatus, startInstance } from './services/api.js';
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
-import TtsTestPage from './pages/TtsTestPage.jsx';
+import InferencePage from './pages/InferencePage.jsx';
 
 function GpuInstanceControl() {
   const [status, setStatus] = useState(null);
@@ -220,7 +220,7 @@ export default function App() {
                   : <Navigate to={appConfig.defaultPath} replace />
               }
             />
-            <Route path="/tts-test" element={<TtsTestPage />} />
+            <Route path="/tts-test" element={<InferencePage directMode />} />
             <Route path="/inference" element={<Navigate to={appConfig.defaultPath} replace />} />
             <Route path="/live" element={<Navigate to={appConfig.defaultPath} replace />} />
             <Route path="*" element={<Navigate to={appConfig.defaultPath} replace />} />
