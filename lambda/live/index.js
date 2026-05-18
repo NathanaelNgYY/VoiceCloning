@@ -21,7 +21,7 @@ export const handler = async (event) => {
   }
 
   try {
-    const { buffer, contentType } = await gpuPostBinary('/inference/tts', {
+    const { buffer, contentType, wordTimestamps } = await gpuPostBinary('/inference/tts', {
       ...body,
       text: `${body.text.trim()} `,
       text_split_method: 'cut0',
@@ -38,6 +38,7 @@ export const handler = async (event) => {
       headers: {
         'Content-Type': contentType || 'audio/wav',
         'Content-Length': String(buffer.length),
+        'X-Word-Timestamps': wordTimestamps || 'null',
         ...corsHeaders,
       },
       body: buffer.toString('base64'),
