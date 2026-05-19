@@ -335,6 +335,8 @@ export default function LivePage({ replyMode = 'phrases' }) {
         refAudioPath,
         promptText,
         promptLang,
+        textLang: liveLanguage,
+        preferredRoute: 'sentence',
         auxRefAudioPaths: auxRefAudios.map((item) => item.path),
         defaults: {
           top_k: topK,

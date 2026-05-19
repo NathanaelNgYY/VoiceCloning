@@ -17,6 +17,8 @@ test('buildVoiceProfilePayload uses S3 model keys and preserves reference settin
       refAudioPath: 'training/datasets/michael-tan/reference.wav',
       promptText: 'Reference transcript',
       promptLang: 'en',
+      textLang: 'en',
+      preferredRoute: 'sentence',
       auxRefAudioPaths: ['training/datasets/michael-tan/aux1.wav'],
       defaults: {
         top_k: 5,
@@ -35,6 +37,8 @@ test('buildVoiceProfilePayload uses S3 model keys and preserves reference settin
       ref_audio_path: 'training/datasets/michael-tan/reference.wav',
       prompt_text: 'Reference transcript',
       prompt_lang: 'en',
+      text_lang: 'en',
+      preferredRoute: 'sentence',
       aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
       defaults: {
         top_k: 5,
@@ -57,6 +61,8 @@ test('buildVoiceProfilePayload uses local paths outside S3 mode', () => {
       refAudioPath: 'C:/refs/reference.wav',
       promptText: '',
       promptLang: 'en',
+      textLang: 'zh',
+      preferredRoute: 'full',
       auxRefAudioPaths: [],
       defaults: {
         top_k: 8,
@@ -75,6 +81,8 @@ test('buildVoiceProfilePayload uses local paths outside S3 mode', () => {
       ref_audio_path: 'C:/refs/reference.wav',
       prompt_text: '',
       prompt_lang: 'en',
+      text_lang: 'zh',
+      preferredRoute: 'full',
       aux_ref_audio_paths: [],
       defaults: {
         top_k: 8,

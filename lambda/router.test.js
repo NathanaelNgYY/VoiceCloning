@@ -9,7 +9,7 @@ test('router resolves voice profile activation and active-summary routes', () =>
     {
       name: 'VoiceProfileFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/voice-profile\/(?:activate|active)\/?$/u,
+      pattern: /^\/api\/voice-profile\/(?:activate|active|internal\/[^/]+)\/?$/u,
       modulePath: './voice-profile/index.js',
       lambdaPath: '/api/voice-profile/activate',
     },
@@ -20,9 +20,20 @@ test('router resolves voice profile activation and active-summary routes', () =>
     {
       name: 'VoiceProfileFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/voice-profile\/(?:activate|active)\/?$/u,
+      pattern: /^\/api\/voice-profile\/(?:activate|active|internal\/[^/]+)\/?$/u,
       modulePath: './voice-profile/index.js',
       lambdaPath: '/api/voice-profile/active',
+    },
+  );
+
+  assert.deepEqual(
+    findRoute('GET', '/api/voice-profile/internal/michael-tan-v1'),
+    {
+      name: 'VoiceProfileFunction',
+      methods: ['GET', 'POST'],
+      pattern: /^\/api\/voice-profile\/(?:activate|active|internal\/[^/]+)\/?$/u,
+      modulePath: './voice-profile/index.js',
+      lambdaPath: '/api/voice-profile/internal/michael-tan-v1',
     },
   );
 });

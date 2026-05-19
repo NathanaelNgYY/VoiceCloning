@@ -21,6 +21,10 @@ function normalizeDefaults(defaults = {}) {
   };
 }
 
+function normalizePreferredRoute(preferredRoute) {
+  return String(preferredRoute || '').trim().toLowerCase() === 'full' ? 'full' : 'sentence';
+}
+
 export function buildVoiceProfilePayload({
   voiceProfileId = '',
   displayName = '',
@@ -29,6 +33,8 @@ export function buildVoiceProfilePayload({
   refAudioPath = '',
   promptText = '',
   promptLang = 'en',
+  textLang = 'en',
+  preferredRoute = 'sentence',
   auxRefAudioPaths = [],
   defaults = {},
   storageMode = 'local',
@@ -39,6 +45,8 @@ export function buildVoiceProfilePayload({
     ref_audio_path: String(refAudioPath || '').trim(),
     prompt_text: String(promptText || ''),
     prompt_lang: String(promptLang || 'en').trim() || 'en',
+    text_lang: String(textLang || promptLang || 'en').trim() || String(promptLang || 'en').trim() || 'en',
+    preferredRoute: normalizePreferredRoute(preferredRoute),
     aux_ref_audio_paths: Array.isArray(auxRefAudioPaths)
       ? auxRefAudioPaths.filter(Boolean)
       : [],

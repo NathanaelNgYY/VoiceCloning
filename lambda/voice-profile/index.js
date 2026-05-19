@@ -3,6 +3,9 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
+const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
+const ACTIVATE_PROFILE_PATH = /^\/api\/voice-profile\/activate\/?$/u;
+const INTERNAL_PROFILE_PATH = /^\/api\/voice-profile\/internal\/([^/]+)\/?$/u;
 
 function getProfileStorageKey(voiceProfileId) {
   return `voice-profiles/${voiceProfileId}.json`;
@@ -10,6 +13,14 @@ function getProfileStorageKey(voiceProfileId) {
 
 function hasValue(value) {
   return String(value || '').trim() !== '';
+}
+
+function normalizeLanguage(value, fallback = 'en') {
+  return String(value || fallback).trim().toLowerCase() || fallback;
+}
+
+function normalizePreferredRoute(value) {
+  return String(value || '').trim().toLowerCase() === 'full' ? 'full' : 'sentence';
 }
 
 function normalizeDefaults(defaults = {}) {
@@ -31,7 +42,9 @@ function createVoiceProfileRecord(body, now) {
   const sovitsPath = String(body.sovitsPath || '').trim();
   const refAudioPath = String(body.ref_audio_path || '').trim();
   const promptText = String(body.prompt_text || '');
-  const promptLang = String(body.prompt_lang || 'en').trim() || 'en';
+  const promptLang = normalizeLanguage(body.prompt_lang, 'en');
+  const textLang = normalizeLanguage(body.text_lang, promptLang);
+  const preferredRoute = normalizePreferredRoute(body.preferredRoute);
 
   if (!voiceProfileId) {
     throw new Error('voiceProfileId is required');
@@ -62,6 +75,8 @@ function createVoiceProfileRecord(body, now) {
     ref_audio_path: refAudioPath,
     prompt_text: promptText,
     prompt_lang: promptLang,
+    text_lang: textLang,
+    preferredRoute,
     aux_ref_audio_paths: Array.isArray(body.aux_ref_audio_paths)
       ? body.aux_ref_audio_paths.filter((item) => hasValue(item))
       : [],
@@ -88,13 +103,39 @@ async function defaultReadObject(key) {
 async function parseStoredProfile(readObject, key) {
   const buffer = await readObject(key);
   if (!buffer) return null;
-  return JSON.parse(buffer.toString('utf-8'));
+  const stored = JSON.parse(buffer.toString('utf-8'));
+  const promptLang = normalizeLanguage(stored.prompt_lang, 'en');
+  return {
+    ...stored,
+    ...(stored.prompt_lang !== undefined ? { prompt_lang: promptLang } : {}),
+    text_lang: normalizeLanguage(stored.text_lang, promptLang),
+    preferredRoute: normalizePreferredRoute(stored.preferredRoute),
+    aux_ref_audio_paths: Array.isArray(stored.aux_ref_audio_paths)
+      ? stored.aux_ref_audio_paths.filter((item) => hasValue(item))
+      : [],
+    defaults: normalizeDefaults(stored.defaults),
+  };
+}
+
+function getHeaderValue(headers, headerName) {
+  const normalizedHeaderName = String(headerName || '').trim().toLowerCase();
+  if (!normalizedHeaderName) return '';
+
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (String(key || '').trim().toLowerCase() === normalizedHeaderName) {
+      return Array.isArray(value) ? String(value[0] || '') : String(value || '');
+    }
+  }
+
+  return '';
 }
 
 export function createHandler({
   readObject = defaultReadObject,
   writeObject = uploadBuffer,
   now = () => new Date().toISOString(),
+  internalAuthHeaderName = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME || '',
+  internalAuthHeaderValue = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE || '',
 } = {}) {
   return async function handler(event) {
     if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -103,9 +144,10 @@ export function createHandler({
 
     const method = event.requestContext?.http?.method || 'GET';
     const routePath = event.rawPath || '';
+    const internalMatch = routePath.match(INTERNAL_PROFILE_PATH);
 
     try {
-      if (method === 'GET' && routePath.endsWith('/voice-profile/active')) {
+      if (method === 'GET' && ACTIVE_PROFILE_PATH.test(routePath)) {
         const activeProfile = await parseStoredProfile(readObject, ACTIVE_PROFILE_KEY);
         if (!activeProfile) {
           return err(404, 'No active voice profile has been saved', event);
@@ -113,7 +155,30 @@ export function createHandler({
         return ok(buildVoiceProfileSummary(activeProfile), {}, event);
       }
 
-      if (method === 'POST' && routePath.endsWith('/voice-profile/activate')) {
+      if (method === 'GET' && internalMatch) {
+        if (!hasValue(internalAuthHeaderName) || !hasValue(internalAuthHeaderValue)) {
+          return err(500, 'Internal voice profile auth is not configured', event);
+        }
+
+        const providedSecret = getHeaderValue(event.headers, internalAuthHeaderName);
+        if (providedSecret !== internalAuthHeaderValue) {
+          return err(403, 'Forbidden', event);
+        }
+
+        const voiceProfileId = String(internalMatch[1] || '').trim();
+        if (!voiceProfileId || !isSafePathSegment(voiceProfileId)) {
+          return err(400, 'voiceProfileId must be a safe path segment', event);
+        }
+
+        const storedProfile = await parseStoredProfile(readObject, getProfileStorageKey(voiceProfileId));
+        if (!storedProfile) {
+          return err(404, `Voice profile ${voiceProfileId} not found`, event);
+        }
+
+        return ok(storedProfile, {}, event);
+      }
+
+      if (method === 'POST' && ACTIVATE_PROFILE_PATH.test(routePath)) {
         let body;
         try {
           body = parseJsonBody(event);

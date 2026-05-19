@@ -1,6 +1,6 @@
 # External Chatbot -> VoiceCloning Handoff
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 
 ## Source Of Truth
 
@@ -51,6 +51,24 @@ There are now four main runtime pieces:
 
 The frontend remains static and separate. This is intentional.
 
+## Voice-Profile Status
+
+The VoiceCloning side now persists full saved profiles in S3:
+
+- `voice-profiles/<voiceProfileId>.json`
+- `voice-profiles/active.json`
+
+Current API support in this repo:
+
+- `POST /api/voice-profile/activate`
+- `GET /api/voice-profile/active`
+- `GET /api/voice-profile/internal/:voiceProfileId`
+
+The internal full-profile endpoint is protected by a shared header configured on this Lambda:
+
+- `VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME`
+- `VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE`
+
 ## Recommended Integration Path
 
 ### Recommended path: chatbot owns conversation, VoiceCloning owns TTS
@@ -96,7 +114,7 @@ Avoid option 2 for this integration.
 
 Option 1 is acceptable only as an internal server-side contract, but it is not the best public/session contract if it exposes raw voice-cloning fields to the browser or to assignment payloads directly.
 
-### Important correction: current website selection is only partially server-side
+### Important correction: website save is now server-side, but `active.json` is still global
 
 Right now, selecting a voice on the website already loads the GPT and SoVITS weights into the shared inference worker:
 
@@ -113,41 +131,46 @@ and the inference worker stores the currently loaded pair globally in:
 
 - [inferenceServer.js](C:/Users/User/Downloads/VoiceCloningProjectV1/VoiceCloning/gpu-inference-worker/src/services/inferenceServer.js:88)
 
-But the other important voice-cloning fields are **not** persisted server-side yet:
+The website can now also save the full cloning profile server-side through:
 
-- `ref_audio_path`
-- `prompt_text`
-- `prompt_lang`
-- `aux_ref_audio_paths`
-- live/default inference tuning values
+- `POST /api/voice-profile/activate`
 
-Those still live in browser state in the website UI.
-
-So if the clinical chatbot simply reuses "whatever model is currently loaded", it will still be missing the full reference profile unless we persist that profile somewhere server-side.
-
-## Recommended Shared-State Fix
-
-If you want the clinical chatbot to always follow the website-selected voice, then add a shared active-profile record.
-
-Recommended behavior:
-
-1. When the user clicks `Save voice` or otherwise confirms the selected voice in this website, persist the active voice profile server-side.
-2. The clinical chatbot backend reads that same active profile.
-3. The chatbot then uses that resolved profile when generating cloned replies.
-
-The persisted active profile should include:
+That saved profile includes:
 
 - `voiceProfileId`
-- `gptKey`
-- `sovitsKey`
+- `displayName`
+- `gptKey` or `gptPath`
+- `sovitsKey` or `sovitsPath`
 - `ref_audio_path`
 - `prompt_text`
 - `prompt_lang`
+- `text_lang`
+- `preferredRoute`
 - `aux_ref_audio_paths`
 - default tuning values
-- optional metadata such as `displayName`, `selectedAt`, `selectedBy`
 
-The browser should still receive only summary data when needed. The full profile stays server-side.
+But `voice-profiles/active.json` is still only a global active pointer. That is useful for the website UI, but it is **not** the right runtime source of truth for long-term per-chatbot or per-assignment routing.
+
+## Recommended Long-Term Compatibility Model
+
+For correct long-term behavior, keep two separate responsibilities:
+
+1. ClinicalChatbot owns the stable binding:
+   - `assignmentId + scenarioId -> voiceProfileId`
+   - or `chatbotId -> voiceProfileId`
+2. VoiceCloning owns the full lookup:
+   - `voiceProfileId -> full cloned-voice profile`
+
+That means the clinical chatbot runtime should not depend on whichever voice another operator most recently activated on the website.
+
+Recommended runtime flow:
+
+1. ClinicalChatbot resolves the local binding to `voiceProfileId`.
+2. ClinicalChatbot calls `GET /api/voice-profile/internal/:voiceProfileId` on this system.
+3. VoiceCloning returns the full saved profile JSON for that ID.
+4. ClinicalChatbot calls `POST /api/models/select` if the loaded pair is wrong.
+5. ClinicalChatbot calls `POST /api/live/tts-sentence` or `POST /api/inference`.
+6. ClinicalChatbot returns WAV audio to its own frontend.
 
 ## Recommended Endpoint Shape For This Requirement
 
@@ -155,7 +178,7 @@ Your proposed chatbot-backend endpoints are fine, but they need one clarificatio
 
 ### `GET /assignment/:assignmentId/voice-profile?scenarioId=...`
 
-This should return summary data for the **currently active website-selected voice**, not an unrelated static assignment voice.
+This should return summary data for the `voiceProfileId` already bound to that assignment or scenario.
 
 Example response:
 
@@ -176,34 +199,28 @@ This should:
 4. call `POST /api/live/tts-sentence` for short replies or `POST /api/inference` for long replies
 5. return `audio/wav`
 
-If the website-selected voice is the true source of truth, then `voiceProfileId` here is mainly a guard or summary identifier, not a frontend-controlled free choice.
+`voiceProfileId` should stay a stable backend-owned identifier, not a browser-owned set of raw cloning fields.
 
-## Best Place To Persist The Active Voice
+## Internal Lookup Contract
 
-There are two workable choices:
+The full-profile lookup endpoint on this repo is:
 
-### Option A: chatbot backend owns the active-profile record
+```text
+GET /api/voice-profile/internal/:voiceProfileId
+```
 
-This fits your proposed endpoints best.
+It is routed through the existing Lambda `/api/*` behavior and returns the full saved JSON for that `voiceProfileId`.
 
-Flow:
+Protect it with:
 
-1. The VoiceCloning website calls a chatbot-backend endpoint when voice selection is confirmed.
-2. The chatbot backend stores the full active profile server-side.
-3. `GET /assignment/:assignmentId/voice-profile` returns summary from that stored active profile.
-4. `POST /assignment/:assignmentId/voice-response` uses the stored full profile.
+- `VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME`
+- `VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE`
 
-### Option B: VoiceCloning backend owns the active-profile record
+ClinicalChatbot can call it through CloudFront at:
 
-This is often cleaner operationally, because the website already lives here and already knows the selected reference setup.
-
-Flow:
-
-1. The VoiceCloning website persists the active full profile into this stack.
-2. The clinical chatbot backend fetches summary or full server-side data from this stack.
-3. The chatbot backend still owns access control and response generation.
-
-Either option works. The critical part is not where the record lives. The critical part is that the record must exist server-side, because the current website UI state is not enough by itself.
+```text
+https://doovx82fh9tfs.cloudfront.net/api/voice-profile/internal/{voiceProfileId}
+```
 
 ### Do not use `live-gateway` unless needed
 

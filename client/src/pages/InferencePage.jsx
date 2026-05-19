@@ -5,9 +5,8 @@ import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile } from '../services/api.js';
 import WordTimestampPlayer from '../components/WordTimestampPlayer.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -1094,6 +1093,8 @@ export default function InferencePage({ directMode = false }) {
         refAudioPath,
         promptText,
         promptLang,
+        textLang,
+        preferredRoute: directMode ? 'sentence' : 'full',
         auxRefAudioPaths: selectedAuxReferences.map((reference) => reference.path),
         defaults: {
           top_k: topK,

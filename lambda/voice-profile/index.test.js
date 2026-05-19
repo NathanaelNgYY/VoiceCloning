@@ -9,6 +9,7 @@ function createEvent({ method = 'GET', path = '/api/voice-profile/active', body,
     rawPath: path,
     body: body === undefined ? undefined : JSON.stringify(body),
     queryStringParameters: query,
+    headers: {},
   };
 }
 
@@ -39,6 +40,8 @@ test('voice profile activate saves the full profile and marks it active', async 
       ref_audio_path: 'training/datasets/michael-tan/reference.wav',
       prompt_text: 'Reference transcript',
       prompt_lang: 'en',
+      text_lang: 'en',
+      preferredRoute: 'sentence',
       aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
       defaults: {
         top_k: 5,
@@ -68,6 +71,8 @@ test('voice profile activate saves the full profile and marks it active', async 
         ref_audio_path: 'training/datasets/michael-tan/reference.wav',
         prompt_text: 'Reference transcript',
         prompt_lang: 'en',
+        text_lang: 'en',
+        preferredRoute: 'sentence',
         aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
         defaults: {
           top_k: 5,
@@ -90,6 +95,8 @@ test('voice profile activate saves the full profile and marks it active', async 
         ref_audio_path: 'training/datasets/michael-tan/reference.wav',
         prompt_text: 'Reference transcript',
         prompt_lang: 'en',
+        text_lang: 'en',
+        preferredRoute: 'sentence',
         aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
         defaults: {
           top_k: 5,
@@ -143,6 +150,8 @@ test('voice profile active returns only summary data', async () => {
         ref_audio_path: 'training/datasets/dr-lim/reference.wav',
         prompt_text: 'Reference transcript',
         prompt_lang: 'en',
+        text_lang: 'en',
+        preferredRoute: 'sentence',
         aux_ref_audio_paths: [],
         defaults: {
           top_k: 5,
@@ -190,4 +199,92 @@ test('voice profile active returns 404 when no active profile has been saved', a
 
   assert.equal(response.statusCode, 404);
   assert.match(JSON.parse(response.body).error, /No active voice profile/u);
+});
+
+test('voice profile internal returns the full stored profile when the shared secret matches', async () => {
+  const handler = createHandler({
+    readObject: async (key) => {
+      assert.equal(key, 'voice-profiles/michael-tan-v1.json');
+      return Buffer.from(JSON.stringify({
+        voiceProfileId: 'michael-tan-v1',
+        displayName: 'Michael Tan',
+        preferredRoute: 'sentence',
+        gptKey: 'models/user-models/gpt/michael-tan.ckpt',
+        sovitsKey: 'models/user-models/sovits/michael-tan.pth',
+        ref_audio_path: 'training/datasets/michael-tan/reference.wav',
+        prompt_text: 'Reference transcript',
+        prompt_lang: 'en',
+        text_lang: 'en',
+        aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
+        defaults: {
+          top_k: 5,
+          top_p: 0.85,
+          temperature: 0.7,
+          repetition_penalty: 1.35,
+          speed_factor: 1.0,
+        },
+        updatedAt: '2026-05-18T10:00:00.000Z',
+      }), 'utf-8');
+    },
+    writeObject: async () => {
+      throw new Error('not used');
+    },
+    internalAuthHeaderName: 'x-internal-key',
+    internalAuthHeaderValue: 'super-secret',
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler({
+    ...createEvent({
+      method: 'GET',
+      path: '/api/voice-profile/internal/michael-tan-v1',
+    }),
+    headers: {
+      'x-internal-key': 'super-secret',
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    voiceProfileId: 'michael-tan-v1',
+    displayName: 'Michael Tan',
+    preferredRoute: 'sentence',
+    gptKey: 'models/user-models/gpt/michael-tan.ckpt',
+    sovitsKey: 'models/user-models/sovits/michael-tan.pth',
+    ref_audio_path: 'training/datasets/michael-tan/reference.wav',
+    prompt_text: 'Reference transcript',
+    prompt_lang: 'en',
+    text_lang: 'en',
+    aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
+    defaults: {
+      top_k: 5,
+      top_p: 0.85,
+      temperature: 0.7,
+      repetition_penalty: 1.35,
+      speed_factor: 1.0,
+    },
+    updatedAt: '2026-05-18T10:00:00.000Z',
+  });
+});
+
+test('voice profile internal rejects requests with missing or wrong shared secret', async () => {
+  const handler = createHandler({
+    readObject: async () => {
+      throw new Error('not used');
+    },
+    writeObject: async () => {
+      throw new Error('not used');
+    },
+    internalAuthHeaderName: 'x-internal-key',
+    internalAuthHeaderValue: 'super-secret',
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'GET',
+    path: '/api/voice-profile/internal/michael-tan-v1',
+  }));
+
+  assert.equal(response.statusCode, 403);
+  assert.match(JSON.parse(response.body).error, /Forbidden/u);
 });
