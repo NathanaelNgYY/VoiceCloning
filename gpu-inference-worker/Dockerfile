@@ -70,7 +70,7 @@ RUN mkdir -p "$GPT_SOVITS_ROOT" /tmp/gpt-sovits-unpack \
       torchaudio==2.1.1 \
       --index-url https://download.pytorch.org/whl/cu118 \
     && "$PYTHON_EXEC" -m pip install -r "$GPT_SOVITS_ROOT/requirements.txt" \
-    && "$PYTHON_EXEC" -m pip install "fastapi<0.112.2" "uvicorn[standard]" attrdict \
+    && "$PYTHON_EXEC" -m pip install "fastapi<0.112.2" "uvicorn[standard]" attrdict faster-whisper \
     && mkdir -p \
       "$LOCAL_TEMP_ROOT" \
       "$GPT_SOVITS_ROOT/GPT_weights_v2" \
