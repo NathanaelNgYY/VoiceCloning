@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { PYTHON_EXEC, buildPythonEnv } from '../config.js';
 
 const SCRIPT_PATH = fileURLToPath(new URL('../../scripts/align_words.py', import.meta.url));
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 120_000;
 
 export async function alignWords(wavPath) {
   return new Promise((resolve) => {

@@ -48,7 +48,7 @@ export default function WordTimestampPlayer({
       audio.removeEventListener('ended', handleReset);
       audio.removeEventListener('pause', handleReset);
     };
-  }, [wordTimestamps]);
+  }, [wordTimestamps, audioUrl]);
 
   if (!audioUrl) return null;
 

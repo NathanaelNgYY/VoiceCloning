@@ -10,6 +10,7 @@ import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
   cancelSession,
+  parseWav,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -226,6 +227,49 @@ router.post('/inference', async (req, res) => {
       'X-Word-Timestamps': JSON.stringify(wordTimestamps ?? null),
     });
     res.send(audioBuffer);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/inference/tts-with-timestamps', async (req, res) => {
+  const params = readInferenceParams(req.body);
+
+  if (!params.text) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  if (!params.ref_audio_path) {
+    return res.status(400).json({ error: 'ref_audio_path is required' });
+  }
+
+  try {
+    const status = await inferenceServer.getStatus();
+    if (!status.ready) {
+      return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
+    }
+
+    activityState.mark();
+    const resolvedParams = await resolveRefAudioParams(params);
+    const { audioBuffer, wordTimestamps } = await synthesizeLongText(resolvedParams, {
+      maxChunkLength: 280,
+      maxSentencesPerChunk: 3,
+      chunkJoinPauseMs: 120,
+      retryCount: 2,
+    });
+    activityState.mark();
+
+    let duration = null;
+    try {
+      const wav = parseWav(audioBuffer);
+      const frameCount = Math.floor(wav.dataChunk.length / wav.blockAlign);
+      duration = parseFloat((frameCount / wav.sampleRate).toFixed(3));
+    } catch { /* ignore — duration is optional */ }
+
+    res.json({
+      audio: audioBuffer.toString('base64'),
+      wordTimestamps: wordTimestamps ?? null,
+      duration,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
