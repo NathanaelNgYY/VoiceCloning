@@ -5,6 +5,7 @@ import {
   getTrainingAudioUrl,
   getTrainingAudioFiles,
   activateVoiceProfile,
+  getActiveVoiceProfile,
   selectModels,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
@@ -31,6 +32,7 @@ import {
   buildLiveFastRefParams,
 } from '@/lib/liveFastSetup';
 import { shouldLoadSelectedProfile } from '@/lib/modelLoading';
+import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
 import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
@@ -214,6 +216,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [serverReady, setServerReady] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [activeVoiceProfile, setActiveVoiceProfile] = useState(null);
+  const [loadingActiveVoiceProfile, setLoadingActiveVoiceProfile] = useState(true);
+  const [activeVoiceProfileError, setActiveVoiceProfileError] = useState('');
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
   const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
@@ -293,6 +298,24 @@ export default function LivePage({ replyMode = 'phrases' }) {
     }
   }
 
+  async function loadActiveVoiceProfile() {
+    setLoadingActiveVoiceProfile(true);
+    try {
+      const res = await getActiveVoiceProfile();
+      setActiveVoiceProfile(res.data || null);
+      setActiveVoiceProfileError('');
+    } catch (err) {
+      if (err.response?.status === 404) {
+        setActiveVoiceProfile(null);
+        setActiveVoiceProfileError('');
+      } else {
+        setActiveVoiceProfileError(err.response?.data?.error || err.message || 'Could not load saved voice profile.');
+      }
+    } finally {
+      setLoadingActiveVoiceProfile(false);
+    }
+  }
+
   function applyBestReference(files = trainingAudioFiles) {
     const selection = chooseBestReferenceSet(files);
     if (!selection.primary) {
@@ -350,6 +373,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
 
       const response = await activateVoiceProfile(payload);
       const summary = response.data || {};
+      setActiveVoiceProfile(summary.voiceProfileId ? summary : null);
+      setActiveVoiceProfileError('');
+      setLoadingActiveVoiceProfile(false);
       setReferenceMessage(
         `Saved voice profile ${summary.displayName || selectedProfile.displayName} (${summary.voiceProfileId || payload.voiceProfileId}).`,
       );
@@ -459,7 +485,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
     const params = new URLSearchParams(window.location.search);
     const voiceParam = params.get('voice');
     if (voiceParam) urlVoiceKeyRef.current = voiceParam.toLowerCase().replace(/[\s_-]+/g, '');
-    fetchModels(); checkStatus();
+    fetchModels(); checkStatus(); loadActiveVoiceProfile();
   }, []);
 
   useEffect(() => {
@@ -499,7 +525,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   }, [selectedExpName, loadingTrainingAudio, trainingAudioFiles]);
 
   useEffect(() => {
-    function handleGpuReady() { fetchModels(); checkStatus(); }
+    function handleGpuReady() { fetchModels(); checkStatus(); loadActiveVoiceProfile(); }
     window.addEventListener('voice-cloning-gpu-ready', handleGpuReady);
     return () => window.removeEventListener('voice-cloning-gpu-ready', handleGpuReady);
   }, []);
@@ -594,37 +620,51 @@ export default function LivePage({ replyMode = 'phrases' }) {
           </div>
 
           {/* Model status + refresh */}
-          <div className="ml-auto flex items-center gap-3">
-            <span className={cn(
-              'flex items-center gap-1.5 text-xs',
-              selectedModelLoaded ? 'text-emerald-600' : loadingModel ? 'text-blue-500' : 'text-slate-400'
-            )}>
-              {loadingModel
-                ? <Loader2 size={11} className="animate-spin" />
-                : <span className={cn('h-2 w-2 rounded-full', selectedModelLoaded ? 'bg-emerald-500' : 'bg-slate-300')} />
-              }
-              {selectedModelLoaded ? 'Ready' : loadingModel ? 'Loading...' : 'No model'}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={saveSelectedVoiceProfile}
-              disabled={!isReady || isConversationActive || loadingModel || savingProfile}
-              className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
-            >
-              {savingProfile ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-              {savingProfile ? 'Saving...' : 'Save voice'}
-            </Button>
-            <button
-              type="button"
-              onClick={() => { autoLoadAttemptKeyRef.current = ''; fetchModels(); checkStatus(); }}
-              disabled={isConversationActive || loadingModel || savingProfile}
-              title="Refresh models"
-              className="text-slate-400 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <RefreshCw size={13} />
-            </button>
+          <div className="ml-auto flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-3">
+              <span className={cn(
+                'flex items-center gap-1.5 text-xs',
+                selectedModelLoaded ? 'text-emerald-600' : loadingModel ? 'text-blue-500' : 'text-slate-400'
+              )}>
+                {loadingModel
+                  ? <Loader2 size={11} className="animate-spin" />
+                  : <span className={cn('h-2 w-2 rounded-full', selectedModelLoaded ? 'bg-emerald-500' : 'bg-slate-300')} />
+                }
+                {selectedModelLoaded ? 'Ready' : loadingModel ? 'Loading...' : 'No model'}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={saveSelectedVoiceProfile}
+                disabled={!isReady || isConversationActive || loadingModel || savingProfile}
+                className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
+              >
+                {savingProfile ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                {savingProfile ? 'Saving...' : 'Save voice'}
+              </Button>
+              <button
+                type="button"
+                onClick={() => { autoLoadAttemptKeyRef.current = ''; fetchModels(); checkStatus(); loadActiveVoiceProfile(); }}
+                disabled={isConversationActive || loadingModel || savingProfile || loadingActiveVoiceProfile}
+                title="Refresh models"
+                className="text-slate-400 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <RefreshCw size={13} />
+              </button>
+            </div>
+            <div className="max-w-full text-right text-[11px]">
+              {activeVoiceProfileError ? (
+                <span className="text-red-500">{activeVoiceProfileError}</span>
+              ) : (
+                <span className="inline-flex flex-wrap items-center justify-end gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-500">
+                  <span className="uppercase tracking-widest text-slate-400">Active voice profile</span>
+                  <span className="font-medium text-slate-700">
+                    {loadingActiveVoiceProfile ? 'Loading...' : formatActiveVoiceProfileSummary(activeVoiceProfile)}
+                  </span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -5,7 +5,7 @@ import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile, getActiveVoiceProfile } from '../services/api.js';
 import WordTimestampPlayer from '../components/WordTimestampPlayer.jsx';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -29,6 +29,7 @@ import {
   parseStoredReferencePresets,
 } from '@/lib/referencePresets';
 import { chooseBestReferenceSet } from '@/lib/referenceSelection';
+import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
 import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 
@@ -62,6 +63,9 @@ export default function InferencePage({ directMode = false }) {
   const [serverReady, setServerReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [savingVoiceProfile, setSavingVoiceProfile] = useState(false);
+  const [activeVoiceProfile, setActiveVoiceProfile] = useState(null);
+  const [loadingActiveVoiceProfile, setLoadingActiveVoiceProfile] = useState(true);
+  const [activeVoiceProfileError, setActiveVoiceProfileError] = useState('');
   const [modelError, setModelError] = useState(null);
 
   const [refAudioPath, setRefAudioPath] = useState('');
@@ -174,6 +178,7 @@ export default function InferencePage({ directMode = false }) {
     restoreReferencePresets();
     fetchModels();
     checkStatus();
+    loadActiveVoiceProfile();
     restoreInferenceState();
 
     return () => {
@@ -188,6 +193,7 @@ export default function InferencePage({ directMode = false }) {
       autoLoadKeyRef.current = '';
       fetchModels();
       checkStatus();
+      loadActiveVoiceProfile();
     }
 
     window.addEventListener('voice-cloning-gpu-ready', handleGpuReady);
@@ -217,6 +223,24 @@ export default function InferencePage({ directMode = false }) {
       setServerReady(false);
       setLoadedGPTPath('');
       setLoadedSoVITSPath('');
+    }
+  }
+
+  async function loadActiveVoiceProfile() {
+    setLoadingActiveVoiceProfile(true);
+    try {
+      const res = await getActiveVoiceProfile();
+      setActiveVoiceProfile(res.data || null);
+      setActiveVoiceProfileError('');
+    } catch (err) {
+      if (err.response?.status === 404) {
+        setActiveVoiceProfile(null);
+        setActiveVoiceProfileError('');
+      } else {
+        setActiveVoiceProfileError(err.response?.data?.error || err.message || 'Could not load saved voice profile.');
+      }
+    } finally {
+      setLoadingActiveVoiceProfile(false);
     }
   }
 
@@ -1108,6 +1132,9 @@ export default function InferencePage({ directMode = false }) {
 
       const response = await activateVoiceProfile(payload);
       const summary = response.data || {};
+      setActiveVoiceProfile(summary.voiceProfileId ? summary : null);
+      setActiveVoiceProfileError('');
+      setLoadingActiveVoiceProfile(false);
       showNotice({
         title: 'Voice profile saved',
         message: `${summary.displayName || selectedProfile.displayName} is now saved as ${summary.voiceProfileId || payload.voiceProfileId}.`,
@@ -1629,6 +1656,18 @@ export default function InferencePage({ directMode = false }) {
                   {savingVoiceProfile ? <Spinner size={14} /> : <Check size={14} />}
                   {savingVoiceProfile ? 'Saving...' : 'Save Voice Profile'}
                 </Button>
+              </div>
+              <div className="mt-3 text-xs">
+                {activeVoiceProfileError ? (
+                  <span className="text-red-500">{activeVoiceProfileError}</span>
+                ) : (
+                  <span className="inline-flex flex-wrap items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-500">
+                    <span className="uppercase tracking-widest text-slate-400">Active voice profile</span>
+                    <span className="font-medium text-slate-700">
+                      {loadingActiveVoiceProfile ? 'Loading...' : formatActiveVoiceProfileSummary(activeVoiceProfile)}
+                    </span>
+                  </span>
+                )}
               </div>
             </div>
           )}

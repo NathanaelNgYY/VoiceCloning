@@ -33,6 +33,7 @@ try {
     'training-audio',
     'transcribe',
     'upload',
+    'voice-profile',
     'node_modules'
   )
 
