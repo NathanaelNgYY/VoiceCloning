@@ -7,8 +7,9 @@ import {
 import { preprocessText } from './textPreprocessor.js';
 
 const GEMINI_REST_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const SILENCE_COMMIT_MS = 1500;
+const SILENCE_COMMIT_MS = 1200;
 const PCM_SAMPLE_RATE = 24000;
+const SPEECH_RMS_THRESHOLD = 0.008; // below this = silence, don't reset timer
 
 function buildWavBuffer(pcmBuffer, sampleRate = PCM_SAMPLE_RATE) {
   const header = Buffer.alloc(44);
@@ -27,6 +28,18 @@ function buildWavBuffer(pcmBuffer, sampleRate = PCM_SAMPLE_RATE) {
   header.write('data', 36);
   header.writeUInt32LE(dataLen, 40);
   return Buffer.concat([header, pcmBuffer]);
+}
+
+function rmsOfPcm16Base64(base64) {
+  const buf = Buffer.from(base64, 'base64');
+  const samples = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
+  if (samples.length === 0) return 0;
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i] / 32768;
+    sumSq += s * s;
+  }
+  return Math.sqrt(sumSq / samples.length);
 }
 
 function chunksToWavBase64(base64Chunks) {
@@ -129,8 +142,13 @@ export class GeminiRestBridge extends EventEmitter {
   sendAudio(base64Audio) {
     if (this.closed || this.inputPaused || this.processing || !base64Audio) return false;
     this.audioChunks.push(base64Audio);
-    this.hasPendingAudio = true;
-    this._resetSilenceTimer();
+    // Only treat as speech (and reset silence timer) if loud enough
+    const rms = rmsOfPcm16Base64(base64Audio);
+    if (rms > SPEECH_RMS_THRESHOLD) {
+      if (!this.hasPendingAudio) console.log('[geminiRest] Speech detected, accumulating...');
+      this.hasPendingAudio = true;
+      this._resetSilenceTimer();
+    }
     return true;
   }
 
