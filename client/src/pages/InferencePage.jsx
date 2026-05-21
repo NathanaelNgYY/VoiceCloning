@@ -832,7 +832,7 @@ export default function InferencePage() {
 
   async function handleLoadModels({ auto = false } = {}) {
     if (!selectedGPT || !selectedSoVITS) {
-      if (!auto) alert('Select a person with both GPT and SoVITS checkpoints');
+      if (!auto) alert('Select a person with complete voice checkpoints');
       return;
     }
     setLoading(true);
@@ -845,7 +845,7 @@ export default function InferencePage() {
       if (!auto) {
         showNotice({
           title: 'Voice profile loaded',
-          message: 'The selected GPT and SoVITS checkpoints are ready for inference.',
+          message: 'The selected voice checkpoints are ready for inference.',
           tone: 'success',
         });
       }
@@ -1062,7 +1062,7 @@ export default function InferencePage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Voice You’re Preparing</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight">{selectedProfile?.displayName || 'No profile selected'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {selectedProfile ? 'Choose the exact GPT and SoVITS pair you want; the server loads the selected profile automatically.' : 'Pick a speaker here before you move on to references and text.'}
+                {selectedProfile ? 'Choose the exact voice model pair you want; the server loads the selected profile automatically.' : 'Pick a speaker here before you move on to references and text.'}
               </p>
             </div>
 
@@ -1095,7 +1095,7 @@ export default function InferencePage() {
                   {selectionLoaded ? 'Loaded' : serverReady ? 'Needs reload' : 'Offline'}
                 </Badge>
               </div>
-              <CardDescription>Start by choosing the speaker, then keep the default checkpoints or switch to a different GPT or SoVITS model if you prefer.</CardDescription>
+              <CardDescription>Start by choosing the speaker, then keep the default checkpoints or switch to a different model if you prefer.</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -1116,7 +1116,7 @@ export default function InferencePage() {
 
           <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
             {selectedProfile
-              ? `The server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'} for this profile.`
+              ? `The server will use ${selectedGPTCandidate?.model?.name || 'not selected'} and ${selectedSoVITSCandidate?.model?.name || 'not selected'} for this profile.`
               : 'Choose a speaker first; complete profiles load automatically for generation.'}
           </div>
 

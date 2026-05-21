@@ -153,7 +153,7 @@ export default function App() {
                     Voice Cloning Studio
                   </h1>
                   <p className="text-xs text-muted-foreground">
-                    GPT-SoVITS Training & Inference
+                    AI Voice Cloning Studio
                   </p>
                 </div>
               </div>
@@ -277,7 +277,7 @@ export default function App() {
               Voice Cloning Studio
             </span>
             <span className="text-xs text-muted-foreground">
-              Built with GPT-SoVITS
+              Voice Cloning Studio
             </span>
           </div>
         </footer>

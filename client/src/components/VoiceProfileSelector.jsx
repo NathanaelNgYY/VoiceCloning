@@ -68,7 +68,7 @@ export default function VoiceProfileSelector({
         </Select>
 
         <p className="mt-3 text-sm leading-6 text-slate-500">
-          Pick the speaker first, then optionally override the GPT or SoVITS checkpoint if you want something other than the latest epoch.
+          Pick the speaker first, then optionally override the voice checkpoint if you want something other than the latest epoch.
         </p>
       </div>
 
@@ -85,7 +85,7 @@ export default function VoiceProfileSelector({
           />
 
           <ModelSelect
-            label="SoVITS"
+            label="Voice"
             value={selectedSoVITSPath}
             onChange={onSoVITSChange}
             options={selectedProfile?.sovitsCandidates || []}

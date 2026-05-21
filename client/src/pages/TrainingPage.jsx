@@ -1,26 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
 import AudioUploader from '../components/AudioUploader.jsx';
 import FloatingNotice from '../components/FloatingNotice.jsx';
-import ProgressTracker from '../components/ProgressTracker.jsx';
-import LogViewer from '../components/LogViewer.jsx';
 import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { validateTrainingStart } from '@/lib/trainingValidation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronRight, Play, Square, AlertCircle, Activity, AudioLines } from 'lucide-react';
+import { AlertCircle, AudioLines, ChevronDown, Play, Square, X } from 'lucide-react';
 import Spinner from '../components/Spinner.jsx';
 import { cn } from '@/lib/utils';
 
 const NOTICE_TIMEOUT_MS = 4200;
 
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
 export default function TrainingPage() {
   const [expName, setExpName] = useState('');
+  const [email, setEmail] = useState('');
   const [files, setFiles] = useState([]);
   const [batchSize, setBatchSize] = useState(2);
   const [sovitsEpochs, setSovitsEpochs] = useState(20);
@@ -34,14 +38,14 @@ export default function TrainingPage() {
   const [uploadError, setUploadError] = useState(null);
   const [notice, setNotice] = useState(null);
 
-  const { logs, steps, pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
+  const { pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
   const restoredSessionRef = useRef(null);
   const noticeTimeoutRef = useRef(null);
   const previousStatusRef = useRef(null);
   const noticesReadyRef = useRef(false);
+  const canvasRef = useRef(null);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
-  const completedSteps = steps.filter((step) => step.status === 'done').length;
   const statusLabel = pipelineStatus === 'running'
     ? 'Training in progress'
     : pipelineStatus === 'waiting'
@@ -52,13 +56,12 @@ export default function TrainingPage() {
           ? 'Needs attention'
           : pipelineStatus === 'stopped'
             ? 'Stopped'
-            : 'Ready to start';
+            : 'idle';
 
   function showNotice({ title, message = '', tone = 'success' }) {
     if (noticeTimeoutRef.current) {
       window.clearTimeout(noticeTimeoutRef.current);
     }
-
     const id = Date.now();
     setNotice({ id, title, message, tone });
     noticeTimeoutRef.current = window.setTimeout(() => {
@@ -118,86 +121,186 @@ export default function TrainingPage() {
 
   useEffect(() => {
     if (!noticesReadyRef.current) return;
-
     const previousStatus = previousStatusRef.current;
     if (previousStatus === null) {
       previousStatusRef.current = pipelineStatus;
       return;
     }
-
     if (pipelineStatus !== previousStatus) {
       if (pipelineStatus === 'complete') {
         showNotice({
           title: 'Training complete',
-          message: 'Your checkpoints are ready. You can review the logs or move to inference when you are ready.',
+          message: 'Your checkpoints are ready. Open the inference studio to use your new voice.',
           tone: 'success',
         });
       } else if (pipelineStatus === 'error') {
         showNotice({
           title: 'Training needs attention',
-          message: error || 'The pipeline stopped before finishing. Check the logs to see which step needs attention.',
+          message: error || 'The pipeline stopped before finishing.',
           tone: 'error',
         });
       }
     }
-
     previousStatusRef.current = pipelineStatus;
   }, [pipelineStatus, error]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let rafId;
+    let dots = [];
+    const mouse = { x: -999, y: -999 };
+    let lastTime = null;
+
+    const REPEL = 90, SPRING = 0.12, DAMP = 0.75;
+
+    function buildGrid() {
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      canvas.width = W;
+      canvas.height = H;
+      lastTime = null;
+
+      const spacing = window.devicePixelRatio > 1.5 ? 48 : 32;
+      const cols = Math.floor(W / spacing) + 1;
+      const rows = Math.floor(H / spacing) + 1;
+      const offX = (W - (cols - 1) * spacing) / 2;
+      const offY = (H - (rows - 1) * spacing) / 2;
+
+      dots = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const ox = offX + c * spacing;
+          const oy = offY + r * spacing;
+          dots.push({ ox, oy, x: ox, y: oy, vx: 0, vy: 0 });
+        }
+      }
+    }
+
+    function draw(timestamp) {
+      const dt = lastTime === null ? 16.67 : timestamp - lastTime;
+      lastTime = timestamp;
+      const scale = dt / 16.67;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const d of dots) {
+        const dx = d.x - mouse.x;
+        const dy = d.y - mouse.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        d.vx += (d.ox - d.x) * SPRING * scale;
+        d.vy += (d.oy - d.y) * SPRING * scale;
+
+        if (dist < REPEL && dist > 0) {
+          const force = (REPEL - dist) / REPEL * 2.8 * scale;
+          d.vx += (dx / dist) * force;
+          d.vy += (dy / dist) * force;
+        }
+
+        d.vx *= Math.pow(DAMP, scale);
+        d.vy *= Math.pow(DAMP, scale);
+        d.x += d.vx;
+        d.y += d.vy;
+      }
+
+      const buckets = new Array(11).fill(null).map(() => []);
+      for (const d of dots) {
+        const displaced = Math.sqrt((d.x - d.ox) ** 2 + (d.y - d.oy) ** 2);
+        const t = Math.min(displaced / 16, 1);
+        buckets[Math.round(t * 10)].push(d);
+      }
+      for (let i = 0; i <= 10; i++) {
+        const bucket = buckets[i];
+        if (bucket.length === 0) continue;
+        const t = i / 10;
+        const alpha = 0.35 + t * 0.45;
+        const radius = 1.2 + t * 1.4;
+        const r = Math.round(148 + t * (99 - 148));
+        const g = Math.round(163 + t * (102 - 163));
+        const b = Math.round(184 + t * (241 - 184));
+        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+        ctx.beginPath();
+        for (const d of bucket) {
+          ctx.moveTo(d.x + radius, d.y);
+          ctx.arc(d.x, d.y, radius, 0, Math.PI * 2);
+        }
+        ctx.fill();
+      }
+
+      if (mouse.x !== -999) {
+        const grd = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 70);
+        grd.addColorStop(0, 'rgba(99,102,241,0.10)');
+        grd.addColorStop(1, 'rgba(99,102,241,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, 70, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      rafId = requestAnimationFrame(draw);
+    }
+
+    function onMouseMove(e) {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+    }
+
+    buildGrid();
+    rafId = requestAnimationFrame(draw);
+    window.addEventListener('mousemove', onMouseMove);
+    let resizeTimer;
+    function onResize() {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(buildGrid, 100);
+    }
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('mousemove', onMouseMove);
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   async function handleStart() {
-    if (!expName.trim()) return alert('Enter an experiment name');
-    if (files.length === 0) return alert('Upload audio files first');
+    const validation = validateTrainingStart({
+      expName, email, files, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage,
+    });
+    if (!validation.valid) {
+      const message = validation.errors.join(' ');
+      setUploadError(message);
+      showNotice({ title: 'Check training setup', message, tone: 'error' });
+      return;
+    }
 
     setUploadError(null);
-
+    setUploading(true);
     try {
-      setUploading(true);
       await uploadFiles(expName, files);
-      setUploading(false);
-
-      const res = await startTraining({
-        expName,
-        batchSize,
-        sovitsEpochs,
-        gptEpochs,
-        sovitsSaveEvery,
-        gptSaveEvery,
-        asrLanguage,
-      });
-
+      const res = await startTraining({ expName, email, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage });
       setSessionId(res.data.sessionId);
       restoredSessionRef.current = res.data.sessionId;
       connect(res.data.sessionId, { initialStatus: 'waiting' });
-      showNotice({
-        title: 'Training started',
-        message: 'Your files are uploaded and the pipeline is preparing the first step.',
-        tone: 'success',
-      });
+      showNotice({ title: 'Training started', message: "Training has started — we'll email you when it's done.", tone: 'success' });
     } catch (err) {
-      setUploading(false);
       setUploadError(err.response?.data?.error || err.message);
-      showNotice({
-        title: 'Training could not start',
-        message: err.response?.data?.error || err.message,
-        tone: 'error',
-      });
+      showNotice({ title: 'Training could not start', message: err.response?.data?.error || err.message, tone: 'error' });
+    } finally {
+      setUploading(false);
     }
   }
 
   async function handleStop() {
     if (!sessionId) return;
-    // Clear the UI immediately — don't wait for the API response.
-    // If the process already died (step error), stopTraining returns 404 and would
-    // never reach reset(), leaving the error state visible.
     disconnect();
     reset();
     setSessionId(null);
     restoredSessionRef.current = null;
-    showNotice({
-      title: 'Training stopped',
-      message: 'The current run has been stopped. You can adjust the setup and start again whenever you are ready.',
-      tone: 'success',
-    });
+    showNotice({ title: 'Training stopped', message: 'The current run has been stopped.', tone: 'success' });
     try {
       await stopTraining(sessionId);
     } catch (err) {
@@ -205,358 +308,227 @@ export default function TrainingPage() {
     }
   }
 
+  function removeFile(index) {
+    setFiles(files.filter((_, i) => i !== index));
+  }
+
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in flex min-h-0 flex-1 flex-col justify-center py-8">
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'fixed', inset: 0, zIndex: -5, pointerEvents: 'none' }}
+        aria-hidden="true"
+      />
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
-      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#1d4ed8_38%,#0f766e_100%)] px-6 py-7 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:px-8 lg:px-10">
-        <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,rgba(125,211,252,0.35),transparent_55%)]" />
-        <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
-        <div className="absolute bottom-0 right-8 h-48 w-48 rounded-full bg-emerald-300/15 blur-3xl" />
+      {/* Page title */}
+      <div className="mb-10">
+        <h1 className="text-4xl font-bold tracking-tight">
+          <span className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary/80 bg-clip-text text-transparent">
+            Train a voice
+          </span>
+        </h1>
+        <p className="mt-2 text-base text-slate-500">Upload audio clips, name the run, and start.</p>
+      </div>
 
-        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.85fr)] lg:items-end">
-          <div>
-            <Badge className="border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white shadow-none">
-              Training Pipeline
-            </Badge>
-            <h2 className="mt-5 max-w-3xl font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Start here to train a voice model from your clips, your settings, and a clear step-by-step pipeline.
-            </h2>
-            <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
-              Give your run a name, upload the source audio you want to learn from, choose the training settings, then follow all 8 stages and the live logs from this page.
-            </p>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                <Activity size={12} className="mr-1.5" />
-                {statusLabel}
-              </Badge>
-              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                Step 1: upload your source clips
-              </Badge>
-              <Badge className="border border-white/12 bg-white/10 px-3 py-1.5 text-white shadow-none">
-                Step 2: review the 8-stage pipeline
-              </Badge>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-[24px] border border-white/12 bg-white/10 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Experiment</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight">{expName || 'Untitled project'}</p>
-              <p className="mt-2 text-sm leading-6 text-white/72">
-                {expName ? 'This name helps you find the dataset, checkpoints, and logs for this run later.' : 'Give this run a short name before you start so the checkpoints stay organized.'}
-              </p>
-            </div>
-
-            <div className="rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.85)] backdrop-blur-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Current Focus</p>
-              <p className="mt-3 text-2xl font-semibold tracking-tight">{isRunning ? 'Watch the pipeline' : 'Get your run ready'}</p>
-              <p className="mt-2 text-sm leading-6 text-white/72">
-                {isRunning ? 'Stay here to watch each stage finish, or come back later and the progress will still be restored.' : 'Start with the experiment name and source clips, then move on to the settings below.'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 01 Setup */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
-              1
-            </Badge>
-            <div>
-              <CardTitle className="font-display text-2xl">Setup</CardTitle>
-              <CardDescription>Name this run and upload the clips you want the model to learn from.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-          <div className="space-y-6 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
-                <AudioLines size={20} />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Project identity</p>
-                <p className="text-sm leading-6 text-slate-500">Start with a simple name so you can recognize this run and its checkpoints later.</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      {/* Two-column form */}
+      <div className="grid items-start gap-12 lg:grid-cols-[minmax(0,8fr)_minmax(0,11fr)]">
+        {/* Left: fields */}
+        <div className="space-y-7">
+          <div className="space-y-2">
+            <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
               Experiment Name
             </Label>
             <Input
-              className="h-12 rounded-2xl border-slate-200 bg-white shadow-sm"
-              placeholder="e.g. my_voice_model"
+              className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
+              placeholder="e.g. voice-run-01"
               value={expName}
               onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
               disabled={isRunning}
             />
-            {expName && (
-              <p className="font-mono text-xs text-muted-foreground">
-                Letters, numbers, hyphens, underscores only
-              </p>
-            )}
           </div>
 
-            <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Quick Summary</p>
-              <div className="mt-4 space-y-3 text-sm text-slate-600">
-                <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-                  <span>Dataset</span>
-                  <span className="min-w-0 text-right font-semibold text-slate-800">{files.length} file{files.length === 1 ? '' : 's'}</span>
-                </div>
-                <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-                  <span>Pipeline</span>
-                  <span className="min-w-0 text-right font-semibold text-slate-800">{statusLabel}</span>
-                </div>
-                <div className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-                  <span>Next step</span>
-                  <span className="min-w-0 text-right font-semibold text-slate-800">{isRunning ? 'Watch the active stage' : 'Upload source clips'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2 rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(240,249,255,0.74))] p-5">
-            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Training Audio
+          <div className="space-y-2">
+            <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+              Notify Email
             </Label>
-            <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
+            <Input
+              type="email"
+              className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={isRunning}
+            />
           </div>
+        </div>
 
-          {uploadError && (
-            <div className="flex items-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive lg:col-span-2">
-              <AlertCircle size={16} />
-              {uploadError}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        {/* Right: upload zone */}
+        <div className="space-y-2">
+          <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+            Audio Clips
+          </Label>
+          <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
+        </div>
+      </div>
 
-      {/* 02 Configuration */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
-              2
-            </Badge>
-            <div>
-              <CardTitle className="font-display text-2xl">Configuration</CardTitle>
-              <CardDescription>Choose the language, checkpoint cadence, and training length before you start.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-6">
-          <Collapsible open={showSettings} onOpenChange={setShowSettings}>
-            <CollapsibleTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2 rounded-2xl border-slate-200 text-muted-foreground">
-                <ChevronRight
-                  size={14}
-                  className={cn("transition-transform", showSettings && "rotate-90")}
-                />
-                {showSettings ? 'Hide' : 'Show'} advanced settings
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-x-10">
-                {/* Batch Size */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Batch Size</Label>
-                    <span className="font-mono text-sm font-semibold">{batchSize}</span>
-                  </div>
-                  <Slider
-                    min={1} max={4} step={1}
-                    value={[batchSize]}
-                    onValueChange={([v]) => setBatchSize(v)}
-                    disabled={isRunning}
-                  />
-                </div>
-
-                {/* ASR Language */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
-                  <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">ASR Language</Label>
-                  <Select value={asrLanguage} onValueChange={setAsrLanguage} disabled={isRunning}>
-                    <SelectTrigger className="rounded-2xl border-slate-200 bg-white"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="en">English</SelectItem>
-                      <SelectItem value="zh">Chinese</SelectItem>
-                      <SelectItem value="ja">Japanese</SelectItem>
-                      <SelectItem value="ko">Korean</SelectItem>
-                      <SelectItem value="auto">Auto Detect</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* SoVITS Epochs */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SoVITS Epochs</Label>
-                    <span className="font-mono text-sm font-semibold">{sovitsEpochs}</span>
-                  </div>
-                  <Slider
-                    min={1} max={50} step={1}
-                    value={[sovitsEpochs]}
-                    onValueChange={([v]) => setSovitsEpochs(v)}
-                    disabled={isRunning}
-                  />
-                </div>
-
-                {/* GPT Epochs */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">GPT Epochs</Label>
-                    <span className="font-mono text-sm font-semibold">{gptEpochs}</span>
-                  </div>
-                  <Slider
-                    min={1} max={50} step={1}
-                    value={[gptEpochs]}
-                    onValueChange={([v]) => setGptEpochs(v)}
-                    disabled={isRunning}
-                  />
-                </div>
-
-                {/* SoVITS Save Interval */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SoVITS Save Interval</Label>
-                    <span className="font-mono text-sm font-semibold">every {sovitsSaveEvery}ep</span>
-                  </div>
-                  <Slider
-                    min={1} max={10} step={1}
-                    value={[sovitsSaveEvery]}
-                    onValueChange={([v]) => setSovitsSaveEvery(v)}
-                    disabled={isRunning}
-                  />
-                </div>
-
-                {/* GPT Save Interval */}
-                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/80 p-4">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">GPT Save Interval</Label>
-                    <span className="font-mono text-sm font-semibold">every {gptSaveEvery}ep</span>
-                  </div>
-                  <Slider
-                    min={1} max={10} step={1}
-                    value={[gptSaveEvery]}
-                    onValueChange={([v]) => setGptSaveEvery(v)}
-                    disabled={isRunning}
-                  />
-                </div>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </CardContent>
-      </Card>
-
-      {/* 03 Pipeline */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
-              3
-            </Badge>
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <CardTitle className="font-display text-2xl">Pipeline</CardTitle>
-                {pipelineStatus === 'running' && (
-                  <Badge className="animate-pulse-dot">Running</Badge>
+      {/* File list – full width */}
+      {files.length > 0 && (
+        <div className="mt-8">
+          {files.map((f, i) => (
+            <div
+              key={`${f.name}-${i}`}
+              className="flex items-center gap-4 border-b border-slate-100 py-3 last:border-0"
+            >
+              <AudioLines size={15} className="shrink-0 text-slate-400" />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{f.name}</span>
+              <span className="shrink-0 text-xs text-slate-400">{formatSize(f.size || 0)}</span>
+              <button
+                type="button"
+                className={cn(
+                  'shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:text-slate-700',
+                  isRunning && 'cursor-not-allowed opacity-40'
                 )}
-                {pipelineStatus === 'complete' && (
-                  <Badge variant="success">Complete</Badge>
-                )}
-                {pipelineStatus === 'error' && (
-                  <Badge variant="destructive">Error</Badge>
-                )}
-              </div>
-              <CardDescription>Follow the full training path from source preparation to SoVITS and GPT checkpoints.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6 p-6">
-          <div className="flex flex-wrap gap-3">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/85 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Progress</p>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-800">{completedSteps}/{steps.length}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/85 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Batch</p>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-800">{batchSize}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/85 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Language</p>
-              <p className="mt-2 text-lg font-semibold tracking-tight text-slate-800">{asrLanguage.toUpperCase()}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,rgba(248,250,252,0.95),rgba(240,249,255,0.92))] px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">View</p>
-              <p className="mt-2 text-sm font-semibold tracking-tight text-slate-800">
-                Everything stays visible here so you can follow the full run at a glance.
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-[24px] border border-slate-200 bg-white/90 p-4 shadow-sm">
-            <ProgressTracker steps={steps} />
-          </div>
-
-          <div className="flex items-center gap-4">
-            {!isRunning ? (
-              <Button
-                onClick={handleStart}
-                disabled={uploading || isRunning}
-                size="lg"
-                className="rounded-2xl shadow-[0_20px_50px_-28px_rgba(14,165,233,0.75)]"
+                onClick={() => removeFile(i)}
+                disabled={isRunning}
+                title="Remove file"
               >
-                {uploading ? (
-                  <>
-                    <Spinner size={14} className="text-primary-foreground" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <Play size={14} />
-                    Start Training
-                  </>
-                )}
-              </Button>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Action bar */}
+      <div className="mt-10 flex flex-wrap items-center gap-4">
+        {!isRunning ? (
+          <Button
+            onClick={handleStart}
+            disabled={uploading || isRunning}
+            className="h-12 rounded-full px-8 text-sm font-semibold shadow-lg shadow-primary/25 [background:linear-gradient(135deg,hsl(224,85%,58%)_0%,hsl(250,80%,62%)_100%)] hover:shadow-primary/35 hover:opacity-95 transition-all"
+          >
+            {uploading ? (
+              <>
+                <Spinner size={15} className="text-primary-foreground" />
+                Uploading...
+              </>
             ) : (
-              <Button variant="destructive" size="lg" className="rounded-2xl" onClick={handleStop}>
-                <Square size={14} />
-                Stop Training
-              </Button>
+              <>
+                <Play size={15} />
+                Start training
+              </>
             )}
+          </Button>
+        ) : (
+          <Button
+            variant="destructive"
+            className="h-12 rounded-full px-8 text-sm font-semibold shadow-none"
+            onClick={handleStop}
+          >
+            <Square size={15} />
+            Stop training
+          </Button>
+        )}
 
-            {error && (
-              <span className="rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive">
-                {error}
-              </span>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+        <span className="flex items-center gap-2 text-sm text-slate-500">
+          <span className={cn(
+            'h-2 w-2 rounded-full',
+            pipelineStatus === 'running' ? 'bg-blue-500' :
+            pipelineStatus === 'complete' ? 'bg-emerald-500' :
+            pipelineStatus === 'error' ? 'bg-red-500' :
+            'bg-slate-300'
+          )} />
+          {files.length > 0 ? `${files.length} clip${files.length !== 1 ? 's' : ''} ready` : 'No clips'} · {statusLabel}
+        </span>
 
-      {/* 04 Logs */}
-      <Card className="overflow-hidden rounded-[28px] border border-sky-100/80 bg-white/88 shadow-[0_24px_70px_-45px_rgba(15,23,42,0.65)] backdrop-blur-sm">
-        <CardHeader className="border-b border-slate-100/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.75))]">
-          <div className="flex items-center gap-3">
-            <Badge variant="secondary" className="h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-sm font-semibold">
-              4
-            </Badge>
-            <div>
-              <CardTitle className="font-display text-2xl">Logs</CardTitle>
-              <CardDescription>Real-time training output</CardDescription>
+        {(error || uploadError) && (
+          <span className="flex items-center gap-1.5 text-sm text-red-600">
+            <AlertCircle size={14} />
+            {error || uploadError}
+          </span>
+        )}
+      </div>
+
+      {/* Additional settings collapsible */}
+      <Collapsible open={showSettings} onOpenChange={setShowSettings} className="mt-12">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-sm text-slate-400 transition-colors hover:text-slate-700"
+          >
+            <ChevronDown
+              size={15}
+              className={cn('transition-transform', showSettings && 'rotate-180')}
+            />
+            {showSettings ? 'Hide' : 'Show'} additional settings
+          </button>
+        </CollapsibleTrigger>
+
+        <CollapsibleContent>
+          <div className="mt-6 grid grid-cols-1 gap-5 rounded-2xl border border-slate-100 bg-slate-50 p-6 md:grid-cols-2 md:gap-x-8">
+            {/* Batch Size */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Batch Size</Label>
+                <span className="font-mono text-sm font-semibold text-slate-700">{batchSize}</span>
+              </div>
+              <Slider min={1} max={4} step={1} value={[batchSize]} onValueChange={([v]) => setBatchSize(v)} disabled={isRunning} />
+            </div>
+
+            {/* ASR Language */}
+            <div className="space-y-3">
+              <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">ASR Language</Label>
+              <Select value={asrLanguage} onValueChange={setAsrLanguage} disabled={isRunning}>
+                <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white shadow-none"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="en">English</SelectItem>
+                  <SelectItem value="zh">Chinese</SelectItem>
+                  <SelectItem value="ja">Japanese</SelectItem>
+                  <SelectItem value="ko">Korean</SelectItem>
+                  <SelectItem value="auto">Auto Detect</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Voice Epochs */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Voice Epochs</Label>
+                <span className="font-mono text-sm font-semibold text-slate-700">{sovitsEpochs}</span>
+              </div>
+              <Slider min={1} max={50} step={1} value={[sovitsEpochs]} onValueChange={([v]) => setSovitsEpochs(v)} disabled={isRunning} />
+            </div>
+
+            {/* Language Epochs */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Language Epochs</Label>
+                <span className="font-mono text-sm font-semibold text-slate-700">{gptEpochs}</span>
+              </div>
+              <Slider min={1} max={50} step={1} value={[gptEpochs]} onValueChange={([v]) => setGptEpochs(v)} disabled={isRunning} />
+            </div>
+
+            {/* Voice Save Interval */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Voice Save Interval</Label>
+                <span className="font-mono text-sm font-semibold text-slate-700">every {sovitsSaveEvery}ep</span>
+              </div>
+              <Slider min={1} max={10} step={1} value={[sovitsSaveEvery]} onValueChange={([v]) => setSovitsSaveEvery(v)} disabled={isRunning} />
+            </div>
+
+            {/* Language Save Interval */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Language Save Interval</Label>
+                <span className="font-mono text-sm font-semibold text-slate-700">every {gptSaveEvery}ep</span>
+              </div>
+              <Slider min={1} max={10} step={1} value={[gptSaveEvery]} onValueChange={([v]) => setGptSaveEvery(v)} disabled={isRunning} />
             </div>
           </div>
-        </CardHeader>
-        <CardContent className="p-6">
-          <LogViewer logs={logs} />
-        </CardContent>
-      </Card>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
