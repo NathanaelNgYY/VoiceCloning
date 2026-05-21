@@ -8,7 +8,7 @@ import {
 import { GeminiLiveEventMapper, buildGeminiSetup } from './geminiLiveEvents.js';
 
 const GEMINI_LIVE_URL =
-  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
+  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 // Client sends 24kHz PCM16; Gemini Live accepts 16kHz PCM16.
 const CLIENT_SAMPLE_RATE = 24000;
