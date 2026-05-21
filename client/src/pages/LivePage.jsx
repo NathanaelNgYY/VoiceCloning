@@ -81,7 +81,12 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
   const hasVoice = !isUser && (Boolean(message.audioUrl) || readyParts.length > 0);
   const isBusy = ['thinking', 'generating_voice', 'transcribing', 'listening'].includes(message.status);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
-  const wordTimestamps = !isUser ? (selectedPart?.wordTimestamps || message.wordTimestamps || null) : null;
+  const wordTimestamps = !isUser
+    ? (selectedPart?.wordTimestamps
+      || message.wordTimestamps
+      || (message.audioParts || []).find((p) => Array.isArray(p.wordTimestamps) && p.wordTimestamps.length > 0)?.wordTimestamps
+      || null)
+    : null;
 
   useEffect(() => {
     const audio = audioRef?.current;
