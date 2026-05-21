@@ -185,7 +185,7 @@ router.post('/inference/tts', async (req, res) => {
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': audioBuffer.length,
-      'X-Word-Timestamps': JSON.stringify(wordTimestamps ?? null),
+      'X-Word-Timestamps': Buffer.from(JSON.stringify(wordTimestamps ?? null)).toString('base64'),
     });
     res.send(audioBuffer);
   } catch (err) {
@@ -224,7 +224,7 @@ router.post('/inference', async (req, res) => {
       'Content-Length': audioBuffer.length,
       'X-Chunk-Count': String(chunks.length),
       'X-Chunk-Retries': String(chunks.reduce((sum, chunk) => sum + Math.max(0, chunk.attempts - 1), 0)),
-      'X-Word-Timestamps': JSON.stringify(wordTimestamps ?? null),
+      'X-Word-Timestamps': Buffer.from(JSON.stringify(wordTimestamps ?? null)).toString('base64'),
     });
     res.send(audioBuffer);
   } catch (err) {

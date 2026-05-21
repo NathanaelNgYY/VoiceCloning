@@ -191,7 +191,8 @@ function parseWordTimestampsHeader(headers) {
   if (!value) return null;
 
   try {
-    return JSON.parse(value);
+    const json = atob(value);
+    return JSON.parse(json);
   } catch {
     return null;
   }
