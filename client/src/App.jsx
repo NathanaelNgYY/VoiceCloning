@@ -229,9 +229,8 @@ export default function App() {
 
         {/* Footer */}
         <footer className="mx-auto w-full max-w-6xl border-t border-slate-100 px-8">
-          <div className="flex items-center justify-between py-5">
+          <div className="flex items-center py-5">
             <span className="text-xs text-slate-400">Voice Cloning Studio</span>
-            <span className="text-xs text-slate-400">Built with GPT-SoVITS</span>
           </div>
         </footer>
       </div>
