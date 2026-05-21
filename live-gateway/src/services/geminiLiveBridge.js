@@ -82,11 +82,14 @@ export class GeminiLiveBridge extends EventEmitter {
 
     socket.on('open', () => {
       if (socket !== this.socket) return;
-      this.sendGemini(buildGeminiSetup({
+      console.log('[geminiLive] WebSocket connected, sending setup...');
+      const setup = buildGeminiSetup({
         model: this.model,
         systemPrompt: this.systemPrompt,
         language: this.language,
-      }));
+      });
+      console.log('[geminiLive] Setup:', JSON.stringify(setup));
+      this.sendGemini(setup);
     });
 
     socket.on('message', (data) => {
@@ -94,24 +97,28 @@ export class GeminiLiveBridge extends EventEmitter {
       this.handleMessage(data);
     });
 
-    socket.on('error', () => {
+    socket.on('error', (err) => {
       if (socket !== this.socket) return;
+      console.error('[geminiLive] Socket error:', err?.message || err);
       this.emit('app-event', safeErrorEvent(
         'AI conversation failed while connecting to Gemini Live.',
         'gemini_live_socket_error',
       ));
     });
 
-    socket.on('close', () => {
+    socket.on('close', (code, reason) => {
+      console.log('[geminiLive] Socket closed:', code, reason?.toString());
       this.handleClose(socket);
     });
   }
 
   handleMessage(data) {
     let event;
+    const raw = data.toString();
     try {
-      event = JSON.parse(data.toString());
+      event = JSON.parse(raw);
     } catch {
+      console.error('[geminiLive] Failed to parse message:', raw.slice(0, 200));
       this.emit('app-event', safeErrorEvent(
         'AI conversation failed: received an unreadable event.',
         'gemini_live_parse_error',
@@ -119,6 +126,7 @@ export class GeminiLiveBridge extends EventEmitter {
       return;
     }
 
+    console.log('[geminiLive] Received:', JSON.stringify(event).slice(0, 300));
     for (const appEvent of this.mapper.map(event)) {
       this.emit('app-event', { type: appEvent.type, ...appEvent });
     }

@@ -15,7 +15,6 @@ export function buildGeminiSetup({ model, systemPrompt = DEFAULT_SYSTEM_PROMPT, 
       model: modelId,
       generationConfig: {
         responseModalities: ['TEXT'],
-        inputAudioTranscription: {},
       },
       systemInstruction: {
         parts: [{ text: `${systemPrompt}${languageInstruction}` }],
