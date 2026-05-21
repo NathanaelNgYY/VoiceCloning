@@ -1,7 +1,8 @@
 import { WebSocket, WebSocketServer } from 'ws';
-import { CORS_ORIGIN } from '../config.js';
+import { CORS_ORIGIN, GEMINI_API_KEY } from '../config.js';
 import { OpenAiRealtimeBridge } from '../services/openaiRealtimeBridge.js';
 import { normalizeRealtimeLanguage } from '../services/openaiRealtimeEvents.js';
+import { GeminiLiveBridge } from '../services/geminiLiveBridge.js';
 
 export const LIVE_CHAT_PATH = '/api/live/chat/realtime';
 
@@ -130,9 +131,10 @@ export function attachLiveChatSocket(server) {
 
   wss.on('connection', (browserSocket, req) => {
     const url = parseRequestUrl(req);
-    const bridge = new OpenAiRealtimeBridge({
-      language: getLiveChatLanguage(url),
-    });
+    const language = getLiveChatLanguage(url);
+    const bridge = GEMINI_API_KEY
+      ? new GeminiLiveBridge({ language })
+      : new OpenAiRealtimeBridge({ language });
     activeClients.set(browserSocket, bridge);
 
     bridge.on('app-event', (payload) => {

@@ -42,5 +42,7 @@ export const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-r
 export const OPENAI_REALTIME_SYSTEM_PROMPT = process.env.OPENAI_REALTIME_SYSTEM_PROMPT
   || 'You are a casual, helpful assistant. Keep replies concise and conversational.';
 export const OPENAI_REALTIME_VAD = process.env.OPENAI_REALTIME_VAD || 'semantic_vad';
+export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+export const GEMINI_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.0-flash-live-001';
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 export const PORT = Number.parseInt(process.env.PORT || '3002', 10);
