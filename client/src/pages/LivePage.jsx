@@ -130,26 +130,24 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
           {messageStatusText(message)}
         </div>
 
-        {!isUser && Array.isArray(wordTimestamps) && wordTimestamps.length > 0 && (
-          <div className="mb-2 rounded-2xl border border-white/80 bg-white/75 px-4 py-3 text-sm text-slate-700 shadow-sm">
-            <div className="flex flex-wrap items-end gap-x-1 gap-y-2">
-              {wordTimestamps.map((item, index) => (
-                <div key={`${item.word}-${item.start}-${index}`} className="inline-flex flex-col items-center gap-0.5">
-                  <span className={cn('font-mono text-[9px]', index === activeWordIndex ? 'text-amber-600' : 'text-slate-400')}>
-                    {(typeof item.start === 'number' && isFinite(item.start) ? item.start : 0).toFixed(2)}
-                  </span>
-                  <span className={cn('rounded px-0.5 transition-colors', index === activeWordIndex && 'bg-yellow-200 text-slate-950')}>
-                    {item.word}
-                  </span>
-                </div>
-              ))}
-            </div>
+        {!isUser && Array.isArray(wordTimestamps) && wordTimestamps.length > 0 ? (
+          <div className="flex flex-wrap items-end gap-x-1 gap-y-2 text-sm">
+            {wordTimestamps.map((item, index) => (
+              <div key={`${item.word}-${item.start}-${index}`} className="inline-flex flex-col items-center gap-0.5">
+                <span className={cn('font-mono text-[9px]', index === activeWordIndex ? 'text-amber-600' : 'text-slate-400')}>
+                  {(typeof item.start === 'number' && isFinite(item.start) ? item.start : 0).toFixed(2)}
+                </span>
+                <span className={cn('rounded px-0.5 transition-colors', index === activeWordIndex && 'bg-yellow-200 text-slate-950')}>
+                  {item.word}
+                </span>
+              </div>
+            ))}
           </div>
+        ) : (
+          <p className={cn('whitespace-pre-wrap text-sm leading-6', isBusy && !message.text && 'italic opacity-60')}>
+            {message.text || (isUser ? 'Listening...' : 'Thinking...')}
+          </p>
         )}
-
-        <p className={cn('whitespace-pre-wrap text-sm leading-6', isBusy && !message.text && 'italic opacity-60')}>
-          {message.text || (isUser ? 'Listening...' : 'Thinking...')}
-        </p>
 
         {message.error && (
           <p className="mt-2 flex items-center gap-1 text-xs text-red-500">
