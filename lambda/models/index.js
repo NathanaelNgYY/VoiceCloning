@@ -1,15 +1,8 @@
 import path from 'path';
 import { listObjects } from '../shared/s3.js';
 import { inferencePost, inferenceGet } from '../shared/gpuWorker.js';
+import { loadModelPair, useGpuWorkerModels } from '../shared/modelSelection.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
-
-function modelSource() {
-  return (process.env.MODEL_SOURCE || 's3').trim().toLowerCase();
-}
-
-function useGpuWorkerModels() {
-  return ['gpu-worker', 'gpu', 'local', 'gpt-sovits'].includes(modelSource());
-}
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
@@ -79,37 +72,7 @@ export const handler = async (event) => {
       } catch {
         return err(400, 'Invalid JSON body');
       }
-
-      const resolvedGptKey = body.gptKey || body.gptPath;
-      const resolvedSovitsKey = body.sovitsKey || body.sovitsPath;
-
-      let lastStatus = null;
-      if (useGpuWorkerModels()) {
-        if (resolvedSovitsKey) {
-          lastStatus = await inferencePost('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
-        }
-        if (resolvedGptKey) {
-          lastStatus = await inferencePost('/inference/weights/gpt', { weightsPath: resolvedGptKey });
-        }
-        return ok({
-          message: 'Models loaded successfully',
-          loaded: lastStatus?.loaded || {},
-        });
-      }
-
-      if (resolvedSovitsKey) {
-        const { localPath } = await inferencePost('/models/download', { s3Key: resolvedSovitsKey });
-        lastStatus = await inferencePost('/inference/weights/sovits', { weightsPath: localPath });
-      }
-      if (resolvedGptKey) {
-        const { localPath } = await inferencePost('/models/download', { s3Key: resolvedGptKey });
-        lastStatus = await inferencePost('/inference/weights/gpt', { weightsPath: localPath });
-      }
-
-      return ok({
-        message: 'Models loaded successfully',
-        loaded: lastStatus?.loaded || {},
-      });
+      return ok(await loadModelPair(body));
     }
 
     return err(404, 'Not found');

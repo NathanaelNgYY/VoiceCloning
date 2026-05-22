@@ -23,7 +23,10 @@ import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
-import { chooseBestReferenceSet } from '@/lib/referenceSelection';
+import {
+  chooseBestReferenceSet,
+  shouldAutoApplyBestReferenceSet,
+} from '@/lib/referenceSelection';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
 import { findActiveWordIndex } from '@/lib/wordTimestamps';
 import {
@@ -35,6 +38,14 @@ import { shouldLoadSelectedProfile } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
 import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
+import {
+  createVoiceProfileBrowserDebugSummary,
+  writeVoiceProfileBrowserDebug,
+} from '@/lib/voiceProfileDebug';
+import {
+  createAutoVoiceProfileSyncFingerprint,
+  getAutoSyncRequestFingerprint,
+} from '@/lib/autoVoiceProfileSync';
 import {
   Bot,
   Check,
@@ -224,6 +235,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [activeVoiceProfileError, setActiveVoiceProfileError] = useState('');
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
+  const [loadedTrainingAudioSourceKey, setLoadedTrainingAudioSourceKey] = useState('');
   const [loadingTrainingAudio, setLoadingTrainingAudio] = useState(false);
   const [refAudioPath, setRefAudioPath] = useState('');
   const [promptText, setPromptText] = useState('');
@@ -249,6 +261,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const autoLoadAttemptKeyRef = useRef('');
   const urlVoiceKeyRef = useRef('');
   const previewRequestRef = useRef(0);
+  const pendingAutoSyncFingerprintRef = useRef('');
+  const autoSyncRequestFingerprintRef = useRef('');
+  const lastAutoSyncedFingerprintRef = useRef('');
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -266,6 +281,38 @@ export default function LivePage({ replyMode = 'phrases' }) {
     primaryPath: refAudioPath, promptText, promptLang, auxRefAudios,
     settings: { speed, topK, topP, temperature, repPenalty },
   }), [refAudioPath, promptText, promptLang, auxRefAudios, speed, topK, topP, temperature, repPenalty]);
+  const currentAutoSyncFingerprint = useMemo(() => createAutoVoiceProfileSyncFingerprint({
+    sourceKey: selectedExpName,
+    selectedGPT,
+    selectedSoVITS,
+    refAudioPath,
+    promptText,
+    promptLang,
+    textLang: liveLanguage,
+    preferredRoute: 'sentence',
+    auxRefAudioPaths: auxRefAudios.map((item) => item.path),
+    defaults: {
+      top_k: topK,
+      top_p: topP,
+      temperature,
+      repetition_penalty: repPenalty,
+      speed_factor: speed,
+    },
+  }), [
+    selectedExpName,
+    selectedGPT,
+    selectedSoVITS,
+    refAudioPath,
+    promptText,
+    promptLang,
+    liveLanguage,
+    auxRefAudios,
+    topK,
+    topP,
+    temperature,
+    repPenalty,
+    speed,
+  ]);
   const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
     primaryPath: refAudioPath, promptText, trainingAudioFiles, auxRefAudios,
   }), [refAudioPath, promptText, trainingAudioFiles, auxRefAudios]);
@@ -273,6 +320,18 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const liveSpeech = useLiveSpeech({ refParams: liveRefParams, replyMode, language: liveLanguage });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
+  const liveSelectedModelLoaded = Boolean(
+    serverReady && selectedGPT && selectedSoVITS &&
+    selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
+  );
+  const autoSyncRequestFingerprint = getAutoSyncRequestFingerprint({
+    pendingFingerprint: pendingAutoSyncFingerprintRef.current,
+    currentFingerprint: currentAutoSyncFingerprint,
+    lastSyncedFingerprint: lastAutoSyncedFingerprintRef.current,
+    ready: liveSelectedModelLoaded && Boolean(refAudioPath),
+    busy: isConversationActive || loadingModel,
+    inFlightFingerprint: autoSyncRequestFingerprintRef.current,
+  });
 
   async function fetchModels() {
     setModelsFetched(false);
@@ -319,16 +378,75 @@ export default function LivePage({ replyMode = 'phrases' }) {
     }
   }
 
-  function applyBestReference(files = trainingAudioFiles) {
+  function clearReferenceSelection() {
+    const audio = referencePreviewAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    setRefAudioPath('');
+    setPromptText('');
+    setPromptLang('en');
+    setAuxRefAudios([]);
+    setReferenceMessage('');
+    setPreviewReference({ path: '', url: null, filename: '', role: '' });
+    setReferenceAudioUrls({});
+    setLoadingPreviewPath('');
+  }
+
+  function applyBestReference(files = trainingAudioFiles, { markForAutoSync = false } = {}) {
     const selection = chooseBestReferenceSet(files);
     if (!selection.primary) {
-      setRefAudioPath(''); setPromptText(''); setPromptLang('en'); setAuxRefAudios([]);
+      clearReferenceSelection();
+      if (markForAutoSync) {
+        pendingAutoSyncFingerprintRef.current = '';
+      }
       setReferenceMessage(selection.reason); return;
     }
+    const nextPromptLang = normalizeReferenceLanguage(selection.primary.lang);
     setRefAudioPath(selection.primary.path);
     setPromptText(selection.primary.transcript || '');
-    setPromptLang(normalizeReferenceLanguage(selection.primary.lang));
+    setPromptLang(nextPromptLang);
     setAuxRefAudios(selection.aux);
+    if (markForAutoSync) {
+      pendingAutoSyncFingerprintRef.current = createAutoVoiceProfileSyncFingerprint({
+        sourceKey: selectedExpName,
+        selectedGPT,
+        selectedSoVITS,
+        refAudioPath: selection.primary.path,
+        promptText: selection.primary.transcript || '',
+        promptLang: nextPromptLang,
+        textLang: liveLanguage,
+        preferredRoute: 'sentence',
+        auxRefAudioPaths: selection.aux.map((item) => item.path),
+        defaults: {
+          top_k: topK,
+          top_p: topP,
+          temperature,
+          repetition_penalty: repPenalty,
+          speed_factor: speed,
+        },
+      });
+    }
+    writeVoiceProfileBrowserDebug('live auto-selected references', createVoiceProfileBrowserDebugSummary({
+      context: 'live auto-select',
+      voiceProfileId: selectedProfile?.key || '',
+      displayName: selectedProfile?.displayName || '',
+      selectedExpName,
+      refAudioPath: selection.primary.path,
+      promptText: selection.primary.transcript || '',
+      promptLang: nextPromptLang,
+      textLang: liveLanguage,
+      auxRefAudioPaths: selection.aux.map((item) => item.path),
+      defaults: {
+        top_k: topK,
+        top_p: topP,
+        temperature,
+        repetition_penalty: repPenalty,
+        speed_factor: speed,
+      },
+    }));
     setReferenceMessage(`${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
   }
 
@@ -346,6 +464,40 @@ export default function LivePage({ replyMode = 'phrases' }) {
     }
   }
 
+  async function persistSelectedVoiceProfile() {
+    if (!selectedProfile || !selectedGPT || !selectedSoVITS || !refAudioPath) {
+      throw new Error('Voice profile is not ready to save yet.');
+    }
+
+    const storageMode = await getStorageMode();
+    const payload = buildVoiceProfilePayload({
+      displayName: selectedProfile.displayName,
+      selectedGPT,
+      selectedSoVITS,
+      refAudioPath,
+      promptText,
+      promptLang,
+      textLang: liveLanguage,
+      preferredRoute: 'sentence',
+      auxRefAudioPaths: auxRefAudios.map((item) => item.path),
+      defaults: {
+        top_k: topK,
+        top_p: topP,
+        temperature,
+        repetition_penalty: repPenalty,
+        speed_factor: speed,
+      },
+      storageMode,
+    });
+
+    const response = await activateVoiceProfile(payload);
+    const summary = response.data || {};
+    setActiveVoiceProfile(summary.voiceProfileId ? summary : null);
+    setActiveVoiceProfileError('');
+    setLoadingActiveVoiceProfile(false);
+    return { summary, payload };
+  }
+
   async function saveSelectedVoiceProfile() {
     if (!selectedProfile || !selectedGPT || !selectedSoVITS || !liveRefParams) return;
 
@@ -353,32 +505,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
     setModelError('');
 
     try {
-      const storageMode = await getStorageMode();
-      const payload = buildVoiceProfilePayload({
-        displayName: selectedProfile.displayName,
-        selectedGPT,
-        selectedSoVITS,
-        refAudioPath,
-        promptText,
-        promptLang,
-        textLang: liveLanguage,
-        preferredRoute: 'sentence',
-        auxRefAudioPaths: auxRefAudios.map((item) => item.path),
-        defaults: {
-          top_k: topK,
-          top_p: topP,
-          temperature,
-          repetition_penalty: repPenalty,
-          speed_factor: speed,
-        },
-        storageMode,
-      });
-
-      const response = await activateVoiceProfile(payload);
-      const summary = response.data || {};
-      setActiveVoiceProfile(summary.voiceProfileId ? summary : null);
-      setActiveVoiceProfileError('');
-      setLoadingActiveVoiceProfile(false);
+      const { summary, payload } = await persistSelectedVoiceProfile();
+      lastAutoSyncedFingerprintRef.current = currentAutoSyncFingerprint;
+      pendingAutoSyncFingerprintRef.current = '';
       setReferenceMessage(
         `Saved voice profile ${summary.displayName || selectedProfile.displayName} (${summary.voiceProfileId || payload.voiceProfileId}).`,
       );
@@ -392,6 +521,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
     if (!file) return;
+    pendingAutoSyncFingerprintRef.current = '';
     setRefAudioPath(file.path); setPromptText(file.transcript || '');
     setPromptLang(normalizeReferenceLanguage(file.lang));
     setAuxRefAudios((cur) => cur.filter((item) => item.path !== file.path).slice(0, 5));
@@ -400,6 +530,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
 
   function handleAuxToggle(file, checked) {
     if (!file?.path || file.path === refAudioPath) return;
+    pendingAutoSyncFingerprintRef.current = '';
     setAuxRefAudios((cur) => {
       const without = cur.filter((item) => item.path !== file.path);
       return checked ? [...without, file].slice(0, 5) : without;
@@ -510,22 +641,80 @@ export default function LivePage({ replyMode = 'phrases' }) {
   }, [serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel]);
 
   useEffect(() => {
-    if (!selectedExpName) { setTrainingAudioFiles([]); return; }
+    if (!selectedExpName) {
+      setTrainingAudioFiles([]);
+      setLoadedTrainingAudioSourceKey('');
+      return;
+    }
     let ignore = false;
+    setTrainingAudioFiles([]);
+    setLoadedTrainingAudioSourceKey('');
     setLoadingTrainingAudio(true);
     getTrainingAudioFiles(selectedExpName)
-      .then((res) => { if (!ignore) setTrainingAudioFiles(res.data.files || []); })
-      .catch(() => { if (!ignore) { setTrainingAudioFiles([]); setReferenceMessage('Could not load reference clips.'); } })
+      .then((res) => {
+        if (!ignore) {
+          setTrainingAudioFiles(res.data.files || []);
+          setLoadedTrainingAudioSourceKey(selectedExpName);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setTrainingAudioFiles([]);
+          setLoadedTrainingAudioSourceKey('');
+          setReferenceMessage('Could not load reference clips.');
+        }
+      })
       .finally(() => { if (!ignore) setLoadingTrainingAudio(false); });
     return () => { ignore = true; };
   }, [selectedExpName]);
 
   useEffect(() => {
-    if (!selectedExpName || loadingTrainingAudio || trainingAudioFiles.length === 0) return;
-    if (autoReferenceKeyRef.current === selectedExpName) return;
+    if (!shouldAutoApplyBestReferenceSet({
+      selectedSourceKey: selectedExpName,
+      loadedSourceKey: loadedTrainingAudioSourceKey,
+      loading: loadingTrainingAudio,
+      fileCount: trainingAudioFiles.length,
+      lastAppliedSourceKey: autoReferenceKeyRef.current,
+    })) return;
     autoReferenceKeyRef.current = selectedExpName;
-    applyBestReference(trainingAudioFiles);
-  }, [selectedExpName, loadingTrainingAudio, trainingAudioFiles]);
+    applyBestReference(trainingAudioFiles, { markForAutoSync: true });
+  }, [selectedExpName, loadedTrainingAudioSourceKey, loadingTrainingAudio, trainingAudioFiles]);
+
+  useEffect(() => {
+    if (!autoSyncRequestFingerprint) {
+      return;
+    }
+
+    const requestFingerprint = autoSyncRequestFingerprint;
+    const requestDisplayName = selectedProfile?.displayName || '';
+    autoSyncRequestFingerprintRef.current = requestFingerprint;
+    setSavingProfile(true);
+    setModelError('');
+
+    persistSelectedVoiceProfile()
+      .then(({ summary, payload }) => {
+        if (autoSyncRequestFingerprintRef.current !== requestFingerprint) return;
+        lastAutoSyncedFingerprintRef.current = requestFingerprint;
+        pendingAutoSyncFingerprintRef.current = '';
+        setReferenceMessage(
+          `Active voice profile synced to ${summary.displayName || requestDisplayName} (${summary.voiceProfileId || payload.voiceProfileId}).`,
+        );
+      })
+      .catch((err) => {
+        if (autoSyncRequestFingerprintRef.current !== requestFingerprint) return;
+        pendingAutoSyncFingerprintRef.current = '';
+        setModelError(err.response?.data?.error || err.message || 'Could not sync this voice profile.');
+      })
+      .finally(() => {
+        if (autoSyncRequestFingerprintRef.current === requestFingerprint) {
+          autoSyncRequestFingerprintRef.current = '';
+          setSavingProfile(false);
+        }
+      });
+  }, [
+    autoSyncRequestFingerprint,
+    selectedProfile,
+  ]);
 
   useEffect(() => {
     function handleGpuReady() { fetchModels(); checkStatus(); loadActiveVoiceProfile(); }
@@ -591,11 +780,26 @@ export default function LivePage({ replyMode = 'phrases' }) {
           {/* Voice model selector */}
           <div className="flex items-center gap-2">
             <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Voice</span>
-            <Select
-              value={selectedPersonKey}
-              onValueChange={(v) => { setSelectedPersonKey(v); setModelError(''); autoReferenceKeyRef.current = ''; autoLoadAttemptKeyRef.current = ''; }}
-              disabled={isConversationActive || availableProfiles.length === 0}
-            >
+                  <Select
+                    value={selectedPersonKey}
+                    onValueChange={(v) => {
+                      setSelectedPersonKey(v);
+                      setModelError('');
+                      autoReferenceKeyRef.current = '';
+                      autoLoadAttemptKeyRef.current = '';
+                      pendingAutoSyncFingerprintRef.current = '';
+                      autoSyncRequestFingerprintRef.current = '';
+                      setTrainingAudioFiles([]);
+                      setLoadedTrainingAudioSourceKey('');
+                      clearReferenceSelection();
+                      writeVoiceProfileBrowserDebug('live voice switched', createVoiceProfileBrowserDebugSummary({
+                        context: 'live voice switch',
+                        displayName: availableProfiles.find((p) => p.key === v)?.displayName || '',
+                        selectedExpName: availableProfiles.find((p) => p.key === v)?.expName || '',
+                      }));
+                    }}
+                    disabled={isConversationActive || savingProfile || availableProfiles.length === 0}
+                  >
               <SelectTrigger className="h-9 w-44 rounded-xl border-slate-200 bg-white text-sm shadow-none">
                 <SelectValue placeholder={modelsFetched ? 'Select model' : 'Loading...'} />
               </SelectTrigger>

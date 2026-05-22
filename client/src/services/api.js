@@ -1,4 +1,8 @@
 import axios from 'axios';
+import {
+  createVoiceProfileBrowserDebugSummary,
+  writeVoiceProfileBrowserDebug,
+} from '../lib/voiceProfileDebug.js';
 import { API_BASE_URL, resolveApiPath, getStorageMode, isS3Mode } from '@/lib/runtimeConfig';
 
 const api = axios.create({
@@ -163,7 +167,44 @@ export function selectModels(gptPath, sovitsPath) {
 }
 
 export function activateVoiceProfile(profile) {
-  return api.post('/voice-profile/activate', profile);
+  const requestDebug = createVoiceProfileBrowserDebugSummary({
+    context: 'activate request',
+    voiceProfileId: profile?.voiceProfileId,
+    displayName: profile?.displayName,
+    refAudioPath: profile?.ref_audio_path,
+    promptText: profile?.prompt_text,
+    promptLang: profile?.prompt_lang,
+    textLang: profile?.text_lang,
+    auxRefAudioPaths: profile?.aux_ref_audio_paths,
+    defaults: profile?.defaults,
+  });
+  writeVoiceProfileBrowserDebug('activate request', requestDebug);
+
+  return api.post('/voice-profile/activate', profile)
+    .then((response) => {
+      writeVoiceProfileBrowserDebug('activate response', createVoiceProfileBrowserDebugSummary({
+        context: 'activate response',
+        voiceProfileId: profile?.voiceProfileId,
+        displayName: profile?.displayName,
+        refAudioPath: profile?.ref_audio_path,
+        promptText: profile?.prompt_text,
+        promptLang: profile?.prompt_lang,
+        textLang: profile?.text_lang,
+        auxRefAudioPaths: profile?.aux_ref_audio_paths,
+        defaults: profile?.defaults,
+        summary: response?.data || null,
+      }));
+      return response;
+    })
+    .catch((error) => {
+      writeVoiceProfileBrowserDebug('activate error', {
+        ...requestDebug,
+        context: 'activate error',
+        error: error?.response?.data?.error || error?.message || 'Unknown error',
+        status: error?.response?.status || null,
+      });
+      throw error;
+    });
 }
 
 export function getActiveVoiceProfile() {

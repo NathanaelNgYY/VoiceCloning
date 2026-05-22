@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseBestReferenceSet } from './referenceSelection.js';
+import {
+  chooseBestReferenceSet,
+  shouldAutoApplyBestReferenceSet,
+} from './referenceSelection.js';
 
 test('chooseBestReferenceSet prefers clean transcript-rich wav files and adds auxiliaries', () => {
   const result = chooseBestReferenceSet([
@@ -82,4 +85,28 @@ test('chooseBestReferenceSet prefers a fuller prompt over a tiny intro clip', ()
   ], { maxAux: 2 });
 
   assert.equal(result.primary.filename, 'b_balanced.wav');
+});
+
+test('shouldAutoApplyBestReferenceSet waits for the selected voice clip list instead of using stale files', () => {
+  assert.equal(
+    shouldAutoApplyBestReferenceSet({
+      selectedSourceKey: 'PMWongVoice',
+      loadedSourceKey: 'LHLChinese',
+      loading: false,
+      fileCount: 6,
+      lastAppliedSourceKey: '',
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldAutoApplyBestReferenceSet({
+      selectedSourceKey: 'PMWongVoice',
+      loadedSourceKey: 'PMWongVoice',
+      loading: false,
+      fileCount: 6,
+      lastAppliedSourceKey: '',
+    }),
+    true,
+  );
 });

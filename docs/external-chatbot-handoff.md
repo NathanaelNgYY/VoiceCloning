@@ -1,6 +1,6 @@
 # External Chatbot -> VoiceCloning Handoff
 
-Last updated: 2026-05-19
+Last updated: 2026-05-22
 
 ## Source Of Truth
 
@@ -151,6 +151,8 @@ That saved profile includes:
 
 But `voice-profiles/active.json` is still only a global active pointer. That is useful for the website UI, but it is **not** the right runtime source of truth for long-term per-chatbot or per-assignment routing.
 
+At the same time, the website-driven save flow is now more reliable than before. When a user switches voices on the website and the correct training clips for that selected voice finish loading, the frontend can now auto-pick the best primary reference and up to five auxiliary clips for that voice and sync the active saved profile back to the backend. This reduces the risk that the active saved profile is still using an older reference set from a previous voice switch.
+
 ## Recommended Long-Term Compatibility Model
 
 For correct long-term behavior, keep two separate responsibilities:
@@ -166,11 +168,10 @@ That means the clinical chatbot runtime should not depend on whichever voice ano
 Recommended runtime flow:
 
 1. ClinicalChatbot resolves the local binding to `voiceProfileId`.
-2. ClinicalChatbot calls `GET /api/voice-profile/internal/:voiceProfileId` on this system.
-3. VoiceCloning returns the full saved profile JSON for that ID.
-4. ClinicalChatbot calls `POST /api/models/select` if the loaded pair is wrong.
-5. ClinicalChatbot calls `POST /api/live/tts-sentence` or `POST /api/inference`.
-6. ClinicalChatbot returns WAV audio to its own frontend.
+2. ClinicalChatbot can use either of these two paths:
+   - simple: call `POST /api/live/tts-sentence` or `POST /api/inference` with `voiceProfileId + text`
+   - explicit: call `GET /api/voice-profile/internal/:voiceProfileId`, then `POST /api/models/select`, then synthesize with the full voice fields
+3. VoiceCloning returns WAV audio to its own frontend.
 
 ## Recommended Endpoint Shape For This Requirement
 
@@ -234,6 +235,30 @@ If the other chatbot already has its own chat backend or its own LLM pipeline, t
 
 ## REST Endpoints To Reuse
 
+### Simpler contract now supported
+
+The VoiceCloning backend can now resolve a saved voice profile internally when the chatbot sends only:
+
+```json
+{
+  "voiceProfileId": "lecturer-a-v1",
+  "text": "Hello, this is the cloned voice response."
+}
+```
+
+If `voiceProfileId` is present, the backend will:
+
+1. load the full saved profile from server-side storage
+2. load the correct GPT + SoVITS pair if needed
+3. apply `ref_audio_path`, `prompt_text`, `prompt_lang`, `aux_ref_audio_paths`, and saved defaults automatically
+4. return cloned audio
+
+This works on:
+
+- `POST /api/live/tts-sentence`
+- `POST /api/inference`
+- `POST /api/inference/generate`
+
 ### 1. `POST /api/live/tts-sentence`
 
 Use this for short reply chunks or sentence-by-sentence playback.
@@ -248,8 +273,8 @@ Required JSON fields:
 
 ```json
 {
-  "text": "Hello, this is the cloned voice response.",
-  "ref_audio_path": "training/datasets/example/ref.wav"
+  "voiceProfileId": "lecturer-a-v1",
+  "text": "Hello, this is the cloned voice response."
 }
 ```
 
@@ -277,7 +302,10 @@ Notes:
 - Returns binary `audio/wav`.
 - Best for low-latency chatbot replies.
 - Current Lambda layer forces sentence-style synthesis settings for this route in `lambda/live/index.js`.
+- This route is still one-shot. It does not split a long reply into multiple sentence requests by itself.
+- If the external chatbot wants progressive sentence-by-sentence playback, it should split the text and queue repeated `POST /api/live/tts-sentence` requests on its own.
 - For Chinese cloned speech, the current frontend sends `text_lang: "all_zh"` instead of `"zh"`.
+- If you do not want the backend to resolve the saved profile automatically, you can still send the full explicit voice fields yourself.
 
 ### 2. `POST /api/inference`
 
@@ -295,6 +323,7 @@ Notes:
 - Returns binary `audio/wav`.
 - Better for paragraph-length answers.
 - Slower than `POST /api/live/tts-sentence`, but less client work.
+- The same `voiceProfileId + text` shortcut is supported here.
 
 ### 3. `GET /api/models`
 
@@ -331,17 +360,28 @@ Or in local/non-S3 style:
 
 For the other chatbot backend, the simplest flow is:
 
-1. Read the currently active website-selected voice profile from server-side storage.
-2. If needed, call `POST /api/models/select` to load the matching GPT + SoVITS weights.
-3. Build TTS params with:
-   - `ref_audio_path`
-   - `prompt_text`
-   - `prompt_lang`
-   - optional `aux_ref_audio_paths`
-   - optional inference tuning values
-4. If the reply is short, call `POST /api/live/tts-sentence`.
-5. If the reply is long, call `POST /api/inference`.
-6. Return the WAV audio back to the chatbot frontend.
+1. Simplest recommended path:
+   - send `voiceProfileId + text` to `POST /api/live/tts-sentence` or `POST /api/inference`
+   - if you want Live Fast-style progressive playback, split the assistant text into sentences or short phrases and queue `POST /api/live/tts-sentence` calls one by one while managing playback order on the chatbot side
+2. Optional explicit path:
+   - read the saved profile from server-side storage
+   - call `POST /api/models/select` if needed
+   - send the full voice fields explicitly
+3. Return the WAV audio back to the chatbot frontend.
+
+## Browser-Side Verification On The VoiceCloning Website
+
+The VoiceCloning frontend now writes structured browser-console logs that can help verify whether the correct reference set is being saved after a voice switch.
+
+Useful console labels include:
+
+- `live voice switched`
+- `live auto-selected references`
+- `activate request`
+- `activate response`
+- `activate error`
+
+These logs make it easier to confirm whether the current save really includes the intended primary reference path, the auxiliary references, and the tuning defaults before the external chatbot tries to use that `voiceProfileId`.
 
 ## Recommended Voice Profile Shape
 

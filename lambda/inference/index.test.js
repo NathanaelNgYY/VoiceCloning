@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handler } from './index.js';
+import { createHandler, handler } from './index.js';
 
 async function withEnv(values, fn) {
   const previous = {};
@@ -95,4 +95,62 @@ test('inference current returns idle when the GPU worker is not reachable', asyn
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test('inference handler resolves voiceProfileId to a saved full profile before direct synthesis', async () => {
+  const calls = [];
+  const handler = createHandler({
+    resolveSynthesisBody: async (body) => ({
+      ...body,
+      ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+      prompt_text: 'Reference transcript',
+      prompt_lang: 'en',
+      text_lang: 'en',
+      aux_ref_audio_paths: ['training/datasets/lecturer-a/aux1.wav'],
+      top_k: 5,
+      top_p: 0.85,
+      temperature: 0.7,
+      repetition_penalty: 1.35,
+      speed_factor: 1.0,
+    }),
+    postBinary: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return {
+        buffer: Buffer.from('RIFFvoice'),
+        contentType: 'audio/wav',
+        wordTimestamps: null,
+      };
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference',
+    body: JSON.stringify({
+      text: 'This should use the saved profile.',
+      voiceProfileId: 'lecturer-a-v1',
+    }),
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(Buffer.from(response.body, 'base64').toString('utf-8'), 'RIFFvoice');
+  assert.deepEqual(calls, [
+    {
+      routePath: '/inference',
+      payload: {
+        text: 'This should use the saved profile.',
+        voiceProfileId: 'lecturer-a-v1',
+        ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+        prompt_text: 'Reference transcript',
+        prompt_lang: 'en',
+        text_lang: 'en',
+        aux_ref_audio_paths: ['training/datasets/lecturer-a/aux1.wav'],
+        top_k: 5,
+        top_p: 0.85,
+        temperature: 0.7,
+        repetition_penalty: 1.35,
+        speed_factor: 1.0,
+      },
+    },
+  ]);
 });
