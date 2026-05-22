@@ -6,6 +6,7 @@ Last updated: 2026-05-22
 
 - Use branch `separate-containers` as the latest structure.
 - Note: the branch is spelled `separate-containers` in git, even if earlier notes said `seperate-containers`.
+- This handoff is a VoiceCloning-side integration note. Do not treat the ClinicalChatbot session handoff as the source for this document.
 
 ## Goal
 
