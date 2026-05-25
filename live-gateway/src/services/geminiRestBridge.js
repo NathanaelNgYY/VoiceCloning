@@ -1,3 +1,5 @@
+// NOTE: This file is retained for reference but is currently unused.
+// The live-chat route has been switched to always use OpenAiRealtimeBridge.
 import { EventEmitter } from 'events';
 import {
   GEMINI_API_KEY,

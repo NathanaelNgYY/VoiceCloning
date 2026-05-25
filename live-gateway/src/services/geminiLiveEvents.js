@@ -1,3 +1,5 @@
+// NOTE: This file is retained for reference but is currently unused.
+// The live-chat route has been switched to always use OpenAiRealtimeBridge.
 import { preprocessText } from './textPreprocessor.js';
 
 const DEFAULT_SYSTEM_PROMPT =
