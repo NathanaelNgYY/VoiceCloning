@@ -369,7 +369,7 @@ export function useLiveSpeech({
     patchMessage(messageId, { status: 'generating_voice', error: null });
 
     try {
-      const { blob, wordTimestamps } = await synthesizeWithRetry(buildLiveReplyParams(text, refParams, liveLanguage));
+      const { blob } = await synthesizeWithRetry(buildLiveReplyParams(text, refParams, liveLanguage));
       if (
         isCancelledRef.current ||
         runId !== runIdRef.current ||
@@ -379,7 +379,7 @@ export function useLiveSpeech({
       }
 
       const url = URL.createObjectURL(blob);
-      patchMessage(messageId, { status: 'ready', audioUrl: url, wordTimestamps, error: null });
+      patchMessage(messageId, { status: 'ready', audioUrl: url, error: null });
       setSelectedReplyId(messageId);
       setPhase('speaking');
     } catch (err) {
@@ -436,7 +436,7 @@ export function useLiveSpeech({
         }
 
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
-        const { blob, wordTimestamps } = await synthesizeSentenceWithRetry(
+        const { blob } = await synthesizeSentenceWithRetry(
           buildLiveSentenceParams(phrases[index], refParams, liveLanguage)
         );
 
@@ -449,7 +449,7 @@ export function useLiveSpeech({
         }
 
         const url = URL.createObjectURL(blob);
-        patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, wordTimestamps, error: null });
+        patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
         if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
           setSelectedReplyId(partId);
         }

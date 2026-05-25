@@ -1,10 +1,10 @@
 import { corsHeaders, err, preflight, parseJsonBody } from '../shared/cors.js';
-import { gpuPostBinary } from '../shared/gpuWorker.js';
+import { inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
 
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
-  postBinary = gpuPostBinary,
+  postBinary = inferencePostBinary,
 } = {}) {
   return async function handler(event) {
     if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -28,7 +28,7 @@ export function createHandler({
         return err(400, 'ref_audio_path is required');
       }
 
-      const { buffer, contentType, wordTimestamps } = await postBinary('/inference/tts', {
+      const { buffer, contentType } = await postBinary('/inference/tts', {
         ...resolvedBody,
         text: `${resolvedBody.text.trim()} `,
         text_split_method: 'cut0',
@@ -45,7 +45,6 @@ export function createHandler({
         headers: {
           'Content-Type': contentType || 'audio/wav',
           'Content-Length': String(buffer.length),
-          'X-Word-Timestamps': wordTimestamps || 'null',
           ...corsHeaders,
         },
         body: buffer.toString('base64'),

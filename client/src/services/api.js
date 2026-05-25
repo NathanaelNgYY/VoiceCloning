@@ -219,26 +219,6 @@ export function transcribeAudio(filePath, language = 'auto') {
 
 // ── Inference ──
 
-function getResponseHeader(headers, name) {
-  const lowerName = name.toLowerCase();
-  if (typeof headers?.get === 'function') {
-    return headers.get(name) || headers.get(lowerName);
-  }
-  return headers?.[lowerName] || headers?.[name] || null;
-}
-
-function parseWordTimestampsHeader(headers) {
-  const value = getResponseHeader(headers, 'x-word-timestamps');
-  if (!value) return null;
-
-  try {
-    const json = atob(value);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
 export async function synthesize(params) {
   const res = await api.post('/inference', params, {
     responseType: 'blob',
@@ -258,7 +238,6 @@ export async function synthesize(params) {
 
   return {
     blob: new Blob([res.data], { type: 'audio/wav' }),
-    wordTimestamps: parseWordTimestampsHeader(res.headers),
   };
 }
 
@@ -281,7 +260,6 @@ export async function synthesizeSentence(params) {
 
   return {
     blob: new Blob([res.data], { type: 'audio/wav' }),
-    wordTimestamps: parseWordTimestampsHeader(res.headers),
   };
 }
 

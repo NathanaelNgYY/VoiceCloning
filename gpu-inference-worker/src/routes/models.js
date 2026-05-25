@@ -4,11 +4,14 @@ import fs from 'fs';
 import { LOCAL_TEMP_ROOT } from '../config.js';
 import { GPT_SOVITS_ROOT } from '../config.js';
 import { downloadFile } from '../services/s3Sync.js';
+import {
+  resolveRefAudioPath,
+  warmReferenceAudioPaths,
+} from '../services/refAudioCache.js';
 
 const router = Router();
 
 const modelCache = path.join(LOCAL_TEMP_ROOT, 'model_cache');
-const refAudioCache = path.join(LOCAL_TEMP_ROOT, 'ref_audio_cache');
 const localGptWeightsDir = path.join(GPT_SOVITS_ROOT, 'GPT_weights_v2');
 const localSoVitsWeightsDir = path.join(GPT_SOVITS_ROOT, 'SoVITS_weights_v2');
 
@@ -75,15 +78,27 @@ router.post('/ref-audio/download', async (req, res) => {
   }
 
   const filename = path.basename(s3Key);
-  const localPath = path.join(refAudioCache, filename);
 
   try {
-    // Skip download if already cached
-    if (!fs.existsSync(localPath)) {
-      fs.mkdirSync(refAudioCache, { recursive: true });
-      await downloadFile(s3Key, localPath);
-    }
+    const localPath = await resolveRefAudioPath(s3Key);
     res.json({ localPath, filename });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/ref-audio/warm', async (req, res) => {
+  const { ref_audio_path } = req.body || {};
+  if (!ref_audio_path) {
+    return res.status(400).json({ error: 'ref_audio_path is required' });
+  }
+
+  try {
+    const warmed = await warmReferenceAudioPaths(req.body);
+    res.json({
+      ref_audio_path: warmed.ref_audio_path,
+      aux_ref_audio_paths: warmed.aux_ref_audio_paths,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

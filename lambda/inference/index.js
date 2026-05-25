@@ -10,14 +10,13 @@ function isWorkerUnavailableError(error) {
     || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var|INFERENCE_WORKER_URL/u.test(message);
 }
 
-function binaryWav(buffer, contentType = 'audio/wav', wordTimestamps = null) {
+function binaryWav(buffer, contentType = 'audio/wav') {
   return {
     statusCode: 200,
     isBase64Encoded: true,
     headers: {
       'Content-Type': contentType,
       'Content-Length': String(buffer.length),
-      'X-Word-Timestamps': wordTimestamps || 'null',
       ...corsHeaders,
     },
     body: buffer.toString('base64'),
@@ -55,8 +54,8 @@ export function createHandler({
         if (!body.text) return err(400, 'text is required');
         const resolvedBody = await resolveSynthesisBody(body);
         if (!resolvedBody.ref_audio_path) return err(400, 'ref_audio_path is required');
-        const { buffer, contentType, wordTimestamps } = await postBinary('/inference', resolvedBody);
-        return binaryWav(buffer, contentType, wordTimestamps);
+        const { buffer, contentType } = await postBinary('/inference', resolvedBody);
+        return binaryWav(buffer, contentType);
       }
 
       if (method === 'POST' && routePath.endsWith('/inference/generate')) {

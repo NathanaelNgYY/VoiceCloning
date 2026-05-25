@@ -7,8 +7,6 @@ export function useInferenceSSE() {
   const [completedChunks, setCompletedChunks] = useState(0);
   const [currentChunkText, setCurrentChunkText] = useState('');
   const [error, setError] = useState(null);
-  const [wordTimestamps, setWordTimestamps] = useState(null);
-  const [transcript, setTranscript] = useState('');
   const esRef = useRef(null);
 
   const hydrate = useCallback((initialState = {}) => {
@@ -25,8 +23,6 @@ export function useInferenceSSE() {
     setCompletedChunks(initialCompletedChunks);
     setCurrentChunkText(initialCurrentChunkText);
     setError(initialError);
-    setWordTimestamps(null);
-    setTranscript('');
   }, []);
 
   const connect = useCallback((sessionId, initialState = {}) => {
@@ -47,7 +43,6 @@ export function useInferenceSSE() {
       onStart(data) {
         setStatus('generating');
         setTotalChunks(data.totalChunks || 0);
-        setTranscript((data.chunks || []).map((chunk) => chunk.text).join(' '));
       },
       onChunkStart(data) {
         setStatus('generating');
@@ -56,10 +51,9 @@ export function useInferenceSSE() {
       onChunkComplete(data) {
         setCompletedChunks(data.index + 1);
       },
-      onComplete(data) {
+      onComplete() {
         setStatus('complete');
         setCurrentChunkText('');
-        setWordTimestamps(data?.wordTimestamps ?? null);
       },
       onError(data) {
         const isCancelled = data?.message?.includes('cancelled');
@@ -92,8 +86,6 @@ export function useInferenceSSE() {
     completedChunks,
     currentChunkText,
     error,
-    wordTimestamps,
-    transcript,
     connect,
     disconnect,
     hydrate,

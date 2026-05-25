@@ -84,7 +84,6 @@ export async function gpuPostBinary(routePath, body = {}) {
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
     contentType: response.headers.get('content-type') || 'application/octet-stream',
-    wordTimestamps: response.headers.get('x-word-timestamps') || null,
   };
 }
 
@@ -128,6 +127,5 @@ export async function inferencePostBinary(routePath, body = {}) {
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
     contentType: response.headers.get('content-type') || 'application/octet-stream',
-    wordTimestamps: response.headers.get('x-word-timestamps') || null,
   };
 }

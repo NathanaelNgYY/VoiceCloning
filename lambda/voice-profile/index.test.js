@@ -15,6 +15,7 @@ function createEvent({ method = 'GET', path = '/api/voice-profile/active', body,
 
 test('voice profile activate saves the full profile and marks it active', async () => {
   const uploads = [];
+  const warmedProfiles = [];
   const handler = createHandler({
     readObject: async () => {
       throw new Error('not used');
@@ -24,6 +25,12 @@ test('voice profile activate saves the full profile and marks it active', async 
         key,
         contentType,
         body: JSON.parse(payload.toString('utf-8')),
+      });
+    },
+    warmReferenceAudio: async (profile) => {
+      warmedProfiles.push({
+        ref_audio_path: profile.ref_audio_path,
+        aux_ref_audio_paths: profile.aux_ref_audio_paths,
       });
     },
     now: () => '2026-05-18T10:00:00.000Z',
@@ -110,6 +117,10 @@ test('voice profile activate saves the full profile and marks it active', async 
       },
     },
   ]);
+  assert.deepEqual(warmedProfiles, [{
+    ref_audio_path: 'training/datasets/michael-tan/reference.wav',
+    aux_ref_audio_paths: ['training/datasets/michael-tan/aux1.wav'],
+  }]);
 });
 
 test('voice profile activate rejects incomplete profile payloads', async () => {

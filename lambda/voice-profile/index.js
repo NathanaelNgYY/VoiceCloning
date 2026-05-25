@@ -1,6 +1,7 @@
 import { uploadBuffer, getObject, headObject } from '../shared/s3.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
+import { inferencePost } from '../shared/gpuWorker.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
 const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
@@ -133,6 +134,10 @@ function getHeaderValue(headers, headerName) {
 export function createHandler({
   readObject = defaultReadObject,
   writeObject = uploadBuffer,
+  warmReferenceAudio = async (profile) => inferencePost('/ref-audio/warm', {
+    ref_audio_path: profile.ref_audio_path,
+    aux_ref_audio_paths: profile.aux_ref_audio_paths || [],
+  }),
   now = () => new Date().toISOString(),
   internalAuthHeaderName = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME || '',
   internalAuthHeaderValue = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE || '',
@@ -209,6 +214,11 @@ export function createHandler({
           Buffer.from(JSON.stringify(activeRecord), 'utf-8'),
           'application/json',
         );
+        try {
+          await warmReferenceAudio(activeRecord);
+        } catch (warmError) {
+          console.warn(`[voice-profile] ref-audio warm failed for ${record.voiceProfileId}: ${warmError.message}`);
+        }
 
         return ok(buildVoiceProfileSummary(activeRecord), {}, event);
       }

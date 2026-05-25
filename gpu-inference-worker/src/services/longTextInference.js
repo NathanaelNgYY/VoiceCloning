@@ -1,13 +1,11 @@
 import crypto from 'crypto';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
 import { LOCAL_TEMP_ROOT } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
-import { alignWords } from './wordAligner.js';
 
 const TEMP_DIR = LOCAL_TEMP_ROOT;
 
@@ -1090,10 +1088,8 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     const finalPath = path.join(sessionDir, 'final.wav');
     fs.writeFileSync(finalPath, finalBuffer);
 
-    const wordTimestamps = await alignWords(finalPath);
-
     // Upload to S3 for persistence (non-blocking — don't fail the session on S3 error)
-    let s3Key = `audio/output/${sessionId}/final.wav`;
+    const s3Key = `audio/output/${sessionId}/final.wav`;
     uploadBuffer(s3Key, finalBuffer, 'audio/wav').catch((err) => {
       console.error(`[inference] Failed to upload result to S3: ${err.message}`);
     });
@@ -1103,7 +1099,6 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       totalChunks: chunks.length,
       totalDurationSec: parseFloat(totalDuration.toFixed(2)),
       ...(s3Key ? { s3Key } : {}),
-      wordTimestamps: wordTimestamps ?? null,
     });
     inferenceState.setComplete();
   } catch (err) {
@@ -1168,14 +1163,5 @@ export async function synthesizeLongText(params, options = {}) {
     ? buffers[0]
     : concatWavs(buffers, pauses, fades);
 
-  let wordTimestamps = null;
-  const alignTempPath = path.join(os.tmpdir(), `align_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
-  try {
-    fs.writeFileSync(alignTempPath, finalBuffer);
-    wordTimestamps = await alignWords(alignTempPath);
-  } finally {
-    try { fs.unlinkSync(alignTempPath); } catch { /* ignore */ }
-  }
-
-  return { audioBuffer: finalBuffer, chunks: metadata, wordTimestamps };
+  return { audioBuffer: finalBuffer, chunks: metadata };
 }

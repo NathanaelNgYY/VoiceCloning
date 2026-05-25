@@ -47,6 +47,7 @@ test('inference handler proxies direct synthesis as base64 WAV', async () => {
     assert.equal(response.statusCode, 200);
     assert.equal(response.isBase64Encoded, true);
     assert.equal(response.headers['Content-Type'], 'audio/wav');
+    assert.equal('X-Word-Timestamps' in response.headers, false);
     assert.equal(Buffer.from(response.body, 'base64').toString('utf-8'), 'RIFFdemo');
     assert.equal(calls[0].url, 'http://gpu-worker.local:3001/inference');
   } finally {
@@ -118,7 +119,6 @@ test('inference handler resolves voiceProfileId to a saved full profile before d
       return {
         buffer: Buffer.from('RIFFvoice'),
         contentType: 'audio/wav',
-        wordTimestamps: null,
       };
     },
   });

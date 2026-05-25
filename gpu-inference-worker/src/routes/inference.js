@@ -1,52 +1,18 @@
 import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import { Router } from 'express';
-import { LOCAL_TEMP_ROOT } from '../config.js';
-import { downloadFile } from '../services/s3Sync.js';
 import { inferenceServer } from '../services/inferenceServer.js';
 import { activityState } from '../services/activityState.js';
 import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
   cancelSession,
-  parseWav,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
-import { alignWords } from '../services/wordAligner.js';
+import { resolveRefAudioParams } from '../services/refAudioCache.js';
 
 const router = Router();
-
-const refAudioCache = path.join(LOCAL_TEMP_ROOT, 'ref_audio_cache');
-
-function cachePathForS3Key(s3Key) {
-  const hash = crypto.createHash('sha1').update(s3Key).digest('hex').slice(0, 12);
-  return path.join(refAudioCache, `${hash}_${path.basename(s3Key)}`);
-}
-
-async function resolveRefAudioPath(refPath) {
-  if (!refPath || fs.existsSync(refPath)) {
-    return refPath;
-  }
-
-  const localPath = cachePathForS3Key(refPath);
-  if (!fs.existsSync(localPath)) {
-    fs.mkdirSync(refAudioCache, { recursive: true });
-    await downloadFile(refPath, localPath);
-  }
-  return localPath;
-}
-
-async function resolveRefAudioParams(params) {
-  return {
-    ...params,
-    ref_audio_path: await resolveRefAudioPath(params.ref_audio_path),
-    aux_ref_audio_paths: await Promise.all(
-      (params.aux_ref_audio_paths || []).map((item) => resolveRefAudioPath(item)),
-    ),
-  };
-}
 
 function readInferenceParams(body) {
   const {
@@ -78,6 +44,15 @@ function readInferenceParams(body) {
     speed_factor,
     seed,
   };
+}
+
+export async function handleLiveTtsRequest(body, {
+  resolveParams = resolveRefAudioParams,
+  synthesize = (params) => inferenceServer.synthesize(params),
+} = {}) {
+  const resolvedParams = await resolveParams(body);
+  const audioBuffer = await synthesize(resolvedParams);
+  return { audioBuffer, resolvedParams };
 }
 
 router.get('/inference/status', async (_req, res) => {
@@ -162,30 +137,13 @@ router.post('/inference/weights/sovits', async (req, res) => {
 
 router.post('/inference/tts', async (req, res) => {
   try {
-    const status = await inferenceServer.getStatus();
-    if (!status.ready) {
-      return res.status(503).json({ error: status.error || 'Inference server is not ready' });
-    }
-
     activityState.mark();
-    const resolvedParams = await resolveRefAudioParams(req.body);
-    const audioBuffer = await inferenceServer.synthesize(resolvedParams);
+    const { audioBuffer } = await handleLiveTtsRequest(req.body);
     activityState.mark();
-
-    let wordTimestamps = null;
-    const ttsTempPath = path.join(LOCAL_TEMP_ROOT, `align_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
-    try {
-      fs.mkdirSync(path.dirname(ttsTempPath), { recursive: true });
-      fs.writeFileSync(ttsTempPath, audioBuffer);
-      wordTimestamps = await alignWords(ttsTempPath);
-    } finally {
-      try { fs.unlinkSync(ttsTempPath); } catch { /* ignore */ }
-    }
 
     res.set({
       'Content-Type': 'audio/wav',
       'Content-Length': audioBuffer.length,
-      'X-Word-Timestamps': Buffer.from(JSON.stringify(wordTimestamps ?? null)).toString('base64'),
     });
     res.send(audioBuffer);
   } catch (err) {
@@ -211,7 +169,7 @@ router.post('/inference', async (req, res) => {
 
     activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
-    const { audioBuffer, chunks, wordTimestamps } = await synthesizeLongText(resolvedParams, {
+    const { audioBuffer, chunks } = await synthesizeLongText(resolvedParams, {
       maxChunkLength: 280,
       maxSentencesPerChunk: 3,
       chunkJoinPauseMs: 120,
@@ -224,52 +182,8 @@ router.post('/inference', async (req, res) => {
       'Content-Length': audioBuffer.length,
       'X-Chunk-Count': String(chunks.length),
       'X-Chunk-Retries': String(chunks.reduce((sum, chunk) => sum + Math.max(0, chunk.attempts - 1), 0)),
-      'X-Word-Timestamps': Buffer.from(JSON.stringify(wordTimestamps ?? null)).toString('base64'),
     });
     res.send(audioBuffer);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/inference/tts-with-timestamps', async (req, res) => {
-  const params = readInferenceParams(req.body);
-
-  if (!params.text) {
-    return res.status(400).json({ error: 'text is required' });
-  }
-  if (!params.ref_audio_path) {
-    return res.status(400).json({ error: 'ref_audio_path is required' });
-  }
-
-  try {
-    const status = await inferenceServer.getStatus();
-    if (!status.ready) {
-      return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
-    }
-
-    activityState.mark();
-    const resolvedParams = await resolveRefAudioParams(params);
-    const { audioBuffer, wordTimestamps } = await synthesizeLongText(resolvedParams, {
-      maxChunkLength: 280,
-      maxSentencesPerChunk: 3,
-      chunkJoinPauseMs: 120,
-      retryCount: 2,
-    });
-    activityState.mark();
-
-    let duration = null;
-    try {
-      const wav = parseWav(audioBuffer);
-      const frameCount = Math.floor(wav.dataChunk.length / wav.blockAlign);
-      duration = parseFloat((frameCount / wav.sampleRate).toFixed(3));
-    } catch { /* ignore — duration is optional */ }
-
-    res.json({
-      audio: audioBuffer.toString('base64'),
-      wordTimestamps: wordTimestamps ?? null,
-      duration,
-    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
