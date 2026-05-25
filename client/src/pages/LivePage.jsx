@@ -28,7 +28,6 @@ import {
   shouldAutoApplyBestReferenceSet,
 } from '@/lib/referenceSelection';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
-import { findActiveWordIndex } from '@/lib/wordTimestamps';
 import {
   DEFAULT_LIVE_FAST_SETTINGS,
   buildLiveFastReferencePreviewItems,
@@ -91,37 +90,6 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
   const readyParts = (message.audioParts || []).filter((part) => part.audioUrl);
   const hasVoice = !isUser && (Boolean(message.audioUrl) || readyParts.length > 0);
   const isBusy = ['thinking', 'generating_voice', 'transcribing', 'listening'].includes(message.status);
-  const [activeWordIndex, setActiveWordIndex] = useState(-1);
-  const wordTimestamps = !isUser
-    ? (selectedPart?.wordTimestamps
-      || message.wordTimestamps
-      || (message.audioParts || []).find((p) => Array.isArray(p.wordTimestamps) && p.wordTimestamps.length > 0)?.wordTimestamps
-      || null)
-    : null;
-
-  useEffect(() => {
-    const audio = audioRef?.current;
-    if (!audio || !selected || !Array.isArray(wordTimestamps) || wordTimestamps.length === 0) {
-      setActiveWordIndex(-1);
-      return undefined;
-    }
-
-    const handleTimeUpdate = () => {
-      setActiveWordIndex(findActiveWordIndex(wordTimestamps, audio.currentTime));
-    };
-    const handleReset = () => setActiveWordIndex(-1);
-
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('ended', handleReset);
-    audio.addEventListener('pause', handleReset);
-
-    return () => {
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('ended', handleReset);
-      audio.removeEventListener('pause', handleReset);
-    };
-  }, [audioRef, selected, wordTimestamps]);
-
   return (
     <div className={cn('flex gap-2.5', isUser ? 'justify-end' : 'justify-start')}>
       {!isUser && (
@@ -141,24 +109,9 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
           {messageStatusText(message)}
         </div>
 
-        {!isUser && Array.isArray(wordTimestamps) && wordTimestamps.length > 0 ? (
-          <div className="flex flex-wrap items-end gap-x-1 gap-y-2 text-sm">
-            {wordTimestamps.map((item, index) => (
-              <div key={`${item.word}-${item.start}-${index}`} className="inline-flex flex-col items-center gap-0.5">
-                <span className={cn('font-mono text-[9px]', index === activeWordIndex ? 'text-amber-600' : 'text-slate-400')}>
-                  {(typeof item.start === 'number' && isFinite(item.start) ? item.start : 0).toFixed(2)}
-                </span>
-                <span className={cn('rounded px-0.5 transition-colors', index === activeWordIndex && 'bg-yellow-200 text-slate-950')}>
-                  {item.word}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className={cn('whitespace-pre-wrap text-sm leading-6', isBusy && !message.text && 'italic opacity-60')}>
-            {message.text || (isUser ? 'Listening...' : 'Thinking...')}
-          </p>
-        )}
+        <p className={cn('whitespace-pre-wrap text-sm leading-6', isBusy && !message.text && 'italic opacity-60')}>
+          {message.text || (isUser ? 'Listening...' : 'Thinking...')}
+        </p>
 
         {message.error && (
           <p className="mt-2 flex items-center gap-1 text-xs text-red-500">

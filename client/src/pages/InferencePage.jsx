@@ -6,7 +6,6 @@ import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
 import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile, getActiveVoiceProfile } from '../services/api.js';
-import WordTimestampPlayer from '../components/WordTimestampPlayer.jsx';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -107,7 +106,6 @@ export default function InferencePage({ directMode = false }) {
 
   const [audioBlob, setAudioBlob] = useState(null);
   const [inferError, setInferError] = useState(null);
-  const [directWordTimestamps, setDirectWordTimestamps] = useState(null);
   const [directSynthesizing, setDirectSynthesizing] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const [referencePresets, setReferencePresets] = useState([]);
@@ -1123,10 +1121,9 @@ function handleSelectPerson(nextKey) {
 
     if (directMode) {
       setDirectSynthesizing(true);
-      setDirectWordTimestamps(null);
       setAudioBlob(null);
       try {
-        const { blob, wordTimestamps } = await synthesize({
+        const { blob } = await synthesize({
           text,
           text_lang: textLang,
           ref_audio_path: refAudioPath,
@@ -1140,7 +1137,6 @@ function handleSelectPerson(nextKey) {
           speed_factor: speed,
         });
         setAudioBlob(blob);
-        setDirectWordTimestamps(wordTimestamps);
       } catch (err) {
         setInferError(err.response?.data?.error || err.message);
       } finally {
@@ -2061,18 +2057,6 @@ useEffect(() => {
             </div>
           )}
 
-          <WordTimestampPlayer
-            audioBlob={audioBlob}
-            wordTimestamps={directMode ? directWordTimestamps : inference.wordTimestamps}
-            transcript={directMode ? text : inference.transcript}
-          />
-          {directMode && audioBlob && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {Array.isArray(directWordTimestamps) && directWordTimestamps.length > 0
-                ? `Timestamps: ✓ ${directWordTimestamps.length} words received`
-                : 'Timestamps: not received — check EC2 logs (alignment may have failed)'}
-            </p>
-          )}
         </CardContent>
       </Card>
     </div>
