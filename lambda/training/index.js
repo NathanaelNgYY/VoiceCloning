@@ -67,9 +67,6 @@ export const handler = async (event) => {
       try {
         return ok(await gpuGet('/train/current'));
       } catch (error) {
-        if (!isWorkerUnavailableError(error)) {
-          throw error;
-        }
         return ok({
           sessionId: null,
           status: 'idle',

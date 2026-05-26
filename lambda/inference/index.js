@@ -91,7 +91,6 @@ export function createHandler({
         try {
           return ok(await getJson('/inference/current'));
         } catch (error) {
-          if (!isWorkerUnavailable(error)) throw error;
           return ok({
             sessionId: null,
             status: 'idle',
@@ -102,7 +101,16 @@ export function createHandler({
       }
 
       if (method === 'GET' && routePath.endsWith('/inference/status')) {
-        return ok(await getJson('/inference/status'));
+        try {
+          return ok(await getJson('/inference/status'));
+        } catch (error) {
+          return ok({
+            ready: false,
+            workerAvailable: !isWorkerUnavailable(error),
+            error: error.message,
+            managed: false,
+          });
+        }
       }
 
       return err(404, 'Not found');
