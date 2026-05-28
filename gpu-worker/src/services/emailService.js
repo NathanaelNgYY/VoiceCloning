@@ -1,7 +1,5 @@
 import nodemailer from 'nodemailer';
 
-const INFERENCE_BASE_URL = 'https://doovx82fh9tfs.cloudfront.net';
-
 function escapeHtml(str) {
   const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
   return String(str).replace(/[&<>"']/g, c => map[c]);
@@ -34,8 +32,6 @@ export async function sendTrainingCompleteEmail(email, expName) {
     return;
   }
 
-  const inferenceUrl = INFERENCE_BASE_URL;
-
   await transport.sendMail({
     from,
     to: email,
@@ -44,13 +40,8 @@ export async function sendTrainingCompleteEmail(email, expName) {
       `Training is complete, you may now come back to test it.`,
       '',
       `Voice model: ${expName}`,
-      '',
-      'Visit your inference studio here:',
-      inferenceUrl,
     ].join('\n'),
     html: `<p>Training is complete, you may now come back to test it.</p>`
-      + `<p>Voice model: <strong>${escapeHtml(expName)}</strong></p>`
-      + `<p>Visit your inference studio here:<br>`
-      + `<a href="${inferenceUrl}">${inferenceUrl}</a></p>`,
+      + `<p>Voice model: <strong>${escapeHtml(expName)}</strong></p>`,
   });
 }
