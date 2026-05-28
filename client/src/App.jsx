@@ -167,7 +167,7 @@ export default function App() {
                 end
                 className={({ isActive }) =>
                   cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 shrink-0 whitespace-nowrap items-center text-sm font-medium transition-colors",
                     isActive
                       ? "text-foreground"
                       : "text-muted-foreground hover:text-foreground"
@@ -190,7 +190,7 @@ export default function App() {
                 to="/inference"
                 className={({ isActive }) =>
                   cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 shrink-0 whitespace-nowrap items-center text-sm font-medium transition-colors",
                     isActive
                       ? "text-foreground"
                       : "text-muted-foreground hover:text-foreground"
@@ -213,7 +213,7 @@ export default function App() {
                 to="/live"
                 className={({ isActive }) =>
                   cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 shrink-0 whitespace-nowrap items-center text-sm font-medium transition-colors",
                     isActive
                       ? "text-foreground"
                       : "text-muted-foreground hover:text-foreground"
@@ -236,7 +236,7 @@ export default function App() {
                 to="/live-fast"
                 className={({ isActive }) =>
                   cn(
-                    "group relative inline-flex h-11 items-center text-sm font-medium transition-colors",
+                    "group relative inline-flex h-11 shrink-0 whitespace-nowrap items-center text-sm font-medium transition-colors",
                     isActive
                       ? "text-foreground"
                       : "text-muted-foreground hover:text-foreground"
