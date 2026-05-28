@@ -17,12 +17,13 @@ function integerInRange(value, min, max, fallback) {
 }
 
 export function normalizeLiveFastSettings(settings = {}) {
+  const s = settings ?? {};
   return {
-    speed: numberInRange(settings.speed, 0.5, 2.0, DEFAULT_LIVE_FAST_SETTINGS.speed),
-    topK: integerInRange(settings.topK, 1, 50, DEFAULT_LIVE_FAST_SETTINGS.topK),
-    topP: numberInRange(settings.topP, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.topP),
-    temperature: numberInRange(settings.temperature, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.temperature),
-    repPenalty: numberInRange(settings.repPenalty, 1.0, 2.0, DEFAULT_LIVE_FAST_SETTINGS.repPenalty),
+    speed: numberInRange(s.speed, 0.5, 2.0, DEFAULT_LIVE_FAST_SETTINGS.speed),
+    topK: integerInRange(s.topK, 1, 50, DEFAULT_LIVE_FAST_SETTINGS.topK),
+    topP: numberInRange(s.topP, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.topP),
+    temperature: numberInRange(s.temperature, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.temperature),
+    repPenalty: numberInRange(s.repPenalty, 1.0, 2.0, DEFAULT_LIVE_FAST_SETTINGS.repPenalty),
   };
 }
 
