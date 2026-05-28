@@ -41,12 +41,15 @@ export async function sendTrainingCompleteEmail(email, expName) {
     to: email,
     subject: `Your voice model is ready: ${expName}`,
     text: [
-      `Training is complete for voice "${expName}".`,
+      `Training is complete, you may now come back to test it.`,
+      '',
+      `Voice model: ${expName}`,
       '',
       'Visit your inference studio here:',
       inferenceUrl,
     ].join('\n'),
-    html: `<p>Training is complete for voice <strong>${escapeHtml(expName)}</strong>.</p>`
+    html: `<p>Training is complete, you may now come back to test it.</p>`
+      + `<p>Voice model: <strong>${escapeHtml(expName)}</strong></p>`
       + `<p>Visit your inference studio here:<br>`
       + `<a href="${inferenceUrl}">${inferenceUrl}</a></p>`,
   });
