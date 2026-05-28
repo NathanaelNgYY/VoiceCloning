@@ -2057,6 +2057,8 @@ useEffect(() => {
             </div>
           )}
 
+          {audioBlob && <AudioPlayer audioBlob={audioBlob} />}
+
         </CardContent>
       </Card>
     </div>

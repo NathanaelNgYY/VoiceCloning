@@ -3,6 +3,7 @@ dist/
 .superpowers/
 client/dist-training/
 client/dist-live-fast/
+client/dist-combined/
 .dist/
 .env
 .claude/
