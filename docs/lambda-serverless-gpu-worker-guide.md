@@ -72,6 +72,7 @@ New inference worker package:
   - Separate Node.js service on port `3003`
   - Owns `/models*`, `/ref-audio*`, and `/inference*`
   - Handles model loading, GPT-SoVITS inference, inference artifacts, and inference activity
+  - Exposes both `GET /activity/status` and `GET /inference/activity/status`; the `/inference/...` form is used by Lambda idle checks when training and inference share one public ALB hostname
 
 Lambda routing changes:
 
@@ -678,9 +679,11 @@ aws lambda update-function-configuration `
 
 Required for automatic GPU shutdown: add an EventBridge schedule so Lambda checks idleness without a user opening the app. `GPU_IDLE_STOP_MINUTES` only sets the idle threshold inside Lambda. It does not run a timer by itself.
 
-The rule below calls the Lambda every five minutes. The actual shutdown happens only when `/activity/status` says the worker is not training or generating and has been idle longer than `GPU_IDLE_STOP_MINUTES`. With `GPU_IDLE_STOP_MINUTES=30`, stop time is roughly 30 to 35 minutes after last activity. With `GPU_IDLE_STOP_MINUTES=1` for testing, stop time is roughly 1 to 6 minutes.
+The rule below calls the Lambda every five minutes. The actual shutdown happens only when Lambda sees both the training side and the inference side as idle for longer than `GPU_IDLE_STOP_MINUTES`. Training activity is read from `GET ${GPU_WORKER_URL}/activity/status`. If `INFERENCE_WORKER_URL` is configured, inference activity is read from `GET ${INFERENCE_WORKER_URL}/inference/activity/status`. With `GPU_IDLE_STOP_MINUTES=30`, stop time is roughly 30 to 35 minutes after last activity. With `GPU_IDLE_STOP_MINUTES=1` for testing, stop time is roughly 1 to 6 minutes.
 
-The GPU worker activity timer is refreshed only by real worker-side progress or active work, such as a running training subprocess, an active streaming inference session, direct synthesis, model load/start/stop operations, training logs, or training/inference state transitions. Passive frontend traffic does not refresh the timer: frontend restore calls like `/train/current` and `/inference/current`, inference status polling, model list reads, and SSE progress connections are ignored. ALB `GET /healthz` is also ignored. EventBridge/Lambda `GET /activity/status` is passive while the worker is idle. It refreshes the timer only when the worker can prove active work is present, such as a running training subprocess or active inference session; a stale `waiting`/`running`/`generating` status by itself does not keep the EC2 instance alive. If Lambda sees a busy worker whose `idleMs` is already past `GPU_IDLE_STOP_MINUTES`, it treats that as stale busy state and stops the instance.
+The GPU worker activity timer is refreshed only by real worker-side progress or active work, such as a running training subprocess, an active streaming inference session, direct synthesis, model load/start/stop operations, training logs, or training/inference state transitions. Passive frontend traffic does not refresh the timer: frontend restore calls like `/train/current` and `/inference/current`, inference status polling, model list reads, and SSE progress connections are ignored. ALB `GET /healthz` is also ignored. EventBridge/Lambda activity probes are passive while the workers are idle. `GET /activity/status` and `GET /inference/activity/status` refresh the timer only when the worker can prove active work is present, such as a running training subprocess or active inference session; a stale `waiting`/`running`/`generating` status by itself does not keep the EC2 instance alive. If Lambda sees a busy worker whose `idleMs` is already past `GPU_IDLE_STOP_MINUTES`, it treats that as stale busy state and stops the instance.
+
+If `GPU_WORKER_URL` and `INFERENCE_WORKER_URL` both use the same shared ALB hostname, the inference idle-check probe must use `/inference/activity/status` so the existing `/inference*` listener rule forwards it to `gpu-inference-worker`. No new EventBridge target is required for this fix; the existing `/api/instance/idle-check` invocation stays the same.
 
 ```powershell
 $profile = "account3"
