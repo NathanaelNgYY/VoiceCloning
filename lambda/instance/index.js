@@ -18,6 +18,10 @@ function workerUrl() {
   return (process.env.GPU_WORKER_URL || '').replace(/\/+$/u, '');
 }
 
+function inferenceWorkerUrl() {
+  return (process.env.INFERENCE_WORKER_URL || '').replace(/\/+$/u, '');
+}
+
 function idleStopMinutes() {
   const value = Number.parseFloat(process.env.GPU_IDLE_STOP_MINUTES || '0');
   return Number.isFinite(value) && value > 0 ? value : 0;
@@ -84,16 +88,33 @@ function statusPayload({ id, state, workerReady, started = false, previousState 
   return payload;
 }
 
-async function getWorkerActivityStatus() {
-  const baseUrl = workerUrl();
-  if (!baseUrl) {
+function activityProbeTargets() {
+  const trainingUrl = workerUrl();
+  if (!trainingUrl) {
     throw new Error('GPU_WORKER_URL is not configured.');
   }
 
+  const targets = [{
+    name: 'training',
+    url: `${trainingUrl}/activity/status`,
+  }];
+
+  const inferenceUrl = inferenceWorkerUrl();
+  if (inferenceUrl) {
+    targets.push({
+      name: 'inference',
+      url: `${inferenceUrl}/inference/activity/status`,
+    });
+  }
+
+  return targets;
+}
+
+async function fetchActivityStatus(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
   try {
-    const response = await fetch(`${baseUrl}/activity/status`, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
       throw new Error(`Worker activity status returned ${response.status}`);
     }
@@ -101,6 +122,61 @@ async function getWorkerActivityStatus() {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function preferStatus(values, key) {
+  const preferred = values.find((value) => value?.[key] && value[key] !== 'idle');
+  if (preferred) return preferred[key];
+
+  const fallback = values.find((value) => typeof value?.[key] === 'string');
+  return fallback?.[key] || 'idle';
+}
+
+function mergeActivityStatuses(samples) {
+  const values = samples.map((sample) => sample.activity || {});
+  const lastActivityAt = values
+    .map((value) => Number(value?.lastActivityAt))
+    .filter(Number.isFinite)
+    .reduce((max, value) => Math.max(max, value), 0);
+  const idleMs = values
+    .map((value) => Number(value?.idleMs))
+    .filter(Number.isFinite)
+    .reduce((min, value) => Math.min(min, value), Number.POSITIVE_INFINITY);
+
+  return {
+    busy: values.some((value) => Boolean(value?.busy)),
+    lastActivityAt: lastActivityAt || Date.now(),
+    idleMs: Number.isFinite(idleMs) ? idleMs : 0,
+    trainingStatus: preferStatus(values, 'trainingStatus'),
+    inferenceStatus: preferStatus(values, 'inferenceStatus'),
+    trainingActive: values.some((value) => Boolean(value?.trainingActive)),
+    inferenceActive: values.some((value) => Boolean(value?.inferenceActive)),
+    sources: Object.fromEntries(samples.map((sample) => [sample.name, sample.activity])),
+  };
+}
+
+async function getWorkerActivityStatus() {
+  const targets = activityProbeTargets();
+  const results = await Promise.allSettled(targets.map(async (target) => ({
+    name: target.name,
+    activity: await fetchActivityStatus(target.url),
+  })));
+
+  const failures = results
+    .map((result, index) => (
+      result.status === 'rejected'
+        ? { name: targets[index].name, message: result.reason?.message || String(result.reason) }
+        : null
+    ))
+    .filter(Boolean);
+
+  if (failures.length) {
+    throw new Error(
+      `Worker activity check failed for ${failures.map((failure) => `${failure.name}: ${failure.message}`).join('; ')}`,
+    );
+  }
+
+  return mergeActivityStatuses(results.map((result) => result.value));
 }
 
 async function getStatus() {
