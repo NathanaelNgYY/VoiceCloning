@@ -76,7 +76,7 @@ function GpuInstanceControl() {
         type="button"
         disabled
         title="Checking the GPU instance status. The start button appears after this returns."
-        className="inline-flex h-10 cursor-wait items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-500"
+        className="inline-flex h-8 cursor-wait items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-medium text-slate-500 sm:h-10 sm:rounded-2xl sm:font-semibold"
       >
         <Power size={14} />
         Checking GPU
@@ -90,7 +90,7 @@ function GpuInstanceControl() {
         type="button"
         disabled
         title={status?.message || 'GPU instance control is not configured yet.'}
-        className="inline-flex h-10 cursor-not-allowed items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-500"
+        className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-medium text-slate-500 sm:h-10 sm:rounded-2xl sm:font-semibold"
       >
         <Power size={14} />
         GPU not configured
@@ -121,7 +121,7 @@ function GpuInstanceControl() {
       disabled={!canStart}
       title={title}
       className={cn(
-        'inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold transition-colors',
+        'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors sm:h-10 sm:rounded-2xl sm:font-semibold',
         isReady
           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
           : canStart
@@ -141,18 +141,18 @@ export default function App() {
       <div className="flex min-h-screen flex-col bg-background">
         {/* Header */}
         <header className="sticky top-0 z-50 border-b border-white/60 bg-white/75 backdrop-blur-xl">
-          <div className="mx-auto max-w-6xl px-6">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
             {/* Title row */}
-            <div className="flex items-center justify-between pt-5">
+            <div className="flex items-center justify-between pt-3 sm:pt-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-primary shadow-[0_18px_35px_-24px_rgba(14,165,233,0.85)]">
-                  <Activity className="h-6 w-6 text-primary" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-100 text-primary shadow-[0_18px_35px_-24px_rgba(14,165,233,0.85)] sm:h-12 sm:w-12 sm:rounded-2xl">
+                  <Activity className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
                 </div>
                 <div>
-                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                  <h1 className="text-base font-semibold tracking-tight text-foreground sm:text-xl">
                     Voice Cloning Studio
                   </h1>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="hidden text-xs text-muted-foreground sm:block">
                     AI Voice Cloning Studio
                   </p>
                 </div>
@@ -161,7 +161,7 @@ export default function App() {
             </div>
 
             {/* Navigation */}
-            <nav className="mt-4 flex items-center gap-7 border-b border-slate-200/80">
+            <nav className="-mb-px mt-4 flex items-center gap-4 overflow-x-auto [&::-webkit-scrollbar]:hidden sm:gap-7">
               <NavLink
                 to="/"
                 end
@@ -260,7 +260,7 @@ export default function App() {
         </header>
 
         {/* Main content */}
-        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
+        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-10">
           <Routes>
             <Route path="/" element={<TrainingPage />} />
             <Route path="/inference" element={<InferencePage />} />
@@ -270,7 +270,7 @@ export default function App() {
         </main>
 
         {/* Footer */}
-        <footer className="mx-auto w-full max-w-6xl px-6">
+        <footer className="mx-auto w-full max-w-6xl px-4 sm:px-6">
           <Separator />
           <div className="flex items-center justify-between py-5">
             <span className="text-xs text-muted-foreground">
