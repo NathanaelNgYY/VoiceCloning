@@ -34,6 +34,7 @@ export const handler = async (event) => {
     if (method === 'POST' && routePath.endsWith('/train')) {
       const {
         expName,
+        email,
         batchSize,
         sovitsEpochs,
         gptEpochs,
@@ -49,6 +50,7 @@ export const handler = async (event) => {
 
       return ok(await gpuPost('/train', {
         expName,
+        ...(email ? { email } : {}),
         config: {
           ...(batchSize !== undefined ? { batchSize } : {}),
           ...(sovitsEpochs !== undefined ? { sovitsEpochs } : {}),
