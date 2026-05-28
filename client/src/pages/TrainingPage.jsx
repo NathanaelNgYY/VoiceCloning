@@ -322,8 +322,8 @@ export default function TrainingPage() {
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
       {/* Page title */}
-      <div className="mb-10">
-        <h1 className="text-4xl font-bold tracking-tight">
+      <div className="mb-6 sm:mb-10">
+        <h1 className="text-2xl font-bold tracking-tight sm:text-4xl">
           <span className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary/80 bg-clip-text text-transparent">
             Train a voice
           </span>
@@ -332,7 +332,7 @@ export default function TrainingPage() {
       </div>
 
       {/* Two-column form */}
-      <div className="grid items-start gap-12 lg:grid-cols-[minmax(0,8fr)_minmax(0,11fr)]">
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,8fr)_minmax(0,11fr)] lg:gap-12">
         {/* Left: fields */}
         <div className="space-y-7">
           <div className="space-y-2">
