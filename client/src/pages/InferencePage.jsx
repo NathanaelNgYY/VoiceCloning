@@ -1026,7 +1026,7 @@ export default function InferencePage() {
     <div className="animate-fade-in space-y-8">
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
-      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#082f49_42%,#115e59_100%)] px-6 py-7 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:px-8 lg:px-10">
+      <section className="relative overflow-hidden rounded-[24px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#082f49_42%,#115e59_100%)] px-4 py-5 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:rounded-[32px] sm:px-8 sm:py-7 lg:px-10">
         <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_55%)]" />
         <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
         <div className="absolute bottom-0 right-8 h-48 w-48 rounded-full bg-emerald-300/15 blur-3xl" />
@@ -1036,7 +1036,7 @@ export default function InferencePage() {
             <Badge className="border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white shadow-none">
               Inference Studio
             </Badge>
-            <h2 className="mt-5 max-w-3xl font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            <h2 className="mt-4 max-w-3xl font-display text-xl font-semibold tracking-tight text-white sm:mt-5 sm:text-3xl lg:text-4xl">
               Use this page to choose a voice, confirm the right references, and turn your text into speech.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
@@ -1099,7 +1099,7 @@ export default function InferencePage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-5 p-6">
+        <CardContent className="space-y-5 p-4 sm:p-6">
           <VoiceProfileSelector
             profiles={voiceProfiles}
             value={selectedPersonKey}
@@ -1186,7 +1186,7 @@ export default function InferencePage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6 p-6">
+        <CardContent className="space-y-6 p-4 sm:p-6">
           <ReferencePresetLibrary
             presets={referencePresets}
             activePresetId={activeReferencePresetId}
