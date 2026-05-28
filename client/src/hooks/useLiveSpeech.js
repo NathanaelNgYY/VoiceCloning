@@ -708,7 +708,7 @@ export function useLiveSpeech({
     if (action === 'commit') {
       armBargeInMonitor();
       const id = ensureUserMessage();
-      patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+      patchMessage(id, { status: 'transcribing' });
       setPhase('thinking');
       setInterimTranscript('Thinking...');
       sendManualCommitTail();
@@ -760,7 +760,7 @@ export function useLiveSpeech({
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = false;
           const id = ensureUserMessage();
-          patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+          patchMessage(id, { status: 'transcribing' });
           setPhase('thinking');
           setInterimTranscript('Thinking...');
         }
