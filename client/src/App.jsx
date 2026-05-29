@@ -20,7 +20,6 @@ import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { getInstanceStatus, startInstance } from './services/api.js';
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
-import InferencePage from './pages/InferencePage.jsx';
 
 function GpuInstanceControl() {
   const [status, setStatus] = useState(null);
@@ -179,19 +178,6 @@ export default function App() {
                   {item.label}
                 </NavLink>
               ))}
-              <NavLink
-                to="/tts-test"
-                className={({ isActive }) =>
-                  cn(
-                    'rounded-lg px-3 py-1.5 text-sm font-medium transition-all',
-                    isActive
-                      ? 'bg-primary/10 text-primary font-semibold'
-                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
-                  )
-                }
-              >
-                TTS Test
-              </NavLink>
             </nav>
             <GpuInstanceControl />
           </div>
@@ -220,7 +206,6 @@ export default function App() {
                   : <Navigate to={appConfig.defaultPath} replace />
               }
             />
-            <Route path="/tts-test" element={<InferencePage directMode />} />
             <Route path="/inference" element={<Navigate to={appConfig.defaultPath} replace />} />
             <Route path="/live" element={<Navigate to={appConfig.defaultPath} replace />} />
             <Route path="*" element={<Navigate to={appConfig.defaultPath} replace />} />
