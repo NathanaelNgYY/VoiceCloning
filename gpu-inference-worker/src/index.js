@@ -7,6 +7,13 @@ import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { buildCorsOriginOption } from './services/corsOrigin.js';
+import {
+  clearStartupModelCache,
+  clearStartupRefAudioCache,
+} from './services/startupCleanup.js';
+
+clearStartupRefAudioCache({ log: console.log });
+clearStartupModelCache({ log: console.log });
 
 const app = express();
 

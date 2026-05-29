@@ -8,6 +8,13 @@ import activityRoutes from './routes/activity.js';
 import { processManager } from './services/processManager.js';
 import { recordTrainingLog } from './services/trainingLogger.js';
 import { buildCorsOriginOption } from './services/corsOrigin.js';
+import {
+  clearStartupModelCache,
+  clearStartupRefAudioCache,
+} from './services/startupCleanup.js';
+
+clearStartupRefAudioCache({ log: console.log });
+clearStartupModelCache({ log: console.log });
 
 const app = express();
 
