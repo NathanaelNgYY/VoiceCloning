@@ -292,6 +292,80 @@ test('idle check does not stop a recently active busy running GPU', async () => 
   }
 });
 
+test('idle check keeps the GPU running when the inference worker was recently active on a shared worker domain', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value === 'http://localhost:3001/activity/status') {
+      return new Response(JSON.stringify({
+        busy: false,
+        idleMs: 11 * 60 * 1000,
+        lastActivityAt: Date.now() - (11 * 60 * 1000),
+        trainingStatus: 'idle',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (value === 'http://localhost:3001/inference/activity/status') {
+      return new Response(JSON.stringify({
+        busy: false,
+        idleMs: 2 * 60 * 1000,
+        lastActivityAt: Date.now() - (2 * 60 * 1000),
+        inferenceStatus: 'idle',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      return {
+        Reservations: [{
+          Instances: [{
+            InstanceId: 'i-inference-active',
+            State: { Name: 'running' },
+          }],
+        }],
+      };
+    },
+  };
+
+  const { handler } = await import(`./index.js?inferenceRecent=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-inference-active',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      INFERENCE_WORKER_URL: 'http://localhost:3001',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(calls, ['DescribeInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.checked, true);
+      assert.equal(body.stopped, false);
+      assert.equal(body.reason, 'idle-threshold-not-met');
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
 test('idle check stops a stale busy GPU after configured idle minutes', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;

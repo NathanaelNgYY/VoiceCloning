@@ -209,6 +209,8 @@ The Lambda function uses Node.js 20.x with handler `index.handler`. It is packag
 
 `GpuIdleStopMinutes` only defines the idle threshold. Lambda does not run on a timer by itself; EventBridge must call `/api/instance/idle-check` periodically. Manual `curl -X POST https://d3dghqhnk7aoku.cloudfront.net/api/instance/idle-check` proves the stop path, but automatic shutdown requires the EventBridge rule and target in the deployment guide.
 
+In the split training and inference deployment, the idle-check Lambda now reads activity from both worker roles before deciding to stop the EC2 instance. Training activity still comes from `GET /activity/status` on `GPU_WORKER_URL`. Inference activity comes from `GET /inference/activity/status` on `INFERENCE_WORKER_URL`. When both env vars use the same shared ALB hostname, that inference probe intentionally relies on the existing `/inference*` listener rule to reach `gpu-inference-worker`, so no new EventBridge target or extra ALB rule is needed for this fix. Keep `INFERENCE_WORKER_URL` configured, and redeploy both the Lambda package and the inference worker when updating this idle-check path.
+
 Future production direction: move Lambda to Seoul (`ap-northeast-2`) and keep GPU EC2 private.
 
 - CloudFront -> public ALB -> private GPU EC2 for browser SSE/WSS.

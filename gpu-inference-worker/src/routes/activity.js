@@ -5,7 +5,7 @@ import { hasActiveInferenceSession } from '../services/longTextInference.js';
 
 const router = Router();
 
-router.get('/activity/status', (_req, res) => {
+function sendActivityStatus(_req, res) {
   const inference = inferenceState.getState();
   const inferenceActive = hasActiveInferenceSession(inference.sessionId);
   const now = Date.now();
@@ -19,6 +19,9 @@ router.get('/activity/status', (_req, res) => {
     inferenceStatus: inference.status,
     inferenceActive,
   }));
-});
+}
+
+router.get('/activity/status', sendActivityStatus);
+router.get('/inference/activity/status', sendActivityStatus);
 
 export default router;

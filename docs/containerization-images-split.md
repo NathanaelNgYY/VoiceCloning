@@ -1,6 +1,6 @@
 # VoiceCloning Container Images
 
-Last updated: 2026-05-15
+Last updated: 2026-05-28
 
 This guide documents the current split deployment. Training and inference now run as separate GPU container images. It does not use Docker Compose.
 
@@ -48,12 +48,14 @@ The frontend is intentionally not one of these images. The deployed frontend sho
 - `GET /inference/result/:sessionId`
 - `GET /ref-audio`
 - `GET /activity/status`
+- `GET /inference/activity/status`
 - `GET /healthz`
 
 `voice-lambda-api` routes:
 
 - training requests to `GPU_WORKER_URL`
 - inference and model requests to `INFERENCE_WORKER_URL`
+- GPU idle-stop checks use `GET ${GPU_WORKER_URL}/activity/status` for training activity and `GET ${INFERENCE_WORKER_URL}/inference/activity/status` for inference activity
 
 Until `INFERENCE_WORKER_URL` is set, Lambda falls back to `GPU_WORKER_URL`. That fallback is useful during rollout, but a true split deployment is not complete until `INFERENCE_WORKER_URL` is configured.
 
@@ -586,6 +588,7 @@ Start one real training job and confirm:
 ```bash
 curl "$INFERENCE_URL/healthz"
 curl "$INFERENCE_URL/activity/status"
+curl "$INFERENCE_URL/inference/activity/status"
 curl "$INFERENCE_URL/models"
 curl -X POST "$INFERENCE_URL/inference/start"
 curl "$INFERENCE_URL/inference/status"
