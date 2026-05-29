@@ -32,6 +32,7 @@ import {
   shouldAutoApplyBestReferenceSet,
 } from '@/lib/referenceSelection';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
+import { buildModelSelectWarmPayload } from '@/lib/modelLoading';
 import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
 import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
@@ -991,7 +992,10 @@ function handleSelectPerson(nextKey) {
     setLoading(true);
     setModelError(null);
     try {
-      await selectModels(selectedGPT, selectedSoVITS);
+      await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
+        refAudioPath,
+        auxRefAudioPaths: selectedAuxReferences.map((reference) => reference.path),
+      }));
       setLoadedGPTPath(selectedGPT);
       setLoadedSoVITSPath(selectedSoVITS);
       setServerReady(true);

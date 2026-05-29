@@ -4,6 +4,8 @@ This README explains how the deployed/cloud version of the Voice Cloning app is 
 
 This document does not describe local mock mode.
 
+Branch note: the deployed backend source of truth is the `separate-containers` branch. The older `deployment-with-changes` branch is treated as a frontend-only consumer that routes to the same Lambda/GPU backend paths, so backend changes should land on `separate-containers`.
+
 ## 1. High-Level Cloud Architecture
 
 In the cloud version, each frontend app only needs to know its own CloudFront domain. Training and Live Fast are built as separate bundles, but both distributions route backend paths to the same Lambda Function URL, GPU ALB, and S3-backed model/audio data.

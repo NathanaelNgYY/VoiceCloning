@@ -33,7 +33,10 @@ import {
   buildLiveFastReferencePreviewItems,
   buildLiveFastRefParams,
 } from '@/lib/liveFastSetup';
-import { shouldLoadSelectedProfile } from '@/lib/modelLoading';
+import {
+  buildModelSelectWarmPayload,
+  shouldLoadSelectedProfile,
+} from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
 import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
@@ -407,7 +410,10 @@ export default function LivePage({ replyMode = 'phrases' }) {
     if (!selectedProfile || isConversationActive) return;
     setLoadingModel(true); setModelError('');
     try {
-      await selectModels(selectedGPT, selectedSoVITS);
+      await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
+        refAudioPath: liveRefParams?.ref_audio_path,
+        auxRefAudioPaths: liveRefParams?.aux_ref_audio_paths || [],
+      }));
       setLoadedGPTPath(selectedGPT); setLoadedSoVITSPath(selectedSoVITS); setServerReady(true);
       setReferenceMessage('Voice model loaded.');
     } catch (err) {

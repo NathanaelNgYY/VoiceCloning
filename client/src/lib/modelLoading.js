@@ -17,3 +17,21 @@ export function shouldLoadSelectedProfile({
       && (loadedGPTPath !== gptPath || loadedSoVITSPath !== sovitsPath)
   );
 }
+
+export function buildModelSelectWarmPayload({
+  refAudioPath = '',
+  auxRefAudioPaths = [],
+} = {}) {
+  const primaryPath = String(refAudioPath || '').trim();
+  if (!primaryPath) {
+    return {};
+  }
+
+  return {
+    ref_audio_path: primaryPath,
+    aux_ref_audio_paths: Array.from(auxRefAudioPaths || [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, 5),
+  };
+}

@@ -159,11 +159,30 @@ export function getModels() {
   return api.get('/models');
 }
 
-export function selectModels(gptPath, sovitsPath) {
+export function selectModels(gptPath, sovitsPath, options = {}) {
+  const refAudioPath = String(options?.ref_audio_path || '').trim();
+  const auxRefAudioPaths = Array.isArray(options?.aux_ref_audio_paths)
+    ? options.aux_ref_audio_paths.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5)
+    : [];
+
   if (isS3Mode()) {
-    return api.post('/models/select', { gptKey: gptPath, sovitsKey: sovitsPath });
+    return api.post('/models/select', {
+      gptKey: gptPath,
+      sovitsKey: sovitsPath,
+      ...(refAudioPath ? {
+        ref_audio_path: refAudioPath,
+        aux_ref_audio_paths: auxRefAudioPaths,
+      } : {}),
+    });
   }
-  return api.post('/models/select', { gptPath, sovitsPath });
+  return api.post('/models/select', {
+    gptPath,
+    sovitsPath,
+    ...(refAudioPath ? {
+      ref_audio_path: refAudioPath,
+      aux_ref_audio_paths: auxRefAudioPaths,
+    } : {}),
+  });
 }
 
 export function activateVoiceProfile(profile) {
