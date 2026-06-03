@@ -8,6 +8,7 @@
     "dev:lambda": "vite --mode lambda-local --host 0.0.0.0 --port 5173 --strictPort",
     "dev:deployed-env": "vite",
     "build": "vite build",
+    "build:combined": "vite build --mode combined --outDir dist-combined",
     "preview": "vite preview"
   },
   "dependencies": {

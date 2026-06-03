@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .dist/
+dist-combined/
+dist-live-fast/
+dist-training/
+.env.combined
 .env
 .claude/
 .worktrees/

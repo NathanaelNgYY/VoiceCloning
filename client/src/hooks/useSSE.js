@@ -8,8 +8,8 @@ const STEP_NAMES = [
   'Extract Text Features',
   'Extract HuBERT Features',
   'Extract Semantic Features',
-  'Train SoVITS',
-  'Train GPT',
+  'Train Voice Model',
+  'Train Language Model',
 ];
 
 function createDefaultSteps() {

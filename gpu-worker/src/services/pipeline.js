@@ -13,6 +13,7 @@ import { trainingState } from './trainingState.js';
 import { generateSoVITSConfig, generateGPTConfig } from './configGenerator.js';
 import { STEPS } from './trainingSteps.js';
 import { downloadPrefix, uploadDirectory, uploadFile } from './s3Sync.js';
+import { sendTrainingCompleteEmail } from './emailNotifier.js';
 
 function sendStep(sessionId, stepIndex, status, detail) {
   trainingState.setStepStatus(stepIndex, status, detail || '');
@@ -118,6 +119,7 @@ export function cleanupLocalTrainingArtifacts({
 
 export async function runPipelineWithS3(sessionId, {
   expName,
+  email,
   s3Prefix: rawAudioPrefix,
   batchSize = 2,
   sovitsEpochs = 8,
@@ -362,6 +364,9 @@ export async function runPipelineWithS3(sessionId, {
 
     trainingState.setStatus('complete');
     sseManager.send(sessionId, 'pipeline-complete', { success: true });
+    if (email) {
+      await sendTrainingCompleteEmail(email, expName);
+    }
   } catch (err) {
     const errorMsg = parseError(err.message || String(err));
     trainingState.setError(errorMsg);

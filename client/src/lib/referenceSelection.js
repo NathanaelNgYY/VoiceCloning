@@ -75,3 +75,20 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
     reason: 'Auto-picked from transcript quality, language, file type, and clean-reference filename hints.',
   };
 }
+
+export function shouldAutoApplyBestReferenceSet({
+  selectedSourceKey = '',
+  loadedSourceKey = '',
+  loading = false,
+  fileCount = 0,
+  lastAppliedSourceKey = '',
+} = {}) {
+  return Boolean(
+    selectedSourceKey
+      && loadedSourceKey
+      && selectedSourceKey === loadedSourceKey
+      && !loading
+      && Number(fileCount) > 0
+      && lastAppliedSourceKey !== selectedSourceKey
+  );
+}

@@ -832,7 +832,7 @@ export default function InferencePage() {
 
   async function handleLoadModels({ auto = false } = {}) {
     if (!selectedGPT || !selectedSoVITS) {
-      if (!auto) alert('Select a person with both GPT and SoVITS checkpoints');
+      if (!auto) alert('Select a person with complete voice checkpoints');
       return;
     }
     setLoading(true);
@@ -845,7 +845,7 @@ export default function InferencePage() {
       if (!auto) {
         showNotice({
           title: 'Voice profile loaded',
-          message: 'The selected GPT and SoVITS checkpoints are ready for inference.',
+          message: 'The selected voice checkpoints are ready for inference.',
           tone: 'success',
         });
       }
@@ -1026,7 +1026,7 @@ export default function InferencePage() {
     <div className="animate-fade-in space-y-8">
       <FloatingNotice notice={notice} onClose={() => setNotice(null)} />
 
-      <section className="relative overflow-hidden rounded-[32px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#082f49_42%,#115e59_100%)] px-6 py-7 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:px-8 lg:px-10">
+      <section className="relative overflow-hidden rounded-[24px] border border-sky-200/50 bg-[linear-gradient(135deg,#0f172a_0%,#082f49_42%,#115e59_100%)] px-4 py-5 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.85)] sm:rounded-[32px] sm:px-8 sm:py-7 lg:px-10">
         <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_55%)]" />
         <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
         <div className="absolute bottom-0 right-8 h-48 w-48 rounded-full bg-emerald-300/15 blur-3xl" />
@@ -1036,7 +1036,7 @@ export default function InferencePage() {
             <Badge className="border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-white shadow-none">
               Inference Studio
             </Badge>
-            <h2 className="mt-5 max-w-3xl font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            <h2 className="mt-4 max-w-3xl font-display text-xl font-semibold tracking-tight text-white sm:mt-5 sm:text-3xl lg:text-4xl">
               Use this page to choose a voice, confirm the right references, and turn your text into speech.
             </h2>
             <p className="mt-4 max-w-2xl text-sm leading-7 text-white/72 sm:text-base">
@@ -1062,7 +1062,7 @@ export default function InferencePage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/60">Voice You’re Preparing</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight">{selectedProfile?.displayName || 'No profile selected'}</p>
               <p className="mt-2 text-sm leading-6 text-white/72">
-                {selectedProfile ? 'Choose the exact GPT and SoVITS pair you want; the server loads the selected profile automatically.' : 'Pick a speaker here before you move on to references and text.'}
+                {selectedProfile ? 'Choose the exact voice model pair you want; the server loads the selected profile automatically.' : 'Pick a speaker here before you move on to references and text.'}
               </p>
             </div>
 
@@ -1095,11 +1095,11 @@ export default function InferencePage() {
                   {selectionLoaded ? 'Loaded' : serverReady ? 'Needs reload' : 'Offline'}
                 </Badge>
               </div>
-              <CardDescription>Start by choosing the speaker, then keep the default checkpoints or switch to a different GPT or SoVITS model if you prefer.</CardDescription>
+              <CardDescription>Start by choosing the speaker, then keep the default checkpoints or switch to a different model if you prefer.</CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-5 p-6">
+        <CardContent className="space-y-5 p-4 sm:p-6">
           <VoiceProfileSelector
             profiles={voiceProfiles}
             value={selectedPersonKey}
@@ -1116,7 +1116,7 @@ export default function InferencePage() {
 
           <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
             {selectedProfile
-              ? `The server will use GPT ${selectedGPTCandidate?.model?.name || 'not selected'} and SoVITS ${selectedSoVITSCandidate?.model?.name || 'not selected'} for this profile.`
+              ? `The server will use ${selectedGPTCandidate?.model?.name || 'not selected'} and ${selectedSoVITSCandidate?.model?.name || 'not selected'} for this profile.`
               : 'Choose a speaker first; complete profiles load automatically for generation.'}
           </div>
 
@@ -1186,7 +1186,7 @@ export default function InferencePage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6 p-6">
+        <CardContent className="space-y-6 p-4 sm:p-6">
           <ReferencePresetLibrary
             presets={referencePresets}
             activePresetId={activeReferencePresetId}

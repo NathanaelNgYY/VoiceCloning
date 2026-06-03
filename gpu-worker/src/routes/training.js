@@ -9,7 +9,7 @@ const router = Router();
 const sessions = new Map();
 
 router.post('/train', (req, res) => {
-  const { expName, config = {} } = req.body;
+  const { expName, email, config = {} } = req.body;
 
   if (!expName) {
     return res.status(400).json({ error: 'expName is required' });
@@ -31,6 +31,7 @@ router.post('/train', (req, res) => {
     trainingState.setStatus('running');
     return runPipelineWithS3(sessionId, {
       expName,
+      email,
       s3Prefix,
       batchSize: config.batchSize,
       sovitsEpochs: config.sovitsEpochs,
