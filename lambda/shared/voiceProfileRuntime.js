@@ -1,5 +1,9 @@
-import { getObject, headObject } from './s3.js';
-import { ensureProfileModelsLoaded } from './modelSelection.js';
+import { getObject, headObject, uploadBuffer } from './s3.js';
+import {
+  ensureProfileModelsLoaded,
+  persistSavedProfileReferenceSelection,
+  resolveSavedProfileReferenceSelection,
+} from './modelSelection.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
 
@@ -80,7 +84,10 @@ function mergeSynthesisBody(body, profile) {
 
 export function createVoiceProfileResolver({
   readObject = defaultReadObject,
+  writeObject = uploadBuffer,
   ensureModelsLoaded = ensureProfileModelsLoaded,
+  listTrainingAudioFiles,
+  now = () => new Date().toISOString(),
 } = {}) {
   return async function resolveVoiceProfile(body = {}) {
     const voiceProfileId = String(body.voiceProfileId || '').trim();
@@ -100,7 +107,32 @@ export function createVoiceProfileResolver({
     }
 
     const profile = normalizeStoredProfile(JSON.parse(rawProfile.toString('utf-8')));
-    await ensureModelsLoaded(profile);
-    return mergeSynthesisBody(body, profile);
+    const resolvedReferenceSelection = await resolveSavedProfileReferenceSelection(profile, {
+      ...(listTrainingAudioFiles ? { listTrainingAudioFiles } : {}),
+    });
+    const enrichedProfile = resolvedReferenceSelection
+      ? {
+          ...profile,
+          ...resolvedReferenceSelection,
+        }
+      : profile;
+
+    if (
+      resolvedReferenceSelection
+      && profile?.voiceProfileId
+      && (
+        profile.ref_audio_path !== enrichedProfile.ref_audio_path
+        || JSON.stringify(profile.aux_ref_audio_paths || []) !== JSON.stringify(enrichedProfile.aux_ref_audio_paths || [])
+      )
+    ) {
+      await persistSavedProfileReferenceSelection(profile, resolvedReferenceSelection, {
+        readObject,
+        writeObject,
+        now,
+      });
+    }
+
+    await ensureModelsLoaded(enrichedProfile);
+    return mergeSynthesisBody(body, enrichedProfile);
   };
 }

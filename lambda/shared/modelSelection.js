@@ -1,8 +1,11 @@
 import path from 'path';
-import { getObject, listObjects } from './s3.js';
+import { getObject, listObjects, uploadBuffer } from './s3.js';
 import { gpuGet, inferenceGet, inferencePost } from './gpuWorker.js';
 import { useGpuWorkerArtifacts } from './artifacts.js';
 import { isSafePathSegment } from './paths.js';
+
+const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
+const MIN_REUSABLE_AUX_REFS = 5;
 
 export function modelSource() {
   return (process.env.MODEL_SOURCE || 's3').trim().toLowerCase();
@@ -159,43 +162,336 @@ function normalizeReferenceWarmPayload({
   };
 }
 
-async function resolveReferenceWarmPayload({
+function sameReferenceWarmPayload(left, right) {
+  const normalizedLeft = normalizeReferenceWarmPayload(left);
+  const normalizedRight = normalizeReferenceWarmPayload(right);
+
+  if (!normalizedLeft || !normalizedRight) {
+    return normalizedLeft === normalizedRight;
+  }
+
+  return (
+    normalizedLeft.ref_audio_path === normalizedRight.ref_audio_path
+    && normalizedLeft.aux_ref_audio_paths.length === normalizedRight.aux_ref_audio_paths.length
+    && normalizedLeft.aux_ref_audio_paths.every((path, index) => path === normalizedRight.aux_ref_audio_paths[index])
+  );
+}
+
+function hasAuxiliaryReferenceSelection(profile = {}) {
+  return Array.isArray(profile?.aux_ref_audio_paths)
+    && profile.aux_ref_audio_paths
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .length >= MIN_REUSABLE_AUX_REFS;
+}
+
+function getProfileStorageKey(voiceProfileId) {
+  return `voice-profiles/${voiceProfileId}.json`;
+}
+
+function normalizeSavedProfile(profile) {
+  if (!profile || typeof profile !== 'object') {
+    return null;
+  }
+
+  return {
+    ...profile,
+    ref_audio_path: String(profile.ref_audio_path || '').trim(),
+    aux_ref_audio_paths: Array.isArray(profile.aux_ref_audio_paths)
+      ? profile.aux_ref_audio_paths
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+      : [],
+  };
+}
+
+function normalizeModelRef(value) {
+  return String(value || '').trim();
+}
+
+function savedProfileMatchesModelPair(profile, {
+  gptKey = '',
+  gptPath = '',
+  sovitsKey = '',
+  sovitsPath = '',
+} = {}) {
+  const expectedGptRef = normalizeModelRef(gptKey || gptPath);
+  const expectedSovitsRef = normalizeModelRef(sovitsKey || sovitsPath);
+  const savedGptRef = normalizeModelRef(profile?.gptKey || profile?.gptPath);
+  const savedSovitsRef = normalizeModelRef(profile?.sovitsKey || profile?.sovitsPath);
+
+  if (expectedGptRef && savedGptRef && expectedGptRef !== savedGptRef) {
+    return false;
+  }
+  if (expectedSovitsRef && savedSovitsRef && expectedSovitsRef !== savedSovitsRef) {
+    return false;
+  }
+
+  return Boolean(
+    (!expectedGptRef || !savedGptRef || expectedGptRef === savedGptRef)
+    && (!expectedSovitsRef || !savedSovitsRef || expectedSovitsRef === savedSovitsRef)
+  );
+}
+
+async function readSavedProfile(key, {
+  readObject = getObject,
+} = {}) {
+  try {
+    const raw = await readObject(key);
+    if (!raw) return null;
+    return normalizeSavedProfile(JSON.parse(raw.toString('utf-8')));
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSavedProfileWarmPayload({
+  voiceProfileId = '',
+  gptKey = '',
+  gptPath = '',
+  sovitsKey = '',
+  sovitsPath = '',
+} = {}, {
+  readObject = getObject,
+} = {}) {
+  const normalizedVoiceProfileId = String(voiceProfileId || '').trim();
+  if (normalizedVoiceProfileId && isSafePathSegment(normalizedVoiceProfileId)) {
+    const profile = await readSavedProfile(getProfileStorageKey(normalizedVoiceProfileId), { readObject });
+    if (!profile) {
+      return null;
+    }
+    if (!savedProfileMatchesModelPair(profile, { gptKey, gptPath, sovitsKey, sovitsPath })) {
+      return null;
+    }
+
+    const warmPayload = normalizeReferenceWarmPayload(profile);
+    return warmPayload && hasAuxiliaryReferenceSelection(profile) ? warmPayload : null;
+  }
+
+  const activeProfile = await readSavedProfile(ACTIVE_PROFILE_KEY, { readObject });
+  if (!activeProfile) {
+    return null;
+  }
+  if (!savedProfileMatchesModelPair(activeProfile, { gptKey, gptPath, sovitsKey, sovitsPath })) {
+    return null;
+  }
+
+  const warmPayload = normalizeReferenceWarmPayload(activeProfile);
+  return warmPayload && hasAuxiliaryReferenceSelection(activeProfile) ? warmPayload : null;
+}
+
+export async function resolveSavedProfileReferenceSelection(profile, {
+  listTrainingAudioFiles = loadTrainingAudioFilesForExp,
+} = {}) {
+  const normalizedProfile = profile || {};
+  const existingSelection = normalizeReferenceWarmPayload(normalizedProfile);
+  if (existingSelection && hasAuxiliaryReferenceSelection(normalizedProfile)) {
+    return existingSelection;
+  }
+
+  const expName = extractExpNameFromModelRef(
+    normalizedProfile.sovitsKey
+    || normalizedProfile.sovitsPath
+    || normalizedProfile.gptKey
+    || normalizedProfile.gptPath,
+  );
+  if (!expName) {
+    return existingSelection;
+  }
+
+  const files = await listTrainingAudioFiles(expName);
+  const selection = chooseBestReferenceSet(files);
+  if (!selection.primary) {
+    return existingSelection;
+  }
+
+  return normalizeReferenceWarmPayload({
+    ref_audio_path: selection.primary.path,
+    aux_ref_audio_paths: selection.aux.map((file) => file.path),
+  }) || existingSelection;
+}
+
+async function resolveSavedProfileReferenceWarmState({
+  voiceProfileId = '',
+  gptKey = '',
+  gptPath = '',
+  sovitsKey = '',
+  sovitsPath = '',
+} = {}, {
+  listTrainingAudioFiles = loadTrainingAudioFilesForExp,
+  readObject = getObject,
+} = {}) {
+  const normalizedVoiceProfileId = String(voiceProfileId || '').trim();
+  const profile = normalizedVoiceProfileId && isSafePathSegment(normalizedVoiceProfileId)
+    ? await readSavedProfile(getProfileStorageKey(normalizedVoiceProfileId), { readObject })
+    : await readSavedProfile(ACTIVE_PROFILE_KEY, { readObject });
+
+  if (!profile) {
+    return null;
+  }
+  if (!savedProfileMatchesModelPair(profile, { gptKey, gptPath, sovitsKey, sovitsPath })) {
+    return null;
+  }
+
+  const existingSelection = normalizeReferenceWarmPayload(profile);
+  if (existingSelection && hasAuxiliaryReferenceSelection(profile)) {
+    return {
+      warmPayload: existingSelection,
+      savedProfile: profile,
+      shouldPersist: false,
+    };
+  }
+
+  const resolvedSelection = await resolveSavedProfileReferenceSelection(profile, {
+    listTrainingAudioFiles,
+  });
+
+  return {
+    warmPayload: resolvedSelection || existingSelection,
+    savedProfile: profile,
+    shouldPersist: Boolean(
+      resolvedSelection
+      && profile?.voiceProfileId
+      && !sameReferenceWarmPayload(existingSelection, resolvedSelection)
+    ),
+  };
+}
+
+async function resolveReferenceWarmState({
+  voiceProfileId = '',
   gptKey = '',
   gptPath = '',
   sovitsKey = '',
   sovitsPath = '',
   ref_audio_path = '',
   aux_ref_audio_paths = [],
+} = {}, {
+  listTrainingAudioFiles = loadTrainingAudioFilesForExp,
+  readObject = getObject,
 } = {}) {
   const explicit = normalizeReferenceWarmPayload({ ref_audio_path, aux_ref_audio_paths });
   if (explicit) {
-    return explicit;
+    return {
+      warmPayload: explicit,
+      savedProfile: null,
+      shouldPersist: false,
+    };
   }
 
-  const expName = extractExpNameFromModelRef(sovitsKey || sovitsPath || gptKey || gptPath);
-  if (!expName) {
-    return null;
-  }
-
-  const files = await loadTrainingAudioFilesForExp(expName);
-  const selection = chooseBestReferenceSet(files);
-  if (!selection.primary) {
-    return null;
-  }
-
-  return normalizeReferenceWarmPayload({
-    ref_audio_path: selection.primary.path,
-    aux_ref_audio_paths: selection.aux.map((file) => file.path),
+  const savedProfileWarmState = await resolveSavedProfileReferenceWarmState({
+    voiceProfileId,
+    gptKey,
+    gptPath,
+    sovitsKey,
+    sovitsPath,
+  }, {
+    listTrainingAudioFiles,
+    readObject,
   });
+  if (savedProfileWarmState?.warmPayload) {
+    return savedProfileWarmState;
+  }
+
+  return {
+    warmPayload: await resolveSavedProfileReferenceSelection({
+      gptKey,
+      gptPath,
+      sovitsKey,
+      sovitsPath,
+      ref_audio_path,
+      aux_ref_audio_paths,
+    }, {
+      listTrainingAudioFiles,
+    }),
+    savedProfile: null,
+    shouldPersist: false,
+  };
 }
 
-async function warmModelReferences(payload) {
+export async function persistSavedProfileReferenceSelection(profile, selection, {
+  readObject = getObject,
+  writeObject = uploadBuffer,
+  now = () => new Date().toISOString(),
+} = {}) {
+  const normalizedProfile = normalizeSavedProfile(profile);
+  const normalizedSelection = normalizeReferenceWarmPayload(selection);
+  const voiceProfileId = String(normalizedProfile?.voiceProfileId || '').trim();
+
+  if (!voiceProfileId || !normalizedSelection) {
+    return false;
+  }
+
+  const existingSelection = normalizeReferenceWarmPayload(normalizedProfile);
+  if (sameReferenceWarmPayload(existingSelection, normalizedSelection) && hasAuxiliaryReferenceSelection(normalizedProfile)) {
+    return false;
+  }
+
+  const updatedAt = now();
+  const {
+    activatedAt: _ignoredActivatedAt,
+    ...baseProfile
+  } = normalizedProfile;
+  const updatedProfile = {
+    ...baseProfile,
+    ...normalizedSelection,
+    updatedAt,
+  };
+
+  await writeObject(
+    getProfileStorageKey(voiceProfileId),
+    Buffer.from(JSON.stringify(updatedProfile), 'utf-8'),
+    'application/json',
+  );
+
+  const activeProfile = await readSavedProfile(ACTIVE_PROFILE_KEY, { readObject });
+  const shouldWriteActiveProfile = String(activeProfile?.voiceProfileId || '').trim() === voiceProfileId
+    || Boolean(normalizedProfile?.activatedAt);
+  if (shouldWriteActiveProfile) {
+    const activeBaseProfile = normalizeSavedProfile(activeProfile || normalizedProfile) || normalizedProfile;
+    const updatedActiveProfile = {
+      ...activeBaseProfile,
+      ...updatedProfile,
+      activatedAt: String(activeBaseProfile?.activatedAt || normalizedProfile?.activatedAt || updatedAt),
+      updatedAt,
+    };
+    await writeObject(
+      ACTIVE_PROFILE_KEY,
+      Buffer.from(JSON.stringify(updatedActiveProfile), 'utf-8'),
+      'application/json',
+    );
+  }
+
+  return true;
+}
+
+async function warmModelReferences(payload, {
+  postInference = inferencePost,
+  listTrainingAudioFiles = loadTrainingAudioFilesForExp,
+  readObject = getObject,
+  writeObject = uploadBuffer,
+  now = () => new Date().toISOString(),
+} = {}) {
   try {
-    const normalized = await resolveReferenceWarmPayload(payload);
-    if (!normalized) {
+    const {
+      warmPayload,
+      savedProfile,
+      shouldPersist,
+    } = await resolveReferenceWarmState(payload, {
+      listTrainingAudioFiles,
+      readObject,
+    });
+    if (!warmPayload) {
       return null;
     }
-    return await inferencePost('/ref-audio/warm', normalized);
+    if (savedProfile && shouldPersist) {
+      await persistSavedProfileReferenceSelection(savedProfile, warmPayload, {
+        readObject,
+        writeObject,
+        now,
+      });
+    }
+    await postInference('/ref-audio/warm', warmPayload);
+    return warmPayload;
   } catch (error) {
     const target = String(payload?.ref_audio_path || payload?.sovitsKey || payload?.sovitsPath || payload?.gptKey || payload?.gptPath || '').trim();
     console.warn(`[modelSelection] ref-audio warm failed for ${target || 'unknown model selection'}: ${error.message}`);
@@ -204,16 +500,24 @@ async function warmModelReferences(payload) {
 }
 
 export async function loadModelPair({
+  voiceProfileId = '',
   gptKey = '',
   gptPath = '',
   sovitsKey = '',
   sovitsPath = '',
   ref_audio_path = '',
   aux_ref_audio_paths = [],
+} = {}, {
+  postInference = inferencePost,
+  listTrainingAudioFiles = loadTrainingAudioFilesForExp,
+  readObject = getObject,
+  writeObject = uploadBuffer,
+  now = () => new Date().toISOString(),
 } = {}) {
   const resolvedGptKey = gptKey || gptPath;
   const resolvedSovitsKey = sovitsKey || sovitsPath;
   const warmPayload = {
+    voiceProfileId,
     gptKey,
     gptPath,
     sovitsKey,
@@ -225,12 +529,18 @@ export async function loadModelPair({
   let lastStatus = null;
   if (useGpuWorkerModels()) {
     if (resolvedSovitsKey) {
-      lastStatus = await inferencePost('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
+      lastStatus = await postInference('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
     }
     if (resolvedGptKey) {
-      lastStatus = await inferencePost('/inference/weights/gpt', { weightsPath: resolvedGptKey });
+      lastStatus = await postInference('/inference/weights/gpt', { weightsPath: resolvedGptKey });
     }
-    const warmedReferences = await warmModelReferences(warmPayload);
+    const warmedReferences = await warmModelReferences(warmPayload, {
+      postInference,
+      listTrainingAudioFiles,
+      readObject,
+      writeObject,
+      now,
+    });
     return {
       message: 'Models loaded successfully',
       loaded: lastStatus?.loaded || {},
@@ -239,14 +549,20 @@ export async function loadModelPair({
   }
 
   if (resolvedSovitsKey) {
-    const { localPath } = await inferencePost('/models/download', { s3Key: resolvedSovitsKey });
-    lastStatus = await inferencePost('/inference/weights/sovits', { weightsPath: localPath });
+    const { localPath } = await postInference('/models/download', { s3Key: resolvedSovitsKey });
+    lastStatus = await postInference('/inference/weights/sovits', { weightsPath: localPath });
   }
   if (resolvedGptKey) {
-    const { localPath } = await inferencePost('/models/download', { s3Key: resolvedGptKey });
-    lastStatus = await inferencePost('/inference/weights/gpt', { weightsPath: localPath });
+    const { localPath } = await postInference('/models/download', { s3Key: resolvedGptKey });
+    lastStatus = await postInference('/inference/weights/gpt', { weightsPath: localPath });
   }
-  const warmedReferences = await warmModelReferences(warmPayload);
+  const warmedReferences = await warmModelReferences(warmPayload, {
+    postInference,
+    listTrainingAudioFiles,
+    readObject,
+    writeObject,
+    now,
+  });
 
   return {
     message: 'Models loaded successfully',

@@ -131,6 +131,12 @@ function getHeaderValue(headers, headerName) {
   return '';
 }
 
+function wantsFullActiveProfile(event) {
+  const query = event?.queryStringParameters || {};
+  const full = String(query.full || query.include || '').trim().toLowerCase();
+  return ['1', 'true', 'full'].includes(full);
+}
+
 export function createHandler({
   readObject = defaultReadObject,
   writeObject = uploadBuffer,
@@ -157,7 +163,11 @@ export function createHandler({
         if (!activeProfile) {
           return err(404, 'No active voice profile has been saved', event);
         }
-        return ok(buildVoiceProfileSummary(activeProfile), {}, event);
+        return ok(
+          wantsFullActiveProfile(event) ? activeProfile : buildVoiceProfileSummary(activeProfile),
+          {},
+          event,
+        );
       }
 
       if (method === 'GET' && internalMatch) {

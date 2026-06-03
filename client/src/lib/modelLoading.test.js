@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildModelSelectWarmPayload,
+  extractModelSelectWarmedReferenceSelection,
+  resolveInferenceStatusState,
   shouldLoadSelectedProfile,
 } from './modelLoading.js';
 
@@ -93,5 +95,82 @@ test('buildModelSelectWarmPayload forwards primary and capped auxiliary ref path
       'refs/aux-4.wav',
       'refs/aux-5.wav',
     ],
+  });
+});
+
+test('buildModelSelectWarmPayload forwards voiceProfileId when model loading should reuse a saved profile', () => {
+  assert.deepEqual(buildModelSelectWarmPayload({
+    voiceProfileId: 'lecturer-a-v1',
+  }), {
+    voiceProfileId: 'lecturer-a-v1',
+  });
+
+  assert.deepEqual(buildModelSelectWarmPayload({
+    voiceProfileId: 'lecturer-a-v1',
+    refAudioPath: 'refs/primary.wav',
+    auxRefAudioPaths: ['refs/aux-1.wav'],
+  }), {
+    voiceProfileId: 'lecturer-a-v1',
+    ref_audio_path: 'refs/primary.wav',
+    aux_ref_audio_paths: ['refs/aux-1.wav'],
+  });
+});
+
+test('extractModelSelectWarmedReferenceSelection normalizes the warmed reference set returned by model loading', () => {
+  assert.deepEqual(extractModelSelectWarmedReferenceSelection({
+    warmedReferences: {
+      ref_audio_path: 'refs/primary.wav',
+      aux_ref_audio_paths: [
+        'refs/aux-1.wav',
+        '',
+        'refs/primary.wav',
+        'refs/aux-2.wav',
+        'refs/aux-3.wav',
+        'refs/aux-4.wav',
+        'refs/aux-5.wav',
+        'refs/aux-6.wav',
+      ],
+    },
+  }), {
+    refAudioPath: 'refs/primary.wav',
+    auxRefAudioPaths: [
+      'refs/aux-1.wav',
+      'refs/aux-2.wav',
+      'refs/aux-3.wav',
+      'refs/aux-4.wav',
+      'refs/aux-5.wav',
+    ],
+  });
+
+  assert.equal(extractModelSelectWarmedReferenceSelection({
+    warmedReferences: {
+      ref_audio_path: '',
+      aux_ref_audio_paths: ['refs/aux-1.wav'],
+    },
+  }), null);
+});
+
+test('resolveInferenceStatusState preserves the last known loaded weights when status omits loaded paths', () => {
+  assert.deepEqual(resolveInferenceStatusState({
+    status: { ready: false, workerAvailable: false },
+    fallbackLoadedGPTPath: 'models/gpt/current.ckpt',
+    fallbackLoadedSoVITSPath: 'models/sovits/current.pth',
+  }), {
+    serverReady: false,
+    loadedGPTPath: 'models/gpt/current.ckpt',
+    loadedSoVITSPath: 'models/sovits/current.pth',
+  });
+
+  assert.deepEqual(resolveInferenceStatusState({
+    status: {
+      ready: true,
+      loaded: { gptPath: '', sovitsPath: '' },
+    },
+    fallbackLoadedGPTPath: 'models/gpt/current.ckpt',
+    fallbackLoadedSoVITSPath: 'models/sovits/current.pth',
+  }), {
+    serverReady: true,
+    loadedGPTPath: '',
+    loadedSoVITSPath: '',
   });
 });

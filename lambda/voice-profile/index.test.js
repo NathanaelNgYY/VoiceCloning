@@ -194,6 +194,68 @@ test('voice profile active returns only summary data', async () => {
   });
 });
 
+test('voice profile active can return the full stored profile for browser restore when full=1 is requested', async () => {
+  const handler = createHandler({
+    readObject: async (key) => {
+      assert.equal(key, 'voice-profiles/active.json');
+      return Buffer.from(JSON.stringify({
+        voiceProfileId: 'dr-lim-v1',
+        displayName: 'Dr Lim',
+        gptKey: 'models/user-models/gpt/dr-lim.ckpt',
+        sovitsKey: 'models/user-models/sovits/dr-lim.pth',
+        ref_audio_path: 'training/datasets/dr-lim/reference.wav',
+        prompt_text: 'Reference transcript',
+        prompt_lang: 'en',
+        text_lang: 'en',
+        preferredRoute: 'sentence',
+        aux_ref_audio_paths: ['training/datasets/dr-lim/aux-1.wav'],
+        defaults: {
+          top_k: 5,
+          top_p: 0.85,
+          temperature: 0.7,
+          repetition_penalty: 1.35,
+          speed_factor: 1.0,
+        },
+        updatedAt: '2026-05-18T10:00:00.000Z',
+        activatedAt: '2026-05-18T10:00:00.000Z',
+      }), 'utf-8');
+    },
+    writeObject: async () => {
+      throw new Error('not used');
+    },
+    now: () => '2026-05-18T10:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'GET',
+    path: '/api/voice-profile/active',
+    query: { full: '1' },
+  }));
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    voiceProfileId: 'dr-lim-v1',
+    displayName: 'Dr Lim',
+    gptKey: 'models/user-models/gpt/dr-lim.ckpt',
+    sovitsKey: 'models/user-models/sovits/dr-lim.pth',
+    ref_audio_path: 'training/datasets/dr-lim/reference.wav',
+    prompt_text: 'Reference transcript',
+    prompt_lang: 'en',
+    text_lang: 'en',
+    preferredRoute: 'sentence',
+    aux_ref_audio_paths: ['training/datasets/dr-lim/aux-1.wav'],
+    defaults: {
+      top_k: 5,
+      top_p: 0.85,
+      temperature: 0.7,
+      repetition_penalty: 1.35,
+      speed_factor: 1.0,
+    },
+    updatedAt: '2026-05-18T10:00:00.000Z',
+    activatedAt: '2026-05-18T10:00:00.000Z',
+  });
+});
+
 test('voice profile active returns 404 when no active profile has been saved', async () => {
   const handler = createHandler({
     readObject: async () => null,

@@ -5,7 +5,7 @@ import ReferencePresetLibrary from '../components/ReferencePresetLibrary.jsx';
 import RefAudioPlayer from '../components/RefAudioPlayer.jsx';
 import Spinner from '../components/Spinner.jsx';
 import VoiceProfileSelector from '../components/VoiceProfileSelector.jsx';
-import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile, getActiveVoiceProfile } from '../services/api.js';
+import { getModels, selectModels, uploadRefAudio, transcribeAudio, getInferenceStatus, startGeneration, synthesize, getGenerationResult, cancelGeneration, getTrainingAudioFiles, getTrainingAudioUrl, getCurrentInference, getUploadedRefAudioUrl, activateVoiceProfile, getFullActiveVoiceProfile } from '../services/api.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -32,9 +32,20 @@ import {
   shouldAutoApplyBestReferenceSet,
 } from '@/lib/referenceSelection';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
-import { buildModelSelectWarmPayload } from '@/lib/modelLoading';
+import {
+  buildModelSelectWarmPayload,
+  extractModelSelectWarmedReferenceSelection,
+  resolveInferenceStatusState,
+} from '@/lib/modelLoading';
 import { buildVoiceProfiles, extractExpName } from '@/lib/voiceProfiles';
-import { buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
+import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
+import {
+  buildSavedVoiceProfileRestoreKey,
+  findSavedVoiceProfileKey,
+  hasRestorableSavedVoiceProfile,
+  matchesSavedVoiceProfileReferenceSelection,
+  matchesSavedVoiceProfileSelection,
+} from '@/lib/savedVoiceProfile';
 import {
   createAutoVoiceProfileSyncFingerprint,
   getAutoSyncRequestFingerprint,
@@ -54,7 +65,18 @@ function getFallbackReferenceName(filePath) {
 }
 
 function normalizeReferenceLanguage(lang) {
-  const langMap = { ZH: 'zh', EN: 'en', JA: 'ja', KO: 'ko', zh: 'zh', en: 'en', ja: 'ja', ko: 'ko' };
+  const langMap = {
+    ZH: 'zh',
+    EN: 'en',
+    JA: 'ja',
+    KO: 'ko',
+    AUTO: 'auto',
+    zh: 'zh',
+    en: 'en',
+    ja: 'ja',
+    ko: 'ko',
+    auto: 'auto',
+  };
   return langMap[lang] || 'en';
 }
 
@@ -120,9 +142,12 @@ export default function InferencePage({ directMode = false }) {
   const autoLoadKeyRef = useRef('');
   const autoReferenceProfileRef = useRef('');
   const urlVoiceKeyRef = useRef('');
+  const restoredActiveVoiceProfileKeyRef = useRef('');
   const pendingAutoSyncFingerprintRef = useRef('');
   const autoSyncRequestFingerprintRef = useRef('');
   const lastAutoSyncedFingerprintRef = useRef('');
+  const statusRequestVersionRef = useRef(0);
+  const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
 
   const inference = useInferenceSSE();
   const voiceProfiles = buildVoiceProfiles(gptModels, sovitsModels);
@@ -136,6 +161,16 @@ export default function InferencePage({ directMode = false }) {
   const selectedGPT = selectedGPTCandidate?.model?.path || '';
   const selectedSoVITS = selectedSoVITSCandidate?.model?.path || '';
   const currentExpName = selectedProfile?.expName || null;
+  const selectedVoiceProfileId = selectedProfile ? buildVoiceProfileId(selectedProfile.displayName) : '';
+  const canRestoreActiveVoiceProfile = matchesSavedVoiceProfileSelection({
+    profile: activeVoiceProfile,
+    voiceProfileId: selectedVoiceProfileId,
+    selectedGPT,
+    selectedSoVITS,
+  }) && hasRestorableSavedVoiceProfile(activeVoiceProfile);
+  const activeVoiceProfileRestoreKey = canRestoreActiveVoiceProfile
+    ? buildSavedVoiceProfileRestoreKey(activeVoiceProfile)
+    : '';
   const selectionLoaded = Boolean(
     serverReady
       && selectedGPT
@@ -249,23 +284,44 @@ export default function InferencePage({ directMode = false }) {
     }
   }
 
+  function applyInferenceStatusState(nextState = {}) {
+    loadedModelStateRef.current = {
+      gptPath: String(nextState.loadedGPTPath || '').trim(),
+      sovitsPath: String(nextState.loadedSoVITSPath || '').trim(),
+    };
+    setServerReady(Boolean(nextState.serverReady));
+    setLoadedGPTPath(loadedModelStateRef.current.gptPath);
+    setLoadedSoVITSPath(loadedModelStateRef.current.sovitsPath);
+  }
+
   async function checkStatus() {
+    const requestVersion = ++statusRequestVersionRef.current;
     try {
       const res = await getInferenceStatus();
-      setServerReady(Boolean(res.data.ready));
-      setLoadedGPTPath(res.data.loaded?.gptPath || '');
-      setLoadedSoVITSPath(res.data.loaded?.sovitsPath || '');
+      if (statusRequestVersionRef.current !== requestVersion) {
+        return;
+      }
+      applyInferenceStatusState(resolveInferenceStatusState({
+        status: res.data,
+        fallbackLoadedGPTPath: loadedModelStateRef.current.gptPath,
+        fallbackLoadedSoVITSPath: loadedModelStateRef.current.sovitsPath,
+      }));
     } catch {
-      setServerReady(false);
-      setLoadedGPTPath('');
-      setLoadedSoVITSPath('');
+      if (statusRequestVersionRef.current !== requestVersion) {
+        return;
+      }
+      applyInferenceStatusState(resolveInferenceStatusState({
+        status: { ready: false },
+        fallbackLoadedGPTPath: loadedModelStateRef.current.gptPath,
+        fallbackLoadedSoVITSPath: loadedModelStateRef.current.sovitsPath,
+      }));
     }
   }
 
   async function loadActiveVoiceProfile() {
     setLoadingActiveVoiceProfile(true);
     try {
-      const res = await getActiveVoiceProfile();
+      const res = await getFullActiveVoiceProfile();
       setActiveVoiceProfile(res.data || null);
       setActiveVoiceProfileError('');
     } catch (err) {
@@ -434,22 +490,39 @@ export default function InferencePage({ directMode = false }) {
       });
     }
 
+    if (loadingActiveVoiceProfile) {
+      return;
+    }
+
     const selectionStillValid = profiles.some(
       profile => profile.key === selectedPersonKey && profile.complete
     );
 
     if (!selectionStillValid) {
+      const activeMatchKey = findSavedVoiceProfileKey(profiles, activeVoiceProfile?.voiceProfileId || '');
+      const activeMatch = profiles.find(
+        (profile) => profile.key === activeMatchKey && profile.complete,
+      );
       const loadedMatch = profiles.find(
         profile => profile.complete
           && profile.gptModel?.path === loadedGPTPath
           && profile.sovitsModel?.path === loadedSoVITSPath
       );
-      const fallback = profiles.find(profile => profile.complete) || loadedMatch || profiles[0];
+      const fallback = activeMatch || loadedMatch || profiles.find(profile => profile.complete) || profiles[0];
       if (fallback?.key && fallback.key !== selectedPersonKey) {
         setSelectedPersonKey(fallback.key);
       }
     }
-  }, [modelsFetched, gptModels, sovitsModels, selectedPersonKey, loadedGPTPath, loadedSoVITSPath]);
+  }, [
+    modelsFetched,
+    gptModels,
+    sovitsModels,
+    selectedPersonKey,
+    loadedGPTPath,
+    loadedSoVITSPath,
+    loadingActiveVoiceProfile,
+    activeVoiceProfile,
+  ]);
 
   useEffect(() => {
     if (!modelsFetched) return;
@@ -544,6 +617,8 @@ export default function InferencePage({ directMode = false }) {
   }, [currentExpName]);
 
   useEffect(() => {
+    if (loadingActiveVoiceProfile || canRestoreActiveVoiceProfile) return;
+
     const primaryIsUploaded = uploadedRefFiles.some(file => file.serverPath === refAudioPath);
     const keepConfirmedSelection = refLocked && (primaryIsUploaded || activeReferencePresetId);
 
@@ -615,6 +690,8 @@ export default function InferencePage({ directMode = false }) {
     uploadedRefFiles,
     refAudioPath,
     activeReferencePresetId,
+    loadingActiveVoiceProfile,
+    canRestoreActiveVoiceProfile,
   ]);
 
   useEffect(() => {
@@ -792,7 +869,7 @@ export default function InferencePage({ directMode = false }) {
     }
   }
 
-  async function applyReferencePreset(preset) {
+  async function applyReferencePreset(preset, { showLoadedNotice = true } = {}) {
     if (!preset?.primary?.path) return;
 
     const uploadedEntries = [preset.primary, ...(preset.aux || [])].filter((entry) => entry.source === 'uploaded');
@@ -828,12 +905,187 @@ export default function InferencePage({ directMode = false }) {
     });
     setRefLocked(true);
     setActiveReferencePresetId(preset.id);
-    showNotice({
-      title: 'Reference set loaded',
-      message: `Using ${preset.name} for the current inference setup.`,
-      tone: 'success',
-    });
+    if (showLoadedNotice) {
+      showNotice({
+        title: 'Reference set loaded',
+        message: `Using ${preset.name} for the current inference setup.`,
+        tone: 'success',
+      });
+    }
   }
+
+  async function syncLoadedModelReferenceSelection(result = {}) {
+    const selection = extractModelSelectWarmedReferenceSelection(result);
+    if (!selection) {
+      return null;
+    }
+
+    const trainingByPath = new Map(
+      trainingAudioFiles
+        .filter((file) => file?.path)
+        .map((file) => [file.path, file]),
+    );
+    const selectedActiveProfile = selectedVoiceProfileId
+      && activeVoiceProfile?.voiceProfileId === selectedVoiceProfileId
+      ? activeVoiceProfile
+      : null;
+    const primaryPath = selection.refAudioPath;
+    const primaryFile = trainingByPath.get(primaryPath) || null;
+    const toReferenceEntry = (referencePath) => {
+      const trainingMatch = trainingByPath.get(referencePath);
+      const isTrainingReference = Boolean(trainingMatch) || String(referencePath || '').startsWith('training/');
+      return {
+        path: referencePath,
+        name: trainingMatch?.filename || getFallbackReferenceName(referencePath),
+        source: isTrainingReference ? 'training' : 'uploaded',
+      };
+    };
+
+    const preset = buildReferencePreset({
+      id: 'loaded-model-selection',
+      name: `Loaded - ${selectedProfile?.displayName || 'Voice Profile'}`,
+      selectedPersonKey,
+      selectedGPTPath: selectedGPT,
+      selectedSoVITSPath: selectedSoVITS,
+      voiceLabel: selectedProfile?.displayName || selectedActiveProfile?.displayName || '',
+      expName: currentExpName || extractExpName(primaryPath) || '',
+      primary: toReferenceEntry(primaryPath),
+      aux: selection.auxRefAudioPaths.map(toReferenceEntry),
+      promptText: selectedActiveProfile
+        ? String(selectedActiveProfile.prompt_text || '')
+        : String(primaryFile?.transcript || promptText),
+      promptLang: selectedActiveProfile
+        ? normalizeReferenceLanguage(selectedActiveProfile.prompt_lang)
+        : normalizeReferenceLanguage(primaryFile?.lang || promptLang),
+    });
+    if (!preset) {
+      return null;
+    }
+
+    pendingAutoSyncFingerprintRef.current = '';
+    autoSyncRequestFingerprintRef.current = '';
+    await applyReferencePreset(preset, { showLoadedNotice: false });
+
+    if (selectedActiveProfile) {
+      setActiveVoiceProfile((current) => (
+        current ? {
+          ...current,
+          ref_audio_path: primaryPath,
+          aux_ref_audio_paths: selection.auxRefAudioPaths,
+        } : current
+      ));
+    }
+
+    return {
+      ...selection,
+      primaryFilename: primaryFile?.filename || getFallbackReferenceName(primaryPath),
+    };
+  }
+
+  useEffect(() => {
+    restoredActiveVoiceProfileKeyRef.current = '';
+  }, [selectedVoiceProfileId, selectedGPT, selectedSoVITS]);
+
+  useEffect(() => {
+    if (!canRestoreActiveVoiceProfile || !activeVoiceProfileRestoreKey || !selectedProfile) {
+      return;
+    }
+    if (loadingActiveVoiceProfile || loadingTrainingAudio) {
+      return;
+    }
+    if (currentExpName && loadedTrainingAudioSourceKey !== currentExpName) {
+      return;
+    }
+    if (restoredActiveVoiceProfileKeyRef.current === activeVoiceProfileRestoreKey) {
+      return;
+    }
+
+    const primaryPath = String(activeVoiceProfile?.ref_audio_path || '').trim();
+    if (!primaryPath) {
+      return;
+    }
+
+    if (refLocked && matchesSavedVoiceProfileReferenceSelection({
+      profile: activeVoiceProfile,
+      refAudioPath,
+      auxRefAudioPaths: selectedAuxReferences.map((reference) => reference.path),
+    })) {
+      restoredActiveVoiceProfileKeyRef.current = activeVoiceProfileRestoreKey;
+      return;
+    }
+
+    const trainingPathSet = new Set(trainingAudioFiles.map((file) => file.path));
+    const toReferenceEntry = (referencePath) => ({
+      path: referencePath,
+      name: getFallbackReferenceName(referencePath),
+      source: trainingPathSet.has(referencePath) ? 'training' : 'uploaded',
+    });
+
+    const preset = buildReferencePreset({
+      id: 'saved-active-profile',
+      name: `Saved - ${activeVoiceProfile.displayName || selectedProfile.displayName || 'Voice Profile'}`,
+      selectedPersonKey,
+      selectedGPTPath: selectedGPT,
+      selectedSoVITSPath: selectedSoVITS,
+      voiceLabel: selectedProfile.displayName || activeVoiceProfile.displayName || '',
+      expName: currentExpName || extractExpName(primaryPath) || '',
+      primary: toReferenceEntry(primaryPath),
+      aux: Array.isArray(activeVoiceProfile?.aux_ref_audio_paths)
+        ? activeVoiceProfile.aux_ref_audio_paths
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+          .filter((path) => path !== primaryPath)
+          .map(toReferenceEntry)
+        : [],
+      promptText: activeVoiceProfile.prompt_text || '',
+      promptLang: normalizeReferenceLanguage(activeVoiceProfile.prompt_lang),
+    });
+
+    if (!preset) {
+      return;
+    }
+
+    restoredActiveVoiceProfileKeyRef.current = activeVoiceProfileRestoreKey;
+    pendingAutoSyncFingerprintRef.current = '';
+    autoSyncRequestFingerprintRef.current = '';
+
+    let cancelled = false;
+    applyReferencePreset(preset, { showLoadedNotice: false })
+      .then(() => {
+        if (cancelled) return;
+        setTextLang(String(activeVoiceProfile.text_lang || 'en').trim() || 'en');
+        setSpeed(Number.isFinite(activeVoiceProfile?.defaults?.speed_factor) ? activeVoiceProfile.defaults.speed_factor : 1.0);
+        setTopK(Number.isFinite(activeVoiceProfile?.defaults?.top_k) ? activeVoiceProfile.defaults.top_k : 5);
+        setTopP(Number.isFinite(activeVoiceProfile?.defaults?.top_p) ? activeVoiceProfile.defaults.top_p : 0.85);
+        setTemperature(Number.isFinite(activeVoiceProfile?.defaults?.temperature) ? activeVoiceProfile.defaults.temperature : 0.7);
+        setRepPenalty(Number.isFinite(activeVoiceProfile?.defaults?.repetition_penalty) ? activeVoiceProfile.defaults.repetition_penalty : 1.35);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        restoredActiveVoiceProfileKeyRef.current = '';
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    canRestoreActiveVoiceProfile,
+    activeVoiceProfileRestoreKey,
+    activeVoiceProfile,
+    loadingActiveVoiceProfile,
+    loadingTrainingAudio,
+    trainingAudioFiles,
+    selectedProfile,
+    selectedPersonKey,
+    selectedGPT,
+    selectedSoVITS,
+    currentExpName,
+    loadedTrainingAudioSourceKey,
+    refLocked,
+    refAudioPath,
+    selectedAuxReferences,
+    uploadedRefFiles,
+  ]);
 
   function saveCurrentReferencePreset() {
     if (!currentPrimaryReference) return;
@@ -992,17 +1244,22 @@ function handleSelectPerson(nextKey) {
     setLoading(true);
     setModelError(null);
     try {
-      await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
-        refAudioPath,
-        auxRefAudioPaths: selectedAuxReferences.map((reference) => reference.path),
+      const response = await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
+        voiceProfileId: selectedVoiceProfileId,
       }));
-      setLoadedGPTPath(selectedGPT);
-      setLoadedSoVITSPath(selectedSoVITS);
-      setServerReady(true);
+      const syncedSelection = await syncLoadedModelReferenceSelection(response.data || {});
+      statusRequestVersionRef.current += 1;
+      applyInferenceStatusState({
+        serverReady: true,
+        loadedGPTPath: selectedGPT,
+        loadedSoVITSPath: selectedSoVITS,
+      });
       if (!auto) {
         showNotice({
           title: 'Voice profile loaded',
-          message: 'The selected GPT and SoVITS checkpoints are ready for inference.',
+          message: syncedSelection
+            ? `${syncedSelection.primaryFilename} is now the loaded reference set for inference.`
+            : 'The selected GPT and SoVITS checkpoints are ready for inference.',
           tone: 'success',
         });
       }
@@ -1180,7 +1437,7 @@ async function handleCancel() {
   }
 }
 
-async function persistSelectedVoiceProfile() {
+  async function persistSelectedVoiceProfile() {
   if (!selectedProfile || !selectedGPT || !selectedSoVITS || !refAudioPath) {
     throw new Error('Voice profile is not ready to save yet.');
   }
@@ -1208,7 +1465,12 @@ async function persistSelectedVoiceProfile() {
 
   const response = await activateVoiceProfile(payload);
   const summary = response.data || {};
-  setActiveVoiceProfile(summary.voiceProfileId ? summary : null);
+  setActiveVoiceProfile(summary.voiceProfileId ? {
+    ...payload,
+    ...summary,
+    voiceProfileId: summary.voiceProfileId || payload.voiceProfileId,
+    displayName: summary.displayName || payload.displayName,
+  } : null);
   setActiveVoiceProfileError('');
   setLoadingActiveVoiceProfile(false);
   return { summary, payload };

@@ -161,6 +161,7 @@ export function getModels() {
 
 export function selectModels(gptPath, sovitsPath, options = {}) {
   const refAudioPath = String(options?.ref_audio_path || '').trim();
+  const voiceProfileId = String(options?.voiceProfileId || '').trim();
   const auxRefAudioPaths = Array.isArray(options?.aux_ref_audio_paths)
     ? options.aux_ref_audio_paths.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5)
     : [];
@@ -169,6 +170,7 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
     return api.post('/models/select', {
       gptKey: gptPath,
       sovitsKey: sovitsPath,
+      ...(voiceProfileId ? { voiceProfileId } : {}),
       ...(refAudioPath ? {
         ref_audio_path: refAudioPath,
         aux_ref_audio_paths: auxRefAudioPaths,
@@ -178,6 +180,7 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
   return api.post('/models/select', {
     gptPath,
     sovitsPath,
+    ...(voiceProfileId ? { voiceProfileId } : {}),
     ...(refAudioPath ? {
       ref_audio_path: refAudioPath,
       aux_ref_audio_paths: auxRefAudioPaths,
@@ -228,6 +231,12 @@ export function activateVoiceProfile(profile) {
 
 export function getActiveVoiceProfile() {
   return api.get('/voice-profile/active');
+}
+
+export function getFullActiveVoiceProfile() {
+  return api.get('/voice-profile/active', {
+    params: { full: 1 },
+  });
 }
 
 // ── Transcription ──
