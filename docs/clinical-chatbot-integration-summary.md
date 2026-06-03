@@ -284,6 +284,14 @@ Recent integration fixes touched both frontend builds:
 
 So a frontend redeploy must update both sites together when testing the latest voice-profile sync behavior.
 
+### 6. Model loading, reference warming, and startup cache cleanup
+
+The shared `POST /api/models/select` route now does more than just load GPT and SoVITS weights. If a saved voice profile or caller already provides `ref_audio_path` and `aux_ref_audio_paths`, the backend warms those exact files immediately after model loading so later synthesis does not need to fetch them on the first reply.
+
+If the caller only provides the model pair, the backend can still continue by deriving the trained voice name from the selected model files, reading the training audio metadata, auto-selecting the best primary reference and up to five auxiliary clips, and warming that set automatically.
+
+This matters because the GPU worker now clears both the local reference-audio cache and the local model cache on startup. The next model-selection request can therefore rebuild the right cache state from shared storage and reduce the first-response latency for chatbot voice output after a restart.
+
 ## Known Constraints
 
 ### 1. Global loaded model state

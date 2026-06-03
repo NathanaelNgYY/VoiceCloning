@@ -357,6 +357,12 @@ Or in local/non-S3 style:
 }
 ```
 
+This route now also supports reference warm-up on the backend side. If the caller already knows the intended `ref_audio_path` and `aux_ref_audio_paths`, it can include them and the worker will warm those exact files after loading the model.
+
+If those reference fields are omitted, the backend can still continue by deriving the trained voice name from the selected model files, reading that voice's training audio metadata, auto-selecting the best primary reference and up to five auxiliary clips, and warming them before the first synthesis request.
+
+This is useful after GPU startup because the worker clears its local model and reference caches on startup. The next `POST /api/models/select` call can therefore repopulate the required model files and warm the reference set in advance so the first chatbot voice reply avoids the extra cold fetch penalty.
+
 ## Practical Integration Sequence
 
 For the other chatbot backend, the simplest flow is:
