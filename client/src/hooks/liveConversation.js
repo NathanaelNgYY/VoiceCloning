@@ -158,7 +158,11 @@ export function splitLiveReplyPhrases(text) {
   const clean = cleanLiveText(text);
   if (!clean) return [];
 
-  const matches = clean.match(PHRASE_SPLIT_RE) || [clean];
+  // Em/en dashes mark a pause but aren't sentence-enders, so GPT-SoVITS reads
+  // straight through them. Break phrases at dashes first so each side becomes its
+  // own synthesized clip with a real pause between (matching full-mode behavior).
+  const segments = clean.split(/\s*[—–]+\s*/u).map((part) => part.trim()).filter(Boolean);
+  const matches = segments.flatMap((segment) => segment.match(PHRASE_SPLIT_RE) || [segment]);
   return matches
     .map((part) => ensurePhraseEnding(part.trim()))
     .filter(Boolean);

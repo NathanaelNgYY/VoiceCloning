@@ -112,6 +112,13 @@ test('splitLiveReplyPhrases splits punctuation for immediate voice playback', ()
   ]);
 });
 
+test('splitLiveReplyPhrases breaks at em dashes so the voice pauses', () => {
+  assert.deepEqual(
+    splitLiveReplyPhrases('a mix of cultures — Chinese, Malay, and more.'),
+    ['a mix of cultures.', 'Chinese, Malay, and more.'],
+  );
+});
+
 test('splitLiveReplyPhrases splits Chinese punctuation for fast playback', () => {
   assert.deepEqual(splitLiveReplyPhrases('你好！我可以帮你。'), [
     '你好！',
