@@ -187,8 +187,61 @@ const symbolPattern = new RegExp(
   'g',
 );
 
+// ── Punctuation fallback ──
+// When the model returns a long run of words with no sentence-ending punctuation,
+// insert a period at the most natural point so downstream phrase-splitting (which
+// drives the voice's pauses) always has a boundary. Conservative: if adequate
+// punctuation already exists, the text is returned byte-for-byte unchanged.
+
+const BOUNDARY_WORDS = new Set([
+  'and', 'but', 'so', 'because', 'then', 'also', 'however',
+  'plus', 'though', 'although', 'while', 'which', 'since',
+]);
+
+function endsSentence(word) {
+  return /[.!?…]["')\]]*$/u.test(word);
+}
+
+export function ensureSentenceBoundaries(text, { minRunWords = 12 } = {}) {
+  const input = String(text || '');
+  if (!input.trim()) return input;
+
+  const words = input.match(/\S+/gu);
+  if (!words || words.length < minRunWords) return input;
+
+  let changed = false;
+  let wordsSinceEnd = 0;
+  let candidate = -1; // index of word after which a period would precede a conjunction
+
+  for (let i = 0; i < words.length; i += 1) {
+    wordsSinceEnd += 1;
+
+    if (endsSentence(words[i])) {
+      wordsSinceEnd = 0;
+      candidate = -1;
+      continue;
+    }
+
+    const next = words[i + 1];
+    if (next && BOUNDARY_WORDS.has(next.toLowerCase().replace(/[^a-z]/gu, ''))) {
+      candidate = i;
+    }
+
+    if (wordsSinceEnd >= minRunWords) {
+      const insertAt = candidate >= 0 ? candidate : i;
+      words[insertAt] = `${words[insertAt].replace(/[,;:]+$/u, '')}.`;
+      changed = true;
+      wordsSinceEnd = i - insertAt;
+      candidate = -1;
+    }
+  }
+
+  return changed ? words.join(' ') : input;
+}
+
 export function preprocessText(text) {
-  let result = text;
+  // -1) Punctuation fallback — guarantee sentence boundaries before anything else
+  let result = ensureSentenceBoundaries(text);
 
   // 0) Number normalisation (years, ordinals, currency, cardinals)
   result = normalizeNumbers(result);
