@@ -38,9 +38,15 @@ test('preprocessText splits intra-word hyphens so TTS does not say "minus"', () 
   assert.equal(preprocessText('a vibrant city-state'), 'a vibrant city state');
 });
 
+test('preprocessText also de-hyphenates number words like "forty-fifth"', () => {
+  assert.equal(preprocessText('the forty-fifth president'), 'the forty fifth president');
+  // Year output is de-hyphenated too (no "minus")
+  assert.match(preprocessText('from 2017 to 2021'), /twenty seventeen to twenty twenty one/);
+});
+
 test('preprocessText punctuates a run-on and still normalizes numbers', () => {
   const input = 'in 2021 we built so many things and people loved every single part of what we were doing together';
   const result = preprocessText(input);
   assert.ok(result.includes('.'), `expected punctuation, got: ${result}`);
-  assert.match(result, /twenty twenty-one/);
+  assert.match(result, /twenty twenty one/);
 });

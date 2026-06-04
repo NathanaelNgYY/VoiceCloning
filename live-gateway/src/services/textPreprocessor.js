@@ -246,11 +246,6 @@ export function preprocessText(text) {
   // -1) Punctuation fallback — guarantee sentence boundaries before anything else
   let result = ensureSentenceBoundaries(text);
 
-  // -0.5) Split intra-word hyphens (e.g. "Michelin-starred" → "Michelin starred")
-  // so GPT-SoVITS doesn't read the hyphen as "minus". Runs before number
-  // normalisation so number-word output like "twenty-one" keeps its hyphen.
-  result = result.replace(/(\w)-(\w)/gu, '$1 $2');
-
   // 0) Number normalisation (years, ordinals, currency, cardinals)
   result = normalizeNumbers(result);
 
@@ -273,6 +268,11 @@ export function preprocessText(text) {
 
   // 4) Symbol expansion
   result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
+
+  // 5) Split intra-word hyphens LAST so literal hyphenated words ("Michelin-starred")
+  // AND number words emitted above ("forty-fifth", "twenty-one") are all de-hyphenated.
+  // GPT-SoVITS otherwise reads the hyphen as "minus".
+  result = result.replace(/(\w)-(\w)/gu, '$1 $2');
 
   return result;
 }
