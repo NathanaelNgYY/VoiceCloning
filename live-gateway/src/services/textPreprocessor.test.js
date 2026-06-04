@@ -28,6 +28,16 @@ test('ensureSentenceBoundaries leaves a short run-on below threshold unchanged',
   assert.equal(ensureSentenceBoundaries(input), input);
 });
 
+test('ensureSentenceBoundaries leaves long comma/em-dash punctuated text unchanged', () => {
+  const input = "It's known for its stunning skyline, super clean streets and a mix of cultures — Chinese, Malay, Indian, and more.";
+  assert.equal(ensureSentenceBoundaries(input), input);
+});
+
+test('preprocessText splits intra-word hyphens so TTS does not say "minus"', () => {
+  assert.equal(preprocessText('Michelin-starred restaurants'), 'Michelin starred restaurants');
+  assert.equal(preprocessText('a vibrant city-state'), 'a vibrant city state');
+});
+
 test('preprocessText punctuates a run-on and still normalizes numbers', () => {
   const input = 'in 2021 we built so many things and people loved every single part of what we were doing together';
   const result = preprocessText(input);

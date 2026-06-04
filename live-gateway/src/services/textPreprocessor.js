@@ -198,8 +198,11 @@ const BOUNDARY_WORDS = new Set([
   'plus', 'though', 'although', 'while', 'which', 'since',
 ]);
 
-function endsSentence(word) {
-  return /[.!?…]["')\]]*$/u.test(word);
+// Reset on ANY pause punctuation (commas, dashes, colons, sentence-enders), not just
+// sentence-enders — so the fallback fires ONLY on a genuinely punctuation-free run-on
+// and never chops up text that already reads naturally.
+function endsWithPause(word) {
+  return /[.!?…,;:—–]["')\]]*$/u.test(word);
 }
 
 export function ensureSentenceBoundaries(text, { minRunWords = 12 } = {}) {
@@ -216,7 +219,7 @@ export function ensureSentenceBoundaries(text, { minRunWords = 12 } = {}) {
   for (let i = 0; i < words.length; i += 1) {
     wordsSinceEnd += 1;
 
-    if (endsSentence(words[i])) {
+    if (endsWithPause(words[i])) {
       wordsSinceEnd = 0;
       candidate = -1;
       continue;
@@ -242,6 +245,11 @@ export function ensureSentenceBoundaries(text, { minRunWords = 12 } = {}) {
 export function preprocessText(text) {
   // -1) Punctuation fallback — guarantee sentence boundaries before anything else
   let result = ensureSentenceBoundaries(text);
+
+  // -0.5) Split intra-word hyphens (e.g. "Michelin-starred" → "Michelin starred")
+  // so GPT-SoVITS doesn't read the hyphen as "minus". Runs before number
+  // normalisation so number-word output like "twenty-one" keeps its hyphen.
+  result = result.replace(/(\w)-(\w)/gu, '$1 $2');
 
   // 0) Number normalisation (years, ordinals, currency, cardinals)
   result = normalizeNumbers(result);
