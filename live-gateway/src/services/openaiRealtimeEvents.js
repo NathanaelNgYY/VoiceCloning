@@ -9,7 +9,13 @@ const LANGUAGE_INSTRUCTION_RE =
 const LANGUAGE_ONLY_RE = /\b(?:english|chinese)\s+only\.?\s*/gi;
 
 const DEFAULT_SYSTEM_PROMPT =
-  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English. Use commas to create natural rhythm in longer sentences, and em dashes — like this — for mid-sentence pauses. Use question marks on genuine questions.';
+  'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.';
+
+// Always appended to whatever prompt is in effect (default or custom env override),
+// so the TTS layer always receives punctuated, speakable text. The voice ("Trump")
+// is the cloned GPT-SoVITS model — this only shapes the *text*, never the timbre.
+const PROSODY_GUIDANCE =
+  'Write the way it should be spoken aloud: use short sentences, commas for natural rhythm, and em dashes — like this — for mid-sentence pauses. End every sentence with a period, question mark, or exclamation mark. Spell out numbers and years the way you would say them.';
 
 function cleanText(value) {
   return String(value || '').trim();
@@ -34,7 +40,7 @@ function languageOnlyPrompt(systemPrompt, language) {
       .replace(/\s+/g, ' ')
   );
   const basePrompt = neutralPrompt || 'You are a casual, helpful assistant. Keep replies concise and conversational.';
-  return `${basePrompt} ${languageInstruction}`;
+  return `${basePrompt} ${languageInstruction} ${PROSODY_GUIDANCE}`;
 }
 
 function responseKey(event) {

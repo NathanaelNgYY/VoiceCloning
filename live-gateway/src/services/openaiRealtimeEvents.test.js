@@ -40,3 +40,37 @@ test('RealtimeEventMapper keeps English-mode assistant number preprocessing', ()
 
   assert.equal(events[0].text, 'It is thirty degrees.');
 });
+
+test('buildRealtimeSessionUpdate always appends prosody guidance for the default prompt', () => {
+  const update = buildRealtimeSessionUpdate({ language: 'en' });
+  assert.match(
+    update.session.instructions,
+    /End every sentence with a period, question mark, or exclamation mark\./,
+  );
+});
+
+test('buildRealtimeSessionUpdate appends prosody guidance even for a custom prompt that lacks it', () => {
+  const update = buildRealtimeSessionUpdate({
+    language: 'en',
+    systemPrompt: 'You are a casual, helpful assistant. Keep replies concise and conversational. Always respond only in English.',
+  });
+
+  // Custom persona text is preserved
+  assert.match(update.session.instructions, /casual, helpful assistant/);
+  // Language instruction still present
+  assert.match(update.session.instructions, /Always respond only in English/);
+  // Prosody guidance was appended
+  assert.match(update.session.instructions, /em dashes/);
+  assert.match(
+    update.session.instructions,
+    /End every sentence with a period, question mark, or exclamation mark\./,
+  );
+});
+
+test('buildRealtimeSessionUpdate appends prosody guidance for the Chinese prompt too', () => {
+  const update = buildRealtimeSessionUpdate({ language: 'zh' });
+  assert.match(
+    update.session.instructions,
+    /End every sentence with a period, question mark, or exclamation mark\./,
+  );
+});
