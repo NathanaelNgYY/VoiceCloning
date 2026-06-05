@@ -1,7 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import AudioUploader from '../components/AudioUploader.jsx';
 import FloatingNotice from '../components/FloatingNotice.jsx';
-import { getCurrentTraining, uploadFiles, startTraining, stopTraining } from '../services/api.js';
+import TrainingLibraryPanel from '../components/TrainingLibraryPanel.jsx';
+import {
+  deleteTrainingLibraryFile,
+  getCurrentTraining,
+  getTrainingLibraryFiles,
+  replaceTrainingLibraryFile,
+  snapshotTrainingLibraryFiles,
+  startTraining,
+  stopTraining,
+  uploadFiles,
+  uploadTrainingLibraryFile,
+} from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 import { validateTrainingStart } from '@/lib/trainingValidation';
 import { Button } from '@/components/ui/button';
@@ -13,6 +24,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { AlertCircle, AudioLines, ChevronDown, Play, Square, X } from 'lucide-react';
 import Spinner from '../components/Spinner.jsx';
 import { cn } from '@/lib/utils';
+import { getStorageMode } from '@/lib/runtimeConfig';
+import { describeTrainingSelection, resolveTrainingSource } from '@/lib/trainingSource';
 
 const NOTICE_TIMEOUT_MS = 4200;
 
@@ -37,6 +50,13 @@ export default function TrainingPage() {
   const [sessionId, setSessionId] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [storageMode, setStorageMode] = useState('loading');
+  const [trainingLibraryFiles, setTrainingLibraryFiles] = useState([]);
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState([]);
+  const [loadingLibrary, setLoadingLibrary] = useState(false);
+  const [uploadingLibrary, setUploadingLibrary] = useState(false);
+  const [replacingLibraryId, setReplacingLibraryId] = useState('');
+  const [deletingLibraryId, setDeletingLibraryId] = useState('');
 
   const { pipelineStatus, error, connect, disconnect, hydrate, reset } = useSSE();
   const restoredSessionRef = useRef(null);
@@ -46,6 +66,14 @@ export default function TrainingPage() {
   const canvasRef = useRef(null);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
+  const trainingSource = resolveTrainingSource({
+    directFiles: files,
+    selectedLibraryIds,
+  });
+  const selectionSummary = describeTrainingSelection({
+    directFiles: files,
+    selectedLibraryIds,
+  });
   const statusLabel = pipelineStatus === 'running'
     ? 'Training in progress'
     : pipelineStatus === 'waiting'
@@ -67,6 +95,24 @@ export default function TrainingPage() {
     noticeTimeoutRef.current = window.setTimeout(() => {
       setNotice((current) => (current?.id === id ? null : current));
     }, NOTICE_TIMEOUT_MS);
+  }
+
+  async function refreshTrainingLibrary() {
+    setLoadingLibrary(true);
+    try {
+      const response = await getTrainingLibraryFiles();
+      const nextFiles = response.data?.files || [];
+      setTrainingLibraryFiles(nextFiles);
+      setSelectedLibraryIds((current) => current.filter((id) => nextFiles.some((file) => file.id === id)));
+    } catch (err) {
+      showNotice({
+        title: 'Shared storage unavailable',
+        message: err.response?.data?.error || err.message || 'Could not load shared storage files.',
+        tone: 'error',
+      });
+    } finally {
+      setLoadingLibrary(false);
+    }
   }
 
   useEffect(() => {
@@ -118,6 +164,24 @@ export default function TrainingPage() {
       }
     };
   }, [connect, disconnect, hydrate]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadStorageMode() {
+      const mode = await getStorageMode();
+      if (ignore) return;
+      setStorageMode(mode);
+      if (mode === 's3') {
+        await refreshTrainingLibrary();
+      }
+    }
+
+    loadStorageMode();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!noticesReadyRef.current) return;
@@ -272,9 +336,105 @@ export default function TrainingPage() {
     };
   }, []);
 
+  function handleDirectFilesChange(nextFiles) {
+    setFiles(nextFiles);
+    if (nextFiles.length > 0 && selectedLibraryIds.length > 0) {
+      setSelectedLibraryIds([]);
+    }
+  }
+
+  function handleToggleLibrarySelection(fileId, checked) {
+    if (checked) {
+      if (files.length > 0) {
+        setFiles([]);
+      }
+      setSelectedLibraryIds((current) => (current.includes(fileId) ? current : [...current, fileId]));
+      return;
+    }
+
+    setSelectedLibraryIds((current) => current.filter((id) => id !== fileId));
+  }
+
+  async function handleUploadLibraryFiles(nextFiles) {
+    if (nextFiles.length === 0) return;
+    setUploadingLibrary(true);
+    try {
+      for (const file of nextFiles) {
+        await uploadTrainingLibraryFile(file);
+      }
+      await refreshTrainingLibrary();
+      showNotice({
+        title: 'Shared storage updated',
+        message: `${nextFiles.length} file${nextFiles.length === 1 ? '' : 's'} uploaded to shared storage.`,
+        tone: 'success',
+      });
+    } catch (err) {
+      showNotice({
+        title: 'Shared storage upload failed',
+        message: err.response?.data?.error || err.message || 'Could not upload to shared storage.',
+        tone: 'error',
+      });
+    } finally {
+      setUploadingLibrary(false);
+    }
+  }
+
+  async function handleReplaceLibraryFile(fileId, nextFile) {
+    setReplacingLibraryId(fileId);
+    try {
+      await replaceTrainingLibraryFile(fileId, nextFile);
+      await refreshTrainingLibrary();
+      showNotice({
+        title: 'Shared file replaced',
+        message: `${nextFile.name} is now the latest version in shared storage.`,
+        tone: 'success',
+      });
+    } catch (err) {
+      showNotice({
+        title: 'Replace failed',
+        message: err.response?.data?.error || err.message || 'Could not replace the shared storage file.',
+        tone: 'error',
+      });
+    } finally {
+      setReplacingLibraryId('');
+    }
+  }
+
+  async function handleDeleteLibraryFile(fileId) {
+    setDeletingLibraryId(fileId);
+    try {
+      await deleteTrainingLibraryFile(fileId);
+      setSelectedLibraryIds((current) => current.filter((id) => id !== fileId));
+      await refreshTrainingLibrary();
+      showNotice({
+        title: 'Shared file deleted',
+        message: 'The file was removed from shared storage.',
+        tone: 'success',
+      });
+    } catch (err) {
+      showNotice({
+        title: 'Delete failed',
+        message: err.response?.data?.error || err.message || 'Could not delete the shared storage file.',
+        tone: 'error',
+      });
+    } finally {
+      setDeletingLibraryId('');
+    }
+  }
+
   async function handleStart() {
     const validation = validateTrainingStart({
-      expName, email, files, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage,
+      expName,
+      email,
+      source: trainingSource,
+      files,
+      selectedLibraryIds,
+      batchSize,
+      sovitsEpochs,
+      gptEpochs,
+      sovitsSaveEvery,
+      gptSaveEvery,
+      asrLanguage,
     });
     if (!validation.valid) {
       const message = validation.errors.join(' ');
@@ -286,12 +446,20 @@ export default function TrainingPage() {
     setUploadError(null);
     setUploading(true);
     try {
-      await uploadFiles(expName, files);
+      if (trainingSource === 'library') {
+        await snapshotTrainingLibraryFiles(expName, selectedLibraryIds);
+      } else {
+        await uploadFiles(expName, files);
+      }
       const res = await startTraining({ expName, email, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage });
       setSessionId(res.data.sessionId);
       restoredSessionRef.current = res.data.sessionId;
       connect(res.data.sessionId, { initialStatus: 'waiting' });
-      showNotice({ title: 'Training started', message: "Training has started — we'll email you when it's done.", tone: 'success' });
+      showNotice({
+        title: 'Training started',
+        message: "Training has started and we'll email you when it's done.",
+        tone: 'success',
+      });
     } catch (err) {
       setUploadError(err.response?.data?.error || err.message);
       showNotice({ title: 'Training could not start', message: err.response?.data?.error || err.message, tone: 'error' });
@@ -374,11 +542,25 @@ export default function TrainingPage() {
           <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
             Audio Clips
           </Label>
-          <AudioUploader files={files} onFilesChange={setFiles} disabled={isRunning} />
+          <AudioUploader files={files} onFilesChange={handleDirectFilesChange} disabled={isRunning} />
+          <TrainingLibraryPanel
+            files={trainingLibraryFiles}
+            selectedIds={selectedLibraryIds}
+            storageMode={storageMode}
+            loading={loadingLibrary}
+            uploadBusy={uploadingLibrary}
+            replaceBusyId={replacingLibraryId}
+            deleteBusyId={deletingLibraryId}
+            disabled={isRunning}
+            onUploadFiles={handleUploadLibraryFiles}
+            onToggleSelect={handleToggleLibrarySelection}
+            onReplaceFile={handleReplaceLibraryFile}
+            onDeleteFile={handleDeleteLibraryFile}
+          />
         </div>
       </div>
 
-      {/* File list – full width */}
+      {/* File list - full width */}
       {files.length > 0 && (
         <div className="mt-8">
           {files.map((f, i) => (
@@ -445,7 +627,7 @@ export default function TrainingPage() {
             pipelineStatus === 'error' ? 'bg-red-500' :
             'bg-slate-300'
           )} />
-          {files.length > 0 ? `${files.length} clip${files.length !== 1 ? 's' : ''} ready` : 'No clips'} · {statusLabel}
+          {selectionSummary} - {statusLabel}
         </span>
 
         {(error || uploadError) && (

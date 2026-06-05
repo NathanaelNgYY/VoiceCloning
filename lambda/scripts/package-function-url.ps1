@@ -30,6 +30,7 @@ try {
     'models',
     'shared',
     'training',
+    'training-library',
     'training-audio',
     'transcribe',
     'upload',

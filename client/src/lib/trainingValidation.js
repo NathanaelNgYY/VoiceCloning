@@ -15,7 +15,9 @@ function isIntegerInRange(value, min, max) {
 export function validateTrainingStart({
   expName = '',
   email = '',
+  source = '',
   files = [],
+  selectedLibraryIds = [],
   batchSize = 2,
   sovitsEpochs = 20,
   gptEpochs = 25,
@@ -37,8 +39,15 @@ export function validateTrainingStart({
     errors.push('Enter a valid email address to receive training notifications.');
   }
 
+  const cleanSource = String(source || '').trim().toLowerCase();
   const fileList = Array.from(files || []);
-  if (fileList.length === 0) {
+  const libraryIds = Array.from(selectedLibraryIds || []).map((item) => String(item || '').trim()).filter(Boolean);
+
+  if (cleanSource === 'library') {
+    if (libraryIds.length === 0) {
+      errors.push('Select at least one shared storage audio file.');
+    }
+  } else if (fileList.length === 0) {
     errors.push('Upload at least one training audio file.');
   } else {
     const unsupported = fileList.find((file) => !SUPPORTED_AUDIO_EXTENSIONS.has(extensionOf(file?.name || '')));

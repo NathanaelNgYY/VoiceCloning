@@ -74,7 +74,7 @@ api.interceptors.request.use(async (config) => {
 // Initialize storage mode on first import (non-blocking)
 getStorageMode();
 
-// ── S3 presigned upload helpers ──
+// S3 presigned upload helpers
 
 async function getPresignedUploadUrls(expName, files) {
   const fileList = files.map(f => ({ name: f.name, type: f.type, size: f.size }));
@@ -83,11 +83,14 @@ async function getPresignedUploadUrls(expName, files) {
 }
 
 async function uploadFileToS3(presignedUrl, file) {
-  await fetch(presignedUrl, {
+  const response = await fetch(presignedUrl, {
     method: 'PUT',
     body: file,
     headers: { 'Content-Type': file.type || 'audio/wav' },
   });
+  if (!response.ok) {
+    throw new Error(`S3 upload failed (${response.status})`);
+  }
 }
 
 async function confirmUpload(expName, keys) {
@@ -95,7 +98,13 @@ async function confirmUpload(expName, keys) {
   return res.data;
 }
 
-// ── Training audio upload ──
+function assertConfirmedUpload(expectedCount, confirmation, messagePrefix) {
+  if (Number(confirmation?.confirmed) !== Number(expectedCount)) {
+    throw new Error(`${messagePrefix} confirmed ${confirmation?.confirmed || 0} of ${expectedCount} uploaded file(s).`);
+  }
+}
+
+// Training audio upload
 
 export async function uploadFiles(expName, files) {
   await getStorageMode();
@@ -105,6 +114,7 @@ export async function uploadFiles(expName, files) {
     await Promise.all(uploads.map(({ url }, i) => uploadFileToS3(url, files[i])));
     const keys = uploads.map(u => u.key);
     const confirmation = await confirmUpload(expName, keys);
+    assertConfirmedUpload(keys.length, confirmation, 'Training upload');
     return { data: { message: `${confirmation.confirmed} file(s) uploaded`, files: confirmation.files } };
   }
 
@@ -116,7 +126,7 @@ export async function uploadFiles(expName, files) {
   return api.post('/upload', formData);
 }
 
-// ── Reference audio upload ──
+// Reference audio upload
 
 export async function uploadRefAudio(file) {
   await getStorageMode();
@@ -137,9 +147,70 @@ export async function uploadRefAudio(file) {
   return api.post('/upload-ref', formData);
 }
 
-// ── Live audio upload ──
+export async function getTrainingLibraryFiles() {
+  await getStorageMode();
+  if (!isS3Mode()) {
+    return { data: { files: [] } };
+  }
+  return api.get('/training-library');
+}
 
-// ── Training ──
+export async function uploadTrainingLibraryFile(file) {
+  await getStorageMode();
+  if (!isS3Mode()) {
+    throw new Error('Shared training storage requires S3 mode.');
+  }
+
+  const presignRes = await api.post('/training-library/presign', {
+    filename: file.name,
+    type: file.type,
+  });
+  const { id, key, url, filename } = presignRes.data;
+  await uploadFileToS3(url, file);
+  return api.post('/training-library/confirm', {
+    id,
+    key,
+    filename,
+    contentType: file.type || 'audio/wav',
+  });
+}
+
+export async function replaceTrainingLibraryFile(fileId, file) {
+  await getStorageMode();
+  if (!isS3Mode()) {
+    throw new Error('Shared training storage requires S3 mode.');
+  }
+
+  const presignRes = await api.post(`/training-library/${encodeURIComponent(fileId)}/replace-presign`, {
+    filename: file.name,
+    type: file.type,
+  });
+  const { key, url, filename } = presignRes.data;
+  await uploadFileToS3(url, file);
+  return api.post(`/training-library/${encodeURIComponent(fileId)}/replace-confirm`, {
+    key,
+    filename,
+    contentType: file.type || 'audio/wav',
+  });
+}
+
+export async function deleteTrainingLibraryFile(fileId) {
+  await getStorageMode();
+  if (!isS3Mode()) {
+    throw new Error('Shared training storage requires S3 mode.');
+  }
+  return api.delete(`/training-library/${encodeURIComponent(fileId)}`);
+}
+
+export async function snapshotTrainingLibraryFiles(expName, fileIds) {
+  await getStorageMode();
+  if (!isS3Mode()) {
+    throw new Error('Shared training storage requires S3 mode.');
+  }
+  return api.post('/training-library/snapshot', { expName, fileIds });
+}
+
+// Training
 
 export function startTraining(params) {
   return api.post('/train', params);
@@ -153,7 +224,7 @@ export function getCurrentTraining() {
   return api.get('/train/current');
 }
 
-// ── Models ──
+// Models
 
 export function getModels() {
   return api.get('/models');
@@ -239,13 +310,13 @@ export function getFullActiveVoiceProfile() {
   });
 }
 
-// ── Transcription ──
+// Transcription
 
 export function transcribeAudio(filePath, language = 'auto') {
   return api.post('/transcribe', { filePath, language });
 }
 
-// ── Inference ──
+// Inference
 
 export async function synthesize(params) {
   const res = await api.post('/inference', params, {
@@ -366,7 +437,7 @@ export function startInstance() {
   return api.post('/instance/start');
 }
 
-// ── Training audio browser ──
+// Training audio browser
 
 export function getTrainingAudioFiles(expName) {
   return api.get(`/training-audio/${encodeURIComponent(expName)}`);

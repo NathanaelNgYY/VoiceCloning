@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const ACCEPT = '.wav,.mp3,.ogg,.flac,.m4a';
+const ACCEPT = '.wav,.mp3,.ogg,.flac,.m4a,.webm,.mp4';
 
 export default function AudioUploader({ files, onFilesChange, disabled }) {
   const [dragOver, setDragOver] = useState(false);
@@ -46,7 +46,7 @@ export default function AudioUploader({ files, onFilesChange, disabled }) {
         <p className="text-sm text-slate-700">
           <span className="font-semibold">Click to upload</span> or drag &amp; drop
         </p>
-        <p className="mt-1 text-xs text-slate-400">WAV, MP3, FLAC · up to 200MB</p>
+        <p className="mt-1 text-xs text-slate-400">WAV, MP3, FLAC, M4A, OGG, WEBM, MP4 up to 200MB</p>
         <input
           ref={inputRef}
           type="file"

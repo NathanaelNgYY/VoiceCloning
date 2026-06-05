@@ -9,6 +9,7 @@ test('validateTrainingStart accepts a named run with supported audio, bounded se
   const result = validateTrainingStart({
     expName: 'demo_voice_01',
     email: validEmail,
+    source: 'direct',
     files: [wavFile],
     batchSize: 2,
     sovitsEpochs: 20,
@@ -22,19 +23,19 @@ test('validateTrainingStart accepts a named run with supported audio, bounded se
 });
 
 test('validateTrainingStart rejects missing or unsafe experiment names before upload', () => {
-  assert.deepEqual(validateTrainingStart({ expName: '', email: validEmail, files: [wavFile] }), {
+  assert.deepEqual(validateTrainingStart({ expName: '', email: validEmail, source: 'direct', files: [wavFile] }), {
     valid: false,
     errors: ['Enter an experiment name.'],
   });
 
-  assert.deepEqual(validateTrainingStart({ expName: '../voice', email: validEmail, files: [wavFile] }), {
+  assert.deepEqual(validateTrainingStart({ expName: '../voice', email: validEmail, source: 'direct', files: [wavFile] }), {
     valid: false,
     errors: ['Experiment name may only contain letters, numbers, dots, dashes, and underscores.'],
   });
 });
 
 test('validateTrainingStart rejects empty or unsupported training audio input', () => {
-  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: validEmail, files: [] }), {
+  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: validEmail, source: 'direct', files: [] }), {
     valid: false,
     errors: ['Upload at least one training audio file.'],
   });
@@ -42,6 +43,7 @@ test('validateTrainingStart rejects empty or unsupported training audio input', 
   assert.deepEqual(validateTrainingStart({
     expName: 'voice',
     email: validEmail,
+    source: 'direct',
     files: [{ name: 'notes.txt', type: 'text/plain', size: 100 }],
   }), {
     valid: false,
@@ -53,6 +55,7 @@ test('validateTrainingStart rejects out-of-range training settings', () => {
   const result = validateTrainingStart({
     expName: 'voice',
     email: validEmail,
+    source: 'direct',
     files: [wavFile],
     batchSize: 0,
     sovitsEpochs: 0,
@@ -74,14 +77,14 @@ test('validateTrainingStart rejects out-of-range training settings', () => {
 });
 
 test('validateTrainingStart rejects missing email', () => {
-  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: '', files: [wavFile] }), {
+  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: '', source: 'direct', files: [wavFile] }), {
     valid: false,
     errors: ['Enter a valid email address to receive training notifications.'],
   });
 });
 
 test('validateTrainingStart rejects malformed email addresses', () => {
-  const result = validateTrainingStart({ expName: 'voice', email: 'notanemail', files: [wavFile] });
+  const result = validateTrainingStart({ expName: 'voice', email: 'notanemail', source: 'direct', files: [wavFile] });
   assert.equal(result.valid, false);
   assert.deepEqual(result.errors, ['Enter a valid email address to receive training notifications.']);
 });
@@ -90,7 +93,35 @@ test('validateTrainingStart accepts email with subdomain and plus addressing', (
   const result = validateTrainingStart({
     expName: 'voice',
     email: 'user+tag@mail.example.co.uk',
+    source: 'direct',
     files: [wavFile],
   });
   assert.deepEqual(result, { valid: true, errors: [] });
+});
+
+test('validateTrainingStart accepts shared-library mode with selected library files and no direct uploads', () => {
+  const result = validateTrainingStart({
+    expName: 'voice',
+    email: validEmail,
+    source: 'library',
+    files: [],
+    selectedLibraryIds: ['lib-1', 'lib-2'],
+  });
+
+  assert.deepEqual(result, { valid: true, errors: [] });
+});
+
+test('validateTrainingStart rejects shared-library mode when no library files are selected', () => {
+  const result = validateTrainingStart({
+    expName: 'voice',
+    email: validEmail,
+    source: 'library',
+    files: [],
+    selectedLibraryIds: [],
+  });
+
+  assert.deepEqual(result, {
+    valid: false,
+    errors: ['Select at least one shared storage audio file.'],
+  });
 });
