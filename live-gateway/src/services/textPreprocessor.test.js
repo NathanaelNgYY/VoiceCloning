@@ -44,6 +44,23 @@ test('preprocessText also de-hyphenates number words like "forty-fifth"', () => 
   assert.match(preprocessText('from 2017 to 2021'), /twenty seventeen to twenty twenty one/);
 });
 
+test('preprocessText folds smart apostrophes to ASCII so contractions are spoken, not spelled', () => {
+  // Curly apostrophe (U+2019) is what LLMs emit; GPT-SoVITS only handles the
+  // straight ASCII apostrophe, otherwise it splits "He’s" and spells the "s".
+  assert.equal(preprocessText('He’s going home'), "He's going home");
+  assert.equal(preprocessText('It’s fine and they’re here'), "It's fine and they're here");
+});
+
+test('preprocessText folds smart double quotes to ASCII', () => {
+  assert.equal(preprocessText('a “quote” here'), 'a "quote" here');
+});
+
+test('preprocessText leaves em/en dashes and ellipses intact', () => {
+  // These drive downstream phrase pauses, so they must survive normalization.
+  assert.equal(preprocessText('Singapore — a city-state'), 'Singapore — a city state');
+  assert.equal(preprocessText('Well… maybe'), 'Well… maybe');
+});
+
 test('preprocessText punctuates a run-on and still normalizes numbers', () => {
   const input = 'in 2021 we built so many things and people loved every single part of what we were doing together';
   const result = preprocessText(input);

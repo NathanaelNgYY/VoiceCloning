@@ -112,6 +112,20 @@ export function normalizeNumbers(text) {
   return result;
 }
 
+// ── Smart-quote normalization ──
+// LLMs routinely emit typographic quotes: curly apostrophes (’ U+2019) and curly
+// double quotes (“ ” U+201C/U+201D). GPT-SoVITS's English g2p only recognizes the
+// straight ASCII apostrophe for contractions/possessives — a curly apostrophe makes
+// its tokenizer split "He’s" into "He", "’", "s" and read the stray "s" as a letter
+// ("H-E-S"). Fold typographic single/double quotes (and primes) to ASCII so the
+// downstream voice pronounces contractions correctly. Dashes and ellipses are left
+// untouched — they drive phrase pauses downstream.
+function normalizeSmartQuotes(text) {
+  return String(text || '')
+    .replace(/[‘’‚‛′‵]/gu, "'")
+    .replace(/[“”„‟″‶]/gu, '"');
+}
+
 // ── Text preprocessing: abbreviations, acronyms, symbols ──
 
 const ABBREVIATIONS = {
@@ -243,8 +257,12 @@ export function ensureSentenceBoundaries(text, { minRunWords = 12 } = {}) {
 }
 
 export function preprocessText(text) {
+  // -2) Fold smart apostrophes/quotes to ASCII so GPT-SoVITS pronounces contractions
+  //     (a curly ’ otherwise makes it spell "He’s" letter by letter).
+  let result = normalizeSmartQuotes(text);
+
   // -1) Punctuation fallback — guarantee sentence boundaries before anything else
-  let result = ensureSentenceBoundaries(text);
+  result = ensureSentenceBoundaries(result);
 
   // 0) Number normalisation (years, ordinals, currency, cardinals)
   result = normalizeNumbers(result);

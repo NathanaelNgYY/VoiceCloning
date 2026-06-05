@@ -575,12 +575,6 @@ export function useLiveSpeech({
     }
   }
 
-  function armBargeInMonitor() {
-    setAudioLevel(0);
-    setMicInputEnabled(false);
-    setBargeInArmed(true);
-  }
-
   async function requestMicStream() {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('This browser does not support live microphone recording.');
@@ -706,14 +700,16 @@ export function useLiveSpeech({
     });
 
     if (action === 'commit') {
-      armBargeInMonitor();
       const id = ensureUserMessage();
       patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
       setPhase('thinking');
       setInterimTranscript('Thinking...');
       sendManualCommitTail();
       commitOpenAiInput();
-      showNotice('Mic off. Sending what you said. You can speak over the reply to interrupt.');
+      // Mute means silent: send what was already said, then fully stop capture so
+      // no background noise can barge in over the reply. Tap the mic again to talk.
+      stopMicCapture();
+      showNotice('Mic off. Sending what you said.');
       return;
     }
 
