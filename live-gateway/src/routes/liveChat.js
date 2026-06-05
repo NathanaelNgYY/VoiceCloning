@@ -25,8 +25,11 @@ export function originAllowed(origin, options = {}) {
     return true;
   }
 
+  // Browsers always send an Origin header on the WebSocket handshake, so a
+  // missing Origin in production means a non-browser client (e.g. a script
+  // opening the socket directly to drain the OpenAI Realtime budget). Reject it.
   if (!origin) {
-    return true;
+    return false;
   }
 
   if (corsOrigin === '*') {

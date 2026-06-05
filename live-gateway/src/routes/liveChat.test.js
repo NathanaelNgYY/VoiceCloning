@@ -38,6 +38,22 @@ test('originAllowed rejects untrusted production origins', () => {
   }), false);
 });
 
+test('originAllowed rejects production upgrades that omit the Origin header', () => {
+  assert.equal(originAllowed('', {
+    nodeEnv: 'production',
+    corsOrigin: 'https://app.example.com',
+    requestHost: 'live.example.com',
+  }), false);
+});
+
+test('originAllowed still allows non-production upgrades without an Origin', () => {
+  assert.equal(originAllowed('', {
+    nodeEnv: 'development',
+    corsOrigin: 'https://app.example.com',
+    requestHost: 'live.example.com',
+  }), true);
+});
+
 test('getLiveChatLanguage accepts supported language query values and defaults to English', () => {
   assert.equal(getLiveChatLanguage(new URL('http://localhost/api/live/chat/realtime?language=zh')), 'zh');
   assert.equal(getLiveChatLanguage(new URL('http://localhost/api/live/chat/realtime?language=ja')), 'en');
