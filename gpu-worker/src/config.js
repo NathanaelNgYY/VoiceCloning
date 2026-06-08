@@ -80,21 +80,26 @@ export const SCRIPTS = {
   getText: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '1-get-text.py'),
   getHubert: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '2-get-hubert-wav32k.py'),
   getSemantic: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '3-get-semantic.py'),
+  getSv: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'prepare_datasets', '2-get-sv.py'),
   trainSoVITS: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 's2_train.py'),
   trainGPT: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 's1_train.py'),
   apiServer: path.join(GPT_SOVITS_ROOT, 'api_v2.py'),
 };
 
 export const PRETRAINED = {
-  sovitsG: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'gsv-v2final-pretrained', 's2G2333k.pth'),
-  sovitsD: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'gsv-v2final-pretrained', 's2D2333k.pth'),
-  gpt: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'gsv-v2final-pretrained', 's1bert25hz-5kh-longer-epoch=12-step=369668.ckpt'),
+  // v2ProPlus: SoVITS base weights live in the pretrained_models/v2Pro/ subfolder
+  sovitsG: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'v2Pro', 's2Gv2ProPlus.pth'),
+  sovitsD: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'v2Pro', 's2Dv2ProPlus.pth'),
+  // v2Pro/v2ProPlus share the v3 GPT/s1 base ckpt (per engine config.py)
+  gpt: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 's1v3.ckpt'),
   bert: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'chinese-roberta-wwm-ext-large'),
   hubert: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'chinese-hubert-base'),
+  // ERes2NetV2 speaker-verification model — used by 2-get-sv.py and at inference
+  sv: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'pretrained_models', 'sv', 'pretrained_eres2netv2w24s4ep4.ckpt'),
 };
 
 export const CONFIG_TEMPLATES = {
-  sovits: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'configs', 's2.json'),
+  sovits: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'configs', 's2v2ProPlus.json'),
   gpt: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 'configs', 's1longer-v2.yaml'),
 };
 

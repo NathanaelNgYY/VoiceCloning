@@ -26,7 +26,7 @@ export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 20, save
   template.train.grad_ckpt = false;
 
   template.model = template.model || {};
-  template.model.version = 'v2';
+  template.model.version = 'v2ProPlus';
 
   template.data = template.data || {};
   template.data.exp_dir = s2Dir;
@@ -34,9 +34,10 @@ export function generateSoVITSConfig({ expName, batchSize = 2, epochs = 20, save
   template.s2_ckpt_dir = s2Dir;
   template.save_weight_dir = weightsDir;
   template.name = expName;
-  template.version = 'v2';
+  template.version = 'v2ProPlus';
 
-  const logsS2Dir = path.join(GPT_SOVITS_ROOT, s2Dir, 'logs_s2_v2');
+  // s2_train writes checkpoints to logs_s2_<version>
+  const logsS2Dir = path.join(GPT_SOVITS_ROOT, s2Dir, 'logs_s2_v2ProPlus');
   fs.mkdirSync(logsS2Dir, { recursive: true });
 
   fs.mkdirSync(LOCAL_TEMP_ROOT, { recursive: true });
@@ -64,7 +65,7 @@ export function generateGPTConfig({ expName, batchSize = 2, epochs = 25, saveEve
   template.pretrained_s1 = PRETRAINED.gpt;
   template.train_semantic_path = `logs/${expName}/6-name2semantic.tsv`;
   template.train_phoneme_path = `logs/${expName}/2-name2text.txt`;
-  template.output_dir = `logs/${expName}/logs_s1_v2`;
+  template.output_dir = `logs/${expName}/logs_s1_v2ProPlus`;
 
   fs.mkdirSync(LOCAL_TEMP_ROOT, { recursive: true });
   fs.mkdirSync(weightsDir, { recursive: true });

@@ -258,12 +258,36 @@ export async function runPipelineWithS3(sessionId, {
       });
     },
 
-    // Step 5: 3-get-semantic.py
+    // Step 5: 2-get-sv.py (speaker-verification embeddings — required for v2ProPlus)
     async () => {
-      if (fs.existsSync(path.join(logsDir, '6-name2semantic.tsv'))) {
-        return skipStep(sessionId, 5, 'semantic features already extracted');
+      if (dirHasFiles(path.join(logsDir, '7-sv_cn'))) {
+        return skipStep(sessionId, 5, 'SV embeddings already extracted');
       }
       sendStep(sessionId, 5, 'running');
+      await processManager.run({
+        scriptPath: SCRIPTS.getSv,
+        args: [],
+        env: {
+          inp_text: getAsrListFile(),
+          inp_wav_dir: denoisedDir,
+          exp_name: expName,
+          opt_dir: logsDir,
+          sv_path: PRETRAINED.sv,
+          is_half: 'True',
+          _CUDA_VISIBLE_DEVICES: '0',
+          i_part: '0',
+          all_parts: '1',
+        },
+        sessionId,
+      });
+    },
+
+    // Step 6: 3-get-semantic.py
+    async () => {
+      if (fs.existsSync(path.join(logsDir, '6-name2semantic.tsv'))) {
+        return skipStep(sessionId, 6, 'semantic features already extracted');
+      }
+      sendStep(sessionId, 6, 'running');
       await processManager.run({
         scriptPath: SCRIPTS.getSemantic,
         args: [],
@@ -283,9 +307,9 @@ export async function runPipelineWithS3(sessionId, {
       mergePartFiles(logsDir, '6-name2semantic', '.tsv');
     },
 
-    // Step 6: Train SoVITS
+    // Step 7: Train SoVITS
     async () => {
-      sendStep(sessionId, 6, 'running');
+      sendStep(sessionId, 7, 'running');
       const configPath = generateSoVITSConfig({
         expName,
         batchSize,
@@ -300,9 +324,9 @@ export async function runPipelineWithS3(sessionId, {
       });
     },
 
-    // Step 7: Train GPT
+    // Step 8: Train GPT
     async () => {
-      sendStep(sessionId, 7, 'running');
+      sendStep(sessionId, 8, 'running');
       const configPath = generateGPTConfig({
         expName,
         batchSize,

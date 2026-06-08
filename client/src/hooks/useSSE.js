@@ -7,6 +7,7 @@ const STEP_NAMES = [
   'ASR (Speech Recognition)',
   'Extract Text Features',
   'Extract HuBERT Features',
+  'Extract Speaker Verification',
   'Extract Semantic Features',
   'Train SoVITS',
   'Train GPT',
