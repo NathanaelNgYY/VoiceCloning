@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Checkbox } from '@/components/ui/checkbox';
 import { AlertCircle, AudioLines, ChevronDown, Play, Square, X } from 'lucide-react';
 import Spinner from '../components/Spinner.jsx';
 import { cn } from '@/lib/utils';
@@ -45,6 +46,7 @@ export default function TrainingPage() {
   const [sovitsSaveEvery, setSovitsSaveEvery] = useState(4);
   const [gptSaveEvery, setGptSaveEvery] = useState(5);
   const [asrLanguage, setAsrLanguage] = useState('en');
+  const [skipDenoise, setSkipDenoise] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
@@ -451,7 +453,7 @@ export default function TrainingPage() {
       } else {
         await uploadFiles(expName, files);
       }
-      const res = await startTraining({ expName, email, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage });
+      const res = await startTraining({ expName, email, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage, skipDenoise });
       setSessionId(res.data.sessionId);
       restoredSessionRef.current = res.data.sessionId;
       connect(res.data.sessionId, { initialStatus: 'waiting' });
@@ -713,6 +715,24 @@ export default function TrainingPage() {
                 <span className="font-mono text-sm font-semibold text-slate-700">every {gptSaveEvery}ep</span>
               </div>
               <Slider min={1} max={10} step={1} value={[gptSaveEvery]} onValueChange={([v]) => setGptSaveEvery(v)} disabled={isRunning} />
+            </div>
+
+            {/* Skip Denoise toggle */}
+            <div className="space-y-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Skip denoise</Label>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                    Turn on for already-clean recordings. Denoise removes background noise, but on clean audio it can add a raspy artifact.
+                  </p>
+                </div>
+                <Checkbox
+                  className="mt-1"
+                  checked={skipDenoise}
+                  onCheckedChange={(v) => setSkipDenoise(v === true)}
+                  disabled={isRunning}
+                />
+              </div>
             </div>
           </div>
         </CollapsibleContent>

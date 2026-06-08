@@ -42,6 +42,7 @@ export const handler = async (event) => {
         gptSaveEvery,
         asrLanguage,
         asrModel,
+        skipDenoise,
       } = body;
       if (!expName) return err(400, 'expName is required');
       if (!isSafePathSegment(expName)) {
@@ -59,6 +60,7 @@ export const handler = async (event) => {
           ...(gptSaveEvery !== undefined ? { gptSaveEvery } : {}),
           ...(asrLanguage !== undefined ? { asrLanguage } : {}),
           ...(asrModel !== undefined ? { asrModel } : {}),
+          ...(skipDenoise !== undefined ? { skipDenoise } : {}),
         },
       }));
     }
