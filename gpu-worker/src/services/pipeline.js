@@ -127,6 +127,7 @@ export async function runPipelineWithS3(sessionId, {
   gptSaveEvery = 5,
   asrLanguage = 'en',
   asrModel = 'large-v3',
+  skipDenoise = false,
 }) {
   const localExpDir = path.join(LOCAL_TEMP_ROOT, expName);
   const dataDir = path.join(localExpDir, 'data');
@@ -180,10 +181,20 @@ export async function runPipelineWithS3(sessionId, {
       assertDirHasFiles(slicedDir, /\.(wav|mp3|ogg|flac)$/i, 'Slice');
     },
 
-    // Step 1: Denoise
+    // Step 1: Denoise (or pass sliced audio through unchanged when disabled)
     async () => {
       if (dirHasFiles(denoisedDir, /\.(wav|mp3|ogg|flac)$/i)) {
         return skipStep(sessionId, 1, 'denoised audio already exists');
+      }
+      if (skipDenoise) {
+        sendStep(sessionId, 1, 'running', 'denoise disabled — using sliced audio as-is');
+        for (const f of fs.readdirSync(slicedDir)) {
+          if (/\.(wav|mp3|ogg|flac)$/i.test(f)) {
+            fs.copyFileSync(path.join(slicedDir, f), path.join(denoisedDir, f));
+          }
+        }
+        assertDirHasFiles(denoisedDir, /\.(wav|mp3|ogg|flac)$/i, 'Denoise (skipped)');
+        return;
       }
       sendStep(sessionId, 1, 'running');
       await processManager.run({
