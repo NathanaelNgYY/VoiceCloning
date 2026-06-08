@@ -3,6 +3,33 @@ const RISKY_NAME_RE = /(^|[_\-\s])(noisy|noise|music|bgm|silence|silent|long|bad
 const GOOD_AUDIO_EXTENSIONS = new Set(['.wav', '.flac']);
 const OK_AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.ogg', '.webm', '.mp4']);
 
+// GPT-SoVITS slicer names each clip "..._<startSample>_<endSample>.<ext>" at 32 kHz,
+// so we can recover the clip duration from the filename without any audio analysis.
+const REF_SAMPLE_RATE_HZ = 32000;
+
+function durationSecondsFromFilename(filename = '') {
+  const match = String(filename).match(/_(\d+)_(\d+)\.[a-z0-9]+$/i);
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return (end - start) / REF_SAMPLE_RATE_HZ;
+}
+
+// A good voice reference is ~3-9s: long enough for a stable speaker embedding,
+// short enough to stay clean. Very short clips give an unstable voiceprint;
+// very long ones are less reliable references.
+function durationScore(filename) {
+  const seconds = durationSecondsFromFilename(filename);
+  if (seconds == null) return 0; // unknown length — stay neutral
+  if (seconds < 2) return -24;
+  if (seconds < 3) return 6;
+  if (seconds <= 9) return 30;
+  if (seconds <= 11) return 18;
+  if (seconds <= 14) return 4;
+  return -12;
+}
+
 function extensionOf(filename = '') {
   const dot = filename.lastIndexOf('.');
   return dot === -1 ? '' : filename.slice(dot).toLowerCase();
@@ -43,6 +70,9 @@ function scoreReferenceClip(file) {
   if (/(^|[_\-\s])(aux|auxiliary)([_\-\s]|\d|$)/i.test(filename)) score -= 4;
   if (RISKY_NAME_RE.test(filename)) score -= 32;
 
+  // Prefer clips in the ideal reference-length window over chronologically-first ones.
+  score += durationScore(filename);
+
   return score;
 }
 
@@ -72,7 +102,7 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   return {
     primary,
     aux,
-    reason: 'Auto-picked from transcript quality, language, file type, and clean-reference filename hints.',
+    reason: 'Auto-picked from clip length (~3-9s ideal), transcript quality, language, file type, and clean-reference filename hints.',
   };
 }
 
