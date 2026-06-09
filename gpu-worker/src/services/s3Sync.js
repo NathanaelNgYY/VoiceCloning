@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { S3_BUCKET, S3_REGION, S3_PREFIX } from '../config.js';
 
 let client = null;
@@ -107,4 +107,39 @@ export async function downloadFile(s3Key, localPath) {
     chunks.push(chunk);
   }
   fs.writeFileSync(localPath, Buffer.concat(chunks));
+}
+
+// Lists the immediate "subdirectory" names under an S3 prefix (one level deep)
+// using a delimiter, e.g. listSubPrefixes('training/datasets/') → ['lecturer-a', …].
+export async function listSubPrefixes(s3Prefix) {
+  const base = fullKey(s3Prefix);
+  const names = [];
+  let continuationToken;
+  do {
+    const response = await getClient().send(new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: base,
+      Delimiter: '/',
+      ContinuationToken: continuationToken,
+    }));
+    for (const cp of response.CommonPrefixes || []) {
+      const name = cp.Prefix.slice(base.length).replace(/\/+$/, '');
+      if (name) names.push(name);
+    }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
+  return names;
+}
+
+// Returns true if an object exists at the given (prefix-relative) key.
+export async function objectExists(key) {
+  try {
+    await getClient().send(new HeadObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: fullKey(key),
+    }));
+    return true;
+  } catch {
+    return false;
+  }
 }
