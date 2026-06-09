@@ -47,18 +47,30 @@ function transcriptScore(transcript = '') {
   return 8;
 }
 
+function langScore(lang = '') {
+  const normalized = normalizeLang(lang);
+  if (normalized === 'en' || normalized === 'eng') return 14;
+  if (normalized === 'auto' || !normalized) return 3;
+  return 0;
+}
+
 function scoreReferenceClip(file) {
+  const audioScore = Number(file?.qualityScore);
+  if (Number.isFinite(audioScore)) {
+    // Audio quality dominates; transcript + language guard so the PRIMARY
+    // (whose transcript becomes prompt_text) isn't a clean clip with no text.
+    return audioScore + 0.3 * (transcriptScore(file?.transcript) + langScore(file?.lang));
+  }
+
   const filename = file?.filename || getBasename(file?.path);
   const ext = extensionOf(filename);
-  const lang = normalizeLang(file?.lang);
 
   let score = transcriptScore(file?.transcript);
 
   if (GOOD_AUDIO_EXTENSIONS.has(ext)) score += 18;
   else if (OK_AUDIO_EXTENSIONS.has(ext)) score += 6;
 
-  if (lang === 'en' || lang === 'eng') score += 14;
-  else if (lang === 'auto' || !lang) score += 3;
+  score += langScore(file?.lang);
 
   if (GOOD_NAME_RE.test(filename)) score += 14;
   if (/(^|[_\-\s])(reference|ref)([_\-\s]|\d|$)/i.test(filename)) score += 8;
