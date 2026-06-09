@@ -1,5 +1,6 @@
 import path from 'path';
 import { getObject, listObjects, uploadBuffer } from './s3.js';
+import { loadClipScores } from './clipScores.js';
 import { gpuGet, inferenceGet, inferencePost } from './gpuWorker.js';
 import { useGpuWorkerArtifacts } from './artifacts.js';
 import { isSafePathSegment } from './paths.js';
@@ -131,6 +132,7 @@ async function loadTrainingAudioFilesForExp(expName) {
     // ASR file may not exist yet.
   }
 
+  const clipScores = await loadClipScores(normalizedExpName);
   return wavFiles.map((filename) => {
     const info = transcriptMap.get(filename) || {};
     return {
@@ -139,6 +141,7 @@ async function loadTrainingAudioFilesForExp(expName) {
       path: `${denoisedPrefix}${filename}`,
       transcript: info.transcript || '',
       lang: info.lang || '',
+      qualityScore: clipScores.get(filename),
     };
   });
 }
