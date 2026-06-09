@@ -39,6 +39,13 @@ function normalizeLang(lang = '') {
   return String(lang || '').trim().toLowerCase();
 }
 
+function langScore(lang = '') {
+  const normalized = normalizeLang(lang);
+  if (normalized === 'en' || normalized === 'eng') return 14;
+  if (normalized === 'auto' || !normalized) return 3;
+  return 0;
+}
+
 function transcriptScore(transcript = '') {
   const clean = String(transcript || '').replace(/\s+/g, ' ').trim();
   if (!clean) return -12;
@@ -53,17 +60,22 @@ function transcriptScore(transcript = '') {
 }
 
 function scoreReferenceClip(file) {
+  const audioScore = Number(file?.qualityScore);
+  if (Number.isFinite(audioScore)) {
+    // Audio quality dominates; transcript + language guard so the PRIMARY
+    // (whose transcript becomes prompt_text) isn't a clean clip with no text.
+    return audioScore + 0.3 * (transcriptScore(file?.transcript) + langScore(file?.lang));
+  }
+
   const filename = file?.filename || '';
   const ext = extensionOf(filename);
-  const lang = normalizeLang(file?.lang);
 
   let score = transcriptScore(file?.transcript);
 
   if (GOOD_AUDIO_EXTENSIONS.has(ext)) score += 18;
   else if (OK_AUDIO_EXTENSIONS.has(ext)) score += 6;
 
-  if (lang === 'en' || lang === 'eng') score += 14;
-  else if (lang === 'auto' || !lang) score += 3;
+  score += langScore(file?.lang);
 
   if (GOOD_NAME_RE.test(filename)) score += 14;
   if (/(^|[_\-\s])(reference|ref)([_\-\s]|\d|$)/i.test(filename)) score += 8;
@@ -99,11 +111,14 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   const primary = ranked[0].file;
   const aux = ranked.slice(1, maxAux + 1).map((entry) => entry.file);
 
-  return {
-    primary,
-    aux,
-    reason: 'Auto-picked from clip length (~3-9s ideal), transcript quality, language, file type, and clean-reference filename hints.',
-  };
+  const usedQualityScores = ranked.some(
+    (entry) => Number.isFinite(Number(entry.file?.qualityScore)),
+  );
+  const reason = usedQualityScores
+    ? 'Auto-picked by measured audio quality (SNR, clarity, duration), with a transcript/language tie-break.'
+    : 'Auto-picked from clip length (~3-9s ideal), transcript quality, language, file type, and clean-reference filename hints.';
+
+  return { primary, aux, reason };
 }
 
 export function shouldAutoApplyBestReferenceSet({
