@@ -1,5 +1,6 @@
 import path from 'path';
 import { generatePresignedGetUrl, listObjects, getObject } from '../shared/s3.js';
+import { loadClipScores } from '../shared/clipScores.js';
 import { gpuGet, gpuPublicUrl } from '../shared/gpuWorker.js';
 import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { isSafePathSegment } from '../shared/paths.js';
@@ -30,7 +31,7 @@ export const handler = async (event) => {
       }
       const url = await generatePresignedGetUrl(filePath);
       return ok({ url });
-    }
+    } 
 
     if (routePath.includes('/training-audio/file/')) {
       const suffix = routePath.split('/training-audio/file/')[1] || '';
@@ -82,6 +83,7 @@ export const handler = async (event) => {
         // ASR file may not exist yet.
       }
 
+      const clipScores = await loadClipScores(expName);
       const files = wavFiles.map((filename) => {
         const info = transcriptMap.get(filename) || {};
         return {
@@ -90,6 +92,7 @@ export const handler = async (event) => {
           path: `${denoisedPrefix}${filename}`,
           transcript: info.transcript || '',
           lang: info.lang || '',
+          qualityScore: clipScores.get(filename),
         };
       });
       return ok({ expName, files });
