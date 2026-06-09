@@ -364,6 +364,25 @@ export async function runPipelineWithS3(sessionId, {
       }
     }
 
+    // ── Reference-clip quality scoring (non-fatal) ──
+    const clipScoresPath = path.join(dataDir, 'clip-scores.json');
+    try {
+      recordTrainingLog(sessionId, {
+        stream: 'stdout',
+        data: 'Scoring reference clips for audio quality...\n',
+      });
+      await processManager.run({
+        scriptPath: SCRIPTS.scoreClips,
+        args: [denoisedDir, '--json', clipScoresPath],
+        sessionId,
+      });
+    } catch (scoreErr) {
+      recordTrainingLog(sessionId, {
+        stream: 'stderr',
+        data: `Clip scoring failed (non-fatal): ${scoreErr.message || scoreErr}\n`,
+      });
+    }
+
     // ── S3 Sync Up ──
     recordTrainingLog(sessionId, {
       stream: 'stdout',
@@ -373,6 +392,9 @@ export async function runPipelineWithS3(sessionId, {
     const s3DataPrefix = `training/datasets/${expName}/`;
     await uploadDirectory(denoisedDir, `${s3DataPrefix}denoised/`);
     await uploadDirectory(asrDir, `${s3DataPrefix}asr/`);
+    if (fs.existsSync(clipScoresPath)) {
+      await uploadFile(clipScoresPath, `${s3DataPrefix}clip-scores.json`);
+    }
     await uploadDirectory(sovitsWeightsDir, `models/user-models/sovits/`);
     await uploadDirectory(gptWeightsDir, `models/user-models/gpt/`);
 
