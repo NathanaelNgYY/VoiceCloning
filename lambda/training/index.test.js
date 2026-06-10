@@ -44,6 +44,52 @@ test('training handler forwards start requests to the GPU worker with nested con
   }
 });
 
+test('training handler forwards training metadata inputs to the GPU worker config', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({
+        expName: 'demo',
+        skipDenoise: true,
+        selectedReferences: {
+          mode: 'strict',
+          primary: { path: 'training/datasets/demo/denoised/ref.wav', score: 124 },
+        },
+        sourceDatasetStats: {
+          rawFileCount: 3,
+          candidateClipCount: 12,
+        },
+      }),
+    });
+
+    assert.deepEqual(JSON.parse(calls[0].options.body).config, {
+      skipDenoise: true,
+      selectedReferences: {
+        mode: 'strict',
+        primary: { path: 'training/datasets/demo/denoised/ref.wav', score: 124 },
+      },
+      sourceDatasetStats: {
+        rawFileCount: 3,
+        candidateClipCount: 12,
+      },
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('training handler forwards start requests without email when email is omitted', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;

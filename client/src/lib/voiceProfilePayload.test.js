@@ -94,3 +94,56 @@ test('buildVoiceProfilePayload uses local paths outside S3 mode', () => {
     },
   );
 });
+
+test('buildVoiceProfilePayload preserves training, reference, and live fast metadata', () => {
+  assert.deepEqual(
+    buildVoiceProfilePayload({
+      displayName: 'Metadata Voice',
+      selectedGPT: 'models/user-models/gpt/metadata.ckpt',
+      selectedSoVITS: 'models/user-models/sovits/metadata.pth',
+      refAudioPath: 'training/datasets/metadata/denoised/ref.wav',
+      promptText: 'This reference is clean and steady.',
+      promptLang: 'en',
+      textLang: 'en',
+      auxRefAudioPaths: ['training/datasets/metadata/denoised/aux.wav'],
+      defaults: { top_k: 5, speed_factor: 1 },
+      storageMode: 's3',
+      trainingMetadata: {
+        engineVersion: 'v2ProPlus',
+        skipDenoise: true,
+        batchSize: 2,
+        sovitsEpochs: 8,
+        gptEpochs: 15,
+      },
+      referenceMetadata: {
+        mode: 'strict',
+        primary: { path: 'training/datasets/metadata/denoised/ref.wav', score: 124 },
+        aux: [{ path: 'training/datasets/metadata/denoised/aux.wav', score: 118 }],
+      },
+      liveFastMetadata: {
+        configName: 'Default',
+        selected: true,
+        rank: 1,
+      },
+    }).metadata,
+    {
+      training: {
+        engineVersion: 'v2ProPlus',
+        skipDenoise: true,
+        batchSize: 2,
+        sovitsEpochs: 8,
+        gptEpochs: 15,
+      },
+      reference: {
+        mode: 'strict',
+        primary: { path: 'training/datasets/metadata/denoised/ref.wav', score: 124 },
+        aux: [{ path: 'training/datasets/metadata/denoised/aux.wav', score: 118 }],
+      },
+      liveFast: {
+        configName: 'Default',
+        selected: true,
+        rank: 1,
+      },
+    },
+  );
+});

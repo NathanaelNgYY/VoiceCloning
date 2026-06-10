@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
 import {
   chooseBestReferenceSet,
+  describeReferenceCandidate,
   shouldAutoApplyBestReferenceSet,
 } from '@/lib/referenceSelection';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
@@ -294,6 +295,41 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
     primaryPath: refAudioPath, promptText, trainingAudioFiles, auxRefAudios,
   }), [refAudioPath, promptText, trainingAudioFiles, auxRefAudios]);
+  const referenceCandidateMap = useMemo(() => (
+    Object.fromEntries(trainingAudioFiles.map((file) => [file.path, describeReferenceCandidate(file)]))
+  ), [trainingAudioFiles]);
+  const currentReferenceMetadata = useMemo(() => {
+    const primary = referenceCandidateMap[refAudioPath] || (refAudioPath ? describeReferenceCandidate({
+      filename: fallbackName(refAudioPath),
+      path: refAudioPath,
+      transcript: promptText,
+      lang: promptLang,
+    }) : null);
+    const aux = auxRefAudios.map((file) => referenceCandidateMap[file.path] || describeReferenceCandidate(file));
+    return {
+      mode: primary?.eligible ? 'strict' : 'manual',
+      primary,
+      aux,
+      selectedPaths: {
+        primary: refAudioPath,
+        aux: auxRefAudios.map((item) => item.path),
+      },
+    };
+  }, [referenceCandidateMap, refAudioPath, promptText, promptLang, auxRefAudios]);
+  const currentLiveFastMetadata = useMemo(() => ({
+    configName: selectedProfile?.displayName ? `${selectedProfile.displayName} default` : 'Default',
+    selected: true,
+    rank: 1,
+    language: liveLanguage,
+    preferredRoute: 'sentence',
+    defaults: {
+      top_k: topK,
+      top_p: topP,
+      temperature,
+      repetition_penalty: repPenalty,
+      speed_factor: speed,
+    },
+  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed]);
 
   const liveSpeech = useLiveSpeech({ refParams: liveRefParams, replyMode, language: liveLanguage });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
@@ -551,6 +587,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
         repetition_penalty: repPenalty,
         speed_factor: speed,
       },
+      trainingMetadata: activeVoiceProfile?.metadata?.training,
+      referenceMetadata: currentReferenceMetadata,
+      liveFastMetadata: currentLiveFastMetadata,
       storageMode,
     });
 
@@ -1257,8 +1296,23 @@ export default function LivePage({ replyMode = 'phrases' }) {
                             disabled={isConversationActive || (!checked && auxRefAudios.length >= 5)}
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                              {referenceCandidateMap[f.path] && (
+                                <span className={cn(
+                                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                                  referenceCandidateMap[f.path].eligible
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-slate-100 text-slate-500'
+                                )}>
+                                  {Math.round(referenceCandidateMap[f.path].score)}
+                                </span>
+                              )}
+                            </span>
                             {f.transcript && <span className="mt-0.5 block truncate text-xs text-slate-400">{f.transcript}</span>}
+                            {referenceCandidateMap[f.path]?.reasons?.[0] && (
+                              <span className="mt-0.5 block truncate text-[11px] text-amber-600">{referenceCandidateMap[f.path].reasons[0]}</span>
+                            )}
                           </span>
                           <button
                             type="button" onClick={() => handlePreviewReference(pi2)}
@@ -1278,6 +1332,24 @@ export default function LivePage({ replyMode = 'phrases' }) {
                 <p className="mt-1.5 text-xs text-slate-400">
                   {auxRefAudios.length}/5 auxiliary · Primary: {refAudioPath ? fallbackName(refAudioPath) : 'none'}
                 </p>
+                {currentReferenceMetadata.primary && (
+                  <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium text-slate-700">Primary reference score</span>
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                        currentReferenceMetadata.primary.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                      )}>
+                        {Math.round(currentReferenceMetadata.primary.score)} · {currentReferenceMetadata.mode}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate">
+                      {currentReferenceMetadata.primary.eligible
+                        ? 'Passed strict duration, sentence, cleanliness, loudness, and steady-tone checks.'
+                        : currentReferenceMetadata.primary.reasons.join(' ')}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className={cn(!previewReference.url && 'hidden')}>
@@ -1323,6 +1395,23 @@ export default function LivePage({ replyMode = 'phrases' }) {
             {/* Inference controls */}
             <div className="space-y-4">
               <p className="text-sm font-semibold text-slate-800">Inference controls</p>
+              {activeVoiceProfile?.metadata && (
+                <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-500">
+                  <p className="font-semibold text-slate-700">Saved config metadata</p>
+                  <p className="mt-1">
+                    Live Fast: {activeVoiceProfile.metadata.liveFast?.configName || 'saved'} ·
+                    speed {activeVoiceProfile.metadata.liveFast?.defaults?.speed_factor ?? activeVoiceProfile.defaults?.speed_factor ?? speed} ·
+                    temp {activeVoiceProfile.metadata.liveFast?.defaults?.temperature ?? activeVoiceProfile.defaults?.temperature ?? temperature}
+                  </p>
+                  {activeVoiceProfile.metadata.training && (
+                    <p className="mt-1">
+                      Training: {activeVoiceProfile.metadata.training.engineVersion || 'unknown'} ·
+                      denoise {activeVoiceProfile.metadata.training.skipDenoise ? 'skipped' : 'enabled'} ·
+                      batch {activeVoiceProfile.metadata.training.batchSize ?? 'n/a'}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="grid gap-3 md:grid-cols-2">
                 {[
                   { label: 'Speed', display: speed.toFixed(1) + 'x', min: 0.5, max: 2.0, step: 0.1, val: speed, set: setSpeed },

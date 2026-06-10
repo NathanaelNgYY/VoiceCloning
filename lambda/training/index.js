@@ -43,6 +43,8 @@ export const handler = async (event) => {
         asrLanguage,
         asrModel,
         skipDenoise,
+        selectedReferences,
+        sourceDatasetStats,
       } = body;
       if (!expName) return err(400, 'expName is required');
       if (!isSafePathSegment(expName)) {
@@ -61,6 +63,12 @@ export const handler = async (event) => {
           ...(asrLanguage !== undefined ? { asrLanguage } : {}),
           ...(asrModel !== undefined ? { asrModel } : {}),
           ...(skipDenoise !== undefined ? { skipDenoise } : {}),
+          ...(selectedReferences && typeof selectedReferences === 'object' && !Array.isArray(selectedReferences)
+            ? { selectedReferences }
+            : {}),
+          ...(sourceDatasetStats && typeof sourceDatasetStats === 'object' && !Array.isArray(sourceDatasetStats)
+            ? { sourceDatasetStats }
+            : {}),
         },
       }));
     }

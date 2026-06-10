@@ -453,7 +453,21 @@ export default function TrainingPage() {
       } else {
         await uploadFiles(expName, files);
       }
-      const res = await startTraining({ expName, email, batchSize, sovitsEpochs, gptEpochs, sovitsSaveEvery, gptSaveEvery, asrLanguage, skipDenoise });
+      const res = await startTraining({
+        expName,
+        email,
+        batchSize,
+        sovitsEpochs,
+        gptEpochs,
+        sovitsSaveEvery,
+        gptSaveEvery,
+        asrLanguage,
+        skipDenoise,
+        sourceDatasetStats: {
+          source: trainingSource,
+          rawFileCount: trainingSource === 'library' ? selectedLibraryIds.length : files.length,
+        },
+      });
       setSessionId(res.data.sessionId);
       restoredSessionRef.current = res.data.sessionId;
       connect(res.data.sessionId, { initialStatus: 'waiting' });

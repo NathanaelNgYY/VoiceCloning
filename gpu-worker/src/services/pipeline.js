@@ -116,6 +116,41 @@ export function cleanupLocalTrainingArtifacts({
   return removed;
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+export function buildTrainingRunMetadata({
+  sessionId = '',
+  expName = '',
+  startedAt = '',
+  completedAt = '',
+  config = {},
+  selectedReferences = {},
+  sourceDatasetStats = {},
+} = {}) {
+  return {
+    schemaVersion: 1,
+    sessionId,
+    expName,
+    engineVersion: 'v2ProPlus',
+    startedAt,
+    completedAt,
+    training: {
+      batchSize: config.batchSize,
+      sovitsEpochs: config.sovitsEpochs,
+      gptEpochs: config.gptEpochs,
+      sovitsSaveEvery: config.sovitsSaveEvery,
+      gptSaveEvery: config.gptSaveEvery,
+      asrLanguage: config.asrLanguage,
+      asrModel: config.asrModel,
+      skipDenoise: Boolean(config.skipDenoise),
+    },
+    selectedReferences: isPlainObject(selectedReferences) ? selectedReferences : {},
+    sourceDatasetStats: isPlainObject(sourceDatasetStats) ? sourceDatasetStats : {},
+  };
+}
+
 export async function runPipelineWithS3(sessionId, {
   expName,
   email = '',
@@ -128,7 +163,10 @@ export async function runPipelineWithS3(sessionId, {
   asrLanguage = 'en',
   asrModel = 'large-v3',
   skipDenoise = false,
+  selectedReferences = {},
+  sourceDatasetStats = {},
 }) {
+  const startedAt = new Date().toISOString();
   const localExpDir = path.join(LOCAL_TEMP_ROOT, expName);
   const dataDir = path.join(localExpDir, 'data');
   const rawDir = path.join(dataDir, 'raw');
@@ -375,6 +413,29 @@ export async function runPipelineWithS3(sessionId, {
     await uploadDirectory(asrDir, `${s3DataPrefix}asr/`);
     await uploadDirectory(sovitsWeightsDir, `models/user-models/sovits/`);
     await uploadDirectory(gptWeightsDir, `models/user-models/gpt/`);
+    const metadataPath = path.join(localExpDir, 'training-metadata.json');
+    fs.writeFileSync(metadataPath, JSON.stringify(buildTrainingRunMetadata({
+      sessionId,
+      expName,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      config: {
+        batchSize,
+        sovitsEpochs,
+        gptEpochs,
+        sovitsSaveEvery,
+        gptSaveEvery,
+        asrLanguage,
+        asrModel,
+        skipDenoise,
+      },
+      selectedReferences,
+      sourceDatasetStats: {
+        rawFileCount: downloadCount,
+        ...sourceDatasetStats,
+      },
+    }), null, 2));
+    await uploadFile(metadataPath, `training/runs/${expName}/metadata.json`);
 
     recordTrainingLog(sessionId, {
       stream: 'stdout',
