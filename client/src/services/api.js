@@ -310,6 +310,23 @@ export function getFullActiveVoiceProfile() {
   });
 }
 
+export function getVoiceProfileConfigs(voiceProfileId) {
+  return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
+}
+
+export function saveVoiceProfileConfig(voiceProfileId, configId, config) {
+  return api.post(
+    `/voice-profile/configs/${encodeURIComponent(voiceProfileId)}/${encodeURIComponent(configId)}`,
+    config,
+  );
+}
+
+export function deleteVoiceProfileConfig(voiceProfileId, configId) {
+  return api.post(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}/${encodeURIComponent(configId)}`, {
+    delete: true,
+  });
+}
+
 // Transcription
 
 export function transcribeAudio(filePath, language = 'auto') {

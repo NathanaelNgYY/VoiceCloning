@@ -35,6 +35,7 @@ try {
     'transcribe',
     'upload',
     'voice-profile',
+    'voice-profile-configs',
     'node_modules'
   )
 
