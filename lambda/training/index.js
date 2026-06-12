@@ -1,6 +1,7 @@
 import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
+import { getObject, headObject } from '../shared/s3.js';
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
@@ -8,7 +9,24 @@ function isWorkerUnavailableError(error) {
     || /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|GPU_WORKER_URL env var/u.test(message);
 }
 
-export const handler = async (event) => {
+async function defaultReadObject(key) {
+  const existing = await headObject(key);
+  if (!existing) return null;
+  return getObject(key);
+}
+
+function decodeSegment(value) {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    return '';
+  }
+}
+
+export function createHandler({
+  readObject = defaultReadObject,
+} = {}) {
+  return async function trainingHandler(event) {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return preflight();
   }
@@ -88,8 +106,23 @@ export const handler = async (event) => {
       }
     }
 
+    if (method === 'GET' && routePath.includes('/train/metadata/')) {
+      const expName = decodeSegment(routePath.split('/train/metadata/')[1]?.replace(/\/$/u, ''));
+      if (!expName || !isSafePathSegment(expName)) {
+        return err(400, 'Invalid experiment name');
+      }
+      const raw = await readObject(`training/runs/${expName}/metadata.json`);
+      if (!raw) {
+        return err(404, `Training metadata not found for ${expName}`);
+      }
+      return ok({ expName, metadata: JSON.parse(raw.toString('utf-8')) });
+    }
+
     return err(404, 'Not found');
   } catch (error) {
     return err(500, error.message);
   }
 };
+}
+
+export const handler = createHandler();

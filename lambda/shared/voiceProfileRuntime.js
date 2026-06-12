@@ -3,6 +3,7 @@ import {
   ensureProfileModelsLoaded,
   persistSavedProfileReferenceSelection,
   resolveSavedProfileReferenceSelection,
+  writeDefaultVoiceProfileConfig,
 } from './modelSelection.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
@@ -130,6 +131,21 @@ export function createVoiceProfileResolver({
         writeObject,
         now,
       });
+    }
+    const existingSelectionBeforeResolve = {
+      ref_audio_path: profile.ref_audio_path,
+      aux_ref_audio_paths: profile.aux_ref_audio_paths || [],
+    };
+    const selectionChanged = resolvedReferenceSelection && (
+      existingSelectionBeforeResolve.ref_audio_path !== resolvedReferenceSelection.ref_audio_path
+      || JSON.stringify(existingSelectionBeforeResolve.aux_ref_audio_paths || []) !== JSON.stringify(resolvedReferenceSelection.aux_ref_audio_paths || [])
+    );
+    if (selectionChanged && profile?.voiceProfileId) {
+      try {
+        await writeDefaultVoiceProfileConfig(profile, resolvedReferenceSelection, { writeObject, now });
+      } catch (error) {
+        console.warn(`[voiceProfileRuntime] default config write failed for ${profile.voiceProfileId}: ${error.message}`);
+      }
     }
 
     await ensureModelsLoaded(enrichedProfile);

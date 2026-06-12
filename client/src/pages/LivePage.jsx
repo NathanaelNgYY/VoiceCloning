@@ -4,6 +4,7 @@ import {
   getModels,
   getTrainingAudioUrl,
   getTrainingAudioFiles,
+  getTrainingRunMetadata,
   activateVoiceProfile,
   deleteVoiceProfileConfig,
   getFullActiveVoiceProfile,
@@ -112,6 +113,11 @@ function buildConfigId(seed = '') {
   return `${slug || 'config'}-${Date.now().toString(36)}`;
 }
 
+function formatReferenceScore(candidate) {
+  if (!candidate) return 'unscored';
+  return `${Math.round(candidate.score)} ${candidate.eligible ? 'strict' : 'manual'}`;
+}
+
 function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
   const isUser = message.role === 'user';
   const readyParts = (message.audioParts || []).filter((part) => part.audioUrl);
@@ -216,8 +222,12 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [voiceConfigs, setVoiceConfigs] = useState([]);
   const [loadingVoiceConfigs, setLoadingVoiceConfigs] = useState(false);
   const [voiceConfigError, setVoiceConfigError] = useState('');
+  const [loadedConfigId, setLoadedConfigId] = useState('');
+  const [trainingRunMetadata, setTrainingRunMetadata] = useState(null);
+  const [trainingRunMetadataError, setTrainingRunMetadataError] = useState('');
   const [savingConfigId, setSavingConfigId] = useState('');
   const [generatingSampleConfigId, setGeneratingSampleConfigId] = useState('');
+  const [draggingConfigId, setDraggingConfigId] = useState('');
   const [configSampleUrls, setConfigSampleUrls] = useState({});
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
@@ -248,6 +258,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const urlVoiceKeyRef = useRef('');
   const restoredActiveVoiceProfileKeyRef = useRef('');
   const previewRequestRef = useRef(0);
+  const configSampleUrlsRef = useRef({});
+  const autoDefaultConfigKeyRef = useRef('');
+  const reorderingConfigRef = useRef(false);
   const pendingAutoSyncFingerprintRef = useRef('');
   const autoSyncRequestFingerprintRef = useRef('');
   const lastAutoSyncedFingerprintRef = useRef('');
@@ -442,7 +455,25 @@ export default function LivePage({ replyMode = 'phrases' }) {
     setLoadingVoiceConfigs(true);
     try {
       const res = await getVoiceProfileConfigs(voiceProfileId);
-      setVoiceConfigs(res.data.configs || []);
+      const configs = res.data.configs || [];
+      setVoiceConfigs(configs);
+      console.info('[voice-configs] loaded configs', {
+        voiceProfileId,
+        count: configs.length,
+        configs: configs.map((config) => ({
+          configId: config.configId,
+          configName: config.configName,
+          rank: config.rank,
+          hasTrainingMetadata: Boolean(config.trainingMetadata && Object.keys(config.trainingMetadata).length > 0),
+          trainingMetadata: config.trainingMetadata || null,
+          inferenceMetadata: config.inferenceMetadata || null,
+          referenceMetadata: config.referenceMetadata || null,
+          sample: config.sample || null,
+        })),
+      });
+      if (configs[0]) {
+        applyVoiceConfig(configs[0], { silent: true });
+      }
       setVoiceConfigError('');
     } catch (err) {
       setVoiceConfigs([]);
@@ -452,17 +483,103 @@ export default function LivePage({ replyMode = 'phrases' }) {
     }
   }
 
+  async function loadTrainingRunMetadata(expName = selectedExpName) {
+    if (!expName) {
+      setTrainingRunMetadata(null);
+      setTrainingRunMetadataError('');
+      return;
+    }
+    try {
+      const res = await getTrainingRunMetadata(expName);
+      const metadata = res.data.metadata || null;
+      setTrainingRunMetadata(metadata);
+      setTrainingRunMetadataError('');
+      console.info('[voice-configs] loaded training metadata', { expName, metadata });
+    } catch (err) {
+      const message = err.response?.status === 404
+        ? 'No training metadata saved for this model yet.'
+        : err.response?.data?.error || err.message || 'Could not load training metadata.';
+      setTrainingRunMetadata(null);
+      setTrainingRunMetadataError(message);
+      console.info('[voice-configs] training metadata unavailable', { expName, message });
+    }
+  }
+
   function buildCurrentConfigPayload({ configId = '', configName = '' } = {}) {
     return {
       configName: configName || currentLiveFastMetadata.configName,
       rank: voiceConfigs.length + 1,
       selected: true,
-      trainingMetadata: activeVoiceProfile?.metadata?.training || {},
+      trainingMetadata: trainingRunMetadata || activeVoiceProfile?.metadata?.training || {},
       inferenceMetadata: currentLiveFastMetadata,
       referenceMetadata: currentReferenceMetadata,
       sample: {},
       ...(configId ? { configId } : {}),
     };
+  }
+
+  function resolveReferenceFile(path, fallback = {}) {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath) return null;
+    return trainingAudioFiles.find((file) => file.path === normalizedPath)
+      || fallback?.file
+      || {
+        filename: fallback.filename || fallbackName(normalizedPath),
+        path: normalizedPath,
+        transcript: fallback.transcript || '',
+        lang: fallback.lang || '',
+      };
+  }
+
+  async function syncConfigToVoiceProfile(config) {
+    if (!config || !selectedProfile || !selectedGPT || !selectedSoVITS) return;
+    const reference = config.referenceMetadata || {};
+    const inference = config.inferenceMetadata || {};
+    const defaults = inference.defaults || {};
+    const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
+    if (!primaryPath) return;
+    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux)
+      ? reference.selectedPaths.aux
+      : Array.isArray(reference.aux)
+        ? reference.aux.map((item) => item?.path).filter(Boolean)
+        : [];
+    const storageMode = await getStorageMode();
+    const payload = buildVoiceProfilePayload({
+      displayName: selectedProfile.displayName,
+      selectedGPT,
+      selectedSoVITS,
+      refAudioPath: primaryPath,
+      promptText: primaryFile.transcript || reference.primary?.file?.transcript || promptText,
+      promptLang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || promptLang),
+      textLang: inference.language || liveLanguage,
+      preferredRoute: inference.preferredRoute || 'sentence',
+      auxRefAudioPaths: auxPaths,
+      defaults: {
+        top_k: defaults.top_k ?? topK,
+        top_p: defaults.top_p ?? topP,
+        temperature: defaults.temperature ?? temperature,
+        repetition_penalty: defaults.repetition_penalty ?? repPenalty,
+        speed_factor: defaults.speed_factor ?? speed,
+      },
+      trainingMetadata: config.trainingMetadata || trainingRunMetadata || activeVoiceProfile?.metadata?.training,
+      referenceMetadata: reference,
+      liveFastMetadata: inference,
+      storageMode,
+    });
+    const response = await activateVoiceProfile(payload);
+    const summary = response.data || {};
+    setActiveVoiceProfile(summary.voiceProfileId ? {
+      ...payload,
+      ...summary,
+      voiceProfileId: summary.voiceProfileId || payload.voiceProfileId,
+      displayName: summary.displayName || payload.displayName,
+    } : null);
+    console.info('[voice-configs] synced config to voice profile', {
+      voiceProfileId: payload.voiceProfileId,
+      configId: config.configId,
+      rank: config.rank,
+    });
   }
 
   function clearReferenceSelection() {
@@ -482,7 +599,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
     setLoadingPreviewPath('');
   }
 
-  function applyVoiceConfig(config) {
+  function applyVoiceConfig(config, { silent = false } = {}) {
     const reference = config?.referenceMetadata || {};
     const inference = config?.inferenceMetadata || {};
     const defaults = inference.defaults || {};
@@ -493,14 +610,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
         ? reference.aux.map((item) => item?.path).filter(Boolean)
         : [];
     if (primaryPath) {
-      const primaryFile = trainingAudioFiles.find((file) => file.path === primaryPath) || reference.primary?.file || {
-        filename: fallbackName(primaryPath),
-        path: primaryPath,
-        transcript: reference.primary?.file?.transcript || '',
-        lang: reference.primary?.file?.lang || 'en',
-      };
+      const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
       setRefAudioPath(primaryPath);
-      setPromptText(primaryFile.transcript || '');
+      setPromptText(primaryFile.transcript || reference.primary?.file?.transcript || reference.primary?.transcript || '');
       setPromptLang(normalizeReferenceLanguage(primaryFile.lang));
     }
     setAuxRefAudios(auxPaths.slice(0, 5).map((path) => (
@@ -517,7 +629,10 @@ export default function LivePage({ replyMode = 'phrases' }) {
     setTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : topP);
     setTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : temperature);
     setRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : repPenalty);
-    setReferenceMessage(`Loaded config ${config.configName || config.configId}.`);
+    setLoadedConfigId(config?.configId || '');
+    if (!silent) {
+      setReferenceMessage(`Loaded config ${config.configName || config.configId}.`);
+    }
   }
 
   function applyBestReference(files = trainingAudioFiles, { markForAutoSync = false } = {}) {
@@ -721,6 +836,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
     const configId = existingConfig?.configId || buildConfigId(selectedProfile?.displayName || selectedVoiceProfileId);
     setSavingConfigId(configId);
     setModelError('');
+    setVoiceConfigError('');
     try {
       const payload = {
         ...buildCurrentConfigPayload({
@@ -732,13 +848,29 @@ export default function LivePage({ replyMode = 'phrases' }) {
       };
       const res = await saveVoiceProfileConfig(selectedVoiceProfileId, configId, payload);
       const saved = res.data.config;
+      console.info('[voice-configs] saved config', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: saved.configId,
+        config: saved,
+        hasTrainingMetadata: Boolean(saved.trainingMetadata && Object.keys(saved.trainingMetadata).length > 0),
+      });
       setVoiceConfigs((current) => {
         const without = current.filter((item) => item.configId !== saved.configId);
         return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
       });
+      if (Number(saved.rank || 0) === 1) {
+        await syncConfigToVoiceProfile(saved);
+        console.info('[voice-configs] synced rank #1 config to voice profile', {
+          voiceProfileId: selectedVoiceProfileId,
+          configId: saved.configId,
+        });
+      }
       setReferenceMessage(`Saved config ${saved.configName || saved.configId}.`);
+      setLoadedConfigId(saved.configId);
     } catch (err) {
-      setModelError(err.response?.data?.error || err.message || 'Could not save config.');
+      const message = err.response?.data?.error || err.message || 'Could not save config.';
+      setModelError(message);
+      setVoiceConfigError(message);
     } finally {
       setSavingConfigId('');
     }
@@ -747,18 +879,146 @@ export default function LivePage({ replyMode = 'phrases' }) {
   async function deleteSavedVoiceConfig(configId) {
     if (!selectedVoiceProfileId || !configId) return;
     setSavingConfigId(configId);
+    setVoiceConfigError('');
     try {
       await deleteVoiceProfileConfig(selectedVoiceProfileId, configId);
+      console.info('[voice-configs] deleted config', { voiceProfileId: selectedVoiceProfileId, configId });
       setVoiceConfigs((current) => current.filter((item) => item.configId !== configId));
+      if (loadedConfigId === configId) setLoadedConfigId('');
       setConfigSampleUrls((current) => {
         if (current[configId]) URL.revokeObjectURL(current[configId]);
         const next = { ...current };
         delete next[configId];
+        configSampleUrlsRef.current = next;
         return next;
       });
       setReferenceMessage(`Deleted config ${configId}.`);
     } catch (err) {
-      setModelError(err.response?.data?.error || err.message || 'Could not delete config.');
+      const message = err.response?.data?.error || err.message || 'Could not delete config.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function moveVoiceConfig(configId, direction) {
+    if (!selectedVoiceProfileId || !configId || savingConfigId) return;
+    const currentIndex = voiceConfigs.findIndex((item) => item.configId === configId);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= voiceConfigs.length) return;
+    const reordered = [...voiceConfigs];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const reranked = reordered.map((config, index) => ({ ...config, rank: index + 1 }));
+    setSavingConfigId(configId);
+    setVoiceConfigError('');
+    try {
+      const savedConfigs = [];
+      for (const config of reranked) {
+        const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, config);
+        savedConfigs.push(res.data.config);
+      }
+      const sorted = savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      setVoiceConfigs(sorted);
+      if (sorted[0]) {
+        applyVoiceConfig(sorted[0], { silent: true });
+        await syncConfigToVoiceProfile(sorted[0]);
+      }
+      console.info('[voice-configs] reordered configs', {
+        voiceProfileId: selectedVoiceProfileId,
+        order: sorted.map((config) => ({ configId: config.configId, rank: config.rank })),
+      });
+      setReferenceMessage(`Moved ${moved.configName || moved.configId} to #${targetIndex + 1}.`);
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not reorder configs.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function persistConfigOrder(nextOrder, { movedConfigId = '' } = {}) {
+    if (!selectedVoiceProfileId || nextOrder.length === 0) return;
+    const reranked = nextOrder.map((config, index) => ({ ...config, rank: index + 1 }));
+    setSavingConfigId(movedConfigId || reranked[0]?.configId || '');
+    setVoiceConfigError('');
+    try {
+      const savedConfigs = [];
+      for (const config of reranked) {
+        const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, config);
+        savedConfigs.push(res.data.config);
+      }
+      const sorted = savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      setVoiceConfigs(sorted);
+      if (sorted[0]) {
+        await syncConfigToVoiceProfile(sorted[0]);
+      }
+      console.info('[voice-configs] reordered configs', {
+        voiceProfileId: selectedVoiceProfileId,
+        order: sorted.map((config) => ({ configId: config.configId, rank: config.rank, configName: config.configName })),
+      });
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not reorder configs.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+      setDraggingConfigId('');
+      reorderingConfigRef.current = false;
+    }
+  }
+
+  function handleConfigDrop(targetConfigId) {
+    if (!draggingConfigId || draggingConfigId === targetConfigId) {
+      setDraggingConfigId('');
+      return;
+    }
+    const fromIndex = voiceConfigs.findIndex((item) => item.configId === draggingConfigId);
+    const toIndex = voiceConfigs.findIndex((item) => item.configId === targetConfigId);
+    if (fromIndex < 0 || toIndex < 0) {
+      setDraggingConfigId('');
+      return;
+    }
+    const reordered = [...voiceConfigs];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    const reranked = reordered.map((config, index) => ({ ...config, rank: index + 1 }));
+    reorderingConfigRef.current = true;
+    setVoiceConfigs(reranked);
+    if (reranked[0]) {
+      applyVoiceConfig(reranked[0], { silent: true });
+    }
+    persistConfigOrder(reranked, { movedConfigId: moved.configId });
+  }
+
+  async function renameVoiceConfig(config, nextName) {
+    const configName = String(nextName || '').trim() || config.configId;
+    if (!selectedVoiceProfileId || !config?.configId || configName === config.configName) return;
+    setSavingConfigId(config.configId);
+    setVoiceConfigError('');
+    try {
+      const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, {
+        ...config,
+        configName,
+      });
+      const saved = res.data.config;
+      setVoiceConfigs((current) => current.map((item) => (
+        item.configId === saved.configId ? saved : item
+      )));
+      if (Number(saved.rank || 0) === 1) {
+        await syncConfigToVoiceProfile(saved);
+      }
+      console.info('[voice-configs] renamed config', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: saved.configId,
+        configName: saved.configName,
+      });
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not rename config.';
+      setModelError(message);
+      setVoiceConfigError(message);
     } finally {
       setSavingConfigId('');
     }
@@ -769,13 +1029,17 @@ export default function LivePage({ replyMode = 'phrases' }) {
     const reference = config.referenceMetadata || {};
     const inference = config.inferenceMetadata || {};
     const defaults = inference.defaults || {};
+    const primaryPath = reference.selectedPaths?.primary || reference.primary?.path || refAudioPath;
+    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux) ? reference.selectedPaths.aux : [];
+    const prompt = String(primaryFile.transcript || reference.primary?.file?.transcript || promptText || '').trim();
     const params = {
       text: 'This is a short saved voice configuration sample.',
       text_lang: inference.language || liveLanguage,
-      ref_audio_path: reference.selectedPaths?.primary || reference.primary?.path || refAudioPath,
-      prompt_text: reference.primary?.file?.transcript || promptText,
-      prompt_lang: reference.primary?.file?.lang || promptLang,
-      aux_ref_audio_paths: reference.selectedPaths?.aux || [],
+      ref_audio_path: primaryPath,
+      prompt_text: prompt,
+      prompt_lang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || promptLang),
+      aux_ref_audio_paths: auxPaths,
       speed_factor: defaults.speed_factor ?? speed,
       top_k: defaults.top_k ?? topK,
       top_p: defaults.top_p ?? topP,
@@ -786,14 +1050,23 @@ export default function LivePage({ replyMode = 'phrases' }) {
       setModelError('Config has no primary reference audio.');
       return;
     }
+    if (!params.prompt_text) {
+      const message = 'Config sample needs a primary reference transcript. Load the config, enter the primary transcript, update the config, then sample again.';
+      setModelError(message);
+      setVoiceConfigError(message);
+      return;
+    }
     setGeneratingSampleConfigId(config.configId);
     setModelError('');
+    setVoiceConfigError('');
     try {
       const result = await synthesizeSentence(params);
       const url = URL.createObjectURL(result.blob);
       setConfigSampleUrls((current) => {
         if (current[config.configId]) URL.revokeObjectURL(current[config.configId]);
-        return { ...current, [config.configId]: url };
+        const next = { ...current, [config.configId]: url };
+        configSampleUrlsRef.current = next;
+        return next;
       });
       const sample = {
         text: params.text,
@@ -805,12 +1078,20 @@ export default function LivePage({ replyMode = 'phrases' }) {
         sample,
       };
       await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, saved);
+      console.info('[voice-configs] generated sample', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: config.configId,
+        params,
+        sample,
+      });
       setVoiceConfigs((current) => current.map((item) => (
         item.configId === config.configId ? { ...item, sample } : item
       )));
       setReferenceMessage(`Generated sample for ${config.configName || config.configId}.`);
     } catch (err) {
-      setModelError(err.response?.data?.error || err.message || 'Could not generate config sample.');
+      const message = err.response?.data?.error || err.message || 'Could not generate config sample.';
+      setModelError(message);
+      setVoiceConfigError(message);
     } finally {
       setGeneratingSampleConfigId('');
     }
@@ -985,10 +1266,50 @@ export default function LivePage({ replyMode = 'phrases' }) {
   }, [selectedVoiceProfileId]);
 
   useEffect(() => {
+    loadTrainingRunMetadata(selectedExpName);
+  }, [selectedExpName]);
+
+  useEffect(() => {
+    if (
+      loadingVoiceConfigs
+      || voiceConfigs.length > 0
+      || !selectedVoiceProfileId
+      || !selectedProfile
+      || !selectedGPT
+      || !selectedSoVITS
+      || !refAudioPath
+      || loadingTrainingAudio
+      || isConversationActive
+    ) {
+      return;
+    }
+    const key = `${selectedVoiceProfileId}:${refAudioPath}:${auxRefAudios.map((item) => item.path).join(',')}`;
+    if (autoDefaultConfigKeyRef.current === key) return;
+    autoDefaultConfigKeyRef.current = key;
+    saveCurrentVoiceConfig({
+      configId: 'default',
+      configName: `${selectedProfile.displayName} default`,
+      rank: 1,
+      sample: {},
+    });
+  }, [
+    loadingVoiceConfigs,
+    voiceConfigs.length,
+    selectedVoiceProfileId,
+    selectedProfile,
+    selectedGPT,
+    selectedSoVITS,
+    refAudioPath,
+    auxRefAudios,
+    loadingTrainingAudio,
+    isConversationActive,
+  ]);
+
+  useEffect(() => {
     return () => {
-      Object.values(configSampleUrls).forEach((url) => URL.revokeObjectURL(url));
+      Object.values(configSampleUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [configSampleUrls]);
+  }, []);
 
   useEffect(() => {
     if (!canRestoreActiveVoiceProfile || !activeVoiceProfileRestoreKey) {
@@ -1454,7 +1775,22 @@ export default function LivePage({ replyMode = 'phrases' }) {
                       <SelectValue placeholder={loadingTrainingAudio ? 'Loading...' : 'Select primary'} />
                     </SelectTrigger>
                     <SelectContent>
-                      {trainingAudioFiles.map((f) => <SelectItem key={f.path} value={f.path}>{f.filename}</SelectItem>)}
+                      {trainingAudioFiles.map((f) => {
+                        const candidate = referenceCandidateMap[f.path];
+                        return (
+                          <SelectItem key={f.path} value={f.path}>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="truncate">{f.filename}</span>
+                              <span className={cn(
+                                'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                                candidate?.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                              )}>
+                                {formatReferenceScore(candidate)}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                   {(() => {
@@ -1608,7 +1944,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
                     variant="outline"
                     size="sm"
                     onClick={() => saveCurrentVoiceConfig()}
-                    disabled={!isReady || isConversationActive || loadingModel || savingProfile}
+                    disabled={!selectedProfile || !selectedGPT || !selectedSoVITS || !refAudioPath || isConversationActive || loadingModel || Boolean(savingConfigId)}
                     className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
                   >
                     {savingConfigId && !voiceConfigs.some((item) => item.configId === savingConfigId)
@@ -1624,6 +1960,27 @@ export default function LivePage({ replyMode = 'phrases' }) {
                   <p className="rounded-lg bg-slate-50 px-2 py-1.5">
                     Temp {temperature.toFixed(2)} · Rep {repPenalty.toFixed(2)} · {liveLanguageConfig.label}
                   </p>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-2 py-2 text-xs text-slate-500">
+                  <p className="font-semibold text-slate-700">Training metadata</p>
+                  {trainingRunMetadata ? (
+                    <>
+                      <p className="mt-1">
+                        Engine {trainingRunMetadata.engineVersion || 'unknown'} ·
+                        denoise {trainingRunMetadata.training?.skipDenoise ? 'skipped' : 'enabled'} ·
+                        batch {trainingRunMetadata.training?.batchSize ?? 'n/a'}
+                      </p>
+                      <p className="mt-1">
+                        SoVITS {trainingRunMetadata.training?.sovitsEpochs ?? 'n/a'} ep ·
+                        GPT {trainingRunMetadata.training?.gptEpochs ?? 'n/a'} ep ·
+                        raw files {trainingRunMetadata.sourceDatasetStats?.rawFileCount ?? 'n/a'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-amber-700">
+                      {trainingRunMetadataError || 'Training metadata has not loaded yet.'}
+                    </p>
+                  )}
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -1649,13 +2006,52 @@ export default function LivePage({ replyMode = 'phrases' }) {
                         const reference = config.referenceMetadata || {};
                         const sampleUrl = configSampleUrls[config.configId];
                         const busy = savingConfigId === config.configId || generatingSampleConfigId === config.configId;
+                        const loaded = reorderingConfigRef.current
+                          ? index === 0
+                          : loadedConfigId === config.configId;
                         return (
-                          <div key={config.configId} className="rounded-lg border border-slate-200 bg-white p-2">
+                          <div
+                            key={config.configId}
+                            className={cn(
+                              'rounded-lg border bg-white p-2 transition-opacity',
+                              loaded ? 'border-blue-200 ring-1 ring-blue-100' : 'border-slate-200',
+                              draggingConfigId === config.configId && 'opacity-50'
+                            )}
+                            draggable={!busy}
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', config.configId);
+                              setDraggingConfigId(config.configId);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              handleConfigDrop(config.configId);
+                            }}
+                            onDragEnd={() => setDraggingConfigId('')}
+                          >
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <p className="truncate text-xs font-semibold text-slate-800">
-                                  #{index + 1} {config.configName || config.configId}
-                                </p>
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span className="shrink-0 cursor-grab text-xs text-slate-400" title="Drag to reorder">#{index + 1}</span>
+                                  <input
+                                    className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-slate-800 outline-none transition-colors hover:border-slate-200 focus:border-blue-200 focus:bg-white"
+                                    defaultValue={config.configName || config.configId}
+                                    disabled={busy}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter') event.currentTarget.blur();
+                                      if (event.key === 'Escape') {
+                                        event.currentTarget.value = config.configName || config.configId;
+                                        event.currentTarget.blur();
+                                      }
+                                    }}
+                                    onBlur={(event) => renameVoiceConfig(config, event.currentTarget.value)}
+                                  />
+                                  {loaded && <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">loaded</span>}
+                                </div>
                                 <p className="mt-0.5 truncate text-[11px] text-slate-500">
                                   Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
                                   speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
@@ -1668,7 +2064,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
                               </div>
                               <div className="flex shrink-0 flex-wrap justify-end gap-1">
                                 <button type="button" onClick={() => applyVoiceConfig(config)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50">Load</button>
-                                <button type="button" onClick={() => saveCurrentVoiceConfig(config)} disabled={busy} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Update</button>
+                                <button type="button" onClick={() => saveCurrentVoiceConfig(config)} disabled={busy || !loaded} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Update</button>
                                 <button type="button" onClick={() => generateConfigSample(config)} disabled={busy || isConversationActive} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">
                                   {generatingSampleConfigId === config.configId ? 'Generating' : 'Sample'}
                                 </button>

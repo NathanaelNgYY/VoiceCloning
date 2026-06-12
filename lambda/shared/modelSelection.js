@@ -189,6 +189,10 @@ function getProfileStorageKey(voiceProfileId) {
   return `voice-profiles/${voiceProfileId}.json`;
 }
 
+function getDefaultConfigKey(voiceProfileId) {
+  return `voice-profile-configs/${voiceProfileId}/default.json`;
+}
+
 function normalizeSavedProfile(profile) {
   if (!profile || typeof profile !== 'object') {
     return null;
@@ -464,6 +468,56 @@ export async function persistSavedProfileReferenceSelection(profile, selection, 
   return true;
 }
 
+export async function writeDefaultVoiceProfileConfig(profile, selection, {
+  writeObject = uploadBuffer,
+  now = () => new Date().toISOString(),
+} = {}) {
+  const normalizedProfile = normalizeSavedProfile(profile);
+  const normalizedSelection = normalizeReferenceWarmPayload(selection);
+  const voiceProfileId = String(normalizedProfile?.voiceProfileId || '').trim();
+
+  if (!voiceProfileId || !normalizedSelection) {
+    return false;
+  }
+
+  const configName = `${normalizedProfile.displayName || voiceProfileId} default`;
+  const config = {
+    schemaVersion: 1,
+    voiceProfileId,
+    configId: 'default',
+    configName,
+    rank: 1,
+    selected: true,
+    trainingMetadata: normalizedProfile.metadata?.training || {},
+    inferenceMetadata: {
+      configName,
+      selected: true,
+      rank: 1,
+      language: normalizedProfile.text_lang || normalizedProfile.prompt_lang || 'en',
+      preferredRoute: normalizedProfile.preferredRoute || 'sentence',
+      defaults: normalizedProfile.defaults || {},
+    },
+    referenceMetadata: {
+      mode: 'auto',
+      selectedPaths: {
+        primary: normalizedSelection.ref_audio_path,
+        aux: normalizedSelection.aux_ref_audio_paths || [],
+      },
+      primary: { path: normalizedSelection.ref_audio_path },
+      aux: (normalizedSelection.aux_ref_audio_paths || []).map((item) => ({ path: item })),
+    },
+    sample: {},
+    updatedAt: now(),
+  };
+
+  await writeObject(
+    getDefaultConfigKey(voiceProfileId),
+    Buffer.from(JSON.stringify(config), 'utf-8'),
+    'application/json',
+  );
+  return true;
+}
+
 async function warmModelReferences(payload, {
   postInference = inferencePost,
   listTrainingAudioFiles = loadTrainingAudioFilesForExp,
@@ -486,6 +540,10 @@ async function warmModelReferences(payload, {
     if (savedProfile && shouldPersist) {
       await persistSavedProfileReferenceSelection(savedProfile, warmPayload, {
         readObject,
+        writeObject,
+        now,
+      });
+      await writeDefaultVoiceProfileConfig(savedProfile, warmPayload, {
         writeObject,
         now,
       });

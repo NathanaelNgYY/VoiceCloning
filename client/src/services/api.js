@@ -224,6 +224,10 @@ export function getCurrentTraining() {
   return api.get('/train/current');
 }
 
+export function getTrainingRunMetadata(expName) {
+  return api.get(`/train/metadata/${encodeURIComponent(expName)}`);
+}
+
 // Models
 
 export function getModels() {

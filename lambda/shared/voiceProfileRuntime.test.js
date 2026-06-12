@@ -239,7 +239,7 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
 
   assert.deepEqual(readKeys, ['voice-profiles/lecturer-a-v1.json', 'voice-profiles/active.json']);
   assert.deepEqual(listedExpNames, ['lecturer-a']);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 3);
   assert.deepEqual(writes[0], {
     key: 'voice-profiles/lecturer-a-v1.json',
     body: {
@@ -287,6 +287,11 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
       updatedAt: writes[1].body.updatedAt,
     },
   });
+  assert.equal(writes[2].key, 'voice-profile-configs/lecturer-a-v1/default.json');
+  assert.equal(writes[2].body.configId, 'default');
+  assert.equal(writes[2].body.rank, 1);
+  assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference.wav');
+  assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support.wav']);
   assert.equal(loadedProfiles.length, 1);
   assert.deepEqual(loadedProfiles[0].aux_ref_audio_paths, ['training/datasets/lecturer-a/lecturer-a_support.wav']);
   assert.equal(loadedProfiles[0].ref_audio_path, 'training/datasets/lecturer-a/lecturer-a_reference.wav');

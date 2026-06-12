@@ -254,7 +254,7 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
 
     assert.deepEqual(readKeys, ['voice-profiles/lecturer-a-v1.json', 'voice-profiles/active.json']);
     assert.deepEqual(listedExpNames, ['lecturer-a']);
-    assert.equal(writes.length, 2);
+    assert.equal(writes.length, 3);
     assert.deepEqual(writes[0], {
       key: 'voice-profiles/lecturer-a-v1.json',
       body: {
@@ -280,6 +280,11 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
         updatedAt: writes[1].body.updatedAt,
       },
     });
+    assert.equal(writes[2].key, 'voice-profile-configs/lecturer-a-v1/default.json');
+    assert.equal(writes[2].body.configId, 'default');
+    assert.equal(writes[2].body.rank, 1);
+    assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference.wav');
+    assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support.wav']);
     assert.deepEqual(calls.at(-1), {
       routePath: '/ref-audio/warm',
       body: {
