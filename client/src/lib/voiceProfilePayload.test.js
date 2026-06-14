@@ -95,9 +95,8 @@ test('buildVoiceProfilePayload uses local paths outside S3 mode', () => {
   );
 });
 
-test('buildVoiceProfilePayload preserves training, reference, and live fast metadata', () => {
-  assert.deepEqual(
-    buildVoiceProfilePayload({
+test('buildVoiceProfilePayload compacts metadata for CloudFront-safe activation requests', () => {
+  const payload = buildVoiceProfilePayload({
       displayName: 'Metadata Voice',
       selectedGPT: 'models/user-models/gpt/metadata.ckpt',
       selectedSoVITS: 'models/user-models/sovits/metadata.pth',
@@ -117,15 +116,49 @@ test('buildVoiceProfilePayload preserves training, reference, and live fast meta
       },
       referenceMetadata: {
         mode: 'strict',
-        primary: { path: 'training/datasets/metadata/denoised/ref.wav', score: 124 },
-        aux: [{ path: 'training/datasets/metadata/denoised/aux.wav', score: 118 }],
+        selectedPaths: {
+          primary: 'training/datasets/metadata/denoised/ref.wav',
+          aux: ['training/datasets/metadata/denoised/aux.wav'],
+        },
+        primary: {
+          filename: 'ref.wav',
+          path: 'training/datasets/metadata/denoised/ref.wav',
+          score: 124,
+          breakdown: { transcript: 42, fileType: 18, language: 14 },
+          checks: { hasTranscript: true, endsWithSentence: true },
+          reasons: [],
+          file: {
+            filename: 'ref.wav',
+            path: 'training/datasets/metadata/denoised/ref.wav',
+            transcript: 'This long transcript stays in saved configs, not activation.',
+            lang: 'en',
+          },
+        },
+        aux: [{
+          filename: 'aux.wav',
+          path: 'training/datasets/metadata/denoised/aux.wav',
+          score: 118,
+          breakdown: { transcript: 42, fileType: 18, language: 14 },
+          checks: { hasTranscript: true, endsWithSentence: true },
+          reasons: [],
+          file: {
+            filename: 'aux.wav',
+            path: 'training/datasets/metadata/denoised/aux.wav',
+            transcript: 'Auxiliary transcript stays out of activation metadata.',
+            lang: 'en',
+          },
+        }],
       },
       liveFastMetadata: {
         configName: 'Default',
         selected: true,
         rank: 1,
       },
-    }).metadata,
+    });
+
+  assert.ok(JSON.stringify(payload).length < 4096);
+  assert.deepEqual(
+    payload.metadata,
     {
       training: {
         engineVersion: 'v2ProPlus',
@@ -136,8 +169,20 @@ test('buildVoiceProfilePayload preserves training, reference, and live fast meta
       },
       reference: {
         mode: 'strict',
-        primary: { path: 'training/datasets/metadata/denoised/ref.wav', score: 124 },
-        aux: [{ path: 'training/datasets/metadata/denoised/aux.wav', score: 118 }],
+        selectedPaths: {
+          primary: 'training/datasets/metadata/denoised/ref.wav',
+          aux: ['training/datasets/metadata/denoised/aux.wav'],
+        },
+        primary: {
+          filename: 'ref.wav',
+          path: 'training/datasets/metadata/denoised/ref.wav',
+          score: 124,
+        },
+        aux: [{
+          filename: 'aux.wav',
+          path: 'training/datasets/metadata/denoised/aux.wav',
+          score: 118,
+        }],
       },
       liveFast: {
         configName: 'Default',
