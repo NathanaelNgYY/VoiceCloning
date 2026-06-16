@@ -11,6 +11,7 @@ import {
   getVoiceProfileConfigs,
   saveVoiceProfileConfig,
   selectModels,
+  synthesize,
   synthesizeSentence,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
@@ -47,6 +48,11 @@ import {
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
+import {
+  addTtsHistoryItem,
+  createTtsHistoryItem,
+  getTtsHistoryByRoute,
+} from '@/lib/ttsHistory';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
   buildSavedVoiceProfileRestoreKey,
@@ -205,7 +211,7 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
   );
 }
 
-export default function LivePage({ replyMode = 'phrases' }) {
+export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -250,6 +256,11 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [ttsText, setTtsText] = useState('');
+  const [ttsHistory, setTtsHistory] = useState([]);
+  const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
+  const [ttsFullGenerating, setTtsFullGenerating] = useState(false);
+  const [ttsError, setTtsError] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -266,6 +277,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const lastAutoSyncedFingerprintRef = useRef('');
   const statusRequestVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
+  const ttsHistoryRef = useRef([]);
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -1097,6 +1109,55 @@ export default function LivePage({ replyMode = 'phrases' }) {
     }
   }
 
+  async function generateTextToSpeech(route) {
+    const text = ttsText.trim();
+    if (!text) {
+      setTtsError('Enter text to generate audio.');
+      return;
+    }
+    if (!selectedVoiceProfileId || !isReady) {
+      setTtsError('Load a voice profile and config before generating audio.');
+      return;
+    }
+
+    const baseParams = {
+      text,
+      voiceProfileId: selectedVoiceProfileId,
+      text_lang: liveLanguage,
+    };
+    const isFastRoute = route === 'fast';
+    const setGenerating = isFastRoute ? setTtsFastGenerating : setTtsFullGenerating;
+
+    setGenerating(true);
+    setTtsError('');
+    try {
+      const result = isFastRoute
+        ? await synthesizeSentence(baseParams)
+        : await synthesize({
+            ...baseParams,
+            text_split_method: 'cut5',
+            batch_size: 1,
+          });
+      const url = URL.createObjectURL(result.blob);
+      const item = createTtsHistoryItem({
+        route: isFastRoute ? 'fast' : 'full',
+        url,
+        text,
+        voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
+        languageLabel: liveLanguageConfig.label,
+      });
+      setTtsHistory((current) => {
+        const next = addTtsHistoryItem(current, item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+    } catch (err) {
+      setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
     if (!file) return;
@@ -1312,6 +1373,14 @@ export default function LivePage({ replyMode = 'phrases' }) {
   }, []);
 
   useEffect(() => {
+    return () => {
+      ttsHistoryRef.current.forEach((item) => {
+        if (item.url) URL.revokeObjectURL(item.url);
+      });
+    };
+  }, []);
+
+  useEffect(() => {
     if (!canRestoreActiveVoiceProfile || !activeVoiceProfileRestoreKey) {
       return;
     }
@@ -1462,6 +1531,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
     selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
   );
   const isReady = selectedModelLoaded && Boolean(liveRefParams);
+  const isTtsMode = mode === 'tts';
+  const ttsFastHistory = getTtsHistoryByRoute(ttsHistory, 'fast');
+  const ttsFullHistory = getTtsHistoryByRoute(ttsHistory, 'full');
   const isListening = liveSpeech.isMicInputEnabled && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
   const canBargeIn = liveSpeech.isMicInputEnabled || liveSpeech.isBargeInArmed;
   const meterActive = (liveSpeech.isMicInputEnabled && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking'))
@@ -1495,7 +1567,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
         <h1 className="text-2xl font-bold tracking-tight">
           <span className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary/80 bg-clip-text text-transparent">
-            Live Voice Chat
+            {isTtsMode ? 'Text to Speech' : 'Live Voice Chat'}
           </span>
         </h1>
 
@@ -1613,13 +1685,113 @@ export default function LivePage({ replyMode = 'phrases' }) {
         </div>
       )}
 
-      {!liveSpeech.speechApiAvailable && (
+      {!isTtsMode && !liveSpeech.speechApiAvailable && (
         <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-600">
           This browser does not support live audio processing.
         </div>
       )}
 
-      {/* ── Chat card — fills remaining height ── */}
+      {isTtsMode ? (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Input text</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {loadedProfile?.displayName || 'Selected voice'} · {liveLanguageConfig.label} · {loadedConfigId || 'current config'}
+                </p>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                Browser download only
+              </span>
+            </div>
+            <Textarea
+              value={ttsText}
+              onChange={(event) => setTtsText(event.target.value)}
+              disabled={!isReady || ttsFastGenerating || ttsFullGenerating}
+              placeholder={isReady ? 'Type the text to synthesize.' : 'Load a voice profile first.'}
+              className="mt-4 min-h-[220px] rounded-xl border-slate-200 bg-white text-sm leading-6 shadow-none"
+            />
+            {ttsError && (
+              <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
+            )}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <Button
+                type="button"
+                onClick={() => generateTextToSpeech('fast')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || ttsFullGenerating}
+                className="h-10 rounded-xl"
+              >
+                {ttsFastGenerating ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+                Live Fast TTS
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => generateTextToSpeech('full')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || ttsFullGenerating}
+                className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+              >
+                {ttsFullGenerating ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                Full Inference TTS
+              </Button>
+            </div>
+          </section>
+
+          <aside className="space-y-4">
+            {[
+              {
+                title: 'Live Fast output',
+                description: '/api/live/tts-sentence',
+                items: ttsFastHistory,
+              },
+              {
+                title: 'Full inference output',
+                description: '/api/inference',
+                items: ttsFullHistory,
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_4px_32px_-12px_rgba(0,0,0,0.08)]">
+                <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+                <p className="mt-1 text-xs text-slate-400">{item.description}</p>
+                {item.items.length > 0 ? (
+                  <div className="mt-3 space-y-3">
+                    {item.items.map((result, index) => (
+                      <div key={result.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-700">
+                              {index === 0 ? 'Latest' : new Date(result.createdAt).toLocaleTimeString()}
+                            </p>
+                            <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                              {result.voiceName || 'Selected voice'} · {result.languageLabel || liveLanguageConfig.label}
+                            </p>
+                          </div>
+                          <a
+                            href={result.url}
+                            download={result.filename}
+                            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            <Download size={12} /> WAV
+                          </a>
+                        </div>
+                        <audio className="w-full" controls src={result.url} />
+                        {result.text && (
+                          <p className="mt-2 max-h-10 overflow-hidden text-xs leading-5 text-slate-500">{result.text}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-400">
+                    No audio generated yet.
+                  </p>
+                )}
+              </div>
+            ))}
+          </aside>
+        </div>
+      ) : (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
 
         {/* Messages */}
@@ -1734,6 +1906,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Advanced settings collapsible ── */}
       <Collapsible open={showSettings} onOpenChange={setShowSettings}>

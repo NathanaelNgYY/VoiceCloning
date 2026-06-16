@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Navigate, Routes, Route, NavLink } from 'react-router-dom';
+import { Navigate, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { Power } from 'lucide-react';
 
 function AnimatedBackground() {
@@ -20,6 +20,12 @@ import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { getInstanceStatus, startInstance } from './services/api.js';
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
+
+function LiveFastEntry() {
+  const location = useLocation();
+  const tab = new URLSearchParams(location.search).get('tab');
+  return <LivePage replyMode="phrases" mode={tab === 'text-to-speech' ? 'tts' : 'chat'} />;
+}
 
 function GpuInstanceControl() {
   const [status, setStatus] = useState(null);
@@ -194,7 +200,7 @@ export default function App() {
                 appConfig.showTraining
                   ? <TrainingPage />
                   : appConfig.showLiveFast
-                    ? <LivePage replyMode="phrases" />
+                    ? <LiveFastEntry />
                     : <Navigate to={appConfig.defaultPath} replace />
               }
             />
@@ -203,6 +209,14 @@ export default function App() {
               element={
                 appConfig.showLiveFast
                   ? <LivePage replyMode="phrases" />
+                  : <Navigate to={appConfig.defaultPath} replace />
+              }
+            />
+            <Route
+              path="/text-to-speech"
+              element={
+                appConfig.showTextToSpeech
+                  ? <LivePage replyMode="phrases" mode="tts" />
                   : <Navigate to={appConfig.defaultPath} replace />
               }
             />
