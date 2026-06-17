@@ -213,6 +213,10 @@ const symbolPattern = new RegExp(
 function preprocessText(text) {
   let result = text;
 
+  // 0) Greek/maths delta symbol → the word, so it is never read as "triangle".
+  //    Handles attached "ΔG" → "delta G" and spaced "Δ G". Δ = U+0394, ∆ = U+2206.
+  result = result.replace(/[Δ∆]/g, 'delta ');
+
   // 1) Abbreviation expansion
   result = result.replace(abbrPattern, (match) => {
     // Lookup is case-insensitive — normalise the key to title case for the map
