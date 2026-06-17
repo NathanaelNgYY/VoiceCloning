@@ -11,10 +11,12 @@ import {
   getVoiceProfileConfigs,
   saveVoiceProfileConfig,
   selectModels,
-  synthesize,
+  startGeneration,
+  getGenerationResult,
   synthesizeSentence,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
+import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import {
   LIVE_LANGUAGE_OPTIONS,
   getLiveLanguageConfig,
@@ -278,6 +280,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const statusRequestVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
+  const ttsInference = useInferenceSSE();
+  const pendingFullTtsRef = useRef(null);
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -1125,38 +1129,81 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       voiceProfileId: selectedVoiceProfileId,
       text_lang: liveLanguage,
     };
-    const isFastRoute = route === 'fast';
-    const setGenerating = isFastRoute ? setTtsFastGenerating : setTtsFullGenerating;
+    const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
+    const languageLabel = liveLanguageConfig.label;
 
-    setGenerating(true);
     setTtsError('');
+
+    // Live Fast = one short sentence; the synchronous request comfortably finishes
+    // inside CloudFront's origin timeout, so keep it as a single blocking call.
+    if (route === 'fast') {
+      setTtsFastGenerating(true);
+      try {
+        const result = await synthesizeSentence(baseParams);
+        recordTtsHistory({ route: 'fast', url: URL.createObjectURL(result.blob), text, voiceName, languageLabel });
+      } catch (err) {
+        setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+      } finally {
+        setTtsFastGenerating(false);
+      }
+      return;
+    }
+
+    // Full inference can be a long script. A synchronous /inference request holds one
+    // HTTP connection open until all audio returns, which 504s past CloudFront's ~30s
+    // origin timeout / 6MB response limit. Use the async generate flow instead: it
+    // returns a sessionId immediately, streams progress over SSE, and fetches the
+    // finished audio via a presigned URL (bytes never traverse the Lambda response).
+    setTtsFullGenerating(true);
     try {
-      const result = isFastRoute
-        ? await synthesizeSentence(baseParams)
-        : await synthesize({
-            ...baseParams,
-            text_split_method: 'cut5',
-            batch_size: 1,
-          });
-      const url = URL.createObjectURL(result.blob);
-      const item = createTtsHistoryItem({
-        route: isFastRoute ? 'fast' : 'full',
-        url,
-        text,
-        voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
-        languageLabel: liveLanguageConfig.label,
-      });
-      setTtsHistory((current) => {
-        const next = addTtsHistoryItem(current, item);
-        ttsHistoryRef.current = next;
-        return next;
-      });
+      const res = await startGeneration(baseParams);
+      const { sessionId } = res.data;
+      pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel };
+      ttsInference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
+      pendingFullTtsRef.current = null;
       setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
-    } finally {
-      setGenerating(false);
+      setTtsFullGenerating(false);
     }
   }
+
+  function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
+    const item = createTtsHistoryItem({ route, url, text, voiceName, languageLabel });
+    setTtsHistory((current) => {
+      const next = addTtsHistoryItem(current, item);
+      ttsHistoryRef.current = next;
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    const pending = pendingFullTtsRef.current;
+    if (!pending) return;
+
+    if (ttsInference.status === 'complete') {
+      getGenerationResult(pending.sessionId)
+        .then((blob) => {
+          recordTtsHistory({
+            route: 'full',
+            url: URL.createObjectURL(blob),
+            text: pending.text,
+            voiceName: pending.voiceName,
+            languageLabel: pending.languageLabel,
+          });
+        })
+        .catch((err) => setTtsError(err.message || 'Could not fetch the generated audio.'))
+        .finally(() => {
+          pendingFullTtsRef.current = null;
+          setTtsFullGenerating(false);
+          ttsInference.reset();
+        });
+    } else if (ttsInference.status === 'error' || ttsInference.status === 'cancelled') {
+      setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
+      pendingFullTtsRef.current = null;
+      setTtsFullGenerating(false);
+      ttsInference.reset();
+    }
+  }, [ttsInference.status, ttsInference.error]);
 
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
@@ -1714,6 +1761,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             />
             {ttsError && (
               <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
+            )}
+            {ttsFullGenerating && (
+              <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
+                {ttsInference.totalChunks > 0
+                  ? `Synthesizing chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing synthesis…'}
+              </p>
             )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Button
