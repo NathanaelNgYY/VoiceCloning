@@ -240,6 +240,7 @@ function normalizeWhitespace(text) {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/(\w)-(\w)/g, '$1 $2')   // "real-time" → "real time" so TTS won't say "minus"
+    .replace(/\s+[-–]\s+/g, ' — ')    // " - " used as a dash → em-dash (a pause, not spoken "minus")
     .trim();
   return splitCompoundWords(cleaned);
 }

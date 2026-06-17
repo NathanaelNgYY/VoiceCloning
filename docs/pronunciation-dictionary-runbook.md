@@ -110,6 +110,10 @@ These are fixed in the **input text** (what you paste into the TTS page), not th
 
 ## Durability
 
+> The canonical, version-controlled copy of our overrides lives at
+> `gpu-inference-worker/pronunciation/engdict-hot.additions.rep` (with its own README). Add new
+> terms there and commit them, then apply to the host below — don't let the host file be the only copy.
+
 - Editing the host file is **permanent on this instance** — it survives reboots and service
   restarts.
 - It is **lost if the EC2 instance is rebuilt/reimaged** or GPT-SoVITS is reinstalled.
