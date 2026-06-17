@@ -25,3 +25,19 @@ test('intra-word hyphen still becomes a space', () => {
   const joined = chunks.join(' ');
   assert.ok(joined.includes('real time'), `intra-word hyphen should split: "${joined}"`);
 });
+
+// The delta symbol must be spoken as the word "delta", never "triangle".
+// Handles both attached ("ΔG") and spaced ("Δ G") forms.
+test('attached delta symbol becomes "delta G"', () => {
+  const chunks = splitTextIntoChunks('The free-energy change ΔG is negative.');
+  const joined = chunks.join(' ');
+  assert.ok(/delta\s+G/i.test(joined), `delta symbol should become the word "delta": "${joined}"`);
+  assert.ok(!joined.includes('Δ'), `no raw delta symbol should survive: "${joined}"`);
+});
+
+test('increment symbol also becomes "delta"', () => {
+  const chunks = splitTextIntoChunks('Here ∆G equals zero.');
+  const joined = chunks.join(' ');
+  assert.ok(/delta\s+G/i.test(joined), `increment symbol should become "delta": "${joined}"`);
+  assert.ok(!joined.includes('∆'), `no raw increment symbol should survive: "${joined}"`);
+});
