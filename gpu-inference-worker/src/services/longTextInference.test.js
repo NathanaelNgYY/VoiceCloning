@@ -41,3 +41,18 @@ test('increment symbol also becomes "delta"', () => {
   assert.ok(/delta\s+G/i.test(joined), `increment symbol should become "delta": "${joined}"`);
   assert.ok(!joined.includes('∆'), `no raw increment symbol should survive: "${joined}"`);
 });
+
+// A short lead-in clause ("Typically,", "However,", "Therefore,") must not be
+// stranded as its own 1-2 word chunk — GPT-SoVITS has no context to pace a lone
+// word and rushes it. It should merge forward into the following clause.
+test('a short lead-in clause is merged forward, not left as a rushed micro-chunk', () => {
+  const chunks = splitTextIntoChunks('Typically, large fuel molecules are broken down into smaller biomolecules.');
+  assert.ok(
+    !chunks.some(c => c.trim() === 'Typically,'),
+    `"Typically," should not be its own chunk: ${JSON.stringify(chunks)}`,
+  );
+  assert.ok(
+    chunks.some(c => /Typically,\s+large fuel/i.test(c)),
+    `"Typically" should merge with the next clause: ${JSON.stringify(chunks)}`,
+  );
+});

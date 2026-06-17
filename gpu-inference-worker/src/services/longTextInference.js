@@ -19,6 +19,11 @@ const DEFAULTS = {
   retryCount: 2,
 };
 
+// Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a
+// short lead-in clause like "Typically," from being stranded as its own rushed
+// 1-2 word chunk; it merges forward into the following clause instead.
+const MIN_CHUNK_LENGTH = 24;
+
 function clampNumber(value, fallback) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -368,9 +373,11 @@ export function splitTextIntoChunks(text, options = {}) {
     const lastChar = trimmed.slice(-1);
     const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
     if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
-      chunks.push(trimmed);
-      current = '';
-      sentenceCount = 0;
+      if (trimmed.length >= MIN_CHUNK_LENGTH) {
+        chunks.push(trimmed);
+        current = '';
+        sentenceCount = 0;
+      }
     }
   }
 
