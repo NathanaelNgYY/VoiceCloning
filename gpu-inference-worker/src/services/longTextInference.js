@@ -703,7 +703,14 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   const bytesPerSample = Math.max(1, wav.bitsPerSample / 8);
   const frameCount = Math.floor(bytes.length / wav.blockAlign);
   const durationSec = frameCount / wav.sampleRate;
-  const expectedMinDurationSec = Math.max(0.25, Math.min(12, expectedText.length / 45));
+  // A natural read is ~15 characters/second. If a chunk's audio runs well under
+  // the time its text should take, the model almost certainly dropped words; we
+  // flag it so the chunk is re-rolled (a new seed usually produces a full read).
+  // Tune REQUIRED_DURATION_FRACTION up to catch smaller drops (more retries) or
+  // down to be more permissive. Assumes speed_factor near 1.0 or slower.
+  const NATURAL_CHARS_PER_SEC = 15;
+  const REQUIRED_DURATION_FRACTION = 0.65;
+  const expectedDurationSec = Math.max(0.3, Math.min(20, expectedText.length / NATURAL_CHARS_PER_SEC));
 
   let sampleCount = 0;
   let absPeak = 0;
@@ -819,8 +826,8 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   }
 
   let reason = null;
-  if (durationSec < expectedMinDurationSec * 0.45) {
-    reason = `Audio duration too short for text (${durationSec.toFixed(2)}s)`;
+  if (durationSec < expectedDurationSec * REQUIRED_DURATION_FRACTION) {
+    reason = `Audio too short for its text — likely dropped words (${durationSec.toFixed(2)}s vs ~${expectedDurationSec.toFixed(1)}s expected)`;
   } else if (rms < 0.003) {
     reason = 'Generated audio is effectively silent';
   } else if (zeroishRatio > 0.995) {

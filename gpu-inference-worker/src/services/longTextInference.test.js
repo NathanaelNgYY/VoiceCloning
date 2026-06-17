@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitTextIntoChunks } from './longTextInference.js';
+import { splitTextIntoChunks, analyzeAudioQuality } from './longTextInference.js';
+
+// Build a valid PCM16 mono WAV of a given duration filled with mild noise
+// (healthy RMS, not silent, not clipped, low autocorrelation so it isn't
+// mistaken for a loop). Lets us probe the duration-based skip detector.
+function makeNoiseWav(durationSec, sampleRate = 32000) {
+  const blockAlign = 2; // mono, 16-bit
+  const frameCount = Math.round(durationSec * sampleRate);
+  const dataSize = frameCount * blockAlign;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataSize, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * blockAlign, 28); buf.writeUInt16LE(blockAlign, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataSize, 40);
+  let seed = 12345;
+  for (let i = 0; i < frameCount; i++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    const v = ((seed / 0x7fffffff) * 2 - 1) * 0.3 * 32767;
+    buf.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(v))), 44 + i * blockAlign);
+  }
+  return buf;
+}
 
 // A hyphen used as a dash with spaces around it (" - ") reaches GPT-SoVITS as a
 // bare hyphen-minus, which the English G2P verbalizes as the word "minus".
@@ -55,4 +78,19 @@ test('a short lead-in clause is merged forward, not left as a rushed micro-chunk
     chunks.some(c => /Typically,\s+large fuel/i.test(c)),
     `"Typically" should merge with the next clause: ${JSON.stringify(chunks)}`,
   );
+});
+
+// Skip detector: a chunk whose audio is far too short for its text almost
+// certainly dropped words and must be flagged so it gets re-rolled.
+const SKIP_TEXT = 'large fuel molecules are broken down into smaller biomolecules and energy currency';
+
+test('audio far too short for its text is flagged as likely dropped words', () => {
+  const result = analyzeAudioQuality(makeNoiseWav(1.0), SKIP_TEXT); // ~82 chars in 1s = impossibly fast
+  assert.equal(result.ok, false, `should be flagged (${result.durationSec?.toFixed(2)}s): ${result.reason}`);
+  assert.match(result.reason || '', /too short/i);
+});
+
+test('audio of natural length for its text is not flagged short', () => {
+  const result = analyzeAudioQuality(makeNoiseWav(6.0), SKIP_TEXT); // ~82 chars in 6s = normal pace
+  assert.doesNotMatch(result.reason || '', /too short/i, `should not be flagged short: ${result.reason}`);
 });
