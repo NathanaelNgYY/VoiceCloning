@@ -72,3 +72,35 @@ test('pronunciation dictionary overrides an existing word when admin saves it ag
   assert.equal(body.entries[0].readable, 'en zyme');
   assert.equal(body.entries[0].arpabet, '');
 });
+
+test('pronunciation dictionary deletes an entry by category and word', async () => {
+  const objects = new Map();
+  const handler = createHandler({
+    readObject: async (key) => {
+      if (!objects.has(key)) {
+        const error = new Error('missing');
+        error.$metadata = { httpStatusCode: 404 };
+        throw error;
+      }
+      return objects.get(key);
+    },
+    writeObject: async (key, buffer) => objects.set(key, buffer),
+    now: () => '2026-06-18T00:00:00.000Z',
+  });
+
+  await handler(event('POST', '/api/pronunciation-dictionary', {
+    word: 'enzyme',
+    category: 'biology',
+    arpabet: 'EH1 N Z AY0 M',
+  }));
+  const deleted = await handler(event('POST', '/api/pronunciation-dictionary', {
+    action: 'delete',
+    word: 'enzyme',
+    category: 'biology',
+  }));
+
+  assert.equal(deleted.statusCode, 200);
+  const body = JSON.parse(deleted.body);
+  assert.equal(body.deleted, true);
+  assert.equal(body.dictionary.entries.length, 0);
+});

@@ -18,6 +18,15 @@ test('applyReadableOverrides lets admin custom words override synthesis text imm
   assert.equal(text, 'en zyme activity helps foo zyme work.');
 });
 
+test('applyReadableOverrides leaves ARPAbet entries as original words for dictionary lookup', () => {
+  const text = applyReadableOverrides('Foozyme activity helps Barase work.', [
+    { word: 'Foozyme', readable: 'foo zyme', arpabet: 'F UW1 Z AY0 M' },
+    { word: 'Barase', readable: 'bar ace' },
+  ]);
+
+  assert.equal(text, 'Foozyme activity helps bar ace work.');
+});
+
 test('buildHotDictionaryLines converts admin ARPAbet entries into engdict-hot lines', () => {
   assert.deepEqual(buildHotDictionaryLines([
     { word: 'Foozyme', arpabet: 'F UW1 Z AY0 M' },
@@ -59,4 +68,25 @@ test('writeHotDictionaryOverrides replaces existing matching hot dictionary word
   assert.doesNotMatch(content, /FOOZYME OLD/u);
   assert.match(content, /OTHER AH1 DH ER0/u);
   assert.match(content, /FOOZYME F UW1 Z AY0 M/u);
+});
+
+test('writeHotDictionaryOverrides removes managed admin block when no ARPAbet entries remain', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pronunciation-clear-'));
+  const dictPath = path.join(root, 'GPT_SoVITS', 'text');
+  fs.mkdirSync(dictPath, { recursive: true });
+  const filePath = path.join(dictPath, 'engdict-hot.rep');
+  fs.writeFileSync(filePath, [
+    'OTHER AH1 DH ER0',
+    '# BEGIN ADMIN PRONUNCIATION DICTIONARY',
+    'FOOZYME F UW1 Z AY0 M',
+    '# END ADMIN PRONUNCIATION DICTIONARY',
+    '',
+  ].join('\n'), 'utf-8');
+
+  writeHotDictionaryOverrides(root, []);
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  assert.match(content, /OTHER AH1 DH ER0/u);
+  assert.doesNotMatch(content, /ADMIN PRONUNCIATION/u);
+  assert.doesNotMatch(content, /FOOZYME/u);
 });

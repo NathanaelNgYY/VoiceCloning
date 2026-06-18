@@ -29,8 +29,9 @@ export function applyReadableOverrides(text, entries = []) {
     .map((entry) => ({
       word: normalizeWord(entry.word),
       readable: String(entry.readable || '').trim(),
+      arpabet: normalizeArpabet(entry.arpabet),
     }))
-    .filter((entry) => entry.word && entry.readable)
+    .filter((entry) => entry.word && entry.readable && !entry.arpabet)
     .sort((a, b) => b.word.length - a.word.length);
 
   for (const entry of readableEntries) {
@@ -59,14 +60,20 @@ function hotDictionaryWords(entries = []) {
 
 export function writeHotDictionaryOverrides(gptSovitsRoot = GPT_SOVITS_ROOT, entries = []) {
   const lines = buildHotDictionaryLines(entries);
-  if (!gptSovitsRoot || lines.length === 0) return { written: false, lines: 0 };
+  if (!gptSovitsRoot) return { written: false, lines: 0 };
 
   const filePath = path.join(gptSovitsRoot, 'GPT_SoVITS', 'text', 'engdict-hot.rep');
   if (!fs.existsSync(filePath)) return { written: false, lines: 0 };
 
   const current = fs.readFileSync(filePath, 'utf-8');
-  const block = `${BEGIN_MARKER}\n${lines.join('\n')}\n${END_MARKER}`;
   const pattern = new RegExp(`\\n?${escapeRegExp(BEGIN_MARKER)}[\\s\\S]*?${escapeRegExp(END_MARKER)}\\n?`, 'u');
+  if (lines.length === 0) {
+    const next = `${current.replace(pattern, '\n').trimEnd()}\n`;
+    if (next !== current) fs.writeFileSync(filePath, next, 'utf-8');
+    return { written: true, lines: 0 };
+  }
+
+  const block = `${BEGIN_MARKER}\n${lines.join('\n')}\n${END_MARKER}`;
   const words = hotDictionaryWords(entries);
   const withoutManagedBlock = current.replace(pattern, '\n');
   const withoutAdminWords = withoutManagedBlock

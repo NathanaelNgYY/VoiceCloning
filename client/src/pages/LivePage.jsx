@@ -16,6 +16,7 @@ import {
   synthesizeSentence,
   getPronunciationDictionary,
   savePronunciationEntry,
+  deletePronunciationEntry,
   startInferenceServer,
   stopInferenceServer,
 } from '../services/api.js';
@@ -62,6 +63,10 @@ import {
   getTtsHistoryByRoute,
 } from '@/lib/ttsHistory';
 import { concatWavBlobs } from '@/lib/wavConcat';
+import {
+  parsePronunciationCsv,
+  serializePronunciationCsv,
+} from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
   buildSavedVoiceProfileRestoreKey,
@@ -87,12 +92,16 @@ import {
   Loader2,
   Mic,
   MicOff,
+  Pencil,
   PlayCircle,
   RefreshCw,
   Square,
+  Trash2,
+  Upload,
   UserRound,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 
 function messageStatusText(message) {
@@ -278,9 +287,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationWord, setPronunciationWord] = useState('');
   const [pronunciationReadable, setPronunciationReadable] = useState('');
   const [pronunciationArpabet, setPronunciationArpabet] = useState('');
+  const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
   const [pronunciationMessage, setPronunciationMessage] = useState('');
   const [pronunciationBusy, setPronunciationBusy] = useState(false);
+  const [pronunciationTestingWord, setPronunciationTestingWord] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -298,6 +309,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const statusRequestVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
+  const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
 
@@ -1240,13 +1252,160 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         setPronunciationMessage(`Saved ${word}. Restarting inference to load ARPAbet...`);
         await stopInferenceServer();
         await startInferenceServer();
-        setPronunciationMessage(`Saved ${word} and restarted inference.`);
-        checkStatus();
+        setPronunciationMessage(`Saved ${word}. Reloading selected model...`);
+        await loadSelectedModel();
+        setPronunciationMessage(`Saved ${word}, restarted inference, and reloaded the selected model.`);
+        await checkStatus();
       } else {
-        setPronunciationMessage(`Saved ${word} in ${pronunciationCategory}.`);
+        setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
       }
+      setEditingPronunciationWord('');
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  function editPronunciation(entry) {
+    setEditingPronunciationWord(entry.word || '');
+    setPronunciationWord(entry.word || '');
+    setPronunciationReadable(entry.readable || '');
+    setPronunciationArpabet(entry.arpabet || '');
+    setPronunciationMessage(`Editing ${entry.word}.`);
+  }
+
+  function clearPronunciationForm() {
+    setEditingPronunciationWord('');
+    setPronunciationWord('');
+    setPronunciationReadable('');
+    setPronunciationArpabet('');
+    setPronunciationMessage('');
+  }
+
+  async function deletePronunciation(entry) {
+    const word = String(entry.word || '').trim();
+    if (!word) return;
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await deletePronunciationEntry({ word, category: pronunciationCategory });
+      setPronunciationEntries(res.data.dictionary?.entries || []);
+      if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
+      if (entry.arpabet) {
+        setPronunciationMessage(`Deleted ${word}. Restarting inference to remove ARPAbet...`);
+        await stopInferenceServer();
+        await startInferenceServer();
+        setPronunciationMessage(`Deleted ${word}. Reloading selected model...`);
+        await loadSelectedModel();
+        setPronunciationMessage(`Deleted ${word}, restarted inference, and reloaded the selected model.`);
+        await checkStatus();
+      } else {
+        setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
+      }
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not delete pronunciation entry.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  function buildPronunciationTestText(entry) {
+    const word = String(entry.word || '').trim();
+    const readable = String(entry.readable || '').trim();
+    const arpabet = String(entry.arpabet || '').trim();
+    const spoken = readable && !arpabet ? readable : word;
+    return `Pronunciation test. ${spoken}. ${spoken} is used in this sentence.`;
+  }
+
+  async function testPronunciation(entry = null) {
+    const word = String(entry?.word || pronunciationWord || '').trim();
+    const readable = String(entry?.readable || pronunciationReadable || '').trim();
+    const arpabet = String(entry?.arpabet || pronunciationArpabet || '').trim();
+    if (!word) {
+      setPronunciationMessage('Enter a word before testing.');
+      return;
+    }
+    if (arpabet && !entry) {
+      setPronunciationMessage('Save ARPAbet first, then test it after inference reloads.');
+      return;
+    }
+    if (!selectedVoiceProfileId || !isReady) {
+      setPronunciationMessage('Load a voice profile and config before testing pronunciation.');
+      return;
+    }
+
+    setPronunciationTestingWord(word);
+    setPronunciationMessage(`Testing ${word}...`);
+    try {
+      const text = buildPronunciationTestText({ word, readable, arpabet });
+      const result = await synthesizeSentence({
+        text,
+        voiceProfileId: selectedVoiceProfileId,
+        text_lang: liveLanguage,
+      });
+      recordTtsHistory({
+        route: 'fast',
+        url: URL.createObjectURL(result.blob),
+        text,
+        voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
+        languageLabel: liveLanguageConfig.label,
+      });
+      setPronunciationMessage(`Generated pronunciation test for ${word}.`);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not test pronunciation.');
+    } finally {
+      setPronunciationTestingWord('');
+    }
+  }
+
+  function exportPronunciationCsv() {
+    const csv = serializePronunciationCsv(pronunciationEntries);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `pronunciation-${pronunciationCategory}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setPronunciationMessage(`Exported ${pronunciationEntries.length} ${pronunciationCategory} entries.`);
+  }
+
+  async function importPronunciationCsv(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setPronunciationBusy(true);
+    setPronunciationMessage(`Importing ${file.name}...`);
+    try {
+      const rows = parsePronunciationCsv(await file.text(), pronunciationCategory);
+      if (rows.length === 0) {
+        setPronunciationMessage('No valid pronunciation rows found. CSV needs word plus readable or ARPAbet.');
+        return;
+      }
+
+      let hasArpabet = false;
+      for (const row of rows) {
+        if (row.arpabet) hasArpabet = true;
+        await savePronunciationEntry({
+          ...row,
+          source: row.arpabet ? 'csv-arpabet' : 'csv-readable',
+        });
+      }
+
+      await loadPronunciationEntries(pronunciationCategory);
+      if (hasArpabet) {
+        setPronunciationMessage(`Imported ${rows.length} entries. Restarting inference to load ARPAbet...`);
+        await stopInferenceServer();
+        await startInferenceServer();
+        setPronunciationMessage(`Imported ${rows.length} entries. Reloading selected model...`);
+        await loadSelectedModel();
+        await checkStatus();
+      }
+      setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not import pronunciation CSV.');
     } finally {
       setPronunciationBusy(false);
     }
@@ -1909,16 +2068,60 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy} className="h-8 rounded-lg">
                   <Check size={13} />
-                  Save entry
+                  {editingPronunciationWord ? 'Update entry' : 'Save entry'}
                 </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => testPronunciation()}
+                  disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady}
+                  className="h-8 rounded-lg border-slate-200 bg-white"
+                >
+                  {pronunciationTestingWord === pronunciationWord.trim() ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                  Test
+                </Button>
+                {editingPronunciationWord && (
+                  <Button type="button" size="sm" variant="outline" onClick={clearPronunciationForm} disabled={pronunciationBusy} className="h-8 rounded-lg border-slate-200 bg-white">
+                    <X size={13} />
+                    Cancel
+                  </Button>
+                )}
+                <Button type="button" size="sm" variant="outline" onClick={exportPronunciationCsv} disabled={pronunciationBusy || pronunciationEntries.length === 0} className="h-8 rounded-lg border-slate-200 bg-white">
+                  <Download size={13} />
+                  Export CSV
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => pronunciationImportInputRef.current?.click()} disabled={pronunciationBusy} className="h-8 rounded-lg border-slate-200 bg-white">
+                  <Upload size={13} />
+                  Import CSV
+                </Button>
+                <input ref={pronunciationImportInputRef} type="file" accept=".csv,text/csv" onChange={importPronunciationCsv} className="hidden" />
               </div>
               {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
               {pronunciationEntries.length > 0 && (
-                <div className="mt-3 max-h-24 overflow-auto rounded-lg border border-slate-100 bg-white">
-                  {pronunciationEntries.slice(0, 8).map((entry) => (
-                    <div key={entry.id || entry.word} className="flex items-center justify-between gap-3 border-b border-slate-50 px-2 py-1.5 text-xs last:border-b-0">
-                      <span className="font-medium text-slate-700">{entry.word}</span>
-                      <span className="truncate font-mono text-slate-400">{entry.arpabet || entry.readable}</span>
+                <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-100 bg-white">
+                  {pronunciationEntries.map((entry) => (
+                    <div key={entry.id || entry.word} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-50 px-2 py-1.5 text-xs last:border-b-0">
+                      <button
+                        type="button"
+                        onClick={() => editPronunciation(entry)}
+                        className="min-w-0 text-left"
+                        disabled={pronunciationBusy}
+                      >
+                        <span className="block truncate font-medium text-slate-700">{entry.word}</span>
+                        <span className="block truncate font-mono text-slate-400">{entry.arpabet || entry.readable}</span>
+                      </button>
+                      <div className="flex items-center gap-1">
+                        <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady} className="h-7 w-7 rounded-lg text-blue-500">
+                          {pronunciationTestingWord === entry.word ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                        </Button>
+                        <Button type="button" size="icon" variant="ghost" onClick={() => editPronunciation(entry)} disabled={pronunciationBusy} className="h-7 w-7 rounded-lg text-slate-500">
+                          <Pencil size={13} />
+                        </Button>
+                        <Button type="button" size="icon" variant="ghost" onClick={() => deletePronunciation(entry)} disabled={pronunciationBusy} className="h-7 w-7 rounded-lg text-red-500">
+                          <Trash2 size={13} />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>

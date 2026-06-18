@@ -77,6 +77,16 @@ export function createHandler({
 
       if (method === 'POST' && DICTIONARY_PATH.test(routePath)) {
         const body = parseJsonBody(event);
+        if (String(body.action || '').toLowerCase() === 'delete') {
+          const category = normalizeCategory(body.category);
+          const word = normalizeWord(body.word);
+          if (!word) return err(400, 'word is required', event);
+          const dictionary = await readDictionary(readObject, category);
+          const entries = dictionary.entries.filter((item) => String(item.word || '').toLowerCase() !== word.toLowerCase());
+          const saved = { ...dictionary, entries, updatedAt: now() };
+          await writeObject(dictionaryKey(category), Buffer.from(JSON.stringify(saved), 'utf-8'), 'application/json');
+          return ok({ deleted: entries.length !== dictionary.entries.length, word, dictionary: saved }, {}, event);
+        }
         const entry = normalizeEntry(body, now);
         const dictionary = await readDictionary(readObject, entry.category);
         const entries = [

@@ -8,7 +8,7 @@ test('prepareTextForSynthesis normalizes symbols and dashes for any synthesis ro
   assert.match(result, /delta\s+G/i);
   assert.doesNotMatch(result, /[Δ∆]/u);
   assert.doesNotMatch(result, /\s-\s/u);
-  assert.match(result, /—/u);
+  assert.doesNotMatch(result, /[–—]/u);
   assert.match(result, /real time/u);
 });
 
@@ -30,4 +30,12 @@ test('prepareTextForSynthesis handles bullets, ranges, and math operators', () =
   assert.match(result, /delta G\s+less than or equal to\s+0/u);
   assert.match(result, /A\+B|A B/u);
   assert.doesNotMatch(result, /--/u);
+});
+
+test('prepareTextForSynthesis expands slash abbreviations and removes spoken punctuation dashes', () => {
+  const result = prepareTextForSynthesis('Use ref. w/ enzyme - not w/o ATP; input/output matters.');
+
+  assert.match(result, /reference with enzyme, not without A T P/u);
+  assert.match(result, /input or out put/u);
+  assert.doesNotMatch(result, /[-–—]/u);
 });

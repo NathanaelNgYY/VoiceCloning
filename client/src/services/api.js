@@ -422,8 +422,10 @@ export async function getGenerationResultSource(sessionId) {
   await getStorageMode();
 
   if (isS3Mode()) {
-    const res = await api.get(`/inference/result/${sessionId}`);
-    return { url: res.data.url, revoke: false };
+    return {
+      url: resolveApiPath(`/api/inference/result/${encodeURIComponent(sessionId)}?audio=1`),
+      revoke: false,
+    };
   }
 
   const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
@@ -449,6 +451,10 @@ export function getPronunciationDictionary(category = 'general') {
 
 export function savePronunciationEntry(entry) {
   return api.post('/pronunciation-dictionary', entry);
+}
+
+export function deletePronunciationEntry(entry) {
+  return api.post('/pronunciation-dictionary', { ...entry, action: 'delete' });
 }
 
 export async function getInferenceChunk(sessionId, index) {

@@ -73,6 +73,24 @@ test('inference result can return a GPU worker artifact URL instead of S3', asyn
   });
 });
 
+test('inference result audio request redirects to the playable artifact URL', async () => {
+  await withEnv({
+    ARTIFACT_SOURCE: 'gpu-worker',
+    GPU_WORKER_URL: 'http://gpu-worker.internal:3001',
+    GPU_WORKER_PUBLIC_URL: 'https://gpu-worker.example.com',
+  }, async () => {
+    const response = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/inference/result/abc-123',
+      queryStringParameters: { audio: '1' },
+    });
+
+    assert.equal(response.statusCode, 302);
+    assert.equal(response.headers.Location, 'https://gpu-worker.example.com/inference/result/abc-123');
+    assert.equal(response.headers['Cache-Control'], 'no-store');
+  });
+});
+
 test('inference current returns idle when the GPU worker is not reachable', async () => {
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://localhost:3999';

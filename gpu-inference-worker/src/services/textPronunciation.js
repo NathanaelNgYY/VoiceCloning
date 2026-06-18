@@ -140,6 +140,13 @@ const ABBREVIATIONS = {
   'sec.': 'section',
   'min.': 'minutes',
   'max.': 'maximum',
+  'misc.': 'miscellaneous',
+  'ref.': 'reference',
+  'refs.': 'references',
+  'ex.': 'example',
+  'w/': 'with',
+  'w/o': 'without',
+  'b/c': 'because',
 };
 
 const ACRONYM_SKIP = new Set([
@@ -198,8 +205,8 @@ export function prepareTextForSynthesis(text) {
     .replace(/[≥]/gu, ' greater than or equal to ')
     .replace(/(\d)\s*-\s*(\d)/gu, '$1 to $2')
     .replace(/(\w)-(\w)/g, '$1 $2')
-    .replace(/\s*[-–—]{2,}\s*/gu, ' — ')
-    .replace(/\s+[-–—]\s+/g, ' — ')
+    .replace(/\s*[-–—]{2,}\s*/gu, ', ')
+    .replace(/\s+[-–—]\s+/g, ', ')
     .replace(/^\s*[-–—]\s+/gmu, '. ');
 
   result = result.replace(abbrPattern, (match) => {
@@ -208,6 +215,8 @@ export function prepareTextForSynthesis(text) {
     }
     return match;
   });
+
+  result = result.replace(/\b([A-Za-z]+)\s*\/\s*([A-Za-z]+)\b/gu, '$1 or $2');
 
   result = result.replace(/\b([A-Z]{2,5})\b/g, (match) => {
     if (ACRONYM_SKIP.has(match)) return match;
