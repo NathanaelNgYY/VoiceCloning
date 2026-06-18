@@ -11,6 +11,7 @@ import {
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
+import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 
 const router = Router();
 
@@ -51,8 +52,12 @@ export async function handleLiveTtsRequest(body, {
   synthesize = (params) => inferenceServer.synthesize(params),
 } = {}) {
   const resolvedParams = await resolveParams(body);
-  const audioBuffer = await synthesize(resolvedParams);
-  return { audioBuffer, resolvedParams };
+  const normalizedParams = {
+    ...resolvedParams,
+    text: prepareTextForSynthesis(resolvedParams.text),
+  };
+  const audioBuffer = await synthesize(normalizedParams);
+  return { audioBuffer, resolvedParams: normalizedParams };
 }
 
 router.get('/inference/status', async (_req, res) => {

@@ -21,6 +21,7 @@ import {
   LIVE_LANGUAGE_OPTIONS,
   getLiveLanguageConfig,
   normalizeLiveLanguage,
+  splitLiveReplyPhrases,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -55,6 +56,7 @@ import {
   createTtsHistoryItem,
   getTtsHistoryByRoute,
 } from '@/lib/ttsHistory';
+import { concatWavBlobs } from '@/lib/wavConcat';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
   buildSavedVoiceProfileRestoreKey,
@@ -1135,14 +1137,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
     setTtsError('');
 
-    // Live Fast on a single short utterance keeps its low-latency single-unit (cut0)
-    // path, which gives the most natural prosody for one sentence and finishes well
-    // inside CloudFront's origin timeout as a single blocking call.
-    if (route === 'fast' && !isLongTtsText(text)) {
+    if (route === 'fast') {
       setTtsFastGenerating(true);
       try {
-        const result = await synthesizeSentence(baseParams);
-        recordTtsHistory({ route: 'fast', url: URL.createObjectURL(result.blob), text, voiceName, languageLabel });
+        const phrases = splitLiveReplyPhrases(text);
+        const clips = [];
+        for (const phrase of phrases) {
+          const result = await synthesizeSentence({ ...baseParams, text: phrase });
+          clips.push(result.blob);
+        }
+        const blob = clips.length > 1 ? await concatWavBlobs(clips, { pauseMs: 120 }) : clips[0];
+        recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
       } catch (err) {
         setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
       } finally {
@@ -1151,8 +1156,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       return;
     }
 
-    // Full inference, or Live Fast on a long script: the chunked async flow gives the
-    // best long-form quality (server-side sentence chunking + joining) and avoids the
+    // Full inference uses the chunked async flow. It avoids the
     // CloudFront ~30s origin timeout / 6MB response limit that a single synchronous
     // request hits. It returns a sessionId immediately, streams progress over SSE, and
     // fetches the finished audio via a presigned URL (bytes never traverse the Lambda).
@@ -1167,15 +1171,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
       setStreamingRoute(null);
     }
-  }
-
-  // A single short utterance synthesizes best (and safely) via the synchronous single-unit
-  // path; anything longer is routed through the chunked async flow. Thresholds mirror the
-  // worker's own chunking (maxChunkLength 280, maxSentencesPerChunk 3).
-  function isLongTtsText(value) {
-    if (value.length > 280) return true;
-    const sentences = value.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);
-    return sentences.length > 3;
   }
 
   function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
