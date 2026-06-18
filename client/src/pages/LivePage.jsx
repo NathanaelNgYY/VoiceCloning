@@ -11,10 +11,12 @@ import {
   getVoiceProfileConfigs,
   saveVoiceProfileConfig,
   selectModels,
-  synthesize,
+  startGeneration,
+  getGenerationResult,
   synthesizeSentence,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
+import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import {
   LIVE_LANGUAGE_OPTIONS,
   getLiveLanguageConfig,
@@ -259,7 +261,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
-  const [ttsFullGenerating, setTtsFullGenerating] = useState(false);
+  // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
+  const [streamingRoute, setStreamingRoute] = useState(null);
   const [ttsError, setTtsError] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -278,6 +281,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const statusRequestVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
+  const ttsInference = useInferenceSSE();
+  const pendingFullTtsRef = useRef(null);
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -1125,38 +1130,91 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       voiceProfileId: selectedVoiceProfileId,
       text_lang: liveLanguage,
     };
-    const isFastRoute = route === 'fast';
-    const setGenerating = isFastRoute ? setTtsFastGenerating : setTtsFullGenerating;
+    const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
+    const languageLabel = liveLanguageConfig.label;
 
-    setGenerating(true);
     setTtsError('');
+
+    // Live Fast on a single short utterance keeps its low-latency single-unit (cut0)
+    // path, which gives the most natural prosody for one sentence and finishes well
+    // inside CloudFront's origin timeout as a single blocking call.
+    if (route === 'fast' && !isLongTtsText(text)) {
+      setTtsFastGenerating(true);
+      try {
+        const result = await synthesizeSentence(baseParams);
+        recordTtsHistory({ route: 'fast', url: URL.createObjectURL(result.blob), text, voiceName, languageLabel });
+      } catch (err) {
+        setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+      } finally {
+        setTtsFastGenerating(false);
+      }
+      return;
+    }
+
+    // Full inference, or Live Fast on a long script: the chunked async flow gives the
+    // best long-form quality (server-side sentence chunking + joining) and avoids the
+    // CloudFront ~30s origin timeout / 6MB response limit that a single synchronous
+    // request hits. It returns a sessionId immediately, streams progress over SSE, and
+    // fetches the finished audio via a presigned URL (bytes never traverse the Lambda).
+    setStreamingRoute(route);
     try {
-      const result = isFastRoute
-        ? await synthesizeSentence(baseParams)
-        : await synthesize({
-            ...baseParams,
-            text_split_method: 'cut5',
-            batch_size: 1,
-          });
-      const url = URL.createObjectURL(result.blob);
-      const item = createTtsHistoryItem({
-        route: isFastRoute ? 'fast' : 'full',
-        url,
-        text,
-        voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
-        languageLabel: liveLanguageConfig.label,
-      });
-      setTtsHistory((current) => {
-        const next = addTtsHistoryItem(current, item);
-        ttsHistoryRef.current = next;
-        return next;
-      });
+      const res = await startGeneration(baseParams);
+      const { sessionId } = res.data;
+      pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel, route };
+      ttsInference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
+      pendingFullTtsRef.current = null;
       setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
-    } finally {
-      setGenerating(false);
+      setStreamingRoute(null);
     }
   }
+
+  // A single short utterance synthesizes best (and safely) via the synchronous single-unit
+  // path; anything longer is routed through the chunked async flow. Thresholds mirror the
+  // worker's own chunking (maxChunkLength 280, maxSentencesPerChunk 3).
+  function isLongTtsText(value) {
+    if (value.length > 280) return true;
+    const sentences = value.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);
+    return sentences.length > 3;
+  }
+
+  function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
+    const item = createTtsHistoryItem({ route, url, text, voiceName, languageLabel });
+    setTtsHistory((current) => {
+      const next = addTtsHistoryItem(current, item);
+      ttsHistoryRef.current = next;
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    const pending = pendingFullTtsRef.current;
+    if (!pending) return;
+
+    if (ttsInference.status === 'complete') {
+      getGenerationResult(pending.sessionId)
+        .then((blob) => {
+          recordTtsHistory({
+            route: pending.route,
+            url: URL.createObjectURL(blob),
+            text: pending.text,
+            voiceName: pending.voiceName,
+            languageLabel: pending.languageLabel,
+          });
+        })
+        .catch((err) => setTtsError(err.message || 'Could not fetch the generated audio.'))
+        .finally(() => {
+          pendingFullTtsRef.current = null;
+          setStreamingRoute(null);
+          ttsInference.reset();
+        });
+    } else if (ttsInference.status === 'error' || ttsInference.status === 'cancelled') {
+      setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
+      pendingFullTtsRef.current = null;
+      setStreamingRoute(null);
+      ttsInference.reset();
+    }
+  }, [ttsInference.status, ttsInference.error]);
 
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
@@ -1708,31 +1766,38 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <Textarea
               value={ttsText}
               onChange={(event) => setTtsText(event.target.value)}
-              disabled={!isReady || ttsFastGenerating || ttsFullGenerating}
+              disabled={!isReady || ttsFastGenerating || streamingRoute !== null}
               placeholder={isReady ? 'Type the text to synthesize.' : 'Load a voice profile first.'}
               className="mt-4 min-h-[220px] rounded-xl border-slate-200 bg-white text-sm leading-6 shadow-none"
             />
             {ttsError && (
               <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
             )}
+            {streamingRoute && (
+              <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
+                {ttsInference.totalChunks > 0
+                  ? `Synthesizing chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing synthesis…'}
+              </p>
+            )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Button
                 type="button"
                 onClick={() => generateTextToSpeech('fast')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || ttsFullGenerating}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
                 className="h-10 rounded-xl"
               >
-                {ttsFastGenerating ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+                {(ttsFastGenerating || streamingRoute === 'fast') ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
                 Live Fast TTS
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('full')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || ttsFullGenerating}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
-                {ttsFullGenerating ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                {streamingRoute === 'full' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference TTS
               </Button>
             </div>

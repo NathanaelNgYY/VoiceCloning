@@ -15,3 +15,9 @@ CLAUDE.md
 local.env
 AGENTS.md
 config.toml887
+config.toml
+
+# Generated code-graph / analysis tool output (not source)
+graphify-out/
+.understand-anything/
+Understand-Anything/

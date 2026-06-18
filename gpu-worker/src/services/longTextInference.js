@@ -19,6 +19,11 @@ const DEFAULTS = {
   retryCount: 2,
 };
 
+// Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a
+// short lead-in clause like "Typically," from being stranded as its own rushed
+// 1-2 word chunk; it merges forward into the following clause instead.
+const MIN_CHUNK_LENGTH = 24;
+
 function clampNumber(value, fallback) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -213,6 +218,10 @@ const symbolPattern = new RegExp(
 function preprocessText(text) {
   let result = text;
 
+  // 0) Greek/maths delta symbol → the word, so it is never read as "triangle".
+  //    Handles attached "ΔG" → "delta G" and spaced "Δ G". Δ = U+0394, ∆ = U+2206.
+  result = result.replace(/[Δ∆]/g, 'delta ');
+
   // 1) Abbreviation expansion
   result = result.replace(abbrPattern, (match) => {
     // Lookup is case-insensitive — normalise the key to title case for the map
@@ -240,6 +249,7 @@ function normalizeWhitespace(text) {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/(\w)-(\w)/g, '$1 $2')   // "real-time" → "real time" so TTS won't say "minus"
+    .replace(/\s+[-–]\s+/g, ' — ')    // " - " used as a dash → em-dash (a pause, not spoken "minus")
     .trim();
   return splitCompoundWords(cleaned);
 }
@@ -363,9 +373,11 @@ export function splitTextIntoChunks(text, options = {}) {
     const lastChar = trimmed.slice(-1);
     const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
     if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
-      chunks.push(trimmed);
-      current = '';
-      sentenceCount = 0;
+      if (trimmed.length >= MIN_CHUNK_LENGTH) {
+        chunks.push(trimmed);
+        current = '';
+        sentenceCount = 0;
+      }
     }
   }
 
@@ -691,7 +703,14 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   const bytesPerSample = Math.max(1, wav.bitsPerSample / 8);
   const frameCount = Math.floor(bytes.length / wav.blockAlign);
   const durationSec = frameCount / wav.sampleRate;
-  const expectedMinDurationSec = Math.max(0.25, Math.min(12, expectedText.length / 45));
+  // A natural read is ~15 characters/second. If a chunk's audio runs well under
+  // the time its text should take, the model almost certainly dropped words; we
+  // flag it so the chunk is re-rolled (a new seed usually produces a full read).
+  // Tune REQUIRED_DURATION_FRACTION up to catch smaller drops (more retries) or
+  // down to be more permissive. Assumes speed_factor near 1.0 or slower.
+  const NATURAL_CHARS_PER_SEC = 15;
+  const REQUIRED_DURATION_FRACTION = 0.65;
+  const expectedDurationSec = Math.max(0.3, Math.min(20, expectedText.length / NATURAL_CHARS_PER_SEC));
 
   let sampleCount = 0;
   let absPeak = 0;
@@ -807,8 +826,8 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   }
 
   let reason = null;
-  if (durationSec < expectedMinDurationSec * 0.45) {
-    reason = `Audio duration too short for text (${durationSec.toFixed(2)}s)`;
+  if (durationSec < expectedDurationSec * REQUIRED_DURATION_FRACTION) {
+    reason = `Audio too short for its text — likely dropped words (${durationSec.toFixed(2)}s vs ~${expectedDurationSec.toFixed(1)}s expected)`;
   } else if (rms < 0.003) {
     reason = 'Generated audio is effectively silent';
   } else if (zeroishRatio > 0.995) {
