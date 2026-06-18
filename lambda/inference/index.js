@@ -87,6 +87,10 @@ export function createHandler({
         return ok(await postJson('/inference/stop', {}));
       }
 
+      if (method === 'POST' && routePath.endsWith('/inference/start')) {
+        return ok(await postJson('/inference/start', {}));
+      }
+
       if (method === 'GET' && routePath.endsWith('/inference/current')) {
         try {
           return ok(await getJson('/inference/current'));

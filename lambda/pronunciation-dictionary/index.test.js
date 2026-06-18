@@ -40,15 +40,35 @@ test('pronunciation dictionary saves reviewed English entries by category', asyn
   assert.equal(body.entries[0].category, 'biology');
 });
 
-test('pronunciation lookup returns free Datamuse ARPAbet suggestions', async () => {
+test('pronunciation dictionary overrides an existing word when admin saves it again', async () => {
+  const objects = new Map();
   const handler = createHandler({
-    fetchImpl: async () => ({
-      ok: true,
-      json: async () => [{ word: 'enzyme', tags: ['pron:EH1 N Z AY0 M'], score: 100 }],
-    }),
+    readObject: async (key) => {
+      if (!objects.has(key)) {
+        const error = new Error('missing');
+        error.$metadata = { httpStatusCode: 404 };
+        throw error;
+      }
+      return objects.get(key);
+    },
+    writeObject: async (key, buffer) => objects.set(key, buffer),
+    now: () => '2026-06-18T00:00:00.000Z',
   });
 
-  const response = await handler(event('POST', '/api/pronunciation-dictionary/lookup', { word: 'enzyme' }));
-  const body = JSON.parse(response.body);
-  assert.equal(body.suggestions[0].arpabet, 'EH1 N Z AY0 M');
+  await handler(event('POST', '/api/pronunciation-dictionary', {
+    word: 'enzyme',
+    category: 'biology',
+    arpabet: 'EH1 N Z AY0 M',
+  }));
+  await handler(event('POST', '/api/pronunciation-dictionary', {
+    word: 'enzyme',
+    category: 'biology',
+    readable: 'en zyme',
+  }));
+
+  const list = await handler(event('GET', '/api/pronunciation-dictionary', null, { category: 'biology' }));
+  const body = JSON.parse(list.body);
+  assert.equal(body.entries.length, 1);
+  assert.equal(body.entries[0].readable, 'en zyme');
+  assert.equal(body.entries[0].arpabet, '');
 });

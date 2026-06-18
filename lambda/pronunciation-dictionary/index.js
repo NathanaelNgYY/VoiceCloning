@@ -3,7 +3,6 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 
 const DICTIONARY_PATH = /^\/api\/pronunciation-dictionary\/?$/u;
-const LOOKUP_PATH = /^\/api\/pronunciation-dictionary\/lookup\/?$/u;
 const CATEGORIES = new Set(['general', 'biology', 'chemistry', 'medical', 'names', 'acronyms', 'math']);
 
 function normalizeCategory(value) {
@@ -59,26 +58,9 @@ async function readDictionary(readObject, category) {
   }
 }
 
-async function lookupDatamuse(word, fetchImpl) {
-  const url = `https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&qe=sp&md=r&max=5`;
-  const response = await fetchImpl(url, { headers: { accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Datamuse lookup failed (${response.status})`);
-  const results = await response.json();
-  return (Array.isArray(results) ? results : [])
-    .filter((item) => item?.word)
-    .map((item) => ({
-      word: item.word,
-      arpabet: normalizeArpabet(item.tags?.find((tag) => String(tag).startsWith('pron:'))?.slice(5) || ''),
-      score: Number(item.score || 0),
-      source: 'datamuse',
-    }))
-    .filter((item) => item.arpabet);
-}
-
 export function createHandler({
   readObject = getObject,
   writeObject = uploadBuffer,
-  fetchImpl = fetch,
   now = () => new Date().toISOString(),
 } = {}) {
   return async function handler(event) {
@@ -91,14 +73,6 @@ export function createHandler({
       if (method === 'GET' && DICTIONARY_PATH.test(routePath)) {
         const category = normalizeCategory(event.queryStringParameters?.category);
         return ok(await readDictionary(readObject, category), {}, event);
-      }
-
-      if (method === 'POST' && LOOKUP_PATH.test(routePath)) {
-        const body = parseJsonBody(event);
-        const word = normalizeWord(body.word);
-        if (!word) return err(400, 'word is required', event);
-        const suggestions = await lookupDatamuse(word, fetchImpl);
-        return ok({ word, suggestions }, {}, event);
       }
 
       if (method === 'POST' && DICTIONARY_PATH.test(routePath)) {

@@ -447,10 +447,6 @@ export function getPronunciationDictionary(category = 'general') {
   return api.get('/pronunciation-dictionary', { params: { category } });
 }
 
-export function lookupPronunciation(word) {
-  return api.post('/pronunciation-dictionary/lookup', { word });
-}
-
 export function savePronunciationEntry(entry) {
   return api.post('/pronunciation-dictionary', entry);
 }
@@ -472,6 +468,14 @@ export function cancelGeneration(sessionId) {
 
 export function getInferenceStatus() {
   return api.get('/inference/status');
+}
+
+export function startInferenceServer() {
+  return api.post('/inference/start');
+}
+
+export function stopInferenceServer() {
+  return api.post('/inference/stop');
 }
 
 export function getInstanceStatus() {

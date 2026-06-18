@@ -98,6 +98,26 @@ test('inference current returns idle when the GPU worker is not reachable', asyn
   }
 });
 
+test('inference start proxies to the GPU worker start route', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    postJson: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { ready: true };
+    },
+  });
+
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/start',
+    body: '{}',
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), { ready: true });
+  assert.deepEqual(calls, [{ routePath: '/inference/start', payload: {} }]);
+});
+
 test('inference handler resolves voiceProfileId to a saved full profile before direct synthesis', async () => {
   const calls = [];
   const handler = createHandler({

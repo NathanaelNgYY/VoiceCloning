@@ -12,6 +12,10 @@ import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
+import {
+  prepareTextWithRuntimeDictionary,
+  syncHotDictionaryOverrides,
+} from '../services/runtimePronunciationDictionary.js';
 
 const router = Router();
 
@@ -52,9 +56,10 @@ export async function handleLiveTtsRequest(body, {
   synthesize = (params) => inferenceServer.synthesize(params),
 } = {}) {
   const resolvedParams = await resolveParams(body);
+  const dictionaryText = await prepareTextWithRuntimeDictionary(resolvedParams.text);
   const normalizedParams = {
     ...resolvedParams,
-    text: prepareTextForSynthesis(resolvedParams.text),
+    text: prepareTextForSynthesis(dictionaryText),
   };
   const audioBuffer = await synthesize(normalizedParams);
   return { audioBuffer, resolvedParams: normalizedParams };
@@ -76,6 +81,7 @@ router.get('/inference/status', async (_req, res) => {
 
 router.post('/inference/start', async (_req, res) => {
   try {
+    await syncHotDictionaryOverrides();
     const status = await inferenceServer.start();
     activityState.mark();
     res.json(status);
@@ -174,6 +180,7 @@ router.post('/inference', async (req, res) => {
 
     activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
+    resolvedParams.text = await prepareTextWithRuntimeDictionary(resolvedParams.text);
     const { audioBuffer, chunks } = await synthesizeLongText(resolvedParams, {
       maxChunkLength: 280,
       maxSentencesPerChunk: 3,
@@ -214,6 +221,7 @@ router.post('/inference/generate', async (req, res) => {
     }
 
     const resolvedParams = await resolveRefAudioParams(params);
+    resolvedParams.text = await prepareTextWithRuntimeDictionary(resolvedParams.text);
     const sessionId = crypto.randomUUID();
     inferenceState.resetForNewSession({ sessionId, params: resolvedParams });
     sseManager.prepareSession(sessionId);

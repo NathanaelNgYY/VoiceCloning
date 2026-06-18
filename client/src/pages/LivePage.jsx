@@ -15,8 +15,9 @@ import {
   getGenerationResultSource,
   synthesizeSentence,
   getPronunciationDictionary,
-  lookupPronunciation,
   savePronunciationEntry,
+  startInferenceServer,
+  stopInferenceServer,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
@@ -88,7 +89,6 @@ import {
   MicOff,
   PlayCircle,
   RefreshCw,
-  Search,
   Square,
   UserRound,
   Volume2,
@@ -279,7 +279,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationReadable, setPronunciationReadable] = useState('');
   const [pronunciationArpabet, setPronunciationArpabet] = useState('');
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
-  const [pronunciationSuggestions, setPronunciationSuggestions] = useState([]);
   const [pronunciationMessage, setPronunciationMessage] = useState('');
   const [pronunciationBusy, setPronunciationBusy] = useState(false);
   const audioRef = useRef(null);
@@ -1216,29 +1215,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
-  async function lookupPronunciationSuggestion() {
-    const word = pronunciationWord.trim();
-    if (!word) {
-      setPronunciationMessage('Enter a word to look up.');
-      return;
-    }
-    setPronunciationBusy(true);
-    setPronunciationMessage('');
-    try {
-      const res = await lookupPronunciation(word);
-      const suggestions = res.data.suggestions || [];
-      setPronunciationSuggestions(suggestions);
-      if (suggestions[0]?.arpabet) {
-        setPronunciationArpabet(suggestions[0].arpabet);
-      }
-      setPronunciationMessage(suggestions.length ? 'Suggestion loaded from Datamuse.' : 'No suggestion found.');
-    } catch (err) {
-      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not look up pronunciation.');
-    } finally {
-      setPronunciationBusy(false);
-    }
-  }
-
   async function savePronunciation() {
     const word = pronunciationWord.trim();
     if (!word) {
@@ -1257,10 +1233,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         category: pronunciationCategory,
         readable: pronunciationReadable,
         arpabet: pronunciationArpabet,
-        source: pronunciationArpabet ? 'admin-datamuse-reviewed' : 'admin-readable',
+        source: pronunciationArpabet ? 'admin-arpabet' : 'admin-readable',
       });
       setPronunciationEntries(res.data.dictionary?.entries || []);
-      setPronunciationMessage(`Saved ${word} in ${pronunciationCategory}.`);
+      if (pronunciationArpabet.trim()) {
+        setPronunciationMessage(`Saved ${word}. Restarting inference to load ARPAbet...`);
+        await stopInferenceServer();
+        await startInferenceServer();
+        setPronunciationMessage(`Saved ${word} and restarted inference.`);
+        checkStatus();
+      } else {
+        setPronunciationMessage(`Saved ${word} in ${pronunciationCategory}.`);
+      }
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
     } finally {
@@ -1923,29 +1907,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={lookupPronunciationSuggestion} disabled={pronunciationBusy} className="h-8 rounded-lg border-slate-200 bg-white">
-                  {pronunciationBusy ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-                  Lookup
-                </Button>
                 <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy} className="h-8 rounded-lg">
                   <Check size={13} />
                   Save entry
                 </Button>
               </div>
-              {pronunciationSuggestions.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {pronunciationSuggestions.slice(0, 3).map((item) => (
-                    <button
-                      type="button"
-                      key={`${item.word}-${item.arpabet}`}
-                      onClick={() => { setPronunciationWord(item.word); setPronunciationArpabet(item.arpabet); }}
-                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-mono text-slate-600"
-                    >
-                      {item.word}: {item.arpabet}
-                    </button>
-                  ))}
-                </div>
-              )}
               {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
               {pronunciationEntries.length > 0 && (
                 <div className="mt-3 max-h-24 overflow-auto rounded-lg border border-slate-100 bg-white">
