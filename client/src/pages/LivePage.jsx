@@ -1252,9 +1252,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         setPronunciationMessage(`Saved ${word}. Restarting inference to load ARPAbet...`);
         await stopInferenceServer();
         await startInferenceServer();
-        setPronunciationMessage(`Saved ${word}. Reloading selected model...`);
-        await loadSelectedModel();
-        setPronunciationMessage(`Saved ${word}, restarted inference, and reloaded the selected model.`);
+        autoLoadAttemptKeyRef.current = '';
+        setPronunciationMessage(`Saved ${word}. Restarted inference; reloading the selected voice profile...`);
         await checkStatus();
       } else {
         setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
@@ -1296,9 +1295,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         setPronunciationMessage(`Deleted ${word}. Restarting inference to remove ARPAbet...`);
         await stopInferenceServer();
         await startInferenceServer();
-        setPronunciationMessage(`Deleted ${word}. Reloading selected model...`);
-        await loadSelectedModel();
-        setPronunciationMessage(`Deleted ${word}, restarted inference, and reloaded the selected model.`);
+        autoLoadAttemptKeyRef.current = '';
+        setPronunciationMessage(`Deleted ${word}. Restarted inference; reloading the selected voice profile...`);
         await checkStatus();
       } else {
         setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
@@ -1336,7 +1334,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
 
     setPronunciationTestingWord(word);
-    setPronunciationMessage(`Testing ${word}...`);
+    setPronunciationMessage(`Testing ${word} with Live Fast sentence TTS...`);
     try {
       const text = buildPronunciationTestText({ word, readable, arpabet });
       const result = await synthesizeSentence({
@@ -1351,7 +1349,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
         languageLabel: liveLanguageConfig.label,
       });
-      setPronunciationMessage(`Generated pronunciation test for ${word}.`);
+      setPronunciationMessage(`Generated Live Fast pronunciation test for ${word}.`);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not test pronunciation.');
     } finally {
@@ -1399,8 +1397,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         setPronunciationMessage(`Imported ${rows.length} entries. Restarting inference to load ARPAbet...`);
         await stopInferenceServer();
         await startInferenceServer();
-        setPronunciationMessage(`Imported ${rows.length} entries. Reloading selected model...`);
-        await loadSelectedModel();
+        autoLoadAttemptKeyRef.current = '';
+        setPronunciationMessage(`Imported ${rows.length} entries. Restarted inference; reloading the selected voice profile...`);
         await checkStatus();
       }
       setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
