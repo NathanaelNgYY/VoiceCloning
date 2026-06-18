@@ -20,3 +20,14 @@ test('prepareTextForSynthesis expands known compounds before synthesis', () => {
   assert.match(result, /health care/u);
   assert.match(result, /work flows/u);
 });
+
+test('prepareTextForSynthesis handles bullets, ranges, and math operators', () => {
+  const result = prepareTextForSynthesis('• ATP 5-10 times higher -- e.g. ΔG≤0 and A+B.');
+
+  assert.doesNotMatch(result, /•/u);
+  assert.match(result, /5 to 10/u);
+  assert.match(result, /for example/u);
+  assert.match(result, /delta G\s+less than or equal to\s+0/u);
+  assert.match(result, /A\+B|A B/u);
+  assert.doesNotMatch(result, /--/u);
+});

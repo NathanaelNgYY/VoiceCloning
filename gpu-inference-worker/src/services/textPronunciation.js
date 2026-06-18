@@ -132,6 +132,14 @@ const ABBREVIATIONS = {
   'nos.': 'numbers',
   'vol.': 'volume',
   'esp.': 'especially',
+  'e.g.': 'for example',
+  'i.e.': 'that is',
+  'fig.': 'figure',
+  'eq.': 'equation',
+  'ch.': 'chapter',
+  'sec.': 'section',
+  'min.': 'minutes',
+  'max.': 'maximum',
 };
 
 const ACRONYM_SKIP = new Set([
@@ -147,6 +155,9 @@ const SYMBOL_MAP = {
   '%': 'percent',
   '+': 'plus',
   '=': 'equals',
+  '<': 'less than',
+  '>': 'greater than',
+  '*': 'times',
 };
 
 const abbrPattern = new RegExp(
@@ -174,11 +185,22 @@ export function prepareTextForSynthesis(text) {
 
   result = result
     .replace(/\r\n/g, '\n')
+    .replace(/[•●◦]/gu, '. ')
+    .replace(/[“”]/gu, '"')
+    .replace(/[‘’]/gu, "'")
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[Δ∆]/g, 'delta ')
+    .replace(/[×]/gu, ' times ')
+    .replace(/[÷]/gu, ' divided by ')
+    .replace(/[±]/gu, ' plus or minus ')
+    .replace(/[≤]/gu, ' less than or equal to ')
+    .replace(/[≥]/gu, ' greater than or equal to ')
+    .replace(/(\d)\s*-\s*(\d)/gu, '$1 to $2')
     .replace(/(\w)-(\w)/g, '$1 $2')
-    .replace(/\s+[-–]\s+/g, ' — ');
+    .replace(/\s*[-–—]{2,}\s*/gu, ' — ')
+    .replace(/\s+[-–—]\s+/g, ' — ')
+    .replace(/^\s*[-–—]\s+/gmu, '. ');
 
   result = result.replace(abbrPattern, (match) => {
     for (const [abbr, expansion] of Object.entries(ABBREVIATIONS)) {

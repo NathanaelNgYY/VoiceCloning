@@ -28,6 +28,7 @@ try {
     'instance',
     'live',
     'models',
+    'pronunciation-dictionary',
     'shared',
     'training',
     'training-library',

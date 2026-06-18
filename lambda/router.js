@@ -12,6 +12,7 @@ export const ROUTES = [
   { name: 'LiveFunction', methods: ['POST'], pattern: /^\/api\/live\/tts-sentence\/?$/u, modulePath: './live/index.js' },
   { name: 'VoiceProfileFunction', methods: ['GET', 'POST'], pattern: /^\/api\/voice-profile\/(?:activate|active|internal\/[^/]+)\/?$/u, modulePath: './voice-profile/index.js' },
   { name: 'VoiceProfileConfigsFunction', methods: ['GET', 'POST', 'PUT', 'DELETE'], pattern: /^\/api\/voice-profile\/configs\/[^/]+(?:\/[^/]+)?\/?$/u, modulePath: './voice-profile-configs/index.js' },
+  { name: 'PronunciationDictionaryFunction', methods: ['GET', 'POST'], pattern: /^\/api\/pronunciation-dictionary(?:\/lookup)?\/?$/u, modulePath: './pronunciation-dictionary/index.js' },
   { name: 'InstanceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/instance\/(?:status|start|idle-check)\/?$/u, modulePath: './instance/index.js' },
 ];
 

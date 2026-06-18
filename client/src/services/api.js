@@ -418,6 +418,18 @@ async function fetchGeneratedAudio(url, { attempts = 8, delayMs = 500 } = {}) {
   throw new Error(`Generated audio is not ready yet (${lastStatus || 'network error'})`);
 }
 
+export async function getGenerationResultSource(sessionId) {
+  await getStorageMode();
+
+  if (isS3Mode()) {
+    const res = await api.get(`/inference/result/${sessionId}`);
+    return { url: res.data.url, revoke: false };
+  }
+
+  const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
+  return { url: URL.createObjectURL(new Blob([res.data], { type: 'audio/wav' })), revoke: true };
+}
+
 export async function getGenerationResult(sessionId) {
   await getStorageMode();
 
@@ -429,6 +441,18 @@ export async function getGenerationResult(sessionId) {
 
   const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
   return new Blob([res.data], { type: 'audio/wav' });
+}
+
+export function getPronunciationDictionary(category = 'general') {
+  return api.get('/pronunciation-dictionary', { params: { category } });
+}
+
+export function lookupPronunciation(word) {
+  return api.post('/pronunciation-dictionary/lookup', { word });
+}
+
+export function savePronunciationEntry(entry) {
+  return api.post('/pronunciation-dictionary', entry);
 }
 
 export async function getInferenceChunk(sessionId, index) {

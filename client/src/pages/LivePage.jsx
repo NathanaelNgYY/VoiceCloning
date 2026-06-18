@@ -12,8 +12,11 @@ import {
   saveVoiceProfileConfig,
   selectModels,
   startGeneration,
-  getGenerationResult,
+  getGenerationResultSource,
   synthesizeSentence,
+  getPronunciationDictionary,
+  lookupPronunciation,
+  savePronunciationEntry,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
 import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
@@ -27,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
@@ -84,6 +88,7 @@ import {
   MicOff,
   PlayCircle,
   RefreshCw,
+  Search,
   Square,
   UserRound,
   Volume2,
@@ -112,6 +117,8 @@ function normalizeReferenceLanguage(lang) {
   const value = String(lang || '').trim().toLowerCase();
   return ['en', 'zh', 'ja', 'ko', 'auto'].includes(value) ? value : 'en';
 }
+
+const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 'names', 'acronyms', 'math'];
 
 function buildConfigId(seed = '') {
   const slug = String(seed || 'config')
@@ -263,9 +270,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
+  const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
   const [streamingRoute, setStreamingRoute] = useState(null);
   const [ttsError, setTtsError] = useState('');
+  const [pronunciationCategory, setPronunciationCategory] = useState('general');
+  const [pronunciationWord, setPronunciationWord] = useState('');
+  const [pronunciationReadable, setPronunciationReadable] = useState('');
+  const [pronunciationArpabet, setPronunciationArpabet] = useState('');
+  const [pronunciationEntries, setPronunciationEntries] = useState([]);
+  const [pronunciationSuggestions, setPronunciationSuggestions] = useState([]);
+  const [pronunciationMessage, setPronunciationMessage] = useState('');
+  const [pronunciationBusy, setPronunciationBusy] = useState(false);
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -1139,10 +1155,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
     if (route === 'fast') {
       setTtsFastGenerating(true);
+      setTtsFastProgress({ total: 0, current: 0, text: '' });
       try {
         const phrases = splitLiveReplyPhrases(text);
         const clips = [];
-        for (const phrase of phrases) {
+        setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
+        for (let index = 0; index < phrases.length; index += 1) {
+          const phrase = phrases[index];
+          setTtsFastProgress({ total: phrases.length, current: index + 1, text: phrase });
           const result = await synthesizeSentence({ ...baseParams, text: phrase });
           clips.push(result.blob);
         }
@@ -1152,6 +1172,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
       } finally {
         setTtsFastGenerating(false);
+        setTtsFastProgress({ total: 0, current: 0, text: '' });
       }
       return;
     }
@@ -1182,16 +1203,81 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     });
   }
 
+  async function loadPronunciationEntries(category = pronunciationCategory) {
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await getPronunciationDictionary(category);
+      setPronunciationEntries(res.data.entries || []);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not load pronunciation dictionary.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  async function lookupPronunciationSuggestion() {
+    const word = pronunciationWord.trim();
+    if (!word) {
+      setPronunciationMessage('Enter a word to look up.');
+      return;
+    }
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await lookupPronunciation(word);
+      const suggestions = res.data.suggestions || [];
+      setPronunciationSuggestions(suggestions);
+      if (suggestions[0]?.arpabet) {
+        setPronunciationArpabet(suggestions[0].arpabet);
+      }
+      setPronunciationMessage(suggestions.length ? 'Suggestion loaded from Datamuse.' : 'No suggestion found.');
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not look up pronunciation.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  async function savePronunciation() {
+    const word = pronunciationWord.trim();
+    if (!word) {
+      setPronunciationMessage('Enter a word before saving.');
+      return;
+    }
+    if (!pronunciationReadable.trim() && !pronunciationArpabet.trim()) {
+      setPronunciationMessage('Add a readable pronunciation or ARPAbet before saving.');
+      return;
+    }
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await savePronunciationEntry({
+        word,
+        category: pronunciationCategory,
+        readable: pronunciationReadable,
+        arpabet: pronunciationArpabet,
+        source: pronunciationArpabet ? 'admin-datamuse-reviewed' : 'admin-readable',
+      });
+      setPronunciationEntries(res.data.dictionary?.entries || []);
+      setPronunciationMessage(`Saved ${word} in ${pronunciationCategory}.`);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
   useEffect(() => {
     const pending = pendingFullTtsRef.current;
     if (!pending) return;
 
     if (ttsInference.status === 'complete') {
-      getGenerationResult(pending.sessionId)
-        .then((blob) => {
+      getGenerationResultSource(pending.sessionId)
+        .then((source) => {
           recordTtsHistory({
             route: pending.route,
-            url: URL.createObjectURL(blob),
+            url: source.url,
             text: pending.text,
             voiceName: pending.voiceName,
             languageLabel: pending.languageLabel,
@@ -1210,6 +1296,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       ttsInference.reset();
     }
   }, [ttsInference.status, ttsInference.error]);
+
+  useEffect(() => {
+    if (mode !== 'tts') return;
+    loadPronunciationEntries(pronunciationCategory);
+  }, [mode, pronunciationCategory]);
 
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
@@ -1768,6 +1859,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {ttsError && (
               <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
             )}
+            {ttsFastGenerating && (
+              <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <p>
+                  {ttsFastProgress.total > 0
+                    ? `Synthesizing sentence ${Math.min(ttsFastProgress.current, ttsFastProgress.total)} of ${ttsFastProgress.total}...`
+                    : 'Preparing Live Fast sentences...'}
+                </p>
+                {ttsFastProgress.text && (
+                  <p className="mt-1 line-clamp-2 text-xs text-emerald-700/80">{ttsFastProgress.text}</p>
+                )}
+              </div>
+            )}
             {streamingRoute && (
               <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
                 {ttsInference.totalChunks > 0
@@ -1795,6 +1898,65 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 {streamingRoute === 'full' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference TTS
               </Button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Pronunciation dictionary</p>
+                  <p className="mt-0.5 text-xs text-slate-400">English entries saved by category.</p>
+                </div>
+                <Select value={pronunciationCategory} onValueChange={setPronunciationCategory}>
+                  <SelectTrigger className="h-8 w-[130px] rounded-lg border-slate-200 bg-white text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRONUNCIATION_CATEGORIES.map((category) => (
+                      <SelectItem key={category} value={category}>{category}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr]">
+                <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
+                <Input value={pronunciationReadable} onChange={(event) => setPronunciationReadable(event.target.value)} placeholder="Readable pronunciation" className="h-9 rounded-lg bg-white" />
+              </div>
+              <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={lookupPronunciationSuggestion} disabled={pronunciationBusy} className="h-8 rounded-lg border-slate-200 bg-white">
+                  {pronunciationBusy ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                  Lookup
+                </Button>
+                <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy} className="h-8 rounded-lg">
+                  <Check size={13} />
+                  Save entry
+                </Button>
+              </div>
+              {pronunciationSuggestions.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {pronunciationSuggestions.slice(0, 3).map((item) => (
+                    <button
+                      type="button"
+                      key={`${item.word}-${item.arpabet}`}
+                      onClick={() => { setPronunciationWord(item.word); setPronunciationArpabet(item.arpabet); }}
+                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-mono text-slate-600"
+                    >
+                      {item.word}: {item.arpabet}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
+              {pronunciationEntries.length > 0 && (
+                <div className="mt-3 max-h-24 overflow-auto rounded-lg border border-slate-100 bg-white">
+                  {pronunciationEntries.slice(0, 8).map((entry) => (
+                    <div key={entry.id || entry.word} className="flex items-center justify-between gap-3 border-b border-slate-50 px-2 py-1.5 text-xs last:border-b-0">
+                      <span className="font-medium text-slate-700">{entry.word}</span>
+                      <span className="truncate font-mono text-slate-400">{entry.arpabet || entry.readable}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
