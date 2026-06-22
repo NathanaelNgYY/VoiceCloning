@@ -428,7 +428,19 @@ export async function getGenerationResultSource(sessionId) {
     };
   }
 
-  const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
+  const res = await api.get(`/inference/result/${sessionId}`, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+  if (res.status !== 200) {
+    throw new Error(`Generated audio is not ready yet (${res.status})`);
+  }
+  const contentType = String(res.headers?.['content-type'] || '');
+  if (contentType.includes('application/json')) {
+    const data = JSON.parse(await res.data.text());
+    if (data?.url) return { url: data.url, revoke: false };
+    throw new Error('Generated audio response did not include a playable URL.');
+  }
   return { url: URL.createObjectURL(new Blob([res.data], { type: 'audio/wav' })), revoke: true };
 }
 
@@ -441,7 +453,19 @@ export async function getGenerationResult(sessionId) {
     return fetchGeneratedAudio(url);
   }
 
-  const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
+  const res = await api.get(`/inference/result/${sessionId}`, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+  if (res.status !== 200) {
+    throw new Error(`Generated audio is not ready yet (${res.status})`);
+  }
+  const contentType = String(res.headers?.['content-type'] || '');
+  if (contentType.includes('application/json')) {
+    const data = JSON.parse(await res.data.text());
+    if (data?.url) return fetchGeneratedAudio(data.url);
+    throw new Error('Generated audio response did not include a playable URL.');
+  }
   return new Blob([res.data], { type: 'audio/wav' });
 }
 

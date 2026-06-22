@@ -63,6 +63,7 @@ import {
   getTtsHistoryByRoute,
 } from '@/lib/ttsHistory';
 import { concatWavBlobs } from '@/lib/wavConcat';
+import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
 import {
   parsePronunciationCsv,
   serializePronunciationCsv,
@@ -103,6 +104,63 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
+
+function withCacheBuster(url) {
+  if (!url || url.startsWith('blob:')) return url;
+  try {
+    const parsed = new URL(url, window.location.href);
+    parsed.searchParams.set('_audioReady', String(Date.now()));
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}_audioReady=${Date.now()}`;
+  }
+}
+
+function waitForAudioMetadata(url, timeoutMs = 3500) {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio();
+    let settled = false;
+    let timer = null;
+    const cleanup = () => {
+      if (timer) window.clearTimeout(timer);
+      audio.onloadedmetadata = null;
+      audio.oncanplay = null;
+      audio.onerror = null;
+    };
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (ok) resolve();
+      else reject(new Error('Audio metadata was not ready yet.'));
+    };
+    timer = window.setTimeout(() => done(false), timeoutMs);
+    audio.preload = 'metadata';
+    audio.onloadedmetadata = () => done(true);
+    audio.oncanplay = () => done(true);
+    audio.onerror = () => done(false);
+    audio.src = url;
+    audio.load();
+  });
+}
+
+async function waitForPlayableAudioSource(url, { attempts = 5, delayMs = 700 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const candidateUrl = withCacheBuster(url);
+    try {
+      await waitForAudioMetadata(candidateUrl);
+      return candidateUrl;
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs * attempt));
+      }
+    }
+  }
+  throw lastError || new Error('Generated audio is not playable yet.');
+}
 
 function messageStatusText(message) {
   if (message.role === 'user') {
@@ -309,6 +367,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const statusRequestVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
+  const queuedTtsAudioRef = useRef(null);
+  const queuedTtsRef = useRef({ clips: [], playingIndex: -1, active: false });
   const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
@@ -1164,6 +1224,34 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
     setTtsError('');
 
+    if (route === 'fastQueued') {
+      setTtsFastGenerating(true);
+      setTtsFastProgress({ total: 0, current: 0, text: '' });
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true };
+      try {
+        const result = await generateLiveFastQueuedTts({
+          text,
+          baseParams,
+          synthesizeSentence,
+          createObjectUrl: (blob) => URL.createObjectURL(blob),
+          onProgress: setTtsFastProgress,
+          onClipReady: (clip) => {
+            queuedTtsRef.current.clips[clip.index] = clip;
+            playNextQueuedTtsClip();
+          },
+        });
+        if (result.clips.length === 0) {
+          throw new Error('No audio clips were generated.');
+        }
+      } catch (err) {
+        setTtsError(err.response?.data?.error || err.message || 'Could not generate queued Live Fast audio.');
+      } finally {
+        setTtsFastGenerating(false);
+        setTtsFastProgress({ total: 0, current: 0, text: '' });
+      }
+      return;
+    }
+
     if (route === 'fast') {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
@@ -1203,6 +1291,24 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
       setStreamingRoute(null);
     }
+  }
+
+  function playNextQueuedTtsClip() {
+    const queue = queuedTtsRef.current;
+    const nextIndex = queue.playingIndex + 1;
+    const nextClip = queue.clips[nextIndex];
+    const audio = queuedTtsAudioRef.current;
+    if (!queue.active || !nextClip || !audio || !audio.paused) return;
+
+    queue.playingIndex = nextIndex;
+    audio.src = nextClip.url;
+    audio.play().catch((err) => {
+      setTtsError(err.message || 'Browser blocked queued Live Fast playback.');
+    });
+  }
+
+  function handleQueuedTtsEnded() {
+    playNextQueuedTtsClip();
   }
 
   function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
@@ -1415,10 +1521,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
     if (ttsInference.status === 'complete') {
       getGenerationResultSource(pending.sessionId)
-        .then((source) => {
+        .then(async (source) => {
+          const playableUrl = await waitForPlayableAudioSource(source.url);
           recordTtsHistory({
             route: pending.route,
-            url: source.url,
+            url: playableUrl,
             text: pending.text,
             voiceName: pending.voiceName,
             languageLabel: pending.languageLabel,
@@ -2019,7 +2126,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   : 'Preparing synthesis…'}
               </p>
             )}
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
               <Button
                 type="button"
                 onClick={() => generateTextToSpeech('fast')}
@@ -2028,6 +2136,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               >
                 {(ttsFastGenerating || streamingRoute === 'fast') ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
                 Live Fast TTS
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => generateTextToSpeech('fastQueued')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+              >
+                {ttsFastGenerating ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+                Live Fast Queue
               </Button>
               <Button
                 type="button"
