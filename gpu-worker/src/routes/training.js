@@ -46,6 +46,8 @@ router.post('/train', (req, res) => {
       asrLanguage: config.asrLanguage,
       asrModel: config.asrModel,
       skipDenoise: config.skipDenoise,
+      selectedReferences: config.selectedReferences,
+      sourceDatasetStats: config.sourceDatasetStats,
     });
   }).catch((err) => {
     if (err.message === 'SSE client did not connect in time') {

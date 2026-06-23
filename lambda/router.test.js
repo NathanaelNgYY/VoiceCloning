@@ -72,3 +72,51 @@ test('router resolves shared training library routes', () => {
     },
   );
 });
+
+test('router resolves training metadata route', () => {
+  assert.deepEqual(
+    findRoute('GET', '/api/train/metadata/demo'),
+    {
+      name: 'TrainingFunction',
+      methods: ['GET', 'POST'],
+      pattern: /^\/api\/train(?:\/(?:stop|current|metadata\/[^/]+))?\/?$/u,
+      modulePath: './training/index.js',
+      lambdaPath: '/api/train/metadata/demo',
+    },
+  );
+});
+
+test('router resolves per-person voice profile config routes', () => {
+  assert.deepEqual(
+    findRoute('GET', '/api/voice-profile/configs/michael-tan-v1'),
+    {
+      name: 'VoiceProfileConfigsFunction',
+      methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      pattern: /^\/api\/voice-profile\/configs\/[^/]+(?:\/[^/]+)?\/?$/u,
+      modulePath: './voice-profile-configs/index.js',
+      lambdaPath: '/api/voice-profile/configs/michael-tan-v1',
+    },
+  );
+
+  assert.deepEqual(
+    findRoute('PUT', '/api/voice-profile/configs/michael-tan-v1/warm-ref'),
+    {
+      name: 'VoiceProfileConfigsFunction',
+      methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      pattern: /^\/api\/voice-profile\/configs\/[^/]+(?:\/[^/]+)?\/?$/u,
+      modulePath: './voice-profile-configs/index.js',
+      lambdaPath: '/api/voice-profile/configs/michael-tan-v1/warm-ref',
+    },
+  );
+
+  assert.deepEqual(
+    findRoute('DELETE', '/api/voice-profile/configs/michael-tan-v1/warm-ref'),
+    {
+      name: 'VoiceProfileConfigsFunction',
+      methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      pattern: /^\/api\/voice-profile\/configs\/[^/]+(?:\/[^/]+)?\/?$/u,
+      modulePath: './voice-profile-configs/index.js',
+      lambdaPath: '/api/voice-profile/configs/michael-tan-v1/warm-ref',
+    },
+  );
+});

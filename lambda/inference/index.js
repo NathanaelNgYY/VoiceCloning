@@ -23,6 +23,18 @@ function binaryWav(buffer, contentType = 'audio/wav') {
   };
 }
 
+function redirect(location) {
+  return {
+    statusCode: 302,
+    headers: {
+      ...corsHeaders,
+      Location: location,
+      'Cache-Control': 'no-store',
+    },
+    body: '',
+  };
+}
+
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
   postBinary = inferencePostBinary,
@@ -71,10 +83,11 @@ export function createHandler({
           return err(400, 'Invalid sessionId');
         }
         if (shouldUseGpuWorkerArtifacts()) {
-          return ok({ url: buildInferencePublicUrl(`/inference/result/${encodeURIComponent(sessionId)}`) });
+          const url = buildInferencePublicUrl(`/inference/result/${encodeURIComponent(sessionId)}`);
+          return event.queryStringParameters?.audio === '1' ? redirect(url) : ok({ url });
         }
         const url = await buildPresignedGetUrl(`audio/output/${sessionId}/final.wav`);
-        return ok({ url });
+        return event.queryStringParameters?.audio === '1' ? redirect(url) : ok({ url });
       }
 
       if (method === 'POST' && routePath.endsWith('/inference/cancel')) {
@@ -85,6 +98,10 @@ export function createHandler({
 
       if (method === 'POST' && routePath.endsWith('/inference/stop')) {
         return ok(await postJson('/inference/stop', {}));
+      }
+
+      if (method === 'POST' && routePath.endsWith('/inference/start')) {
+        return ok(await postJson('/inference/start', {}));
       }
 
       if (method === 'GET' && routePath.endsWith('/inference/current')) {

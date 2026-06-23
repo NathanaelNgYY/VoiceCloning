@@ -224,6 +224,10 @@ export function getCurrentTraining() {
   return api.get('/train/current');
 }
 
+export function getTrainingRunMetadata(expName) {
+  return api.get(`/train/metadata/${encodeURIComponent(expName)}`);
+}
+
 // Models
 
 export function getModels() {
@@ -307,6 +311,23 @@ export function getActiveVoiceProfile() {
 export function getFullActiveVoiceProfile() {
   return api.get('/voice-profile/active', {
     params: { full: 1 },
+  });
+}
+
+export function getVoiceProfileConfigs(voiceProfileId) {
+  return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
+}
+
+export function saveVoiceProfileConfig(voiceProfileId, configId, config) {
+  return api.post(
+    `/voice-profile/configs/${encodeURIComponent(voiceProfileId)}/${encodeURIComponent(configId)}`,
+    config,
+  );
+}
+
+export function deleteVoiceProfileConfig(voiceProfileId, configId) {
+  return api.post(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}/${encodeURIComponent(configId)}`, {
+    delete: true,
   });
 }
 
@@ -397,6 +418,32 @@ async function fetchGeneratedAudio(url, { attempts = 8, delayMs = 500 } = {}) {
   throw new Error(`Generated audio is not ready yet (${lastStatus || 'network error'})`);
 }
 
+export async function getGenerationResultSource(sessionId) {
+  await getStorageMode();
+
+  if (isS3Mode()) {
+    return {
+      url: resolveApiPath(`/api/inference/result/${encodeURIComponent(sessionId)}?audio=1`),
+      revoke: false,
+    };
+  }
+
+  const res = await api.get(`/inference/result/${sessionId}`, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+  if (res.status !== 200) {
+    throw new Error(`Generated audio is not ready yet (${res.status})`);
+  }
+  const contentType = String(res.headers?.['content-type'] || '');
+  if (contentType.includes('application/json')) {
+    const data = JSON.parse(await res.data.text());
+    if (data?.url) return { url: data.url, revoke: false };
+    throw new Error('Generated audio response did not include a playable URL.');
+  }
+  return { url: URL.createObjectURL(new Blob([res.data], { type: 'audio/wav' })), revoke: true };
+}
+
 export async function getGenerationResult(sessionId) {
   await getStorageMode();
 
@@ -406,8 +453,32 @@ export async function getGenerationResult(sessionId) {
     return fetchGeneratedAudio(url);
   }
 
-  const res = await api.get(`/inference/result/${sessionId}`, { responseType: 'blob' });
+  const res = await api.get(`/inference/result/${sessionId}`, {
+    responseType: 'blob',
+    validateStatus: () => true,
+  });
+  if (res.status !== 200) {
+    throw new Error(`Generated audio is not ready yet (${res.status})`);
+  }
+  const contentType = String(res.headers?.['content-type'] || '');
+  if (contentType.includes('application/json')) {
+    const data = JSON.parse(await res.data.text());
+    if (data?.url) return fetchGeneratedAudio(data.url);
+    throw new Error('Generated audio response did not include a playable URL.');
+  }
   return new Blob([res.data], { type: 'audio/wav' });
+}
+
+export function getPronunciationDictionary(category = 'general') {
+  return api.get('/pronunciation-dictionary', { params: { category } });
+}
+
+export function savePronunciationEntry(entry) {
+  return api.post('/pronunciation-dictionary', entry);
+}
+
+export function deletePronunciationEntry(entry) {
+  return api.post('/pronunciation-dictionary', { ...entry, action: 'delete' });
 }
 
 export async function getInferenceChunk(sessionId, index) {
@@ -427,6 +498,14 @@ export function cancelGeneration(sessionId) {
 
 export function getInferenceStatus() {
   return api.get('/inference/status');
+}
+
+export function startInferenceServer() {
+  return api.post('/inference/start');
+}
+
+export function stopInferenceServer() {
+  return api.post('/inference/stop');
 }
 
 export function getInstanceStatus() {

@@ -4,20 +4,35 @@ import {
   getModels,
   getTrainingAudioUrl,
   getTrainingAudioFiles,
+  getTrainingRunMetadata,
   activateVoiceProfile,
+  deleteVoiceProfileConfig,
   getFullActiveVoiceProfile,
+  getVoiceProfileConfigs,
+  saveVoiceProfileConfig,
   selectModels,
+  startGeneration,
+  getGenerationResultSource,
+  synthesizeSentence,
+  getPronunciationDictionary,
+  savePronunciationEntry,
+  deletePronunciationEntry,
+  startInferenceServer,
+  stopInferenceServer,
 } from '../services/api.js';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
+import { useInferenceSSE } from '../hooks/useInferenceSSE.js';
 import {
   LIVE_LANGUAGE_OPTIONS,
   getLiveLanguageConfig,
   normalizeLiveLanguage,
+  splitLiveReplyPhrases,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,6 +40,7 @@ import { cn } from '@/lib/utils';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
 import {
   chooseBestReferenceSet,
+  describeReferenceCandidate,
   shouldAutoApplyBestReferenceSet,
 } from '@/lib/referenceSelection';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
@@ -41,6 +57,17 @@ import {
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
+import {
+  addTtsHistoryItem,
+  createTtsHistoryItem,
+  getTtsHistoryByRoute,
+} from '@/lib/ttsHistory';
+import { concatWavBlobs } from '@/lib/wavConcat';
+import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
+import {
+  parsePronunciationCsv,
+  serializePronunciationCsv,
+} from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import {
   buildSavedVoiceProfileRestoreKey,
@@ -66,13 +93,74 @@ import {
   Loader2,
   Mic,
   MicOff,
+  Pencil,
   PlayCircle,
   RefreshCw,
   Square,
+  Trash2,
+  Upload,
   UserRound,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
+
+function withCacheBuster(url) {
+  if (!url || url.startsWith('blob:')) return url;
+  try {
+    const parsed = new URL(url, window.location.href);
+    parsed.searchParams.set('_audioReady', String(Date.now()));
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}_audioReady=${Date.now()}`;
+  }
+}
+
+function waitForAudioMetadata(url, timeoutMs = 3500) {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio();
+    let settled = false;
+    let timer = null;
+    const cleanup = () => {
+      if (timer) window.clearTimeout(timer);
+      audio.onloadedmetadata = null;
+      audio.oncanplay = null;
+      audio.onerror = null;
+    };
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (ok) resolve();
+      else reject(new Error('Audio metadata was not ready yet.'));
+    };
+    timer = window.setTimeout(() => done(false), timeoutMs);
+    audio.preload = 'metadata';
+    audio.onloadedmetadata = () => done(true);
+    audio.oncanplay = () => done(true);
+    audio.onerror = () => done(false);
+    audio.src = url;
+    audio.load();
+  });
+}
+
+async function waitForPlayableAudioSource(url, { attempts = 5, delayMs = 700 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const candidateUrl = withCacheBuster(url);
+    try {
+      await waitForAudioMetadata(candidateUrl);
+      return candidateUrl;
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs * attempt));
+      }
+    }
+  }
+  throw lastError || new Error('Generated audio is not playable yet.');
+}
 
 function messageStatusText(message) {
   if (message.role === 'user') {
@@ -95,6 +183,23 @@ function fallbackName(filePath) {
 function normalizeReferenceLanguage(lang) {
   const value = String(lang || '').trim().toLowerCase();
   return ['en', 'zh', 'ja', 'ko', 'auto'].includes(value) ? value : 'en';
+}
+
+const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 'names', 'acronyms', 'math'];
+
+function buildConfigId(seed = '') {
+  const slug = String(seed || 'config')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return `${slug || 'config'}-${Date.now().toString(36)}`;
+}
+
+function formatReferenceScore(candidate) {
+  if (!candidate) return 'unscored';
+  return `${Math.round(candidate.score)} ${candidate.eligible ? 'strict' : 'manual'}`;
 }
 
 function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
@@ -184,7 +289,7 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
   );
 }
 
-export default function LivePage({ replyMode = 'phrases' }) {
+export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -198,6 +303,16 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [activeVoiceProfile, setActiveVoiceProfile] = useState(null);
   const [loadingActiveVoiceProfile, setLoadingActiveVoiceProfile] = useState(true);
   const [activeVoiceProfileError, setActiveVoiceProfileError] = useState('');
+  const [voiceConfigs, setVoiceConfigs] = useState([]);
+  const [loadingVoiceConfigs, setLoadingVoiceConfigs] = useState(false);
+  const [voiceConfigError, setVoiceConfigError] = useState('');
+  const [loadedConfigId, setLoadedConfigId] = useState('');
+  const [trainingRunMetadata, setTrainingRunMetadata] = useState(null);
+  const [trainingRunMetadataError, setTrainingRunMetadataError] = useState('');
+  const [savingConfigId, setSavingConfigId] = useState('');
+  const [generatingSampleConfigId, setGeneratingSampleConfigId] = useState('');
+  const [draggingConfigId, setDraggingConfigId] = useState('');
+  const [configSampleUrls, setConfigSampleUrls] = useState({});
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
   const [loadedTrainingAudioSourceKey, setLoadedTrainingAudioSourceKey] = useState('');
@@ -219,6 +334,22 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [ttsText, setTtsText] = useState('');
+  const [ttsHistory, setTtsHistory] = useState([]);
+  const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
+  const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
+  // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
+  const [streamingRoute, setStreamingRoute] = useState(null);
+  const [ttsError, setTtsError] = useState('');
+  const [pronunciationCategory, setPronunciationCategory] = useState('general');
+  const [pronunciationWord, setPronunciationWord] = useState('');
+  const [pronunciationReadable, setPronunciationReadable] = useState('');
+  const [pronunciationArpabet, setPronunciationArpabet] = useState('');
+  const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
+  const [pronunciationEntries, setPronunciationEntries] = useState([]);
+  const [pronunciationMessage, setPronunciationMessage] = useState('');
+  const [pronunciationBusy, setPronunciationBusy] = useState(false);
+  const [pronunciationTestingWord, setPronunciationTestingWord] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -227,11 +358,20 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const urlVoiceKeyRef = useRef('');
   const restoredActiveVoiceProfileKeyRef = useRef('');
   const previewRequestRef = useRef(0);
+  const configSampleUrlsRef = useRef({});
+  const autoDefaultConfigKeyRef = useRef('');
+  const reorderingConfigRef = useRef(false);
   const pendingAutoSyncFingerprintRef = useRef('');
   const autoSyncRequestFingerprintRef = useRef('');
   const lastAutoSyncedFingerprintRef = useRef('');
   const statusRequestVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
+  const ttsHistoryRef = useRef([]);
+  const queuedTtsAudioRef = useRef(null);
+  const queuedTtsRef = useRef({ clips: [], playingIndex: -1, active: false });
+  const pronunciationImportInputRef = useRef(null);
+  const ttsInference = useInferenceSSE();
+  const pendingFullTtsRef = useRef(null);
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -294,6 +434,41 @@ export default function LivePage({ replyMode = 'phrases' }) {
   const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
     primaryPath: refAudioPath, promptText, trainingAudioFiles, auxRefAudios,
   }), [refAudioPath, promptText, trainingAudioFiles, auxRefAudios]);
+  const referenceCandidateMap = useMemo(() => (
+    Object.fromEntries(trainingAudioFiles.map((file) => [file.path, describeReferenceCandidate(file)]))
+  ), [trainingAudioFiles]);
+  const currentReferenceMetadata = useMemo(() => {
+    const primary = referenceCandidateMap[refAudioPath] || (refAudioPath ? describeReferenceCandidate({
+      filename: fallbackName(refAudioPath),
+      path: refAudioPath,
+      transcript: promptText,
+      lang: promptLang,
+    }) : null);
+    const aux = auxRefAudios.map((file) => referenceCandidateMap[file.path] || describeReferenceCandidate(file));
+    return {
+      mode: primary?.eligible ? 'strict' : 'manual',
+      primary,
+      aux,
+      selectedPaths: {
+        primary: refAudioPath,
+        aux: auxRefAudios.map((item) => item.path),
+      },
+    };
+  }, [referenceCandidateMap, refAudioPath, promptText, promptLang, auxRefAudios]);
+  const currentLiveFastMetadata = useMemo(() => ({
+    configName: selectedProfile?.displayName ? `${selectedProfile.displayName} default` : 'Default',
+    selected: true,
+    rank: 1,
+    language: liveLanguage,
+    preferredRoute: 'sentence',
+    defaults: {
+      top_k: topK,
+      top_p: topP,
+      temperature,
+      repetition_penalty: repPenalty,
+      speed_factor: speed,
+    },
+  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed]);
 
   const liveSpeech = useLiveSpeech({ refParams: liveRefParams, replyMode, language: liveLanguage });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
@@ -377,6 +552,142 @@ export default function LivePage({ replyMode = 'phrases' }) {
     }
   }
 
+  async function loadVoiceConfigs(voiceProfileId = selectedVoiceProfileId) {
+    if (!voiceProfileId) {
+      setVoiceConfigs([]);
+      setVoiceConfigError('');
+      return;
+    }
+    setLoadingVoiceConfigs(true);
+    try {
+      const res = await getVoiceProfileConfigs(voiceProfileId);
+      const configs = res.data.configs || [];
+      setVoiceConfigs(configs);
+      console.info('[voice-configs] loaded configs', {
+        voiceProfileId,
+        count: configs.length,
+        configs: configs.map((config) => ({
+          configId: config.configId,
+          configName: config.configName,
+          rank: config.rank,
+          hasTrainingMetadata: Boolean(config.trainingMetadata && Object.keys(config.trainingMetadata).length > 0),
+          trainingMetadata: config.trainingMetadata || null,
+          inferenceMetadata: config.inferenceMetadata || null,
+          referenceMetadata: config.referenceMetadata || null,
+          sample: config.sample || null,
+        })),
+      });
+      if (configs[0]) {
+        applyVoiceConfig(configs[0], { silent: true });
+      }
+      setVoiceConfigError('');
+    } catch (err) {
+      setVoiceConfigs([]);
+      setVoiceConfigError(err.response?.data?.error || err.message || 'Could not load saved configs.');
+    } finally {
+      setLoadingVoiceConfigs(false);
+    }
+  }
+
+  async function loadTrainingRunMetadata(expName = selectedExpName) {
+    if (!expName) {
+      setTrainingRunMetadata(null);
+      setTrainingRunMetadataError('');
+      return;
+    }
+    try {
+      const res = await getTrainingRunMetadata(expName);
+      const metadata = res.data.metadata || null;
+      setTrainingRunMetadata(metadata);
+      setTrainingRunMetadataError('');
+      console.info('[voice-configs] loaded training metadata', { expName, metadata });
+    } catch (err) {
+      const message = err.response?.status === 404
+        ? 'No training metadata saved for this model yet.'
+        : err.response?.data?.error || err.message || 'Could not load training metadata.';
+      setTrainingRunMetadata(null);
+      setTrainingRunMetadataError(message);
+      console.info('[voice-configs] training metadata unavailable', { expName, message });
+    }
+  }
+
+  function buildCurrentConfigPayload({ configId = '', configName = '' } = {}) {
+    return {
+      configName: configName || currentLiveFastMetadata.configName,
+      rank: voiceConfigs.length + 1,
+      selected: true,
+      trainingMetadata: trainingRunMetadata || activeVoiceProfile?.metadata?.training || {},
+      inferenceMetadata: currentLiveFastMetadata,
+      referenceMetadata: currentReferenceMetadata,
+      sample: {},
+      ...(configId ? { configId } : {}),
+    };
+  }
+
+  function resolveReferenceFile(path, fallback = {}) {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath) return null;
+    return trainingAudioFiles.find((file) => file.path === normalizedPath)
+      || fallback?.file
+      || {
+        filename: fallback.filename || fallbackName(normalizedPath),
+        path: normalizedPath,
+        transcript: fallback.transcript || '',
+        lang: fallback.lang || '',
+      };
+  }
+
+  async function syncConfigToVoiceProfile(config) {
+    if (!config || !selectedProfile || !selectedGPT || !selectedSoVITS) return;
+    const reference = config.referenceMetadata || {};
+    const inference = config.inferenceMetadata || {};
+    const defaults = inference.defaults || {};
+    const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
+    if (!primaryPath) return;
+    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux)
+      ? reference.selectedPaths.aux
+      : Array.isArray(reference.aux)
+        ? reference.aux.map((item) => item?.path).filter(Boolean)
+        : [];
+    const storageMode = await getStorageMode();
+    const payload = buildVoiceProfilePayload({
+      displayName: selectedProfile.displayName,
+      selectedGPT,
+      selectedSoVITS,
+      refAudioPath: primaryPath,
+      promptText: primaryFile.transcript || reference.primary?.file?.transcript || promptText,
+      promptLang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || promptLang),
+      textLang: inference.language || liveLanguage,
+      preferredRoute: inference.preferredRoute || 'sentence',
+      auxRefAudioPaths: auxPaths,
+      defaults: {
+        top_k: defaults.top_k ?? topK,
+        top_p: defaults.top_p ?? topP,
+        temperature: defaults.temperature ?? temperature,
+        repetition_penalty: defaults.repetition_penalty ?? repPenalty,
+        speed_factor: defaults.speed_factor ?? speed,
+      },
+      trainingMetadata: config.trainingMetadata || trainingRunMetadata || activeVoiceProfile?.metadata?.training,
+      referenceMetadata: reference,
+      liveFastMetadata: inference,
+      storageMode,
+    });
+    const response = await activateVoiceProfile(payload);
+    const summary = response.data || {};
+    setActiveVoiceProfile(summary.voiceProfileId ? {
+      ...payload,
+      ...summary,
+      voiceProfileId: summary.voiceProfileId || payload.voiceProfileId,
+      displayName: summary.displayName || payload.displayName,
+    } : null);
+    console.info('[voice-configs] synced config to voice profile', {
+      voiceProfileId: payload.voiceProfileId,
+      configId: config.configId,
+      rank: config.rank,
+    });
+  }
+
   function clearReferenceSelection() {
     const audio = referencePreviewAudioRef.current;
     if (audio) {
@@ -392,6 +703,42 @@ export default function LivePage({ replyMode = 'phrases' }) {
     setPreviewReference({ path: '', url: null, filename: '', role: '' });
     setReferenceAudioUrls({});
     setLoadingPreviewPath('');
+  }
+
+  function applyVoiceConfig(config, { silent = false } = {}) {
+    const reference = config?.referenceMetadata || {};
+    const inference = config?.inferenceMetadata || {};
+    const defaults = inference.defaults || {};
+    const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux)
+      ? reference.selectedPaths.aux
+      : Array.isArray(reference.aux)
+        ? reference.aux.map((item) => item?.path).filter(Boolean)
+        : [];
+    if (primaryPath) {
+      const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+      setRefAudioPath(primaryPath);
+      setPromptText(primaryFile.transcript || reference.primary?.file?.transcript || reference.primary?.transcript || '');
+      setPromptLang(normalizeReferenceLanguage(primaryFile.lang));
+    }
+    setAuxRefAudios(auxPaths.slice(0, 5).map((path) => (
+      trainingAudioFiles.find((file) => file.path === path) || {
+        filename: fallbackName(path),
+        path,
+        transcript: '',
+        lang: '',
+      }
+    )));
+    setSelectedLanguage(normalizeLiveLanguage(inference.language || liveLanguage));
+    setSpeed(Number.isFinite(defaults.speed_factor) ? defaults.speed_factor : speed);
+    setTopK(Number.isFinite(defaults.top_k) ? defaults.top_k : topK);
+    setTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : topP);
+    setTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : temperature);
+    setRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : repPenalty);
+    setLoadedConfigId(config?.configId || '');
+    if (!silent) {
+      setReferenceMessage(`Loaded config ${config.configName || config.configId}.`);
+    }
   }
 
   function applyBestReference(files = trainingAudioFiles, { markForAutoSync = false } = {}) {
@@ -551,6 +898,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
         repetition_penalty: repPenalty,
         speed_factor: speed,
       },
+      trainingMetadata: activeVoiceProfile?.metadata?.training,
+      referenceMetadata: currentReferenceMetadata,
+      liveFastMetadata: currentLiveFastMetadata,
       storageMode,
     });
 
@@ -586,6 +936,619 @@ export default function LivePage({ replyMode = 'phrases' }) {
       setSavingProfile(false);
     }
   }
+
+  async function saveCurrentVoiceConfig(existingConfig = null) {
+    if (!selectedVoiceProfileId || !refAudioPath) return;
+    const configId = existingConfig?.configId || buildConfigId(selectedProfile?.displayName || selectedVoiceProfileId);
+    setSavingConfigId(configId);
+    setModelError('');
+    setVoiceConfigError('');
+    try {
+      const payload = {
+        ...buildCurrentConfigPayload({
+          configId,
+          configName: existingConfig?.configName || currentLiveFastMetadata.configName,
+        }),
+        rank: existingConfig?.rank || voiceConfigs.length + 1,
+        sample: existingConfig?.sample || {},
+      };
+      const res = await saveVoiceProfileConfig(selectedVoiceProfileId, configId, payload);
+      const saved = res.data.config;
+      console.info('[voice-configs] saved config', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: saved.configId,
+        config: saved,
+        hasTrainingMetadata: Boolean(saved.trainingMetadata && Object.keys(saved.trainingMetadata).length > 0),
+      });
+      setVoiceConfigs((current) => {
+        const without = current.filter((item) => item.configId !== saved.configId);
+        return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      });
+      if (Number(saved.rank || 0) === 1) {
+        await syncConfigToVoiceProfile(saved);
+        console.info('[voice-configs] synced rank #1 config to voice profile', {
+          voiceProfileId: selectedVoiceProfileId,
+          configId: saved.configId,
+        });
+      }
+      setReferenceMessage(`Saved config ${saved.configName || saved.configId}.`);
+      setLoadedConfigId(saved.configId);
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not save config.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function deleteSavedVoiceConfig(configId) {
+    if (!selectedVoiceProfileId || !configId) return;
+    setSavingConfigId(configId);
+    setVoiceConfigError('');
+    try {
+      await deleteVoiceProfileConfig(selectedVoiceProfileId, configId);
+      console.info('[voice-configs] deleted config', { voiceProfileId: selectedVoiceProfileId, configId });
+      setVoiceConfigs((current) => current.filter((item) => item.configId !== configId));
+      if (loadedConfigId === configId) setLoadedConfigId('');
+      setConfigSampleUrls((current) => {
+        if (current[configId]) URL.revokeObjectURL(current[configId]);
+        const next = { ...current };
+        delete next[configId];
+        configSampleUrlsRef.current = next;
+        return next;
+      });
+      setReferenceMessage(`Deleted config ${configId}.`);
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not delete config.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function moveVoiceConfig(configId, direction) {
+    if (!selectedVoiceProfileId || !configId || savingConfigId) return;
+    const currentIndex = voiceConfigs.findIndex((item) => item.configId === configId);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= voiceConfigs.length) return;
+    const reordered = [...voiceConfigs];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const reranked = reordered.map((config, index) => ({ ...config, rank: index + 1 }));
+    setSavingConfigId(configId);
+    setVoiceConfigError('');
+    try {
+      const savedConfigs = [];
+      for (const config of reranked) {
+        const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, config);
+        savedConfigs.push(res.data.config);
+      }
+      const sorted = savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      setVoiceConfigs(sorted);
+      if (sorted[0]) {
+        applyVoiceConfig(sorted[0], { silent: true });
+        await syncConfigToVoiceProfile(sorted[0]);
+      }
+      console.info('[voice-configs] reordered configs', {
+        voiceProfileId: selectedVoiceProfileId,
+        order: sorted.map((config) => ({ configId: config.configId, rank: config.rank })),
+      });
+      setReferenceMessage(`Moved ${moved.configName || moved.configId} to #${targetIndex + 1}.`);
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not reorder configs.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function persistConfigOrder(nextOrder, { movedConfigId = '' } = {}) {
+    if (!selectedVoiceProfileId || nextOrder.length === 0) return;
+    const reranked = nextOrder.map((config, index) => ({ ...config, rank: index + 1 }));
+    setSavingConfigId(movedConfigId || reranked[0]?.configId || '');
+    setVoiceConfigError('');
+    try {
+      const savedConfigs = [];
+      for (const config of reranked) {
+        const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, config);
+        savedConfigs.push(res.data.config);
+      }
+      const sorted = savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      setVoiceConfigs(sorted);
+      if (sorted[0]) {
+        await syncConfigToVoiceProfile(sorted[0]);
+      }
+      console.info('[voice-configs] reordered configs', {
+        voiceProfileId: selectedVoiceProfileId,
+        order: sorted.map((config) => ({ configId: config.configId, rank: config.rank, configName: config.configName })),
+      });
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not reorder configs.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+      setDraggingConfigId('');
+      reorderingConfigRef.current = false;
+    }
+  }
+
+  function handleConfigDrop(targetConfigId) {
+    if (!draggingConfigId || draggingConfigId === targetConfigId) {
+      setDraggingConfigId('');
+      return;
+    }
+    const fromIndex = voiceConfigs.findIndex((item) => item.configId === draggingConfigId);
+    const toIndex = voiceConfigs.findIndex((item) => item.configId === targetConfigId);
+    if (fromIndex < 0 || toIndex < 0) {
+      setDraggingConfigId('');
+      return;
+    }
+    const reordered = [...voiceConfigs];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    const reranked = reordered.map((config, index) => ({ ...config, rank: index + 1 }));
+    reorderingConfigRef.current = true;
+    setVoiceConfigs(reranked);
+    if (reranked[0]) {
+      applyVoiceConfig(reranked[0], { silent: true });
+    }
+    persistConfigOrder(reranked, { movedConfigId: moved.configId });
+  }
+
+  async function renameVoiceConfig(config, nextName) {
+    const configName = String(nextName || '').trim() || config.configId;
+    if (!selectedVoiceProfileId || !config?.configId || configName === config.configName) return;
+    setSavingConfigId(config.configId);
+    setVoiceConfigError('');
+    try {
+      const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, {
+        ...config,
+        configName,
+      });
+      const saved = res.data.config;
+      setVoiceConfigs((current) => current.map((item) => (
+        item.configId === saved.configId ? saved : item
+      )));
+      if (Number(saved.rank || 0) === 1) {
+        await syncConfigToVoiceProfile(saved);
+      }
+      console.info('[voice-configs] renamed config', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: saved.configId,
+        configName: saved.configName,
+      });
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not rename config.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function generateConfigSample(config) {
+    if (!config?.configId) return;
+    const reference = config.referenceMetadata || {};
+    const inference = config.inferenceMetadata || {};
+    const defaults = inference.defaults || {};
+    const primaryPath = reference.selectedPaths?.primary || reference.primary?.path || refAudioPath;
+    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux) ? reference.selectedPaths.aux : [];
+    const prompt = String(primaryFile.transcript || reference.primary?.file?.transcript || promptText || '').trim();
+    const params = {
+      text: 'This is a short saved voice configuration sample.',
+      text_lang: inference.language || liveLanguage,
+      ref_audio_path: primaryPath,
+      prompt_text: prompt,
+      prompt_lang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || promptLang),
+      aux_ref_audio_paths: auxPaths,
+      speed_factor: defaults.speed_factor ?? speed,
+      top_k: defaults.top_k ?? topK,
+      top_p: defaults.top_p ?? topP,
+      temperature: defaults.temperature ?? temperature,
+      repetition_penalty: defaults.repetition_penalty ?? repPenalty,
+    };
+    if (!params.ref_audio_path) {
+      setModelError('Config has no primary reference audio.');
+      return;
+    }
+    if (!params.prompt_text) {
+      const message = 'Config sample needs a primary reference transcript. Load the config, enter the primary transcript, update the config, then sample again.';
+      setModelError(message);
+      setVoiceConfigError(message);
+      return;
+    }
+    setGeneratingSampleConfigId(config.configId);
+    setModelError('');
+    setVoiceConfigError('');
+    try {
+      const result = await synthesizeSentence(params);
+      const url = URL.createObjectURL(result.blob);
+      setConfigSampleUrls((current) => {
+        if (current[config.configId]) URL.revokeObjectURL(current[config.configId]);
+        const next = { ...current, [config.configId]: url };
+        configSampleUrlsRef.current = next;
+        return next;
+      });
+      const sample = {
+        text: params.text,
+        generatedAt: new Date().toISOString(),
+        localOnly: true,
+      };
+      const saved = {
+        ...config,
+        sample,
+      };
+      await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, saved);
+      console.info('[voice-configs] generated sample', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: config.configId,
+        params,
+        sample,
+      });
+      setVoiceConfigs((current) => current.map((item) => (
+        item.configId === config.configId ? { ...item, sample } : item
+      )));
+      setReferenceMessage(`Generated sample for ${config.configName || config.configId}.`);
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not generate config sample.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setGeneratingSampleConfigId('');
+    }
+  }
+
+  async function generateTextToSpeech(route) {
+    const text = ttsText.trim();
+    if (!text) {
+      setTtsError('Enter text to generate audio.');
+      return;
+    }
+    if (!selectedVoiceProfileId || !isReady) {
+      setTtsError('Load a voice profile and config before generating audio.');
+      return;
+    }
+
+    const baseParams = {
+      text,
+      voiceProfileId: selectedVoiceProfileId,
+      text_lang: liveLanguage,
+    };
+    const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
+    const languageLabel = liveLanguageConfig.label;
+
+    setTtsError('');
+
+    if (route === 'fastQueued') {
+      setTtsFastGenerating(true);
+      setTtsFastProgress({ total: 0, current: 0, text: '' });
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true };
+      try {
+        const result = await generateLiveFastQueuedTts({
+          text,
+          baseParams,
+          synthesizeSentence,
+          createObjectUrl: (blob) => URL.createObjectURL(blob),
+          onProgress: setTtsFastProgress,
+          onClipReady: (clip) => {
+            queuedTtsRef.current.clips[clip.index] = clip;
+            playNextQueuedTtsClip();
+          },
+        });
+        if (result.clips.length === 0) {
+          throw new Error('No audio clips were generated.');
+        }
+      } catch (err) {
+        setTtsError(err.response?.data?.error || err.message || 'Could not generate queued Live Fast audio.');
+      } finally {
+        setTtsFastGenerating(false);
+        setTtsFastProgress({ total: 0, current: 0, text: '' });
+      }
+      return;
+    }
+
+    if (route === 'fast') {
+      setTtsFastGenerating(true);
+      setTtsFastProgress({ total: 0, current: 0, text: '' });
+      try {
+        const phrases = splitLiveReplyPhrases(text);
+        const clips = [];
+        setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
+        for (let index = 0; index < phrases.length; index += 1) {
+          const phrase = phrases[index];
+          setTtsFastProgress({ total: phrases.length, current: index + 1, text: phrase });
+          const result = await synthesizeSentence({ ...baseParams, text: phrase });
+          clips.push(result.blob);
+        }
+        const blob = clips.length > 1 ? await concatWavBlobs(clips, { pauseMs: 120 }) : clips[0];
+        recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
+      } catch (err) {
+        setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+      } finally {
+        setTtsFastGenerating(false);
+        setTtsFastProgress({ total: 0, current: 0, text: '' });
+      }
+      return;
+    }
+
+    // Full inference uses the chunked async flow. It avoids the
+    // CloudFront ~30s origin timeout / 6MB response limit that a single synchronous
+    // request hits. It returns a sessionId immediately, streams progress over SSE, and
+    // fetches the finished audio via a presigned URL (bytes never traverse the Lambda).
+    setStreamingRoute(route);
+    try {
+      const res = await startGeneration(baseParams);
+      const { sessionId } = res.data;
+      pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel, route };
+      ttsInference.connect(sessionId, { initialStatus: 'waiting' });
+    } catch (err) {
+      pendingFullTtsRef.current = null;
+      setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+      setStreamingRoute(null);
+    }
+  }
+
+  function playNextQueuedTtsClip() {
+    const queue = queuedTtsRef.current;
+    const nextIndex = queue.playingIndex + 1;
+    const nextClip = queue.clips[nextIndex];
+    const audio = queuedTtsAudioRef.current;
+    if (!queue.active || !nextClip || !audio || !audio.paused) return;
+
+    queue.playingIndex = nextIndex;
+    audio.src = nextClip.url;
+    audio.play().catch((err) => {
+      setTtsError(err.message || 'Browser blocked queued Live Fast playback.');
+    });
+  }
+
+  function handleQueuedTtsEnded() {
+    playNextQueuedTtsClip();
+  }
+
+  function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
+    const item = createTtsHistoryItem({ route, url, text, voiceName, languageLabel });
+    setTtsHistory((current) => {
+      const next = addTtsHistoryItem(current, item);
+      ttsHistoryRef.current = next;
+      return next;
+    });
+  }
+
+  async function loadPronunciationEntries(category = pronunciationCategory) {
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await getPronunciationDictionary(category);
+      setPronunciationEntries(res.data.entries || []);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not load pronunciation dictionary.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  async function savePronunciation() {
+    const word = pronunciationWord.trim();
+    if (!word) {
+      setPronunciationMessage('Enter a word before saving.');
+      return;
+    }
+    if (!pronunciationReadable.trim() && !pronunciationArpabet.trim()) {
+      setPronunciationMessage('Add a readable pronunciation or ARPAbet before saving.');
+      return;
+    }
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await savePronunciationEntry({
+        word,
+        category: pronunciationCategory,
+        readable: pronunciationReadable,
+        arpabet: pronunciationArpabet,
+        source: pronunciationArpabet ? 'admin-arpabet' : 'admin-readable',
+      });
+      setPronunciationEntries(res.data.dictionary?.entries || []);
+      if (pronunciationArpabet.trim()) {
+        setPronunciationMessage(`Saved ${word}. Restarting inference to load ARPAbet...`);
+        await stopInferenceServer();
+        await startInferenceServer();
+        autoLoadAttemptKeyRef.current = '';
+        setPronunciationMessage(`Saved ${word}. Restarted inference; reloading the selected voice profile...`);
+        await checkStatus();
+      } else {
+        setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
+      }
+      setEditingPronunciationWord('');
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  function editPronunciation(entry) {
+    setEditingPronunciationWord(entry.word || '');
+    setPronunciationWord(entry.word || '');
+    setPronunciationReadable(entry.readable || '');
+    setPronunciationArpabet(entry.arpabet || '');
+    setPronunciationMessage(`Editing ${entry.word}.`);
+  }
+
+  function clearPronunciationForm() {
+    setEditingPronunciationWord('');
+    setPronunciationWord('');
+    setPronunciationReadable('');
+    setPronunciationArpabet('');
+    setPronunciationMessage('');
+  }
+
+  async function deletePronunciation(entry) {
+    const word = String(entry.word || '').trim();
+    if (!word) return;
+    setPronunciationBusy(true);
+    setPronunciationMessage('');
+    try {
+      const res = await deletePronunciationEntry({ word, category: pronunciationCategory });
+      setPronunciationEntries(res.data.dictionary?.entries || []);
+      if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
+      if (entry.arpabet) {
+        setPronunciationMessage(`Deleted ${word}. Restarting inference to remove ARPAbet...`);
+        await stopInferenceServer();
+        await startInferenceServer();
+        autoLoadAttemptKeyRef.current = '';
+        setPronunciationMessage(`Deleted ${word}. Restarted inference; reloading the selected voice profile...`);
+        await checkStatus();
+      } else {
+        setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
+      }
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not delete pronunciation entry.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  function buildPronunciationTestText(entry) {
+    const word = String(entry.word || '').trim();
+    const readable = String(entry.readable || '').trim();
+    const arpabet = String(entry.arpabet || '').trim();
+    const spoken = readable && !arpabet ? readable : word;
+    return `Pronunciation test. ${spoken}. ${spoken} is used in this sentence.`;
+  }
+
+  async function testPronunciation(entry = null) {
+    const word = String(entry?.word || pronunciationWord || '').trim();
+    const readable = String(entry?.readable || pronunciationReadable || '').trim();
+    const arpabet = String(entry?.arpabet || pronunciationArpabet || '').trim();
+    if (!word) {
+      setPronunciationMessage('Enter a word before testing.');
+      return;
+    }
+    if (arpabet && !entry) {
+      setPronunciationMessage('Save ARPAbet first, then test it after inference reloads.');
+      return;
+    }
+    if (!selectedVoiceProfileId || !isReady) {
+      setPronunciationMessage('Load a voice profile and config before testing pronunciation.');
+      return;
+    }
+
+    setPronunciationTestingWord(word);
+    setPronunciationMessage(`Testing ${word} with Live Fast sentence TTS...`);
+    try {
+      const text = buildPronunciationTestText({ word, readable, arpabet });
+      const result = await synthesizeSentence({
+        text,
+        voiceProfileId: selectedVoiceProfileId,
+        text_lang: liveLanguage,
+      });
+      recordTtsHistory({
+        route: 'fast',
+        url: URL.createObjectURL(result.blob),
+        text,
+        voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
+        languageLabel: liveLanguageConfig.label,
+      });
+      setPronunciationMessage(`Generated Live Fast pronunciation test for ${word}.`);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not test pronunciation.');
+    } finally {
+      setPronunciationTestingWord('');
+    }
+  }
+
+  function exportPronunciationCsv() {
+    const csv = serializePronunciationCsv(pronunciationEntries);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `pronunciation-${pronunciationCategory}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setPronunciationMessage(`Exported ${pronunciationEntries.length} ${pronunciationCategory} entries.`);
+  }
+
+  async function importPronunciationCsv(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setPronunciationBusy(true);
+    setPronunciationMessage(`Importing ${file.name}...`);
+    try {
+      const rows = parsePronunciationCsv(await file.text(), pronunciationCategory);
+      if (rows.length === 0) {
+        setPronunciationMessage('No valid pronunciation rows found. CSV needs word plus readable or ARPAbet.');
+        return;
+      }
+
+      let hasArpabet = false;
+      for (const row of rows) {
+        if (row.arpabet) hasArpabet = true;
+        await savePronunciationEntry({
+          ...row,
+          source: row.arpabet ? 'csv-arpabet' : 'csv-readable',
+        });
+      }
+
+      await loadPronunciationEntries(pronunciationCategory);
+      if (hasArpabet) {
+        setPronunciationMessage(`Imported ${rows.length} entries. Restarting inference to load ARPAbet...`);
+        await stopInferenceServer();
+        await startInferenceServer();
+        autoLoadAttemptKeyRef.current = '';
+        setPronunciationMessage(`Imported ${rows.length} entries. Restarted inference; reloading the selected voice profile...`);
+        await checkStatus();
+      }
+      setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not import pronunciation CSV.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    const pending = pendingFullTtsRef.current;
+    if (!pending) return;
+
+    if (ttsInference.status === 'complete') {
+      getGenerationResultSource(pending.sessionId)
+        .then(async (source) => {
+          const playableUrl = await waitForPlayableAudioSource(source.url);
+          recordTtsHistory({
+            route: pending.route,
+            url: playableUrl,
+            text: pending.text,
+            voiceName: pending.voiceName,
+            languageLabel: pending.languageLabel,
+          });
+        })
+        .catch((err) => setTtsError(err.message || 'Could not fetch the generated audio.'))
+        .finally(() => {
+          pendingFullTtsRef.current = null;
+          setStreamingRoute(null);
+          ttsInference.reset();
+        });
+    } else if (ttsInference.status === 'error' || ttsInference.status === 'cancelled') {
+      setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
+      pendingFullTtsRef.current = null;
+      setStreamingRoute(null);
+      ttsInference.reset();
+    }
+  }, [ttsInference.status, ttsInference.error]);
+
+  useEffect(() => {
+    if (mode !== 'tts') return;
+    loadPronunciationEntries(pronunciationCategory);
+  }, [mode, pronunciationCategory]);
 
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
@@ -752,6 +1715,64 @@ export default function LivePage({ replyMode = 'phrases' }) {
   }, [selectedVoiceProfileId, selectedGPT, selectedSoVITS]);
 
   useEffect(() => {
+    loadVoiceConfigs(selectedVoiceProfileId);
+  }, [selectedVoiceProfileId]);
+
+  useEffect(() => {
+    loadTrainingRunMetadata(selectedExpName);
+  }, [selectedExpName]);
+
+  useEffect(() => {
+    if (
+      loadingVoiceConfigs
+      || voiceConfigs.length > 0
+      || !selectedVoiceProfileId
+      || !selectedProfile
+      || !selectedGPT
+      || !selectedSoVITS
+      || !refAudioPath
+      || loadingTrainingAudio
+      || isConversationActive
+    ) {
+      return;
+    }
+    const key = `${selectedVoiceProfileId}:${refAudioPath}:${auxRefAudios.map((item) => item.path).join(',')}`;
+    if (autoDefaultConfigKeyRef.current === key) return;
+    autoDefaultConfigKeyRef.current = key;
+    saveCurrentVoiceConfig({
+      configId: 'default',
+      configName: `${selectedProfile.displayName} default`,
+      rank: 1,
+      sample: {},
+    });
+  }, [
+    loadingVoiceConfigs,
+    voiceConfigs.length,
+    selectedVoiceProfileId,
+    selectedProfile,
+    selectedGPT,
+    selectedSoVITS,
+    refAudioPath,
+    auxRefAudios,
+    loadingTrainingAudio,
+    isConversationActive,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(configSampleUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      ttsHistoryRef.current.forEach((item) => {
+        if (item.url) URL.revokeObjectURL(item.url);
+      });
+    };
+  }, []);
+
+  useEffect(() => {
     if (!canRestoreActiveVoiceProfile || !activeVoiceProfileRestoreKey) {
       return;
     }
@@ -902,6 +1923,9 @@ export default function LivePage({ replyMode = 'phrases' }) {
     selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
   );
   const isReady = selectedModelLoaded && Boolean(liveRefParams);
+  const isTtsMode = mode === 'tts';
+  const ttsFastHistory = getTtsHistoryByRoute(ttsHistory, 'fast');
+  const ttsFullHistory = getTtsHistoryByRoute(ttsHistory, 'full');
   const isListening = liveSpeech.isMicInputEnabled && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
   const canBargeIn = liveSpeech.isMicInputEnabled || liveSpeech.isBargeInArmed;
   const meterActive = (liveSpeech.isMicInputEnabled && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking'))
@@ -935,7 +1959,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
         <h1 className="text-2xl font-bold tracking-tight">
           <span className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary/80 bg-clip-text text-transparent">
-            Live Voice Chat
+            {isTtsMode ? 'Text to Speech' : 'Live Voice Chat'}
           </span>
         </h1>
 
@@ -1053,13 +2077,228 @@ export default function LivePage({ replyMode = 'phrases' }) {
         </div>
       )}
 
-      {!liveSpeech.speechApiAvailable && (
+      {!isTtsMode && !liveSpeech.speechApiAvailable && (
         <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-600">
           This browser does not support live audio processing.
         </div>
       )}
 
-      {/* ── Chat card — fills remaining height ── */}
+      {isTtsMode ? (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Input text</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {loadedProfile?.displayName || 'Selected voice'} · {liveLanguageConfig.label} · {loadedConfigId || 'current config'}
+                </p>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                Browser download only
+              </span>
+            </div>
+            <Textarea
+              value={ttsText}
+              onChange={(event) => setTtsText(event.target.value)}
+              disabled={!isReady || ttsFastGenerating || streamingRoute !== null}
+              placeholder={isReady ? 'Type the text to synthesize.' : 'Load a voice profile first.'}
+              className="mt-4 min-h-[220px] rounded-xl border-slate-200 bg-white text-sm leading-6 shadow-none"
+            />
+            {ttsError && (
+              <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
+            )}
+            {ttsFastGenerating && (
+              <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <p>
+                  {ttsFastProgress.total > 0
+                    ? `Synthesizing sentence ${Math.min(ttsFastProgress.current, ttsFastProgress.total)} of ${ttsFastProgress.total}...`
+                    : 'Preparing Live Fast sentences...'}
+                </p>
+                {ttsFastProgress.text && (
+                  <p className="mt-1 line-clamp-2 text-xs text-emerald-700/80">{ttsFastProgress.text}</p>
+                )}
+              </div>
+            )}
+            {streamingRoute && (
+              <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
+                {ttsInference.totalChunks > 0
+                  ? `Synthesizing chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing synthesis…'}
+              </p>
+            )}
+            <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <Button
+                type="button"
+                onClick={() => generateTextToSpeech('fast')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                className="h-10 rounded-xl"
+              >
+                {(ttsFastGenerating || streamingRoute === 'fast') ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+                Live Fast TTS
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => generateTextToSpeech('fastQueued')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+              >
+                {ttsFastGenerating ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+                Live Fast Queue
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => generateTextToSpeech('full')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+              >
+                {streamingRoute === 'full' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                Full Inference TTS
+              </Button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Pronunciation dictionary</p>
+                  <p className="mt-0.5 text-xs text-slate-400">English entries saved by category.</p>
+                </div>
+                <Select value={pronunciationCategory} onValueChange={setPronunciationCategory}>
+                  <SelectTrigger className="h-8 w-[130px] rounded-lg border-slate-200 bg-white text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRONUNCIATION_CATEGORIES.map((category) => (
+                      <SelectItem key={category} value={category}>{category}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr]">
+                <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
+                <Input value={pronunciationReadable} onChange={(event) => setPronunciationReadable(event.target.value)} placeholder="Readable pronunciation" className="h-9 rounded-lg bg-white" />
+              </div>
+              <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy} className="h-8 rounded-lg">
+                  <Check size={13} />
+                  {editingPronunciationWord ? 'Update entry' : 'Save entry'}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => testPronunciation()}
+                  disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady}
+                  className="h-8 rounded-lg border-slate-200 bg-white"
+                >
+                  {pronunciationTestingWord === pronunciationWord.trim() ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                  Test
+                </Button>
+                {editingPronunciationWord && (
+                  <Button type="button" size="sm" variant="outline" onClick={clearPronunciationForm} disabled={pronunciationBusy} className="h-8 rounded-lg border-slate-200 bg-white">
+                    <X size={13} />
+                    Cancel
+                  </Button>
+                )}
+                <Button type="button" size="sm" variant="outline" onClick={exportPronunciationCsv} disabled={pronunciationBusy || pronunciationEntries.length === 0} className="h-8 rounded-lg border-slate-200 bg-white">
+                  <Download size={13} />
+                  Export CSV
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => pronunciationImportInputRef.current?.click()} disabled={pronunciationBusy} className="h-8 rounded-lg border-slate-200 bg-white">
+                  <Upload size={13} />
+                  Import CSV
+                </Button>
+                <input ref={pronunciationImportInputRef} type="file" accept=".csv,text/csv" onChange={importPronunciationCsv} className="hidden" />
+              </div>
+              {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
+              {pronunciationEntries.length > 0 && (
+                <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-100 bg-white">
+                  {pronunciationEntries.map((entry) => (
+                    <div key={entry.id || entry.word} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-50 px-2 py-1.5 text-xs last:border-b-0">
+                      <button
+                        type="button"
+                        onClick={() => editPronunciation(entry)}
+                        className="min-w-0 text-left"
+                        disabled={pronunciationBusy}
+                      >
+                        <span className="block truncate font-medium text-slate-700">{entry.word}</span>
+                        <span className="block truncate font-mono text-slate-400">{entry.arpabet || entry.readable}</span>
+                      </button>
+                      <div className="flex items-center gap-1">
+                        <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady} className="h-7 w-7 rounded-lg text-blue-500">
+                          {pronunciationTestingWord === entry.word ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                        </Button>
+                        <Button type="button" size="icon" variant="ghost" onClick={() => editPronunciation(entry)} disabled={pronunciationBusy} className="h-7 w-7 rounded-lg text-slate-500">
+                          <Pencil size={13} />
+                        </Button>
+                        <Button type="button" size="icon" variant="ghost" onClick={() => deletePronunciation(entry)} disabled={pronunciationBusy} className="h-7 w-7 rounded-lg text-red-500">
+                          <Trash2 size={13} />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <aside className="space-y-4">
+            {[
+              {
+                title: 'Live Fast output',
+                description: '/api/live/tts-sentence',
+                items: ttsFastHistory,
+              },
+              {
+                title: 'Full inference output',
+                description: '/api/inference',
+                items: ttsFullHistory,
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_4px_32px_-12px_rgba(0,0,0,0.08)]">
+                <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+                <p className="mt-1 text-xs text-slate-400">{item.description}</p>
+                {item.items.length > 0 ? (
+                  <div className="mt-3 space-y-3">
+                    {item.items.map((result, index) => (
+                      <div key={result.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-700">
+                              {index === 0 ? 'Latest' : new Date(result.createdAt).toLocaleTimeString()}
+                            </p>
+                            <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                              {result.voiceName || 'Selected voice'} · {result.languageLabel || liveLanguageConfig.label}
+                            </p>
+                          </div>
+                          <a
+                            href={result.url}
+                            download={result.filename}
+                            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            <Download size={12} /> WAV
+                          </a>
+                        </div>
+                        <audio className="w-full" controls src={result.url} />
+                        {result.text && (
+                          <p className="mt-2 max-h-10 overflow-hidden text-xs leading-5 text-slate-500">{result.text}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 text-sm text-slate-400">
+                    No audio generated yet.
+                  </p>
+                )}
+              </div>
+            ))}
+          </aside>
+        </div>
+      ) : (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
 
         {/* Messages */}
@@ -1174,6 +2413,7 @@ export default function LivePage({ replyMode = 'phrases' }) {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Advanced settings collapsible ── */}
       <Collapsible open={showSettings} onOpenChange={setShowSettings}>
@@ -1215,7 +2455,22 @@ export default function LivePage({ replyMode = 'phrases' }) {
                       <SelectValue placeholder={loadingTrainingAudio ? 'Loading...' : 'Select primary'} />
                     </SelectTrigger>
                     <SelectContent>
-                      {trainingAudioFiles.map((f) => <SelectItem key={f.path} value={f.path}>{f.filename}</SelectItem>)}
+                      {trainingAudioFiles.map((f) => {
+                        const candidate = referenceCandidateMap[f.path];
+                        return (
+                          <SelectItem key={f.path} value={f.path}>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="truncate">{f.filename}</span>
+                              <span className={cn(
+                                'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                                candidate?.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                              )}>
+                                {formatReferenceScore(candidate)}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                   {(() => {
@@ -1257,8 +2512,23 @@ export default function LivePage({ replyMode = 'phrases' }) {
                             disabled={isConversationActive || (!checked && auxRefAudios.length >= 5)}
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                              {referenceCandidateMap[f.path] && (
+                                <span className={cn(
+                                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                                  referenceCandidateMap[f.path].eligible
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-slate-100 text-slate-500'
+                                )}>
+                                  {Math.round(referenceCandidateMap[f.path].score)}
+                                </span>
+                              )}
+                            </span>
                             {f.transcript && <span className="mt-0.5 block truncate text-xs text-slate-400">{f.transcript}</span>}
+                            {referenceCandidateMap[f.path]?.reasons?.[0] && (
+                              <span className="mt-0.5 block truncate text-[11px] text-amber-600">{referenceCandidateMap[f.path].reasons[0]}</span>
+                            )}
                           </span>
                           <button
                             type="button" onClick={() => handlePreviewReference(pi2)}
@@ -1278,6 +2548,24 @@ export default function LivePage({ replyMode = 'phrases' }) {
                 <p className="mt-1.5 text-xs text-slate-400">
                   {auxRefAudios.length}/5 auxiliary · Primary: {refAudioPath ? fallbackName(refAudioPath) : 'none'}
                 </p>
+                {currentReferenceMetadata.primary && (
+                  <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium text-slate-700">Primary reference score</span>
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                        currentReferenceMetadata.primary.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                      )}>
+                        {Math.round(currentReferenceMetadata.primary.score)} · {currentReferenceMetadata.mode}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate">
+                      {currentReferenceMetadata.primary.eligible
+                        ? 'Passed strict duration, sentence, cleanliness, loudness, and steady-tone checks.'
+                        : currentReferenceMetadata.primary.reasons.join(' ')}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className={cn(!previewReference.url && 'hidden')}>
@@ -1323,6 +2611,162 @@ export default function LivePage({ replyMode = 'phrases' }) {
             {/* Inference controls */}
             <div className="space-y-4">
               <p className="text-sm font-semibold text-slate-800">Inference controls</p>
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Current config</p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {currentLiveFastMetadata.configName} · {currentReferenceMetadata.primary ? fallbackName(currentReferenceMetadata.selectedPaths.primary) : 'no reference'}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => saveCurrentVoiceConfig()}
+                    disabled={!selectedProfile || !selectedGPT || !selectedSoVITS || !refAudioPath || isConversationActive || loadingModel || Boolean(savingConfigId)}
+                    className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
+                  >
+                    {savingConfigId && !voiceConfigs.some((item) => item.configId === savingConfigId)
+                      ? <Loader2 size={13} className="animate-spin" />
+                      : <Check size={13} />}
+                    {savingConfigId && !voiceConfigs.some((item) => item.configId === savingConfigId) ? 'Saving...' : 'Save new'}
+                  </Button>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+                  <p className="rounded-lg bg-slate-50 px-2 py-1.5">
+                    Speed {speed.toFixed(1)} · Top K {topK} · Top P {topP.toFixed(2)}
+                  </p>
+                  <p className="rounded-lg bg-slate-50 px-2 py-1.5">
+                    Temp {temperature.toFixed(2)} · Rep {repPenalty.toFixed(2)} · {liveLanguageConfig.label}
+                  </p>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-2 py-2 text-xs text-slate-500">
+                  <p className="font-semibold text-slate-700">Training metadata</p>
+                  {trainingRunMetadata ? (
+                    <>
+                      <p className="mt-1">
+                        Engine {trainingRunMetadata.engineVersion || 'unknown'} ·
+                        denoise {trainingRunMetadata.training?.skipDenoise ? 'skipped' : 'enabled'} ·
+                        batch {trainingRunMetadata.training?.batchSize ?? 'n/a'}
+                      </p>
+                      <p className="mt-1">
+                        SoVITS {trainingRunMetadata.training?.sovitsEpochs ?? 'n/a'} ep ·
+                        GPT {trainingRunMetadata.training?.gptEpochs ?? 'n/a'} ep ·
+                        raw files {trainingRunMetadata.sourceDatasetStats?.rawFileCount ?? 'n/a'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-amber-700">
+                      {trainingRunMetadataError || 'Training metadata has not loaded yet.'}
+                    </p>
+                  )}
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-700">Saved configs for this person</p>
+                    <button
+                      type="button"
+                      onClick={() => loadVoiceConfigs(selectedVoiceProfileId)}
+                      disabled={loadingVoiceConfigs || !selectedVoiceProfileId}
+                      className="text-xs font-medium text-slate-500 hover:text-slate-800 disabled:opacity-40"
+                    >
+                      {loadingVoiceConfigs ? 'Loading...' : 'Refresh'}
+                    </button>
+                  </div>
+                  {voiceConfigError && <p className="mb-2 text-xs text-red-500">{voiceConfigError}</p>}
+                  {voiceConfigs.length === 0 ? (
+                    <p className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-2 text-xs text-amber-700">
+                      No saved configs yet. Click Save new after choosing references and inference settings.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {voiceConfigs.map((config, index) => {
+                        const defaults = config.inferenceMetadata?.defaults || {};
+                        const reference = config.referenceMetadata || {};
+                        const sampleUrl = configSampleUrls[config.configId];
+                        const busy = savingConfigId === config.configId || generatingSampleConfigId === config.configId;
+                        const loaded = reorderingConfigRef.current
+                          ? index === 0
+                          : loadedConfigId === config.configId;
+                        return (
+                          <div
+                            key={config.configId}
+                            className={cn(
+                              'rounded-lg border bg-white p-2 transition-opacity',
+                              loaded ? 'border-blue-200 ring-1 ring-blue-100' : 'border-slate-200',
+                              draggingConfigId === config.configId && 'opacity-50'
+                            )}
+                            draggable={!busy}
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', config.configId);
+                              setDraggingConfigId(config.configId);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              handleConfigDrop(config.configId);
+                            }}
+                            onDragEnd={() => setDraggingConfigId('')}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span className="shrink-0 cursor-grab text-xs text-slate-400" title="Drag to reorder">#{index + 1}</span>
+                                  <input
+                                    className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-slate-800 outline-none transition-colors hover:border-slate-200 focus:border-blue-200 focus:bg-white"
+                                    defaultValue={config.configName || config.configId}
+                                    disabled={busy}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter') event.currentTarget.blur();
+                                      if (event.key === 'Escape') {
+                                        event.currentTarget.value = config.configName || config.configId;
+                                        event.currentTarget.blur();
+                                      }
+                                    }}
+                                    onBlur={(event) => renameVoiceConfig(config, event.currentTarget.value)}
+                                  />
+                                  {loaded && <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">loaded</span>}
+                                </div>
+                                <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                                  Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
+                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
+                                </p>
+                                {config.trainingMetadata?.engineVersion && (
+                                  <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                                    Trained {config.trainingMetadata.engineVersion} · denoise {config.trainingMetadata.skipDenoise ? 'skipped' : 'enabled'} · batch {config.trainingMetadata.batchSize ?? 'n/a'}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                <button type="button" onClick={() => applyVoiceConfig(config)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50">Load</button>
+                                <button type="button" onClick={() => saveCurrentVoiceConfig(config)} disabled={busy || !loaded} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Update</button>
+                                <button type="button" onClick={() => generateConfigSample(config)} disabled={busy || isConversationActive} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+                                  {generatingSampleConfigId === config.configId ? 'Generating' : 'Sample'}
+                                </button>
+                                <button type="button" onClick={() => deleteSavedVoiceConfig(config.configId)} disabled={busy} className="rounded-md border border-red-100 px-2 py-1 text-[11px] text-red-500 hover:bg-red-50 disabled:opacity-40">Delete</button>
+                              </div>
+                            </div>
+                            {sampleUrl ? (
+                              <audio className="mt-2 w-full" controls src={sampleUrl} />
+                            ) : config.sample?.generatedAt ? (
+                              <p className="mt-2 text-[11px] text-slate-400">
+                                Sample metadata saved {new Date(config.sample.generatedAt).toLocaleString()}, regenerate to listen in this browser.
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-[11px] text-slate-400">No sample recording yet.</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="grid gap-3 md:grid-cols-2">
                 {[
                   { label: 'Speed', display: speed.toFixed(1) + 'x', min: 0.5, max: 2.0, step: 0.1, val: speed, set: setSpeed },

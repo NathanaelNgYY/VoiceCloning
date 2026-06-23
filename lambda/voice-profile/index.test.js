@@ -123,6 +123,78 @@ test('voice profile activate saves the full profile and marks it active', async 
   }]);
 });
 
+test('voice profile activate saves metadata layers for reproducible Live Fast configs', async () => {
+  const uploads = [];
+  const handler = createHandler({
+    readObject: async () => {
+      throw new Error('not used');
+    },
+    writeObject: async (key, payload) => {
+      uploads.push({ key, body: JSON.parse(payload.toString('utf-8')) });
+    },
+    warmReferenceAudio: async () => {},
+    now: () => '2026-06-10T01:00:00.000Z',
+  });
+
+  const response = await handler(createEvent({
+    method: 'POST',
+    path: '/api/voice-profile/activate',
+    body: {
+      voiceProfileId: 'metadata-voice-v1',
+      displayName: 'Metadata Voice',
+      gptKey: 'models/user-models/gpt/metadata.ckpt',
+      sovitsKey: 'models/user-models/sovits/metadata.pth',
+      ref_audio_path: 'training/datasets/metadata/denoised/ref.wav',
+      prompt_text: 'This reference is clean and steady.',
+      prompt_lang: 'en',
+      text_lang: 'en',
+      aux_ref_audio_paths: ['training/datasets/metadata/denoised/aux.wav'],
+      defaults: { top_k: 5, speed_factor: 1 },
+      metadata: {
+        training: {
+          engineVersion: 'v2ProPlus',
+          skipDenoise: true,
+          batchSize: 2,
+          sovitsEpochs: 8,
+          gptEpochs: 15,
+        },
+        reference: {
+          mode: 'strict',
+          primary: { path: 'training/datasets/metadata/denoised/ref.wav', score: 124 },
+          aux: [{ path: 'training/datasets/metadata/denoised/aux.wav', score: 118 }],
+        },
+        liveFast: {
+          configName: 'Default',
+          selected: true,
+          rank: 1,
+        },
+      },
+    },
+  }));
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(uploads[0].body.metadata, {
+    training: {
+      engineVersion: 'v2ProPlus',
+      skipDenoise: true,
+      batchSize: 2,
+      sovitsEpochs: 8,
+      gptEpochs: 15,
+    },
+    reference: {
+      mode: 'strict',
+      primary: { path: 'training/datasets/metadata/denoised/ref.wav', score: 124 },
+      aux: [{ path: 'training/datasets/metadata/denoised/aux.wav', score: 118 }],
+    },
+    liveFast: {
+      configName: 'Default',
+      selected: true,
+      rank: 1,
+    },
+  });
+  assert.deepEqual(uploads[1].body.metadata, uploads[0].body.metadata);
+});
+
 test('voice profile activate rejects incomplete profile payloads', async () => {
   const handler = createHandler({
     readObject: async () => {

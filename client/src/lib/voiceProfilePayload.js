@@ -25,6 +25,54 @@ function normalizePreferredRoute(preferredRoute) {
   return String(preferredRoute || '').trim().toLowerCase() === 'full' ? 'full' : 'sentence';
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function compactReferenceItem(item) {
+  if (!isPlainObject(item)) return null;
+  const path = String(item.path || item.file?.path || '').trim();
+  const filename = String(item.filename || item.file?.filename || '').trim();
+  const score = Number(item.score);
+  return {
+    ...(filename ? { filename } : {}),
+    ...(path ? { path } : {}),
+    ...(Number.isFinite(score) ? { score } : {}),
+  };
+}
+
+function compactReferenceMetadata(referenceMetadata) {
+  if (!isPlainObject(referenceMetadata)) return null;
+  const selectedPaths = isPlainObject(referenceMetadata.selectedPaths)
+    ? {
+        ...(referenceMetadata.selectedPaths.primary ? { primary: referenceMetadata.selectedPaths.primary } : {}),
+        ...(Array.isArray(referenceMetadata.selectedPaths.aux)
+          ? { aux: referenceMetadata.selectedPaths.aux.filter(Boolean) }
+          : {}),
+      }
+    : null;
+  const primary = compactReferenceItem(referenceMetadata.primary);
+  const aux = Array.isArray(referenceMetadata.aux)
+    ? referenceMetadata.aux.map(compactReferenceItem).filter(Boolean)
+    : [];
+  const compact = {
+    ...(referenceMetadata.mode ? { mode: referenceMetadata.mode } : {}),
+    ...(selectedPaths && Object.keys(selectedPaths).length > 0 ? { selectedPaths } : {}),
+    ...(primary ? { primary } : {}),
+    ...(aux.length > 0 ? { aux } : {}),
+  };
+  return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function normalizeMetadata({ trainingMetadata, referenceMetadata, liveFastMetadata } = {}) {
+  const metadata = {
+    ...(isPlainObject(trainingMetadata) ? { training: trainingMetadata } : {}),
+    ...(compactReferenceMetadata(referenceMetadata) ? { reference: compactReferenceMetadata(referenceMetadata) } : {}),
+    ...(isPlainObject(liveFastMetadata) ? { liveFast: liveFastMetadata } : {}),
+  };
+  return Object.keys(metadata).length > 0 ? metadata : null;
+}
+
 export function buildVoiceProfilePayload({
   voiceProfileId = '',
   displayName = '',
@@ -37,8 +85,12 @@ export function buildVoiceProfilePayload({
   preferredRoute = 'sentence',
   auxRefAudioPaths = [],
   defaults = {},
+  trainingMetadata,
+  referenceMetadata,
+  liveFastMetadata,
   storageMode = 'local',
 } = {}) {
+  const metadata = normalizeMetadata({ trainingMetadata, referenceMetadata, liveFastMetadata });
   const payload = {
     voiceProfileId: String(voiceProfileId || '').trim() || buildVoiceProfileId(displayName),
     displayName: String(displayName || '').trim(),
@@ -51,6 +103,7 @@ export function buildVoiceProfilePayload({
       ? auxRefAudioPaths.filter(Boolean)
       : [],
     defaults: normalizeDefaults(defaults),
+    ...(metadata ? { metadata } : {}),
   };
 
   if (storageMode === 's3') {

@@ -4,13 +4,15 @@ export const ROUTES = [
   { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
   { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },
   { name: 'TrainingLibraryFunction', methods: ['GET', 'POST', 'DELETE'], pattern: /^\/api\/training-library(?:\/(?:snapshot|presign|confirm|[^/]+(?:\/(?:replace-presign|replace-confirm))?))?\/?$/u, modulePath: './training-library/index.js' },
-  { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current))?\/?$/u, modulePath: './training/index.js' },
+  { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current|metadata\/[^/]+))?\/?$/u, modulePath: './training/index.js' },
   { name: 'ModelsFunction', methods: ['GET', 'POST'], pattern: /^\/api\/models(?:\/select)?\/?$/u, modulePath: './models/index.js' },
-  { name: 'InferenceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/inference(?:\/(?:generate|result\/[A-Za-z0-9-]+|cancel|current|status|stop))?\/?$/u, modulePath: './inference/index.js' },
+  { name: 'InferenceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/inference(?:\/(?:generate|result\/[A-Za-z0-9-]+|cancel|current|status|start|stop))?\/?$/u, modulePath: './inference/index.js' },
   { name: 'TranscribeFunction', methods: ['POST'], pattern: /^\/api\/transcribe\/?$/u, modulePath: './transcribe/index.js' },
   { name: 'TrainingAudioFunction', methods: ['GET'], pattern: /^\/api\/(?:training-audio(?:\/file\/[^/]+\/[^/]+|\/[^/]+)|ref-audio)\/?$/u, modulePath: './training-audio/index.js' },
   { name: 'LiveFunction', methods: ['POST'], pattern: /^\/api\/live\/tts-sentence\/?$/u, modulePath: './live/index.js' },
   { name: 'VoiceProfileFunction', methods: ['GET', 'POST'], pattern: /^\/api\/voice-profile\/(?:activate|active|internal\/[^/]+)\/?$/u, modulePath: './voice-profile/index.js' },
+  { name: 'VoiceProfileConfigsFunction', methods: ['GET', 'POST', 'PUT', 'DELETE'], pattern: /^\/api\/voice-profile\/configs\/[^/]+(?:\/[^/]+)?\/?$/u, modulePath: './voice-profile-configs/index.js' },
+  { name: 'PronunciationDictionaryFunction', methods: ['GET', 'POST'], pattern: /^\/api\/pronunciation-dictionary\/?$/u, modulePath: './pronunciation-dictionary/index.js' },
   { name: 'InstanceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/instance\/(?:status|start|idle-check)\/?$/u, modulePath: './instance/index.js' },
 ];
 

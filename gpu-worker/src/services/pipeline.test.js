@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { cleanupLocalTrainingArtifacts } from './pipeline.js';
+import { buildTrainingRunMetadata, cleanupLocalTrainingArtifacts } from './pipeline.js';
 
 test('cleanupLocalTrainingArtifacts removes only current experiment scratch and logs', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-cleanup-'));
@@ -57,4 +57,59 @@ test('cleanupLocalTrainingArtifacts refuses paths outside expected training root
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('buildTrainingRunMetadata records reproducible engine, training, reference, and dataset settings', () => {
+  assert.deepEqual(
+    buildTrainingRunMetadata({
+      sessionId: 'session-1',
+      expName: 'demo',
+      startedAt: '2026-06-10T01:00:00.000Z',
+      completedAt: '2026-06-10T01:30:00.000Z',
+      config: {
+        batchSize: 2,
+        sovitsEpochs: 8,
+        gptEpochs: 15,
+        sovitsSaveEvery: 4,
+        gptSaveEvery: 5,
+        asrLanguage: 'en',
+        asrModel: 'large-v3',
+        skipDenoise: true,
+      },
+      selectedReferences: {
+        mode: 'strict',
+        primary: { path: 'training/datasets/demo/denoised/ref.wav', score: 124 },
+      },
+      sourceDatasetStats: {
+        rawFileCount: 3,
+        candidateClipCount: 12,
+      },
+    }),
+    {
+      schemaVersion: 1,
+      sessionId: 'session-1',
+      expName: 'demo',
+      engineVersion: 'v2ProPlus',
+      startedAt: '2026-06-10T01:00:00.000Z',
+      completedAt: '2026-06-10T01:30:00.000Z',
+      training: {
+        batchSize: 2,
+        sovitsEpochs: 8,
+        gptEpochs: 15,
+        sovitsSaveEvery: 4,
+        gptSaveEvery: 5,
+        asrLanguage: 'en',
+        asrModel: 'large-v3',
+        skipDenoise: true,
+      },
+      selectedReferences: {
+        mode: 'strict',
+        primary: { path: 'training/datasets/demo/denoised/ref.wav', score: 124 },
+      },
+      sourceDatasetStats: {
+        rawFileCount: 3,
+        candidateClipCount: 12,
+      },
+    },
+  );
 });

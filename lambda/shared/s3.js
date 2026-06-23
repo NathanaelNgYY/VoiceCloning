@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   ListObjectsV2Command,
   HeadObjectCommand,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -118,4 +119,12 @@ export async function getObject(key) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+export async function deleteObject(key) {
+  const bucket = requireBucket();
+  await getClient().send(new DeleteObjectCommand({
+    Bucket: bucket,
+    Key: fullKey(key),
+  }));
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handler } from './index.js';
+import { createHandler, handler } from './index.js';
 
 test('training handler forwards start requests to the GPU worker with nested config and email', async () => {
   const calls = [];
@@ -37,6 +37,52 @@ test('training handler forwards start requests to the GPU worker with nested con
         batchSize: 2,
         sovitsEpochs: 4,
         gptEpochs: 3,
+      },
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('training handler forwards training metadata inputs to the GPU worker config', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({
+        expName: 'demo',
+        skipDenoise: true,
+        selectedReferences: {
+          mode: 'strict',
+          primary: { path: 'training/datasets/demo/denoised/ref.wav', score: 124 },
+        },
+        sourceDatasetStats: {
+          rawFileCount: 3,
+          candidateClipCount: 12,
+        },
+      }),
+    });
+
+    assert.deepEqual(JSON.parse(calls[0].options.body).config, {
+      skipDenoise: true,
+      selectedReferences: {
+        mode: 'strict',
+        primary: { path: 'training/datasets/demo/denoised/ref.wav', score: 124 },
+      },
+      sourceDatasetStats: {
+        rawFileCount: 3,
+        candidateClipCount: 12,
       },
     });
   } finally {
@@ -96,4 +142,60 @@ test('training current returns idle when the GPU worker is not reachable', async
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test('training metadata returns stored run metadata for an experiment', async () => {
+  const handlerWithMetadata = createHandler({
+    readObject: async (key) => {
+      assert.equal(key, 'training/runs/demo/metadata.json');
+      return Buffer.from(JSON.stringify({
+        engineVersion: 'v2ProPlus',
+        training: {
+          batchSize: 2,
+          sovitsEpochs: 8,
+          gptEpochs: 15,
+          skipDenoise: true,
+        },
+        sourceDatasetStats: {
+          rawFileCount: 3,
+        },
+      }), 'utf-8');
+    },
+  });
+
+  const response = await handlerWithMetadata({
+    requestContext: { http: { method: 'GET' } },
+    rawPath: '/api/train/metadata/demo',
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    expName: 'demo',
+    metadata: {
+      engineVersion: 'v2ProPlus',
+      training: {
+        batchSize: 2,
+        sovitsEpochs: 8,
+        gptEpochs: 15,
+        skipDenoise: true,
+      },
+      sourceDatasetStats: {
+        rawFileCount: 3,
+      },
+    },
+  });
+});
+
+test('training metadata returns 404 when no run metadata exists', async () => {
+  const handlerWithMetadata = createHandler({
+    readObject: async () => null,
+  });
+
+  const response = await handlerWithMetadata({
+    requestContext: { http: { method: 'GET' } },
+    rawPath: '/api/train/metadata/demo',
+  });
+
+  assert.equal(response.statusCode, 404);
+  assert.match(JSON.parse(response.body).error, /metadata not found/u);
 });

@@ -6,6 +6,7 @@ import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
 import { LOCAL_TEMP_ROOT } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
+import { prepareTextForSynthesis } from './textPronunciation.js';
 
 const TEMP_DIR = LOCAL_TEMP_ROOT;
 
@@ -29,229 +30,8 @@ function clampNumber(value, fallback) {
   return Number.isFinite(num) ? num : fallback;
 }
 
-// Compound words that the TTS model mispronounces as a single token.
-// Each entry maps a word (case-insensitive) to its split form.
-// Add new entries here as you discover mispronounced words.
-const COMPOUND_WORD_SPLITS = {
-  // General academic
-  audiobook: 'audio book',
-  audiobooks: 'audio books',
-  textbook: 'text book',
-  textbooks: 'text books',
-  notebook: 'note book',
-  notebooks: 'note books',
-  handbook: 'hand book',
-  handbooks: 'hand books',
-  coursework: 'course work',
-  framework: 'frame work',
-  frameworks: 'frame works',
-  workflow: 'work flow',
-  workflows: 'work flows',
-  feedback: 'feed back',
-  outcome: 'out come',
-  outcomes: 'out comes',
-  overview: 'over view',
-  throughout: 'through out',
-  widespread: 'wide spread',
-  breakthrough: 'break through',
-  breakthroughs: 'break throughs',
-  underlying: 'under lying',
-  overlapping: 'over lapping',
-  mainstream: 'main stream',
-  standalone: 'stand alone',
-  // Medical — anatomy & body
-  bloodstream: 'blood stream',
-  bloodwork: 'blood work',
-  heartbeat: 'heart beat',
-  heartburn: 'heart burn',
-  breastbone: 'breast bone',
-  backbone: 'back bone',
-  kneecap: 'knee cap',
-  eardrum: 'ear drum',
-  eyeball: 'eye ball',
-  eyelid: 'eye lid',
-  fingertip: 'finger tip',
-  footprint: 'foot print',
-  windpipe: 'wind pipe',
-  birthmark: 'birth mark',
-  // Medical — conditions & symptoms
-  headache: 'head ache',
-  headaches: 'head aches',
-  backache: 'back ache',
-  toothache: 'tooth ache',
-  stomachache: 'stomach ache',
-  nosebleed: 'nose bleed',
-  sunburn: 'sun burn',
-  heatstroke: 'heat stroke',
-  frostbite: 'frost bite',
-  outbreak: 'out break',
-  outbreaks: 'out breaks',
-  onset: 'on set',
-  setback: 'set back',
-  setbacks: 'set backs',
-  fallout: 'fall out',
-  flareup: 'flare up',
-  burnout: 'burn out',
-  // Medical — procedures & treatment
-  healthcare: 'health care',
-  aftercare: 'after care',
-  bloodtest: 'blood test',
-  checkup: 'check up',
-  checkups: 'check ups',
-  followup: 'follow up',
-  followups: 'follow ups',
-  bypass: 'by pass',
-  cutoff: 'cut off',
-  cutoffs: 'cut offs',
-  dosage: 'dose age',
-  intake: 'in take',
-  output: 'out put',
-  uptake: 'up take',
-  lifespan: 'life span',
-  timeframe: 'time frame',
-  timeframes: 'time frames',
-  guideline: 'guide line',
-  guidelines: 'guide lines',
-  baseline: 'base line',
-  // Medical — pharmacology & research
-  drugstore: 'drug store',
-  painkiller: 'pain killer',
-  painkillers: 'pain killers',
-  antibiotic: 'anti biotic',
-  antibiotics: 'anti biotics',
-  underdose: 'under dose',
-  overdose: 'over dose',
-  overdoses: 'over doses',
-  sideeffect: 'side effect',
-  // Laboratory & research
-  benchmark: 'bench mark',
-  benchmarks: 'bench marks',
-  counterpart: 'counter part',
-  counterparts: 'counter parts',
-  dataset: 'data set',
-  datasets: 'data sets',
-  database: 'data base',
-  databases: 'data bases',
-  screenshot: 'screen shot',
-  screenshots: 'screen shots',
-  // Lecture / education
-  classroom: 'class room',
-  classrooms: 'class rooms',
-  homework: 'home work',
-  bookshelf: 'book shelf',
-  whiteboard: 'white board',
-  whiteboards: 'white boards',
-  blackboard: 'black board',
-  slideshow: 'slide show',
-  powerpoint: 'power point',
-  worksheet: 'work sheet',
-  worksheets: 'work sheets',
-  undergraduate: 'under graduate',
-  undergraduates: 'under graduates',
-  postgraduate: 'post graduate',
-  postgraduates: 'post graduates',
-};
-
-function splitCompoundWords(text) {
-  const pattern = new RegExp(
-    `\\b(${Object.keys(COMPOUND_WORD_SPLITS).join('|')})\\b`,
-    'gi',
-  );
-  return text.replace(pattern, (match) => {
-    return COMPOUND_WORD_SPLITS[match.toLowerCase()] || match;
-  });
-}
-
-// ── Text preprocessing: abbreviations, acronyms, symbols ──
-
-const ABBREVIATIONS = {
-  'Dr.': 'Doctor',
-  'Mr.': 'Mister',
-  'Mrs.': 'Misses',
-  'Prof.': 'Professor',
-  'Sr.': 'Senior',
-  'Jr.': 'Junior',
-  'vs.': 'versus',
-  'etc.': 'etcetera',
-  'approx.': 'approximately',
-  'dept.': 'department',
-  'govt.': 'government',
-  'no.': 'number',
-  'nos.': 'numbers',
-  'vol.': 'volume',
-  'esp.': 'especially',
-};
-
-// Build a single regex that matches any abbreviation at a word boundary.
-// We escape the dots and sort longest-first so "nos." doesn't shadow "no.".
-const abbrPattern = new RegExp(
-  '(?<=^|\\s)(' +
-  Object.keys(ABBREVIATIONS)
-    .sort((a, b) => b.length - a.length)
-    .map(k => k.replace(/\./g, '\\.'))
-    .join('|') +
-  ')(?=\\s|$)',
-  'gi',
-);
-
-// Words that happen to be all-caps but should NOT be letter-spaced
-const ACRONYM_SKIP = new Set([
-  'I', 'A', 'AM', 'PM', 'OK', 'OH', 'OR', 'IF', 'IN', 'IT', 'IS',
-  'AT', 'AN', 'AS', 'BE', 'BY', 'DO', 'GO', 'HE', 'ME', 'MY', 'NO',
-  'OF', 'ON', 'SO', 'TO', 'UP', 'US', 'WE',
-]);
-
-const SYMBOL_MAP = {
-  '@': 'at',
-  '&': 'and',
-  '#': 'number',
-  '%': 'percent',
-  '+': 'plus',
-  '=': 'equals',
-};
-
-const symbolPattern = new RegExp(
-  '(?<=\\s|^)([' + Object.keys(SYMBOL_MAP).map(s => '\\' + s).join('') + '])(?=\\s|$)',
-  'g',
-);
-
-function preprocessText(text) {
-  let result = text;
-
-  // 0) Greek/maths delta symbol → the word, so it is never read as "triangle".
-  //    Handles attached "ΔG" → "delta G" and spaced "Δ G". Δ = U+0394, ∆ = U+2206.
-  result = result.replace(/[Δ∆]/g, 'delta ');
-
-  // 1) Abbreviation expansion
-  result = result.replace(abbrPattern, (match) => {
-    // Lookup is case-insensitive — normalise the key to title case for the map
-    for (const [abbr, expansion] of Object.entries(ABBREVIATIONS)) {
-      if (abbr.toLowerCase() === match.toLowerCase()) return expansion;
-    }
-    return match;
-  });
-
-  // 2) Acronym / initialism spacing (2-5 uppercase letters at word boundaries)
-  result = result.replace(/\b([A-Z]{2,5})\b/g, (match) => {
-    if (ACRONYM_SKIP.has(match)) return match;
-    return match.split('').join(' ');
-  });
-
-  // 3) Symbol expansion
-  result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
-
-  return result;
-}
-
 function normalizeWhitespace(text) {
-  const cleaned = String(text || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/(\w)-(\w)/g, '$1 $2')   // "real-time" → "real time" so TTS won't say "minus"
-    .replace(/\s+[-–]\s+/g, ' — ')    // " - " used as a dash → em-dash (a pause, not spoken "minus")
-    .trim();
-  return splitCompoundWords(cleaned);
+  return prepareTextForSynthesis(text);
 }
 
 // Common multi-word phrases that should not be split across chunks
@@ -281,8 +61,7 @@ function restoreSemanticUnits(text) {
 }
 
 function splitIntoSentences(text) {
-  const preprocessed = preprocessText(String(text || ''));
-  const normalized = normalizeWhitespace(preprocessed);
+  const normalized = normalizeWhitespace(String(text || ''));
   if (!normalized) return [];
 
   const sentences = normalized

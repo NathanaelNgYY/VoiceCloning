@@ -73,6 +73,24 @@ test('inference result can return a GPU worker artifact URL instead of S3', asyn
   });
 });
 
+test('inference result audio request redirects to the playable artifact URL', async () => {
+  await withEnv({
+    ARTIFACT_SOURCE: 'gpu-worker',
+    GPU_WORKER_URL: 'http://gpu-worker.internal:3001',
+    GPU_WORKER_PUBLIC_URL: 'https://gpu-worker.example.com',
+  }, async () => {
+    const response = await handler({
+      requestContext: { http: { method: 'GET' } },
+      rawPath: '/api/inference/result/abc-123',
+      queryStringParameters: { audio: '1' },
+    });
+
+    assert.equal(response.statusCode, 302);
+    assert.equal(response.headers.Location, 'https://gpu-worker.example.com/inference/result/abc-123');
+    assert.equal(response.headers['Cache-Control'], 'no-store');
+  });
+});
+
 test('inference current returns idle when the GPU worker is not reachable', async () => {
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://localhost:3999';
@@ -96,6 +114,26 @@ test('inference current returns idle when the GPU worker is not reachable', asyn
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test('inference start proxies to the GPU worker start route', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    postJson: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { ready: true };
+    },
+  });
+
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/start',
+    body: '{}',
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), { ready: true });
+  assert.deepEqual(calls, [{ routePath: '/inference/start', payload: {} }]);
 });
 
 test('inference handler resolves voiceProfileId to a saved full profile before direct synthesis', async () => {

@@ -34,6 +34,20 @@ function normalizeDefaults(defaults = {}) {
   };
 }
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizeMetadata(metadata = {}) {
+  if (!isPlainObject(metadata)) return {};
+  const normalized = {
+    ...(isPlainObject(metadata.training) ? { training: metadata.training } : {}),
+    ...(isPlainObject(metadata.reference) ? { reference: metadata.reference } : {}),
+    ...(isPlainObject(metadata.liveFast) ? { liveFast: metadata.liveFast } : {}),
+  };
+  return Object.keys(normalized).length > 0 ? normalized : {};
+}
+
 function createVoiceProfileRecord(body, now) {
   const voiceProfileId = String(body.voiceProfileId || '').trim();
   const displayName = String(body.displayName || '').trim();
@@ -82,6 +96,9 @@ function createVoiceProfileRecord(body, now) {
       ? body.aux_ref_audio_paths.filter((item) => hasValue(item))
       : [],
     defaults: normalizeDefaults(body.defaults),
+    ...(Object.keys(normalizeMetadata(body.metadata)).length > 0
+      ? { metadata: normalizeMetadata(body.metadata) }
+      : {}),
     updatedAt: now,
   };
 }
@@ -115,6 +132,9 @@ async function parseStoredProfile(readObject, key) {
       ? stored.aux_ref_audio_paths.filter((item) => hasValue(item))
       : [],
     defaults: normalizeDefaults(stored.defaults),
+    ...(Object.keys(normalizeMetadata(stored.metadata)).length > 0
+      ? { metadata: normalizeMetadata(stored.metadata) }
+      : {}),
   };
 }
 

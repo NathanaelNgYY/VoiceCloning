@@ -17,7 +17,7 @@ test('handleLiveTtsRequest synthesizes immediately without a readiness probe', a
   let resolveCalls = 0;
 
   const result = await module.handleLiveTtsRequest({
-    text: 'Hello there.',
+    text: 'The free-energy change ΔG - or ∆G - matters.',
     ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
     aux_ref_audio_paths: [],
   }, {
@@ -31,6 +31,9 @@ test('handleLiveTtsRequest synthesizes immediately without a readiness probe', a
     synthesize: async (params) => {
       synthesizeCalls += 1;
       assert.equal(params.ref_audio_path, '/tmp/reference.wav');
+      assert.match(params.text, /delta\s+G/i);
+      assert.doesNotMatch(params.text, /[Δ∆]/u);
+      assert.doesNotMatch(params.text, /\s-\s/u);
       return Buffer.from('RIFFdemo');
     },
   });

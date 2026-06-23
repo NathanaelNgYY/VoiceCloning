@@ -28,6 +28,7 @@ try {
     'instance',
     'live',
     'models',
+    'pronunciation-dictionary',
     'shared',
     'training',
     'training-library',
@@ -35,6 +36,7 @@ try {
     'transcribe',
     'upload',
     'voice-profile',
+    'voice-profile-configs',
     'node_modules'
   )
 

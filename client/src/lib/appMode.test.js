@@ -17,7 +17,7 @@ test('getAppModeConfig exposes both apps in combined mode', () => {
   assert.equal(config.defaultPath, '/');
   assert.deepEqual(
     config.navItems.map((item) => item.label),
-    ['Training', 'Live Fast'],
+    ['Training', 'Live Fast', 'Text to Speech'],
   );
 });
 
@@ -38,13 +38,14 @@ test('getAppModeConfig exposes only live fast in live-fast mode', () => {
 
   assert.equal(config.showTraining, false);
   assert.equal(config.showLiveFast, true);
+  assert.equal(config.showTextToSpeech, true);
   assert.equal(config.defaultPath, '/');
   assert.deepEqual(
     config.navItems.map((item) => item.to),
-    ['/'],
+    ['/', '/?tab=text-to-speech'],
   );
   assert.deepEqual(
     config.navItems.map((item) => item.label),
-    ['Live Fast'],
+    ['Live Fast', 'Text to Speech'],
   );
 });
