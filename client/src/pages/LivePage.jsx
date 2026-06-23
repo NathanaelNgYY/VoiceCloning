@@ -350,6 +350,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationMessage, setPronunciationMessage] = useState('');
   const [pronunciationBusy, setPronunciationBusy] = useState(false);
   const [pronunciationTestingWord, setPronunciationTestingWord] = useState('');
+  const [pronunciationReloadPending, setPronunciationReloadPending] = useState(false);
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -1355,12 +1356,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       });
       setPronunciationEntries(res.data.dictionary?.entries || []);
       if (pronunciationArpabet.trim()) {
-        setPronunciationMessage(`Saved ${word}. Restarting inference to load ARPAbet...`);
-        await stopInferenceServer();
-        await startInferenceServer();
-        autoLoadAttemptKeyRef.current = '';
-        setPronunciationMessage(`Saved ${word}. Restarted inference; reloading the selected voice profile...`);
-        await checkStatus();
+        setPronunciationReloadPending(true);
+        setPronunciationMessage(`Saved ${word}. Load pronunciation changes when you are ready to update GPT-SoVITS.`);
       } else {
         setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
       }
@@ -1398,12 +1395,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setPronunciationEntries(res.data.dictionary?.entries || []);
       if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
       if (entry.arpabet) {
-        setPronunciationMessage(`Deleted ${word}. Restarting inference to remove ARPAbet...`);
-        await stopInferenceServer();
-        await startInferenceServer();
-        autoLoadAttemptKeyRef.current = '';
-        setPronunciationMessage(`Deleted ${word}. Restarted inference; reloading the selected voice profile...`);
-        await checkStatus();
+        setPronunciationReloadPending(true);
+        setPronunciationMessage(`Deleted ${word}. Load pronunciation changes when you are ready to update GPT-SoVITS.`);
       } else {
         setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
       }
@@ -1431,7 +1424,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       return;
     }
     if (arpabet && !entry) {
-      setPronunciationMessage('Save ARPAbet first, then test it after inference reloads.');
+      setPronunciationMessage('Save ARPAbet first, then load pronunciation changes before testing it.');
+      return;
+    }
+    if (arpabet && pronunciationReloadPending) {
+      setPronunciationMessage('Load pending pronunciation changes before testing ARPAbet entries.');
       return;
     }
     if (!selectedVoiceProfileId || !isReady) {
@@ -1500,16 +1497,30 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
       await loadPronunciationEntries(pronunciationCategory);
       if (hasArpabet) {
-        setPronunciationMessage(`Imported ${rows.length} entries. Restarting inference to load ARPAbet...`);
-        await stopInferenceServer();
-        await startInferenceServer();
-        autoLoadAttemptKeyRef.current = '';
-        setPronunciationMessage(`Imported ${rows.length} entries. Restarted inference; reloading the selected voice profile...`);
-        await checkStatus();
+        setPronunciationReloadPending(true);
+        setPronunciationMessage(`Imported ${rows.length} entries. Load pronunciation changes when you are ready to update GPT-SoVITS.`);
+        return;
       }
       setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not import pronunciation CSV.');
+    } finally {
+      setPronunciationBusy(false);
+    }
+  }
+
+  async function loadPendingPronunciationChanges() {
+    setPronunciationBusy(true);
+    setPronunciationMessage('Loading pronunciation changes into GPT-SoVITS...');
+    try {
+      await stopInferenceServer();
+      await startInferenceServer();
+      autoLoadAttemptKeyRef.current = '';
+      setPronunciationReloadPending(false);
+      setPronunciationMessage('Loaded pronunciation changes; reloading the selected voice profile...');
+      await checkStatus();
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not load pronunciation changes.');
     } finally {
       setPronunciationBusy(false);
     }
@@ -2211,8 +2222,27 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   <Upload size={13} />
                   Import CSV
                 </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={pronunciationReloadPending ? 'default' : 'outline'}
+                  onClick={loadPendingPronunciationChanges}
+                  disabled={pronunciationBusy || !pronunciationReloadPending}
+                  className={cn(
+                    'h-8 rounded-lg',
+                    pronunciationReloadPending ? '' : 'border-slate-200 bg-white',
+                  )}
+                >
+                  {pronunciationBusy && pronunciationReloadPending ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  Load changes
+                </Button>
                 <input ref={pronunciationImportInputRef} type="file" accept=".csv,text/csv" onChange={importPronunciationCsv} className="hidden" />
               </div>
+              {pronunciationReloadPending && (
+                <p className="mt-2 text-xs font-medium text-amber-600">
+                  ARPAbet changes are saved but not loaded into GPT-SoVITS yet.
+                </p>
+              )}
               {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
               {pronunciationEntries.length > 0 && (
                 <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-100 bg-white">
