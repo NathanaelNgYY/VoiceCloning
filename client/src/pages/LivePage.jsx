@@ -645,7 +645,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       };
   }
 
-  async function syncConfigToVoiceProfile(config) {
+  function buildConfigVoiceProfilePayload(config) {
     if (!config || !selectedProfile || !selectedGPT || !selectedSoVITS) return;
     const reference = config.referenceMetadata || {};
     const inference = config.inferenceMetadata || {};
@@ -653,19 +653,27 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
     if (!primaryPath) return;
     const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const promptTextFromConfig = primaryFile.transcript
+      || reference.primary?.file?.transcript
+      || reference.primary?.transcript
+      || promptText;
+    const promptLangFromConfig = primaryFile.lang
+      || reference.primary?.file?.lang
+      || reference.primary?.lang
+      || promptLang;
     const auxPaths = Array.isArray(reference.selectedPaths?.aux)
       ? reference.selectedPaths.aux
       : Array.isArray(reference.aux)
         ? reference.aux.map((item) => item?.path).filter(Boolean)
         : [];
-    const storageMode = await getStorageMode();
-    const payload = buildVoiceProfilePayload({
+
+    return {
       displayName: selectedProfile.displayName,
       selectedGPT,
       selectedSoVITS,
       refAudioPath: primaryPath,
-      promptText: primaryFile.transcript || reference.primary?.file?.transcript || promptText,
-      promptLang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || promptLang),
+      promptText: promptTextFromConfig,
+      promptLang: normalizeReferenceLanguage(promptLangFromConfig),
       textLang: inference.language || liveLanguage,
       preferredRoute: inference.preferredRoute || 'sentence',
       auxRefAudioPaths: auxPaths,
@@ -679,6 +687,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       trainingMetadata: config.trainingMetadata || trainingRunMetadata || activeVoiceProfile?.metadata?.training,
       referenceMetadata: reference,
       liveFastMetadata: inference,
+    };
+  }
+
+  async function syncConfigToVoiceProfile(config) {
+    const configPayload = buildConfigVoiceProfilePayload(config);
+    if (!configPayload) return;
+    const storageMode = await getStorageMode();
+    const payload = buildVoiceProfilePayload({
+      ...configPayload,
       storageMode,
     });
     const response = await activateVoiceProfile(payload);
@@ -694,6 +711,31 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       configId: config.configId,
       rank: config.rank,
     });
+  }
+
+  function applyConfigAsActiveLiveFastProfile(config) {
+    const configPayload = buildConfigVoiceProfilePayload(config);
+    if (!configPayload) return;
+    setActiveVoiceProfile((current) => ({
+      ...(current || {}),
+      voiceProfileId: selectedVoiceProfileId,
+      displayName: configPayload.displayName,
+      gptPath: selectedGPT,
+      sovitsPath: selectedSoVITS,
+      ref_audio_path: configPayload.refAudioPath,
+      prompt_text: configPayload.promptText,
+      prompt_lang: configPayload.promptLang,
+      text_lang: configPayload.textLang,
+      preferredRoute: configPayload.preferredRoute,
+      aux_ref_audio_paths: configPayload.auxRefAudioPaths,
+      defaults: configPayload.defaults,
+      metadata: {
+        ...(current?.metadata || {}),
+        ...(configPayload.trainingMetadata ? { training: configPayload.trainingMetadata } : {}),
+        reference: configPayload.referenceMetadata,
+        liveFast: configPayload.liveFastMetadata,
+      },
+    }));
   }
 
   function clearReferenceSelection() {
@@ -974,13 +1016,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         const without = current.filter((item) => item.configId !== saved.configId);
         return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
       });
-      if (Number(saved.rank || 0) === 1 || existingConfig?.configId === loadedConfigId) {
+      if (Number(saved.rank || 0) === 1) {
         await syncConfigToVoiceProfile(saved);
         console.info('[voice-configs] synced saved config to voice profile', {
           voiceProfileId: selectedVoiceProfileId,
           configId: saved.configId,
           rank: saved.rank,
         });
+      } else if (existingConfig?.configId === loadedConfigId) {
+        applyConfigAsActiveLiveFastProfile(saved);
       }
       setReferenceMessage(`${existingConfig ? 'Updated' : 'Saved'} config ${saved.configName || saved.configId}.`);
       setLoadedConfigId(saved.configId);
@@ -1000,7 +1044,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setVoiceConfigError('');
     try {
       applyVoiceConfig(config);
-      await syncConfigToVoiceProfile(config);
+      if (Number(config.rank || 0) === 1) {
+        await syncConfigToVoiceProfile(config);
+      } else {
+        applyConfigAsActiveLiveFastProfile(config);
+      }
       setReferenceMessage(`Loaded config ${config.configName || config.configId} into inference.`);
       console.info('[voice-configs] loaded config into inference', {
         voiceProfileId: selectedVoiceProfileId,
@@ -1256,6 +1304,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     };
     const liveFastParams = {
       ...baseParams,
+      ...(liveRefParams || {}),
       top_k: topK,
       top_p: topP,
       temperature,
@@ -1514,6 +1563,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         text,
         voiceProfileId: selectedVoiceProfileId,
         text_lang: liveLanguage,
+        ...(liveRefParams || {}),
       });
       recordTtsHistory({
         route: 'fast',
