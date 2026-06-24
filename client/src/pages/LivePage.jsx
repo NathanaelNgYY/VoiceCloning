@@ -12,6 +12,7 @@ import {
   saveVoiceProfileConfig,
   selectModels,
   startGeneration,
+  getCurrentInference,
   getGenerationResultSource,
   synthesizeSentence,
   getPronunciationDictionary,
@@ -373,6 +374,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
+  const completingFullTtsSessionRef = useRef('');
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -613,12 +615,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   function buildCurrentConfigPayload({ configId = '', configName = '' } = {}) {
+    const resolvedConfigName = configName || currentLiveFastMetadata.configName;
     return {
-      configName: configName || currentLiveFastMetadata.configName,
+      configName: resolvedConfigName,
       rank: voiceConfigs.length + 1,
       selected: true,
       trainingMetadata: trainingRunMetadata || activeVoiceProfile?.metadata?.training || {},
-      inferenceMetadata: currentLiveFastMetadata,
+      inferenceMetadata: {
+        ...currentLiveFastMetadata,
+        configName: resolvedConfigName,
+        ...(configId ? { configId } : {}),
+      },
       referenceMetadata: currentReferenceMetadata,
       sample: {},
       ...(configId ? { configId } : {}),
@@ -958,6 +965,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       console.info('[voice-configs] saved config', {
         voiceProfileId: selectedVoiceProfileId,
         configId: saved.configId,
+        primaryReference: saved.referenceMetadata?.selectedPaths?.primary || saved.referenceMetadata?.primary?.path || '',
+        auxReferences: saved.referenceMetadata?.selectedPaths?.aux || [],
         config: saved,
         hasTrainingMetadata: Boolean(saved.trainingMetadata && Object.keys(saved.trainingMetadata).length > 0),
       });
@@ -965,17 +974,42 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         const without = current.filter((item) => item.configId !== saved.configId);
         return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
       });
-      if (Number(saved.rank || 0) === 1) {
+      if (Number(saved.rank || 0) === 1 || existingConfig?.configId === loadedConfigId) {
         await syncConfigToVoiceProfile(saved);
-        console.info('[voice-configs] synced rank #1 config to voice profile', {
+        console.info('[voice-configs] synced saved config to voice profile', {
           voiceProfileId: selectedVoiceProfileId,
           configId: saved.configId,
+          rank: saved.rank,
         });
       }
-      setReferenceMessage(`Saved config ${saved.configName || saved.configId}.`);
+      setReferenceMessage(`${existingConfig ? 'Updated' : 'Saved'} config ${saved.configName || saved.configId}.`);
       setLoadedConfigId(saved.configId);
     } catch (err) {
       const message = err.response?.data?.error || err.message || 'Could not save config.';
+      setModelError(message);
+      setVoiceConfigError(message);
+    } finally {
+      setSavingConfigId('');
+    }
+  }
+
+  async function loadSavedVoiceConfig(config) {
+    if (!config?.configId) return;
+    setSavingConfigId(config.configId);
+    setModelError('');
+    setVoiceConfigError('');
+    try {
+      applyVoiceConfig(config);
+      await syncConfigToVoiceProfile(config);
+      setReferenceMessage(`Loaded config ${config.configName || config.configId} into inference.`);
+      console.info('[voice-configs] loaded config into inference', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: config.configId,
+        primaryReference: config.referenceMetadata?.selectedPaths?.primary || config.referenceMetadata?.primary?.path || '',
+        auxReferences: config.referenceMetadata?.selectedPaths?.aux || [],
+      });
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'Could not load config into inference.';
       setModelError(message);
       setVoiceConfigError(message);
     } finally {
@@ -1219,6 +1253,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       text,
       voiceProfileId: selectedVoiceProfileId,
       text_lang: liveLanguage,
+      top_k: topK,
+      top_p: topP,
+      temperature,
+      repetition_penalty: repPenalty,
+      speed_factor: speed,
     };
     const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
     const languageLabel = liveLanguageConfig.label;
@@ -1319,6 +1358,34 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       ttsHistoryRef.current = next;
       return next;
     });
+  }
+
+  async function completeFullTtsGeneration(sessionId) {
+    const pending = pendingFullTtsRef.current;
+    if (!pending || pending.sessionId !== sessionId) return;
+    if (completingFullTtsSessionRef.current === sessionId) return;
+
+    completingFullTtsSessionRef.current = sessionId;
+    try {
+      const source = await getGenerationResultSource(sessionId);
+      const playableUrl = await waitForPlayableAudioSource(source.url);
+      recordTtsHistory({
+        route: pending.route,
+        url: playableUrl,
+        text: pending.text,
+        voiceName: pending.voiceName,
+        languageLabel: pending.languageLabel,
+      });
+    } catch (err) {
+      setTtsError(err.message || 'Could not fetch the generated audio.');
+    } finally {
+      if (pendingFullTtsRef.current?.sessionId === sessionId) {
+        pendingFullTtsRef.current = null;
+      }
+      completingFullTtsSessionRef.current = '';
+      setStreamingRoute(null);
+      ttsInference.reset();
+    }
   }
 
   async function loadPronunciationEntries(category = pronunciationCategory) {
@@ -1531,23 +1598,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     if (!pending) return;
 
     if (ttsInference.status === 'complete') {
-      getGenerationResultSource(pending.sessionId)
-        .then(async (source) => {
-          const playableUrl = await waitForPlayableAudioSource(source.url);
-          recordTtsHistory({
-            route: pending.route,
-            url: playableUrl,
-            text: pending.text,
-            voiceName: pending.voiceName,
-            languageLabel: pending.languageLabel,
-          });
-        })
-        .catch((err) => setTtsError(err.message || 'Could not fetch the generated audio.'))
-        .finally(() => {
-          pendingFullTtsRef.current = null;
-          setStreamingRoute(null);
-          ttsInference.reset();
-        });
+      completeFullTtsGeneration(pending.sessionId);
     } else if (ttsInference.status === 'error' || ttsInference.status === 'cancelled') {
       setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
       pendingFullTtsRef.current = null;
@@ -1555,6 +1606,38 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       ttsInference.reset();
     }
   }, [ttsInference.status, ttsInference.error]);
+
+  useEffect(() => {
+    if (!streamingRoute || !pendingFullTtsRef.current) return undefined;
+
+    let stopped = false;
+    const poll = async () => {
+      const pending = pendingFullTtsRef.current;
+      if (!pending || stopped || completingFullTtsSessionRef.current) return;
+      try {
+        const res = await getCurrentInference();
+        const state = res.data || {};
+        if (state.sessionId !== pending.sessionId) return;
+        if (state.status === 'complete' || state.resultReady) {
+          completeFullTtsGeneration(pending.sessionId);
+        } else if (state.status === 'error' || state.status === 'cancelled') {
+          setTtsError(state.error || 'Could not generate text to speech audio.');
+          pendingFullTtsRef.current = null;
+          setStreamingRoute(null);
+          ttsInference.reset();
+        }
+      } catch {
+        // SSE remains the primary signal; polling is only a best-effort fallback.
+      }
+    };
+
+    const interval = window.setInterval(poll, 2000);
+    poll();
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [streamingRoute, ttsInference.reset]);
 
   useEffect(() => {
     if (mode !== 'tts') return;
@@ -2773,7 +2856,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                 )}
                               </div>
                               <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                                <button type="button" onClick={() => applyVoiceConfig(config)} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50">Load</button>
+                                <button type="button" onClick={() => loadSavedVoiceConfig(config)} disabled={busy || isConversationActive} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Load</button>
                                 <button type="button" onClick={() => saveCurrentVoiceConfig(config)} disabled={busy || !loaded} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Update</button>
                                 <button type="button" onClick={() => generateConfigSample(config)} disabled={busy || isConversationActive} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">
                                   {generatingSampleConfigId === config.configId ? 'Generating' : 'Sample'}

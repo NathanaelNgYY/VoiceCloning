@@ -184,9 +184,9 @@ router.post('/inference', async (req, res) => {
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
     const { audioBuffer, chunks } = await synthesizeLongText(resolvedParams, {
-      maxChunkLength: 280,
-      maxSentencesPerChunk: 3,
-      chunkJoinPauseMs: 120,
+      maxChunkLength: 160,
+      maxSentencesPerChunk: 1,
+      chunkJoinPauseMs: 180,
       retryCount: 2,
     });
     activityState.mark();
@@ -229,16 +229,15 @@ router.post('/inference/generate', async (req, res) => {
     sseManager.prepareSession(sessionId);
     res.json({ sessionId });
 
-    sseManager.waitForClient(sessionId).then(() => {
-      synthesizeLongTextStreaming(sessionId, resolvedParams, {
-        maxChunkLength: 280,
-        maxSentencesPerChunk: 3,
-        chunkJoinPauseMs: 120,
-        retryCount: 2,
-      });
+    synthesizeLongTextStreaming(sessionId, resolvedParams, {
+      maxChunkLength: 160,
+      maxSentencesPerChunk: 1,
+      chunkJoinPauseMs: 180,
+      retryCount: 2,
     }).catch((err) => {
-      console.error(`[inference/generate] SSE client timeout for ${sessionId}:`, err.message);
+      console.error(`[inference/generate] failed for ${sessionId}:`, err.message);
       inferenceState.setError(err.message);
+      sseManager.send(sessionId, 'error', { message: err.message });
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
