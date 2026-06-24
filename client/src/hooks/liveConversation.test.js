@@ -112,6 +112,16 @@ test('splitLiveReplyPhrases splits punctuation for immediate voice playback', ()
   ]);
 });
 
+test('splitLiveReplyPhrases does not split dotted initialisms into tiny clips', () => {
+  assert.deepEqual(splitLiveReplyPhrases('The W.H.O guidance changed. Next sentence.'), [
+    'The W.H.O guidance changed.',
+    'Next sentence.',
+  ]);
+  assert.deepEqual(splitLiveReplyPhrases('Order an E.C.G. now'), [
+    'Order an E.C.G. now.',
+  ]);
+});
+
 test('splitLiveReplyPhrases breaks at em dashes so the voice pauses', () => {
   assert.deepEqual(
     splitLiveReplyPhrases('a mix of cultures — Chinese, Malay, and more.'),

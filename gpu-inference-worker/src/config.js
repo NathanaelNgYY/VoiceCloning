@@ -28,6 +28,10 @@ function parseIntegerEnv(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+function parseFloatEnv(value, fallback) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 const rawGptSovitsRoot = readEnv('GPT_SOVITS_ROOT');
 
@@ -40,6 +44,11 @@ export const WORKER_HOST = readEnv('WORKER_HOST') || '0.0.0.0';
 export const INFERENCE_HOST = readEnv('INFERENCE_HOST') || '127.0.0.1';
 export const INFERENCE_PORT = parseIntegerEnv(readEnv('INFERENCE_PORT'), 9880);
 export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVITS_ROOT, 'worker_temp');
+
+// Seconds of silence GPT-SoVITS inserts between text fragments (its `fragment_interval`).
+// With text_split_method=cut5 (split on every punctuation), this is the audible pause
+// at each comma / clause break. Bump it for longer comma pauses, lower for tighter speech.
+export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUSE_SECONDS'), 0.1));
 
 const runtimeDir = path.join(GPT_SOVITS_ROOT, 'runtime');
 const pythonCandidates = [

@@ -13,6 +13,7 @@ import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
+import { COMMA_PAUSE_SECONDS } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
@@ -62,6 +63,11 @@ export async function handleLiveTtsRequest(body, {
   const normalizedParams = {
     ...resolvedParams,
     text: prepareTextForSynthesis(emphasizedText),
+    // Split on every punctuation so commas get a deterministic pause rather than
+    // the model's coin-flip prosody. Matches the chunked path's cut5 default.
+    text_split_method: resolvedParams.text_split_method || 'cut5',
+    // Comma/clause pause length (GPT-SoVITS fragment_interval), tunable via COMMA_PAUSE_SECONDS.
+    fragment_interval: resolvedParams.fragment_interval ?? COMMA_PAUSE_SECONDS,
   };
   const audioBuffer = await synthesize(normalizedParams);
   return { audioBuffer, resolvedParams: normalizedParams };

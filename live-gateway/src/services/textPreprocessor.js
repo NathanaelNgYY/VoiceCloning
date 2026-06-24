@@ -275,19 +275,25 @@ export function preprocessText(text) {
     return match;
   });
 
-  // 2) Known bare-caps acronym expansion (USA, US, UK, UAE, …)
+  // 2) Generic uppercase dotted initialisms (W.H.O, E.C.G.) become spell-outs
+  //    without periods, otherwise GPT-SoVITS treats each dot like a full stop.
+  result = result.replace(/\b([A-Z](?:\.[A-Z])+\.?)/gu, (match) =>
+    match.replace(/[^A-Za-z]/gu, '').split('').join(' ')
+  );
+
+  // 3) Known bare-caps acronym expansion (USA, US, UK, UAE, …)
   result = result.replace(acronymExpansionPattern, (match) => ACRONYM_EXPANSIONS[match] || match);
 
-  // 3) Remaining acronym / initialism letter-spacing (2-5 uppercase letters)
+  // 4) Remaining acronym / initialism letter-spacing (2-5 uppercase letters)
   result = result.replace(/\b([A-Z]{2,5})\b/g, (match) => {
     if (ACRONYM_SKIP.has(match)) return match;
     return match.split('').join(' ');
   });
 
-  // 4) Symbol expansion
+  // 5) Symbol expansion
   result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
 
-  // 5) Split intra-word hyphens LAST so literal hyphenated words ("Michelin-starred")
+  // 6) Split intra-word hyphens LAST so literal hyphenated words ("Michelin-starred")
   // AND number words emitted above ("forty-fifth", "twenty-one") are all de-hyphenated.
   // GPT-SoVITS otherwise reads the hyphen as "minus".
   result = result.replace(/(\w)-(\w)/gu, '$1 $2');
