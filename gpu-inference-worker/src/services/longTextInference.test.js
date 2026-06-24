@@ -30,6 +30,24 @@ function makeNoiseWav(durationSec, sampleRate = 32000) {
   return buf;
 }
 
+function makeSparseQuietWav(durationSec, sampleRate = 32000) {
+  const blockAlign = 2;
+  const frameCount = Math.round(durationSec * sampleRate);
+  const dataSize = frameCount * blockAlign;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataSize, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * blockAlign, 28); buf.writeUInt16LE(blockAlign, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < frameCount; i++) {
+    const value = i % 100 === 0 ? 140 : 0;
+    buf.writeInt16LE(value, 44 + i * blockAlign);
+  }
+  return buf;
+}
+
 // A hyphen used as a dash with spaces around it (" - ") reaches GPT-SoVITS as a
 // bare hyphen-minus, which the English G2P verbalizes as the word "minus".
 // It must be normalized to a comma pause before chunking (the shared
@@ -99,6 +117,11 @@ test('audio far too short for its text is flagged as likely dropped words', () =
 test('audio of natural length for its text is not flagged short', () => {
   const result = analyzeAudioQuality(makeNoiseWav(6.0), SKIP_TEXT); // ~82 chars in 6s = normal pace
   assert.doesNotMatch(result.reason || '', /too short/i, `should not be flagged short: ${result.reason}`);
+});
+
+test('quiet recoverable audio with a real waveform is not rejected as silent', () => {
+  const result = analyzeAudioQuality(makeSparseQuietWav(6.0), 'short phrase');
+  assert.doesNotMatch(result.reason || '', /silent/i, `quiet non-empty audio should be recoverable: ${result.reason}`);
 });
 
 test('full inference quality preset ignores caller sampling sliders', () => {

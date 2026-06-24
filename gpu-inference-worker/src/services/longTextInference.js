@@ -638,7 +638,7 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   let reason = null;
   if (durationSec < expectedDurationSec * REQUIRED_DURATION_FRACTION) {
     reason = `Audio too short for its text — likely dropped words (${durationSec.toFixed(2)}s vs ~${expectedDurationSec.toFixed(1)}s expected)`;
-  } else if (rms < 0.003) {
+  } else if (rms < 0.003 && absPeak < 0.003) {
     reason = 'Generated audio is effectively silent';
   } else if (zeroishRatio > 0.995) {
     reason = 'Generated audio contains almost no speech energy';
@@ -781,7 +781,7 @@ function scoreAudioCandidate(analysis) {
   const loopScore = clampNumber(metrics.loopScore, 1);
   const durationSec = clampNumber(analysis?.durationSec, 0);
 
-  if (rms < 0.003 || zeroishRatio > 0.995 || clippedRatio > 0.2) {
+  if ((rms < 0.003 && clampNumber(metrics.absPeak, 0) < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2) {
     return -Infinity;
   }
 
