@@ -659,12 +659,16 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
 }
 
 export function buildAttemptVariants(baseParams, attemptIndex) {
+  const { inference_mode: _inferenceMode, ...synthesisBaseParams } = baseParams;
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
   const safeTopK = clampNumber(baseParams.top_k, 5);
   const speed = clampNumber(baseParams.speed_factor, 1);
 
-  const baseSeed = baseParams.seed ?? Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16);
+  const requestedSeed = Number(baseParams.seed);
+  const baseSeed = Number.isInteger(requestedSeed) && requestedSeed >= 0
+    ? requestedSeed
+    : Number.parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 8), 16);
 
   const safeRepPenalty = clampNumber(baseParams.repetition_penalty, 1.35);
 
@@ -673,7 +677,7 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   const baseInterval = clampNumber(baseParams.fragment_interval, COMMA_PAUSE_SECONDS);
 
   const base = {
-    ...baseParams,
+    ...synthesisBaseParams,
     aux_ref_audio_paths: baseParams.aux_ref_audio_paths || [],
     seed: baseSeed,
     // cut5 = "split on every punctuation": GPT-SoVITS breaks on each comma/clause

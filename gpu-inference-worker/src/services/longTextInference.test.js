@@ -177,3 +177,23 @@ test('quality retry variants become progressively safer after the natural first 
   assert.equal(final.text_split_method, 'cut1');
   assert.equal(final.split_bucket, false);
 });
+
+test('quality retry variants strip internal control fields before GPT-SoVITS synthesis', () => {
+  const params = buildAttemptVariants(applyFullInferenceQualityPreset({
+    text: 'Internal request fields must not reach GPT SoVITS.',
+    inference_mode: 'quality',
+  }), 0);
+
+  assert.equal('inference_mode' in params, false);
+});
+
+test('seed -1 is treated as random instead of a deterministic retry seed base', () => {
+  const params = buildAttemptVariants(applyFullInferenceQualityPreset({
+    text: 'Seed minus one should let the worker choose a usable random seed.',
+    seed: -1,
+  }), 0);
+
+  assert.notEqual(params.seed, -1);
+  assert.equal(Number.isInteger(params.seed), true);
+  assert.ok(params.seed >= 0);
+});
