@@ -27,12 +27,13 @@ function makeNoiseWav(durationSec, sampleRate = 32000) {
 
 // A hyphen used as a dash with spaces around it (" - ") reaches GPT-SoVITS as a
 // bare hyphen-minus, which the English G2P verbalizes as the word "minus".
-// It must be normalized to an em-dash (a pause) before chunking.
-test('spaced hyphen dash is converted to em-dash so TTS does not say "minus"', () => {
+// It must be normalized to a comma pause before chunking (the shared
+// prepareTextForSynthesis converts " - " to ", " rather than an em-dash).
+test('spaced hyphen dash is converted to a comma pause so TTS does not say "minus"', () => {
   const chunks = splitTextIntoChunks('every cell must obey - how energy flows.');
   const joined = chunks.join(' ');
   assert.ok(!/\s-\s/.test(joined), `no spaced hyphen should survive: "${joined}"`);
-  assert.ok(joined.includes('—'), `an em-dash should be present: "${joined}"`);
+  assert.ok(!/[–—]/.test(joined), `no en/em-dash should survive either: "${joined}"`);
 });
 
 test('multiple spaced dashes in one line are all converted', () => {

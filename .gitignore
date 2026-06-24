@@ -16,8 +16,14 @@ local.env
 AGENTS.md
 config.toml887
 config.toml
+touchpoint/
 
-# Generated code-graph / analysis tool output (not source)
+# Understand-Anything tool (cloned repo) + its generated graph/cache
+/Understand-Anything/
+/.understand-anything/
+
+# Graphify generated knowledge graph (rebuilt locally by git post-commit hook)
 graphify-out/
-.understand-anything/
-Understand-Anything/
+
+# Local env files
+client/.env.combined

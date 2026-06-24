@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { loadModelPair } from './modelSelection.js';
+import { resolveSavedProfileReferenceSelection } from './modelSelection.js';
 
 function bufferJson(value) {
   return Buffer.from(JSON.stringify(value), 'utf-8');
@@ -297,6 +298,39 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
       aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
     });
   });
+});
+
+test('resolveSavedProfileReferenceSelection ranks training audio by audio quality score', async () => {
+  const selection = await resolveSavedProfileReferenceSelection(
+    { sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth' },
+    {
+      listTrainingAudioFiles: async () => ([
+        { filename: 'a.wav', path: 'training/datasets/lecturer-a/denoised/a.wav', transcript: 'Clear reference sentence one for testing.', lang: 'en', qualityScore: 40 },
+        { filename: 'b.wav', path: 'training/datasets/lecturer-a/denoised/b.wav', transcript: 'Clear reference sentence two for testing.', lang: 'en', qualityScore: 90 },
+        { filename: 'c.wav', path: 'training/datasets/lecturer-a/denoised/c.wav', transcript: 'Clear reference sentence three for testing.', lang: 'en', qualityScore: 65 },
+      ]),
+    },
+  );
+
+  assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/b.wav');
+  assert.deepEqual(selection.aux_ref_audio_paths, [
+    'training/datasets/lecturer-a/denoised/c.wav',
+    'training/datasets/lecturer-a/denoised/a.wav',
+  ]);
+});
+
+test('resolveSavedProfileReferenceSelection transcript guard avoids an empty-transcript primary', async () => {
+  const selection = await resolveSavedProfileReferenceSelection(
+    { sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth' },
+    {
+      listTrainingAudioFiles: async () => ([
+        { filename: 'pristine.wav', path: 'training/datasets/lecturer-a/denoised/pristine.wav', transcript: '', lang: 'en', qualityScore: 85 },
+        { filename: 'usable.wav', path: 'training/datasets/lecturer-a/denoised/usable.wav', transcript: 'This is a perfectly usable reference sentence for cloning.', lang: 'en', qualityScore: 75 },
+      ]),
+    },
+  );
+
+  assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/usable.wav');
 });
 
 test('loadModelPair returns canonical training paths even when ref warm resolves local cache paths', async () => {

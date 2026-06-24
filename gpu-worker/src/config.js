@@ -84,6 +84,7 @@ export const SCRIPTS = {
   trainSoVITS: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 's2_train.py'),
   trainGPT: path.join(GPT_SOVITS_ROOT, 'GPT_SoVITS', 's1_train.py'),
   apiServer: path.join(GPT_SOVITS_ROOT, 'api_v2.py'),
+  scoreClips: fileURLToPath(new URL('../scripts/score_clips.py', import.meta.url)),
 };
 
 export const PRETRAINED = {

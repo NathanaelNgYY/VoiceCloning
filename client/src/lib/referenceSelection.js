@@ -71,6 +71,10 @@ function scoreBreakdown(file) {
   const filename = file?.filename || '';
   const ext = extensionOf(filename);
   const lang = normalizeLang(file?.lang);
+  // Measured audio quality (SNR/clarity/duration, 0-100) from score_clips.py,
+  // cached in clip-scores.json after training. When present it dominates ranking
+  // among eligible clips; absent it stays neutral so filename/transcript cues lead.
+  const audioScore = Number(file?.qualityScore);
 
   const breakdown = {
     transcript: transcriptScore(file?.transcript),
@@ -80,6 +84,7 @@ function scoreBreakdown(file) {
     duration: durationScore(filename),
     sentenceEnding: hasSentenceEnding(file?.transcript) ? 10 : -18,
     speakerConsistency: 0,
+    audioQuality: Number.isFinite(audioScore) ? audioScore : 0,
   };
 
   if (GOOD_AUDIO_EXTENSIONS.has(ext)) breakdown.fileType += 18;
@@ -201,6 +206,15 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   const auxMetadata = ranked.slice(1, maxAux + 1);
   const aux = auxMetadata.map((entry) => entry.file);
 
+  const usedQualityScores = ranked.some(
+    (entry) => Number.isFinite(Number(entry.file?.qualityScore)),
+  );
+  const reason = usedQualityScores
+    ? 'Auto-picked by measured audio quality (SNR, clarity, duration), with strict eligibility filtering and a transcript/language tie-break.'
+    : useStrict
+      ? 'Auto-picked after hard filtering for 3-9s duration, complete sentence transcript, clean single-speaker/stable-loudness markers, and steady voice/tone, then ranked by score.'
+      : 'No clips passed strict reference filtering, so auto-picked by best-effort ranking from clip length, transcript quality, language, file type, and clean-reference filename hints.';
+
   return {
     primary,
     aux,
@@ -209,9 +223,7 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
     candidates: strictRanked,
     rejected: described.filter((candidate) => !candidate.eligible),
     mode: useStrict ? 'strict' : 'fallback',
-    reason: useStrict
-      ? 'Auto-picked after hard filtering for 3-9s duration, complete sentence transcript, clean single-speaker/stable-loudness markers, and steady voice/tone, then ranked by score.'
-      : 'No clips passed strict reference filtering, so auto-picked by best-effort ranking from clip length, transcript quality, language, file type, and clean-reference filename hints.',
+    reason,
   };
 }
 

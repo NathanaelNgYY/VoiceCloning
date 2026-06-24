@@ -184,3 +184,24 @@ test('shouldAutoApplyBestReferenceSet waits for the selected voice clip list ins
     true,
   );
 });
+
+test('chooseBestReferenceSet ranks by audio quality score when present', () => {
+  const result = chooseBestReferenceSet([
+    { filename: 'a_0_1.wav', path: 'd/a_0_1.wav', transcript: 'A clear sentence here for the reference.', lang: 'en', qualityScore: 40 },
+    { filename: 'b_1_2.wav', path: 'd/b_1_2.wav', transcript: 'Another clear sentence here for reference.', lang: 'en', qualityScore: 85 },
+    { filename: 'c_2_3.wav', path: 'd/c_2_3.wav', transcript: 'Yet another clear sentence for the reference.', lang: 'en', qualityScore: 60 },
+  ], { maxAux: 2 });
+
+  assert.equal(result.primary.filename, 'b_1_2.wav');
+  assert.deepEqual(result.aux.map((file) => file.filename), ['c_2_3.wav', 'a_0_1.wav']);
+  assert.match(result.reason, /quality/i);
+});
+
+test('chooseBestReferenceSet transcript guard avoids an empty-transcript primary', () => {
+  const result = chooseBestReferenceSet([
+    { filename: 'pristine_empty.wav', path: 'd/pristine_empty.wav', transcript: '', lang: 'en', qualityScore: 85 },
+    { filename: 'good_text.wav', path: 'd/good_text.wav', transcript: 'This is a perfectly usable reference sentence for cloning.', lang: 'en', qualityScore: 75 },
+  ], { maxAux: 1 });
+
+  assert.equal(result.primary.filename, 'good_text.wav');
+});
