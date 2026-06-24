@@ -26,6 +26,11 @@ test('loadCmuWordSet returns an empty set when the dictionary is missing', () =>
   assert.equal(set.size, 0);
 });
 
+test('loadCmuWordSet returns an empty set when no root is given', () => {
+  assert.equal(loadCmuWordSet('').size, 0);
+  assert.equal(loadCmuWordSet(null).size, 0);
+});
+
 test('isRealWord degrades to false when the dictionary cannot be found', () => {
   _resetCmuCacheForTests();
   assert.equal(isRealWord('REALLY', { root: path.join(os.tmpdir(), 'cmu-nope-xyz') }), false);

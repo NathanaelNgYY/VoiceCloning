@@ -6,7 +6,7 @@ import { GPT_SOVITS_ROOT } from '../config.js';
 // name it differently, so try the known candidates in order.
 const CANDIDATE_FILES = ['cmudict.rep', 'cmudict-fast.rep', 'cmudict'];
 
-let cache = null; // Set<string> of uppercase words, populated lazily.
+const cacheByRoot = new Map(); // resolved root string -> Set<string>, populated lazily.
 
 export function loadCmuWordSet(root = GPT_SOVITS_ROOT) {
   const words = new Set();
@@ -29,17 +29,18 @@ export function loadCmuWordSet(root = GPT_SOVITS_ROOT) {
   return words;
 }
 
-export function isRealWord(word, { root } = {}) {
-  if (cache === null) {
+export function isRealWord(word, { root = GPT_SOVITS_ROOT } = {}) {
+  const key = root ?? '';
+  if (!cacheByRoot.has(key)) {
     try {
-      cache = loadCmuWordSet(root);
+      cacheByRoot.set(key, loadCmuWordSet(root));
     } catch {
-      cache = new Set();
+      cacheByRoot.set(key, new Set());
     }
   }
-  return cache.has(String(word || '').toUpperCase());
+  return cacheByRoot.get(key).has(String(word ?? '').toUpperCase());
 }
 
 export function _resetCmuCacheForTests() {
-  cache = null;
+  cacheByRoot.clear();
 }
