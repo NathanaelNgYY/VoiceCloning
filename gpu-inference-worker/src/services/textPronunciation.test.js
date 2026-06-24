@@ -35,7 +35,7 @@ test('prepareTextForSynthesis handles bullets, ranges, and math operators', () =
 test('prepareTextForSynthesis expands slash abbreviations and removes spoken punctuation dashes', () => {
   const result = prepareTextForSynthesis('Use ref. w/ enzyme - not w/o ATP; input/output matters.');
 
-  assert.match(result, /reference with enzyme, not without A T P/u);
+  assert.match(result, /reference with enzyme, not without ATP/u);
   assert.match(result, /input or out put/u);
   assert.doesNotMatch(result, /[-–—]/u);
 });

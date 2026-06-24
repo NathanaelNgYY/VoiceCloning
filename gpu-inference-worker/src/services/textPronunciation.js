@@ -149,12 +149,6 @@ const ABBREVIATIONS = {
   'b/c': 'because',
 };
 
-const ACRONYM_SKIP = new Set([
-  'I', 'A', 'AM', 'PM', 'OK', 'OH', 'OR', 'IF', 'IN', 'IT', 'IS',
-  'AT', 'AN', 'AS', 'BE', 'BY', 'DO', 'GO', 'HE', 'ME', 'MY', 'NO',
-  'OF', 'ON', 'SO', 'TO', 'UP', 'US', 'WE',
-]);
-
 const SYMBOL_MAP = {
   '@': 'at',
   '&': 'and',
@@ -217,11 +211,6 @@ export function prepareTextForSynthesis(text) {
   });
 
   result = result.replace(/\b([A-Za-z]+)\s*\/\s*([A-Za-z]+)\b/gu, '$1 or $2');
-
-  result = result.replace(/\b([A-Z]{2,5})\b/g, (match) => {
-    if (ACRONYM_SKIP.has(match)) return match;
-    return match.split('').join(' ');
-  });
 
   result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
   return splitCompoundWords(result).trim();
