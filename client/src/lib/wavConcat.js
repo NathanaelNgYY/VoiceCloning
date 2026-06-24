@@ -51,12 +51,62 @@ function createSilence(durationMs, wav) {
   return new Uint8Array(frames * wav.blockAlign);
 }
 
+function isPcm16(wav) {
+  return wav.audioFormat === 1 && wav.bitsPerSample === 16;
+}
+
 function sameFormat(a, b) {
   return a.audioFormat === b.audioFormat &&
     a.numChannels === b.numChannels &&
     a.sampleRate === b.sampleRate &&
     a.blockAlign === b.blockAlign &&
     a.bitsPerSample === b.bitsPerSample;
+}
+
+function samePcm16Shape(a, b) {
+  return isPcm16(a) &&
+    isPcm16(b) &&
+    a.numChannels === b.numChannels &&
+    a.blockAlign === b.blockAlign;
+}
+
+function buildPcm16Fmt({ numChannels, sampleRate }) {
+  const fmt = new ArrayBuffer(16);
+  const view = new DataView(fmt);
+  const blockAlign = numChannels * 2;
+  view.setUint16(0, 1, true);
+  view.setUint16(2, numChannels, true);
+  view.setUint32(4, sampleRate, true);
+  view.setUint32(8, sampleRate * blockAlign, true);
+  view.setUint16(12, blockAlign, true);
+  view.setUint16(14, 16, true);
+  return fmt;
+}
+
+function resamplePcm16Data(wav, target) {
+  if (wav.sampleRate === target.sampleRate) return wav.data;
+
+  const source = new DataView(wav.data);
+  const sourceFrames = wav.data.byteLength / wav.blockAlign;
+  const targetFrames = Math.max(1, Math.round(sourceFrames * (target.sampleRate / wav.sampleRate)));
+  const output = new ArrayBuffer(targetFrames * target.blockAlign);
+  const outputView = new DataView(output);
+
+  for (let frame = 0; frame < targetFrames; frame += 1) {
+    const sourcePosition = frame * (wav.sampleRate / target.sampleRate);
+    const leftFrame = Math.floor(sourcePosition);
+    const rightFrame = Math.min(sourceFrames - 1, leftFrame + 1);
+    const fraction = sourcePosition - leftFrame;
+
+    for (let channel = 0; channel < wav.numChannels; channel += 1) {
+      const left = source.getInt16((leftFrame * wav.numChannels + channel) * 2, true);
+      const right = source.getInt16((rightFrame * wav.numChannels + channel) * 2, true);
+      const sample = Math.round(left + ((right - left) * fraction));
+      outputView.setInt16((frame * wav.numChannels + channel) * 2, sample, true);
+    }
+  }
+
+  return output;
 }
 
 function buildWav(fmt, dataParts) {
@@ -92,19 +142,23 @@ export async function concatWavBlobs(blobs, { pauseMs = 120 } = {}) {
 
   const parsed = await Promise.all(blobs.map(async (blob) => parseWav(await blob.arrayBuffer())));
   const first = parsed[0];
+  const canNormalizeSampleRate = parsed.every((wav) => sameFormat(first, wav) || samePcm16Shape(first, wav));
   for (const wav of parsed.slice(1)) {
-    if (!sameFormat(first, wav)) {
+    if (!sameFormat(first, wav) && !canNormalizeSampleRate) {
       throw new Error('Cannot concatenate WAV clips with mismatched audio formats');
     }
   }
 
+  const outputFormat = canNormalizeSampleRate && isPcm16(first)
+    ? buildPcm16Fmt(first)
+    : first.fmt;
   const dataParts = [];
   parsed.forEach((wav, index) => {
-    dataParts.push(wav.data);
+    dataParts.push(canNormalizeSampleRate ? resamplePcm16Data(wav, first) : wav.data);
     if (index < parsed.length - 1 && pauseMs > 0) {
       dataParts.push(createSilence(pauseMs, first).buffer);
     }
   });
 
-  return new Blob([buildWav(first.fmt, dataParts)], { type: 'audio/wav' });
+  return new Blob([buildWav(outputFormat, dataParts)], { type: 'audio/wav' });
 }

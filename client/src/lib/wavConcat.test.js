@@ -46,3 +46,14 @@ test('concatWavBlobs joins matching WAV blobs and inserts silence', async () => 
   assert.equal(String.fromCharCode(...output.slice(8, 12)), 'WAVE');
   assert.equal(view.getUint32(40, true), (2 + 800 + 2) * 2);
 });
+
+test('concatWavBlobs resamples PCM16 clips when only sample rate differs', async () => {
+  const first = makePcm16Wav([1000, 2000], 8000);
+  const second = makePcm16Wav([3000, 4000, 5000, 6000], 16000);
+  const joined = await concatWavBlobs([first, second], { pauseMs: 0 });
+  const output = new Uint8Array(await joined.arrayBuffer());
+  const view = new DataView(output.buffer);
+
+  assert.equal(view.getUint32(24, true), 8000);
+  assert.equal(view.getUint32(40, true), (2 + 2) * 2);
+});
