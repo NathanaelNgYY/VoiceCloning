@@ -20,6 +20,22 @@ const DEFAULTS = {
   retryCount: 2,
 };
 
+const FULL_QUALITY_PRESET = {
+  top_k: 15,
+  top_p: 0.85,
+  temperature: 0.62,
+  repetition_penalty: 1.35,
+  speed_factor: 1.0,
+};
+
+const FULL_QUALITY_OPTIONS = {
+  maxChunkLength: 220,
+  maxSentencesPerChunk: 1,
+  chunkJoinPauseMs: 145,
+  retryCount: 4,
+  allowBestEffortFallback: true,
+};
+
 // Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a
 // short lead-in clause like "Typically," from being stranded as its own rushed
 // 1-2 word chunk; it merges forward into the following clause instead.
@@ -28,6 +44,21 @@ const MIN_CHUNK_LENGTH = 24;
 function clampNumber(value, fallback) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+export function applyFullInferenceQualityPreset(params = {}) {
+  return {
+    ...params,
+    inference_mode: 'quality',
+    ...FULL_QUALITY_PRESET,
+  };
+}
+
+export function fullInferenceQualityOptions(overrides = {}) {
+  return {
+    ...FULL_QUALITY_OPTIONS,
+    ...overrides,
+  };
 }
 
 function normalizeWhitespace(text) {
@@ -627,7 +658,7 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   };
 }
 
-function buildAttemptVariants(baseParams, attemptIndex) {
+export function buildAttemptVariants(baseParams, attemptIndex) {
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
   const safeTopK = clampNumber(baseParams.top_k, 5);
@@ -688,9 +719,9 @@ function buildAttemptVariants(baseParams, attemptIndex) {
 
   return {
     ...base,
-    temperature: 0.5,
-    top_p: 0.88,
-    top_k: 12,
+    temperature: 0.42,
+    top_p: 0.78,
+    top_k: 8,
     fragment_interval: baseInterval + 0.1,
     repetition_penalty: safeRepPenalty + 0.2,
     seed: (baseSeed + 47) >>> 0,
@@ -741,9 +772,34 @@ function splitChunkInHalf(text) {
   return [left, right];
 }
 
+function scoreAudioCandidate(analysis) {
+  const metrics = analysis?.metrics || {};
+  const rms = clampNumber(metrics.rms, 0);
+  const zeroishRatio = clampNumber(metrics.zeroishRatio, 1);
+  const clippedRatio = clampNumber(metrics.clippedRatio, 1);
+  const longestQuietSec = clampNumber(metrics.longestQuietSec, 99);
+  const loopScore = clampNumber(metrics.loopScore, 1);
+  const durationSec = clampNumber(analysis?.durationSec, 0);
+
+  if (rms < 0.003 || zeroishRatio > 0.995 || clippedRatio > 0.2) {
+    return -Infinity;
+  }
+
+  return (
+    durationSec
+    + Math.min(rms * 20, 3)
+    - (zeroishRatio * 2)
+    - (clippedRatio * 8)
+    - Math.max(0, longestQuietSec - 1.4)
+    - (loopScore * 3)
+  );
+}
+
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
+  const allowBestEffortFallback = Boolean(options.allowBestEffortFallback);
   let lastError = null;
+  let bestCandidate = null;
 
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const paddedText = `${chunkText.trim()} `;
@@ -751,6 +807,10 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     try {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);
+      const score = scoreAudioCandidate(analysis);
+      if (Number.isFinite(score) && (!bestCandidate || score > bestCandidate.score)) {
+        bestCandidate = { audioBuffer, analysis, paramsUsed: params, attempts: attempt + 1, score };
+      }
       if (!analysis.ok) {
         throw new Error(analysis.reason);
       }
@@ -758,6 +818,17 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     } catch (error) {
       lastError = error;
     }
+  }
+
+  if (allowBestEffortFallback && bestCandidate) {
+    return {
+      audioBuffer: bestCandidate.audioBuffer,
+      analysis: bestCandidate.analysis,
+      paramsUsed: bestCandidate.paramsUsed,
+      attempts: retryCount + 1,
+      fallback: true,
+      fallbackReason: lastError?.message || bestCandidate.analysis?.reason || 'Used best available chunk candidate',
+    };
   }
 
   throw lastError || new Error('Chunk synthesis failed');

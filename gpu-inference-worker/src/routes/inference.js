@@ -7,6 +7,8 @@ import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
   cancelSession,
+  applyFullInferenceQualityPreset,
+  fullInferenceQualityOptions,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -35,6 +37,7 @@ function readInferenceParams(body) {
     repetition_penalty = 1.35,
     speed_factor = 1.0,
     seed = -1,
+    inference_mode = '',
   } = body;
 
   return {
@@ -50,6 +53,7 @@ function readInferenceParams(body) {
     repetition_penalty,
     speed_factor,
     seed,
+    inference_mode,
   };
 }
 
@@ -189,12 +193,8 @@ router.post('/inference', async (req, res) => {
     activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
-    const { audioBuffer, chunks } = await synthesizeLongText(resolvedParams, {
-      maxChunkLength: 160,
-      maxSentencesPerChunk: 1,
-      chunkJoinPauseMs: 180,
-      retryCount: 2,
-    });
+    const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
+    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions());
     activityState.mark();
 
     res.set({
@@ -230,17 +230,13 @@ router.post('/inference/generate', async (req, res) => {
 
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
+    const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
     const sessionId = crypto.randomUUID();
-    inferenceState.resetForNewSession({ sessionId, params: resolvedParams });
+    inferenceState.resetForNewSession({ sessionId, params: qualityParams });
     sseManager.prepareSession(sessionId);
     res.json({ sessionId });
 
-    synthesizeLongTextStreaming(sessionId, resolvedParams, {
-      maxChunkLength: 160,
-      maxSentencesPerChunk: 1,
-      chunkJoinPauseMs: 180,
-      retryCount: 2,
-    }).catch((err) => {
+    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions()).catch((err) => {
       console.error(`[inference/generate] failed for ${sessionId}:`, err.message);
       inferenceState.setError(err.message);
       sseManager.send(sessionId, 'error', { message: err.message });

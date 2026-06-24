@@ -1253,6 +1253,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       text,
       voiceProfileId: selectedVoiceProfileId,
       text_lang: liveLanguage,
+    };
+    const liveFastParams = {
+      ...baseParams,
       top_k: topK,
       top_p: topP,
       temperature,
@@ -1271,7 +1274,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       try {
         const result = await generateLiveFastQueuedTts({
           text,
-          baseParams,
+          baseParams: liveFastParams,
           synthesizeSentence,
           createObjectUrl: (blob) => URL.createObjectURL(blob),
           onProgress: setTtsFastProgress,
@@ -1302,7 +1305,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         for (let index = 0; index < phrases.length; index += 1) {
           const phrase = phrases[index];
           setTtsFastProgress({ total: phrases.length, current: index + 1, text: phrase });
-          const result = await synthesizeSentence({ ...baseParams, text: phrase });
+          const result = await synthesizeSentence({ ...liveFastParams, text: phrase });
           clips.push(result.blob);
         }
         const blob = clips.length > 1 ? await concatWavBlobs(clips, { pauseMs: 120 }) : clips[0];
@@ -1322,7 +1325,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // fetches the finished audio via a presigned URL (bytes never traverse the Lambda).
     setStreamingRoute(route);
     try {
-      const res = await startGeneration(baseParams);
+      const res = await startGeneration({ ...baseParams, inference_mode: 'quality' });
       const { sessionId } = res.data;
       pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel, route };
       ttsInference.connect(sessionId, { initialStatus: 'waiting' });

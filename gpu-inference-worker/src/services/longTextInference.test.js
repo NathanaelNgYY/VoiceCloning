@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitTextIntoChunks, analyzeAudioQuality } from './longTextInference.js';
+import {
+  splitTextIntoChunks,
+  analyzeAudioQuality,
+  applyFullInferenceQualityPreset,
+  buildAttemptVariants,
+} from './longTextInference.js';
 
 // Build a valid PCM16 mono WAV of a given duration filled with mild noise
 // (healthy RMS, not silent, not clipped, low autocorrelation so it isn't
@@ -94,4 +99,58 @@ test('audio far too short for its text is flagged as likely dropped words', () =
 test('audio of natural length for its text is not flagged short', () => {
   const result = analyzeAudioQuality(makeNoiseWav(6.0), SKIP_TEXT); // ~82 chars in 6s = normal pace
   assert.doesNotMatch(result.reason || '', /too short/i, `should not be flagged short: ${result.reason}`);
+});
+
+test('full inference quality preset ignores caller sampling sliders', () => {
+  const params = applyFullInferenceQualityPreset({
+    text: 'Photosynthesis converts light into chemical energy.',
+    top_k: 1,
+    top_p: 1,
+    temperature: 1,
+    repetition_penalty: 1,
+    speed_factor: 1.8,
+  });
+
+  assert.equal(params.inference_mode, 'quality');
+  assert.equal(params.top_k, 15);
+  assert.equal(params.top_p, 0.85);
+  assert.equal(params.temperature, 0.62);
+  assert.equal(params.repetition_penalty, 1.35);
+  assert.equal(params.speed_factor, 1.0);
+});
+
+test('full inference quality chunks keep normal sentences together for flow', () => {
+  const text = 'The first sentence should stay intact for natural prosody. The second sentence should also stay intact.';
+  const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });
+
+  assert.deepEqual(chunks, [
+    'The first sentence should stay intact for natural prosody.',
+    'The second sentence should also stay intact.',
+  ]);
+});
+
+test('quality retry variants become progressively safer after the natural first pass', () => {
+  const base = applyFullInferenceQualityPreset({
+    text: 'Cellular respiration releases energy from glucose.',
+    seed: 100,
+  });
+
+  const first = buildAttemptVariants(base, 0);
+  const second = buildAttemptVariants(base, 1);
+  const final = buildAttemptVariants(base, 4);
+
+  assert.equal(first.temperature, 0.62);
+  assert.equal(first.top_p, 0.85);
+  assert.equal(first.top_k, 15);
+  assert.equal(first.text_split_method, 'cut5');
+
+  assert.ok(second.temperature < first.temperature);
+  assert.ok(second.repetition_penalty > first.repetition_penalty);
+  assert.equal(second.seed, 117);
+
+  assert.equal(final.temperature, 0.42);
+  assert.equal(final.top_p, 0.78);
+  assert.equal(final.top_k, 8);
+  assert.equal(final.text_split_method, 'cut1');
+  assert.equal(final.split_bucket, false);
 });
