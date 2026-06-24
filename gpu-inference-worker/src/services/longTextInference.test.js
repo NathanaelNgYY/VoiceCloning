@@ -160,7 +160,7 @@ test('quality retry variants become progressively safer after the natural first 
 
   const first = buildAttemptVariants(base, 0);
   const second = buildAttemptVariants(base, 1);
-  const final = buildAttemptVariants(base, 4);
+  const safe = buildAttemptVariants(base, 3);
 
   assert.equal(first.temperature, 0.62);
   assert.equal(first.top_p, 0.85);
@@ -171,11 +171,11 @@ test('quality retry variants become progressively safer after the natural first 
   assert.ok(second.repetition_penalty > first.repetition_penalty);
   assert.equal(second.seed, 117);
 
-  assert.equal(final.temperature, 0.42);
-  assert.equal(final.top_p, 0.78);
-  assert.equal(final.top_k, 8);
-  assert.equal(final.text_split_method, 'cut1');
-  assert.equal(final.split_bucket, false);
+  assert.equal(safe.temperature, 0.42);
+  assert.equal(safe.top_p, 0.78);
+  assert.equal(safe.top_k, 8);
+  assert.equal(safe.text_split_method, 'cut1');
+  assert.equal(safe.split_bucket, false);
 });
 
 test('quality retry variants strip internal control fields before GPT-SoVITS synthesis', () => {
@@ -196,4 +196,21 @@ test('seed -1 is treated as random instead of a deterministic retry seed base', 
   assert.notEqual(params.seed, -1);
   assert.equal(Number.isInteger(params.seed), true);
   assert.ok(params.seed >= 0);
+});
+
+test('final quality retry uses a Live Fast compatible minimal payload shape', () => {
+  const params = buildAttemptVariants(applyFullInferenceQualityPreset({
+    text: 'The final attempt should remove risky long text flags.',
+    seed: 200,
+  }), 4);
+
+  assert.equal(params.seed, 267);
+  assert.equal(params.temperature, 0.7);
+  assert.equal(params.top_p, 0.85);
+  assert.equal(params.top_k, 5);
+  assert.equal(params.text_split_method, 'cut5');
+  assert.equal('batch_size' in params, false);
+  assert.equal('split_bucket' in params, false);
+  assert.equal('parallel_infer' in params, false);
+  assert.equal('streaming_mode' in params, false);
 });

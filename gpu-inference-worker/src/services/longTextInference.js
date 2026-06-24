@@ -721,16 +721,37 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     };
   }
 
+  if (attemptIndex === 3) {
+    return {
+      ...base,
+      temperature: 0.42,
+      top_p: 0.78,
+      top_k: 8,
+      fragment_interval: baseInterval + 0.1,
+      repetition_penalty: safeRepPenalty + 0.2,
+      seed: (baseSeed + 47) >>> 0,
+      text_split_method: 'cut1',
+      split_bucket: false,
+    };
+  }
+
+  const {
+    batch_size: _batchSize,
+    streaming_mode: _streamingMode,
+    split_bucket: _splitBucket,
+    parallel_infer: _parallelInfer,
+    ...compatBase
+  } = base;
+
   return {
-    ...base,
-    temperature: 0.42,
-    top_p: 0.78,
-    top_k: 8,
-    fragment_interval: baseInterval + 0.1,
-    repetition_penalty: safeRepPenalty + 0.2,
-    seed: (baseSeed + 47) >>> 0,
-    text_split_method: 'cut1',
-    split_bucket: false,
+    ...compatBase,
+    temperature: 0.7,
+    top_p: 0.85,
+    top_k: 5,
+    fragment_interval: baseInterval,
+    repetition_penalty: 1.35,
+    seed: (baseSeed + 67) >>> 0,
+    text_split_method: 'cut5',
   };
 }
 
