@@ -192,7 +192,33 @@ export function splitTextIntoChunks(text, options = {}) {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  return chunks;
+  return mergeShortChunks(chunks, MIN_CHUNK_LENGTH);
+}
+
+// GPT-SoVITS frequently renders a very short fragment (a lone "Yes." or a
+// stranded lead-in clause) as a near-silent buffer — its AR decoder predicts an
+// early end-of-sequence. Long passages spawn more such fragments, so the odds
+// that one of them defeats every retry (and aborts the whole job) climb with
+// length. Fold any sub-minLength fragment into a neighbour so no chunk is ever
+// short enough to trigger that failure mode.
+function mergeShortChunks(chunks, minLength) {
+  if (chunks.length <= 1) return chunks;
+  const merged = [];
+  for (const chunk of chunks) {
+    const text = chunk.trim();
+    if (!text) continue;
+    if (merged.length > 0 && text.length < minLength) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${text}`.trim();
+    } else {
+      merged.push(text);
+    }
+  }
+  // A short *leading* fragment has no previous chunk to attach to — fold it forward.
+  while (merged.length > 1 && merged[0].length < minLength) {
+    merged[1] = `${merged[0]} ${merged[1]}`.trim();
+    merged.shift();
+  }
+  return merged;
 }
 
 function readChunk(buffer, offset) {
@@ -806,8 +832,12 @@ function scoreAudioCandidate(analysis) {
   const loopScore = clampNumber(metrics.loopScore, 1);
   const durationSec = clampNumber(analysis?.durationSec, 0);
 
-  if ((rms < 0.003 && clampNumber(metrics.absPeak, 0) < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2) {
-    return -Infinity;
+  const absPeak = clampNumber(metrics.absPeak, 0);
+  if ((rms < 0.003 && absPeak < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2) {
+    // Unacceptable audio still earns a finite, comparable score (deeply negative,
+    // ordered by residual energy) so a last-resort fallback can pick the
+    // least-bad take instead of discarding them all and aborting the whole job.
+    return -1000 + Math.min(rms * 100, 1) + Math.min(absPeak * 100, 1) - clippedRatio;
   }
 
   return (
@@ -833,7 +863,7 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);
       const score = scoreAudioCandidate(analysis);
-      if (Number.isFinite(score) && (!bestCandidate || score > bestCandidate.score)) {
+      if (!bestCandidate || score > bestCandidate.score) {
         bestCandidate = { audioBuffer, analysis, paramsUsed: params, attempts: attempt + 1, score };
       }
       if (!analysis.ok) {
@@ -853,6 +883,75 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       attempts: retryCount + 1,
       fallback: true,
       fallbackReason: lastError?.message || bestCandidate.analysis?.reason || 'Used best available chunk candidate',
+    };
+  }
+
+  // Carry the best audio we saw on the error so the resilient wrapper can salvage
+  // it as a last resort instead of aborting an entire long generation.
+  const failure = lastError || new Error('Chunk synthesis failed');
+  if (bestCandidate) failure.bestCandidate = bestCandidate;
+  throw failure;
+}
+
+function pickBestCandidate(candidates) {
+  return candidates
+    .filter(Boolean)
+    .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))[0] || null;
+}
+
+// Synthesize one chunk with escalating effort and — as a last resort — keep the
+// best audio we produced rather than letting a single stubborn chunk sink an
+// entire long generation. Order: (1) full retry suite on the whole chunk;
+// (2) split the chunk in half and retry each sub-chunk harder; (3) if everything
+// still fails, return the least-bad candidate seen. Only a genuine
+// inference-server error (no audio ever produced) propagates.
+async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
+  const escalate = { ...options, allowBestEffortFallback: false };
+  const salvage = [];
+  let lastError = null;
+
+  // Pass 1: full retry suite on the whole chunk.
+  try {
+    const result = await synthesizeChunkWithRetry(chunkText, { ...baseParams, text: chunkText }, escalate);
+    return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
+  } catch (err) {
+    if (err?.bestCandidate) salvage.push(err.bestCandidate);
+    lastError = err;
+  }
+
+  // Pass 2: split the chunk in half and retry each sub-chunk harder.
+  const subChunks = splitChunkInHalf(chunkText);
+  if (subChunks.length >= 2) {
+    if (onSplit) onSplit(subChunks);
+    try {
+      const buffers = [];
+      let attempts = 0;
+      for (const sub of subChunks) {
+        const subResult = await synthesizeChunkWithRetry(sub, { ...baseParams, text: sub }, escalate);
+        buffers.push(subResult.audioBuffer);
+        attempts += subResult.attempts;
+      }
+      const audioBuffer = buffers.length === 1 ? buffers[0] : concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+      return { audioBuffer, attempts, split: true };
+    } catch (err) {
+      if (err?.bestCandidate) salvage.push(err.bestCandidate);
+      lastError = err;
+    }
+  }
+
+  // Pass 3: keep the best audio we saw — never abort the whole job for one chunk.
+  const best = pickBestCandidate(salvage);
+  if (best) {
+    console.warn(
+      `[inference] chunk kept best-effort audio after exhausting retries: ${lastError?.message}; `
+      + `metrics=${JSON.stringify(best.analysis?.metrics)}; text="${chunkText.slice(0, 80)}"`,
+    );
+    return {
+      audioBuffer: best.audioBuffer,
+      attempts: best.attempts || 1,
+      analysis: best.analysis,
+      fallback: true,
+      fallbackReason: lastError?.message || best.analysis?.reason || 'best-effort chunk',
     };
   }
 
@@ -930,37 +1029,18 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       });
 
       const chunkStart = Date.now();
-      let chunkBuffers;
-      let totalAttempts;
-
-      try {
-        const result = await synthesizeChunkWithRetry(chunkText, { ...params, text: chunkText }, options);
-        chunkBuffers = [result.audioBuffer];
-        totalAttempts = result.attempts;
-      } catch (retryErr) {
-        // Adaptive retry: split the failed chunk in half and retry sub-chunks
-        const subChunks = splitChunkInHalf(chunkText);
-        if (subChunks.length < 2) throw retryErr; // can't split further
-
-        sseManager.send(sessionId, 'chunk-split', {
-          index,
-          originalText: chunkText,
-          subChunks,
-        });
-
-        chunkBuffers = [];
-        totalAttempts = 0;
-        for (const sub of subChunks) {
-          const subResult = await synthesizeChunkWithRetry(sub, { ...params, text: sub }, options);
-          chunkBuffers.push(subResult.audioBuffer);
-          totalAttempts += subResult.attempts;
-        }
+      const result = await synthesizeChunkResilient(
+        chunkText,
+        { ...params, text: chunkText },
+        options,
+        { onSplit: (subChunks) => sseManager.send(sessionId, 'chunk-split', { index, originalText: chunkText, subChunks }) },
+      );
+      const chunkBuffer = result.audioBuffer;
+      const totalAttempts = result.attempts;
+      if (result.fallback) {
+        sseManager.send(sessionId, 'chunk-fallback', { index, reason: result.fallbackReason });
       }
 
-      // Write chunk WAV(s) to disk — concatenate sub-chunks if split occurred
-      const chunkBuffer = chunkBuffers.length === 1
-        ? chunkBuffers[0]
-        : concatWavs(chunkBuffers, DEFAULTS.chunkJoinPauseMs);
       const chunkPath = path.join(sessionDir, `chunk_${String(index).padStart(3, '0')}.wav`);
       fs.writeFileSync(chunkPath, chunkBuffer);
       chunkPaths.push(chunkPath);
@@ -1022,39 +1102,15 @@ export async function synthesizeLongText(params, options = {}) {
   const metadata = [];
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    let chunkBuffers;
-    let totalAttempts;
-    let lastAnalysis;
-
-    try {
-      const result = await synthesizeChunkWithRetry(chunk, { ...params, text: chunk }, options);
-      chunkBuffers = [result.audioBuffer];
-      totalAttempts = result.attempts;
-      lastAnalysis = result.analysis;
-    } catch (retryErr) {
-      const subChunks = splitChunkInHalf(chunk);
-      if (subChunks.length < 2) throw retryErr;
-
-      chunkBuffers = [];
-      totalAttempts = 0;
-      for (const sub of subChunks) {
-        const subResult = await synthesizeChunkWithRetry(sub, { ...params, text: sub }, options);
-        chunkBuffers.push(subResult.audioBuffer);
-        totalAttempts += subResult.attempts;
-        lastAnalysis = subResult.analysis;
-      }
-    }
-
-    const chunkBuffer = chunkBuffers.length === 1
-      ? chunkBuffers[0]
-      : concatWavs(chunkBuffers, DEFAULTS.chunkJoinPauseMs);
-    buffers.push(chunkBuffer);
+    const result = await synthesizeChunkResilient(chunk, { ...params, text: chunk }, options);
+    buffers.push(result.audioBuffer);
     metadata.push({
       index,
       text: chunk,
-      attempts: totalAttempts,
-      durationSec: lastAnalysis?.durationSec ?? 0,
-      metrics: lastAnalysis?.metrics ?? {},
+      attempts: result.attempts,
+      durationSec: result.analysis?.durationSec ?? 0,
+      metrics: result.analysis?.metrics ?? {},
+      ...(result.fallback ? { fallback: true } : {}),
     });
   }
 

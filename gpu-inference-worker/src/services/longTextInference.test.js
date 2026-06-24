@@ -1,11 +1,30 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   splitTextIntoChunks,
   analyzeAudioQuality,
   applyFullInferenceQualityPreset,
+  fullInferenceQualityOptions,
   buildAttemptVariants,
+  synthesizeLongText,
 } from './longTextInference.js';
+import { inferenceServer } from './inferenceServer.js';
+
+// A valid PCM16 mono WAV that is genuinely silent (all zero samples) — exactly
+// what GPT-SoVITS returns when the AR decoder predicts an early end-of-sequence.
+function makeSilentWav(durationSec = 1.0, sampleRate = 32000) {
+  const blockAlign = 2;
+  const frameCount = Math.round(durationSec * sampleRate);
+  const dataSize = frameCount * blockAlign;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataSize, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * blockAlign, 28); buf.writeUInt16LE(blockAlign, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataSize, 40);
+  return buf;
+}
 
 // Build a valid PCM16 mono WAV of a given duration filled with mild noise
 // (healthy RMS, not silent, not clipped, low autocorrelation so it isn't
@@ -185,6 +204,58 @@ test('quality retry variants strip internal control fields before GPT-SoVITS syn
   }), 0);
 
   assert.equal('inference_mode' in params, false);
+});
+
+// In full-inference mode (maxSentencesPerChunk: 1) the chunker used to strand a
+// short complete sentence ("Yes.") as its own tiny chunk. GPT-SoVITS renders
+// such a fragment as a near-silent buffer, and a long passage contains enough of
+// them that one eventually defeats every retry and aborts the whole job.
+test('full inference never emits a tiny standalone chunk (silent-buffer trigger)', () => {
+  const text = "Yes. The mitochondria produce most of the cell's usable chemical energy through respiration.";
+  const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });
+  for (const chunk of chunks) {
+    assert.ok(chunk.trim().length >= 24, `chunk too short, will render silent: ${JSON.stringify(chunks)}`);
+  }
+});
+
+test('a short trailing clause is folded back instead of stranded as a tiny chunk', () => {
+  const text = 'The reaction releases a very large amount of usable energy almost instantly, so fast.';
+  const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });
+  for (const chunk of chunks) {
+    assert.ok(chunk.trim().length >= 24, `chunk too short, will render silent: ${JSON.stringify(chunks)}`);
+  }
+});
+
+// The whole point of the long-text path is that one stubborn chunk must never
+// sink a long generation. When every retry yields silence, keep the best-effort
+// audio and finish the job rather than throwing.
+test('long-text synthesis keeps best-effort audio instead of aborting on a silent chunk', async () => {
+  mock.method(inferenceServer, 'synthesize', async () => makeSilentWav(1.0));
+  try {
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text: 'A short standalone sentence for synthesis.' }),
+      fullInferenceQualityOptions({ retryCount: 1 }),
+    );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+// A genuine inference-server failure (no audio ever produced) must still surface
+// as an error — best-effort fallback only applies when we actually got audio.
+test('long-text synthesis still surfaces a genuine inference-server failure', async () => {
+  mock.method(inferenceServer, 'synthesize', async () => { throw new Error('inference server exploded'); });
+  try {
+    await assert.rejects(
+      synthesizeLongText(
+        applyFullInferenceQualityPreset({ text: 'A short standalone sentence for synthesis.' }),
+        fullInferenceQualityOptions({ retryCount: 0 }),
+      ),
+    );
+  } finally {
+    mock.restoreAll();
+  }
 });
 
 test('seed -1 is treated as random instead of a deterministic retry seed base', () => {
