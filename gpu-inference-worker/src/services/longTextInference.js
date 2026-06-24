@@ -4,7 +4,7 @@ import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
-import { LOCAL_TEMP_ROOT } from '../config.js';
+import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
 
@@ -637,16 +637,24 @@ function buildAttemptVariants(baseParams, attemptIndex) {
 
   const safeRepPenalty = clampNumber(baseParams.repetition_penalty, 1.35);
 
+  // Base comma/clause pause (GPT-SoVITS fragment_interval). Configurable via
+  // COMMA_PAUSE_SECONDS; a caller-supplied value still wins. Retries nudge it up.
+  const baseInterval = clampNumber(baseParams.fragment_interval, COMMA_PAUSE_SECONDS);
+
   const base = {
     ...baseParams,
     aux_ref_audio_paths: baseParams.aux_ref_audio_paths || [],
     seed: baseSeed,
-    text_split_method: baseParams.text_split_method || 'cut0',
+    // cut5 = "split on every punctuation": GPT-SoVITS breaks on each comma/clause
+    // mark and inserts a deterministic fragment_interval of silence between fragments.
+    // This makes comma pauses consistent instead of leaving them to the model's
+    // stochastic prosody (cut0 fed the whole chunk in, so internal commas were a coin flip).
+    text_split_method: baseParams.text_split_method || 'cut5',
     batch_size: 1,
     streaming_mode: false,
     split_bucket: true,
     parallel_infer: false,
-    fragment_interval: 0.1,
+    fragment_interval: baseInterval,
     repetition_penalty: safeRepPenalty,
     speed_factor: speed,
   };
@@ -661,7 +669,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
       seed: (baseSeed + 17) >>> 0,
       repetition_penalty: safeRepPenalty + 0.1,
       temperature: Math.max(0.5, safeTemperature * 0.88),
-      fragment_interval: 0.12,
+      fragment_interval: baseInterval + 0.02,
     };
   }
 
@@ -671,7 +679,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
       temperature: Math.max(0.5, safeTemperature * 0.75),
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(8, Math.min(safeTopK, 15)),
-      fragment_interval: 0.15,
+      fragment_interval: baseInterval + 0.05,
       repetition_penalty: safeRepPenalty + 0.15,
       seed: (baseSeed + 31) >>> 0,
       text_split_method: 'cut4',
@@ -683,7 +691,7 @@ function buildAttemptVariants(baseParams, attemptIndex) {
     temperature: 0.5,
     top_p: 0.88,
     top_k: 12,
-    fragment_interval: 0.2,
+    fragment_interval: baseInterval + 0.1,
     repetition_penalty: safeRepPenalty + 0.2,
     seed: (baseSeed + 47) >>> 0,
     text_split_method: 'cut1',
