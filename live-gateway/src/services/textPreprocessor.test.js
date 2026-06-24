@@ -61,6 +61,11 @@ test('preprocessText leaves em/en dashes and ellipses intact', () => {
   assert.equal(preprocessText('Well… maybe'), 'Well… maybe');
 });
 
+test('preprocessText removes pause-heavy periods from dotted initialisms', () => {
+  assert.equal(preprocessText('The W.H.O guidance changed'), 'The W H O guidance changed');
+  assert.equal(preprocessText('Order an E.C.G. now'), 'Order an E C G now');
+});
+
 test('preprocessText punctuates a run-on and still normalizes numbers', () => {
   const input = 'in 2021 we built so many things and people loved every single part of what we were doing together';
   const result = preprocessText(input);

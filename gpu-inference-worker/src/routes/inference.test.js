@@ -42,3 +42,23 @@ test('handleLiveTtsRequest synthesizes immediately without a readiness probe', a
   assert.equal(synthesizeCalls, 1);
   assert.equal(result.audioBuffer.toString('utf-8'), 'RIFFdemo');
 });
+
+test('handleLiveTtsRequest removes pause-heavy periods from dotted initialisms', async () => {
+  const module = await loadInferenceRouteModule();
+
+  await module.handleLiveTtsRequest({
+    text: 'The W.H.O guidance changed.',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+    aux_ref_audio_paths: [],
+  }, {
+    resolveParams: async (body) => ({
+      ...body,
+      ref_audio_path: '/tmp/reference.wav',
+    }),
+    synthesize: async (params) => {
+      assert.match(params.text, /W H O/u);
+      assert.doesNotMatch(params.text, /W\.H\.O/u);
+      return Buffer.from('RIFFdemo');
+    },
+  });
+});

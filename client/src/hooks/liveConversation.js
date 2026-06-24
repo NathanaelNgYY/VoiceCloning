@@ -83,6 +83,7 @@ const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
 const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
 const PHRASE_SPLIT_RE = /[^.!?;:。！？；：]+[.!?;:。！？；：]+|[^.!?;:。！？；：]+$/gu;
+const DOTTED_INITIALISM_DOT = '\uE000';
 
 export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
@@ -154,8 +155,21 @@ function ensurePhraseEnding(text) {
   return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;
 }
 
+function protectDottedInitialisms(text) {
+  return text.replace(/\b[A-Z](?:\.[A-Z])+(?:\.)?/gu, (match, offset, input) => {
+    const afterMatch = input.slice(offset + match.length);
+    const terminalDotEndsSentence = match.endsWith('.') && !/^\s+[a-z]/u.test(afterMatch);
+    if (!terminalDotEndsSentence) return match.replace(/\./g, DOTTED_INITIALISM_DOT);
+    return `${match.slice(0, -1).replace(/\./g, DOTTED_INITIALISM_DOT)}.`;
+  });
+}
+
+function restoreDottedInitialisms(text) {
+  return text.replaceAll(DOTTED_INITIALISM_DOT, '.');
+}
+
 export function splitLiveReplyPhrases(text) {
-  const clean = cleanLiveText(text);
+  const clean = protectDottedInitialisms(cleanLiveText(text));
   if (!clean) return [];
 
   // Em/en dashes mark a pause but aren't sentence-enders, so GPT-SoVITS reads
@@ -164,7 +178,7 @@ export function splitLiveReplyPhrases(text) {
   const segments = clean.split(/\s*[—–]+\s*/u).map((part) => part.trim()).filter(Boolean);
   const matches = segments.flatMap((segment) => segment.match(PHRASE_SPLIT_RE) || [segment]);
   return matches
-    .map((part) => ensurePhraseEnding(part.trim()))
+    .map((part) => restoreDottedInitialisms(ensurePhraseEnding(part.trim())))
     .filter(Boolean);
 }
 
