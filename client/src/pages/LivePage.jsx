@@ -489,12 +489,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     Object.fromEntries(trainingAudioFiles.map((file) => [file.path, describeReferenceCandidate(file)]))
   ), [trainingAudioFiles]);
   const currentReferenceMetadata = useMemo(() => {
-    const primary = referenceCandidateMap[refAudioPath] || (refAudioPath ? describeReferenceCandidate({
-      filename: fallbackName(refAudioPath),
+    const sourcePrimary = referenceCandidateMap[refAudioPath];
+    const primary = refAudioPath ? describeReferenceCandidate({
+      ...(sourcePrimary?.file || {}),
+      filename: sourcePrimary?.filename || fallbackName(refAudioPath),
       path: refAudioPath,
       transcript: promptText,
       lang: promptLang,
-    }) : null);
+    }) : null;
     const aux = auxRefAudios.map((file) => referenceCandidateMap[file.path] || describeReferenceCandidate(file));
     return {
       mode: primary?.eligible ? 'strict' : 'manual',
@@ -507,12 +509,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     };
   }, [referenceCandidateMap, refAudioPath, promptText, promptLang, auxRefAudios]);
   const currentLiveFullReferenceMetadata = useMemo(() => {
-    const primary = referenceCandidateMap[liveFullRefAudioPath] || (liveFullRefAudioPath ? describeReferenceCandidate({
-      filename: fallbackName(liveFullRefAudioPath),
+    const sourcePrimary = referenceCandidateMap[liveFullRefAudioPath];
+    const primary = liveFullRefAudioPath ? describeReferenceCandidate({
+      ...(sourcePrimary?.file || {}),
+      filename: sourcePrimary?.filename || fallbackName(liveFullRefAudioPath),
       path: liveFullRefAudioPath,
       transcript: liveFullPromptText,
       lang: liveFullPromptLang,
-    }) : null);
+    }) : null;
     const aux = liveFullAuxRefAudios.map((file) => referenceCandidateMap[file.path] || describeReferenceCandidate(file));
     return {
       mode: primary?.eligible ? 'strict' : 'manual',
@@ -725,6 +729,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       };
   }
 
+  function referencePromptText(referencePrimary = {}, resolvedFile = {}, fallbackText = '') {
+    return String(
+      referencePrimary?.file?.transcript
+        || referencePrimary?.transcript
+        || resolvedFile?.transcript
+        || fallbackText
+        || ''
+    );
+  }
+
+  function referencePromptLang(referencePrimary = {}, resolvedFile = {}, fallbackLang = 'en') {
+    return normalizeReferenceLanguage(
+      referencePrimary?.file?.lang
+        || referencePrimary?.lang
+        || resolvedFile?.lang
+        || fallbackLang
+    );
+  }
+
   function buildConfigVoiceProfilePayload(config) {
     if (!config || !selectedProfile || !selectedGPT || !selectedSoVITS) return;
     const reference = config.referenceMetadata || {};
@@ -733,14 +756,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
     if (!primaryPath) return;
     const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
-    const promptTextFromConfig = primaryFile.transcript
-      || reference.primary?.file?.transcript
-      || reference.primary?.transcript
-      || promptText;
-    const promptLangFromConfig = primaryFile.lang
-      || reference.primary?.file?.lang
-      || reference.primary?.lang
-      || promptLang;
+    const promptTextFromConfig = referencePromptText(reference.primary, primaryFile, promptText);
+    const promptLangFromConfig = referencePromptLang(reference.primary, primaryFile, promptLang);
     const auxPaths = Array.isArray(reference.selectedPaths?.aux)
       ? reference.selectedPaths.aux
       : Array.isArray(reference.aux)
@@ -871,8 +888,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     if (primaryPath) {
       const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
       setRefAudioPath(primaryPath);
-      setPromptText(primaryFile.transcript || reference.primary?.file?.transcript || reference.primary?.transcript || '');
-      setPromptLang(normalizeReferenceLanguage(primaryFile.lang));
+      setPromptText(referencePromptText(reference.primary, primaryFile));
+      setPromptLang(referencePromptLang(reference.primary, primaryFile));
     }
     setAuxRefAudios(auxPaths.slice(0, 5).map((path) => (
       trainingAudioFiles.find((file) => file.path === path) || {
@@ -1206,8 +1223,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
     const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
     setLiveFullRefAudioPath(primaryPath);
-    setLiveFullPromptText(primaryFile.transcript || reference.primary?.file?.transcript || reference.primary?.transcript || '');
-    setLiveFullPromptLang(normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || reference.primary?.lang));
+    setLiveFullPromptText(referencePromptText(reference.primary, primaryFile));
+    setLiveFullPromptLang(referencePromptLang(reference.primary, primaryFile));
     setLiveFullAuxRefAudios(auxPaths.slice(0, 5).map((path) => (
       trainingAudioFiles.find((file) => file.path === path) || {
         filename: fallbackName(path),
@@ -1350,10 +1367,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         ? reference.aux.map((item) => item?.path).filter(Boolean)
         : [];
     const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
-    const prompt = primaryFile.transcript
-      || reference.primary?.file?.transcript
-      || reference.primary?.transcript
-      || '';
+    const prompt = referencePromptText(reference.primary, primaryFile);
     if (!prompt) {
       setLiveFullMessage('Live Full sample needs a primary reference transcript.');
       return;
@@ -1363,7 +1377,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const params = buildLiveFullRefParams({
       primaryPath,
       promptText: prompt,
-      promptLang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || reference.primary?.lang),
+      promptLang: referencePromptLang(reference.primary, primaryFile),
       auxRefAudios: auxPaths.map((path) => resolveReferenceFile(path) || { path }),
       settings: {
         speed: defaults.speed_factor ?? DEFAULT_LIVE_FULL_SETTINGS.speed,
@@ -1620,13 +1634,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const primaryPath = reference.selectedPaths?.primary || reference.primary?.path || refAudioPath;
     const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
     const auxPaths = Array.isArray(reference.selectedPaths?.aux) ? reference.selectedPaths.aux : [];
-    const prompt = String(primaryFile.transcript || reference.primary?.file?.transcript || promptText || '').trim();
+    const prompt = referencePromptText(reference.primary, primaryFile, promptText).trim();
     const params = {
       text: 'This is a short saved voice configuration sample.',
       text_lang: inference.language || liveLanguage,
       ref_audio_path: primaryPath,
       prompt_text: prompt,
-      prompt_lang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || promptLang),
+      prompt_lang: referencePromptLang(reference.primary, primaryFile, promptLang),
       aux_ref_audio_paths: auxPaths,
       speed_factor: defaults.speed_factor ?? speed,
       top_k: defaults.top_k ?? topK,
