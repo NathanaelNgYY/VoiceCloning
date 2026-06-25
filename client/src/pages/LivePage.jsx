@@ -646,6 +646,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (liveFastConfigs[0] && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId) {
         autoLoadedLiveFastConfigProfileRef.current = voiceProfileId;
         applyVoiceConfig(liveFastConfigs[0], { silent: true });
+        try {
+          await syncConfigToVoiceProfile(liveFastConfigs[0]);
+        } catch (syncErr) {
+          console.warn('[voice-configs] rank #1 voice profile sync failed', {
+            voiceProfileId,
+            configId: liveFastConfigs[0].configId,
+            message: syncErr.response?.data?.error || syncErr.message,
+          });
+        }
       }
       setVoiceConfigError('');
     } catch (err) {
