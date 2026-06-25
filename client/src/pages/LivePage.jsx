@@ -660,15 +660,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (liveFastConfigs[0] && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId) {
         autoLoadedLiveFastConfigProfileRef.current = voiceProfileId;
         applyVoiceConfig(liveFastConfigs[0], { silent: true });
-        try {
-          await syncConfigToVoiceProfile(liveFastConfigs[0]);
-        } catch (syncErr) {
-          console.warn('[voice-configs] rank #1 voice profile sync failed', {
-            voiceProfileId,
-            configId: liveFastConfigs[0].configId,
-            message: syncErr.response?.data?.error || syncErr.message,
-          });
-        }
+        await syncRankOneConfigToVoiceProfile(liveFastConfigs[0], { context: 'startup rank #1 config' });
       }
       setVoiceConfigError('');
     } catch (err) {
@@ -799,6 +791,29 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       configId: config.configId,
       rank: config.rank,
     });
+  }
+
+  async function syncRankOneConfigToVoiceProfile(config, { required = false, context = 'rank #1 config' } = {}) {
+    if (!config) return false;
+    try {
+      await syncConfigToVoiceProfile(config);
+      setVoiceConfigError('');
+      return true;
+    } catch (err) {
+      const message = err.response?.data?.error || err.message || 'voice profile sync failed';
+      const fullMessage = `Could not sync ${context} to voice profile: ${message}`;
+      setVoiceConfigError(fullMessage);
+      console.warn('[voice-configs] rank #1 voice profile sync failed', {
+        voiceProfileId: selectedVoiceProfileId,
+        configId: config.configId,
+        context,
+        message,
+      });
+      if (required) {
+        throw new Error(fullMessage);
+      }
+      return false;
+    }
   }
 
   function applyConfigAsActiveLiveFastProfile(config) {
@@ -1040,15 +1055,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         : syncLoadedModelReferenceSelection(response.data || {});
       if (latestRankOneConfig) {
         applyVoiceConfig(latestRankOneConfig, { silent: true });
-        try {
-          await syncConfigToVoiceProfile(latestRankOneConfig);
-        } catch (syncErr) {
-          console.warn('[voice-configs] rank #1 sync after model load failed', {
-            voiceProfileId: selectedVoiceProfileId,
-            configId: latestRankOneConfig.configId,
-            message: syncErr.response?.data?.error || syncErr.message,
-          });
-        }
+        await syncRankOneConfigToVoiceProfile(latestRankOneConfig, { context: 'model-load rank #1 config' });
       }
       statusRequestVersionRef.current += 1;
       applyInferenceStatusState({
@@ -1167,23 +1174,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         if (applySaved) {
           applyVoiceConfig(saved, { silent: true });
         }
-        try {
-          await syncConfigToVoiceProfile(saved);
-          console.info('[voice-configs] synced saved config to voice profile', {
-            voiceProfileId: selectedVoiceProfileId,
-            configId: saved.configId,
-            rank: saved.rank,
-          });
-        } catch (syncErr) {
-          applyConfigAsActiveLiveFastProfile(saved);
-          const syncMessage = syncErr.response?.data?.error || syncErr.message || 'voice profile sync failed';
-          setVoiceConfigError(`Saved config, but could not sync rank #1 to voice profile: ${syncMessage}`);
-          console.warn('[voice-configs] saved rank #1 but voice profile sync failed', {
-            voiceProfileId: selectedVoiceProfileId,
-            configId: saved.configId,
-            message: syncMessage,
-          });
-        }
+        await syncRankOneConfigToVoiceProfile(saved, { required: true, context: 'saved rank #1 config' });
       } else if (existingConfig?.configId === loadedConfigId) {
         applyConfigAsActiveLiveFastProfile(saved);
         if (applySaved) {
@@ -1434,7 +1425,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       applyVoiceConfig(config);
       if (Number(config.rank || 0) === 1) {
-        await syncConfigToVoiceProfile(config);
+        await syncRankOneConfigToVoiceProfile(config, { required: true, context: 'loaded rank #1 config' });
       } else {
         applyConfigAsActiveLiveFastProfile(config);
       }
@@ -1461,12 +1452,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       await deleteVoiceProfileConfig(selectedVoiceProfileId, configId);
       console.info('[voice-configs] deleted config', { voiceProfileId: selectedVoiceProfileId, configId });
+      let nextConfigs = [];
       setVoiceConfigs((current) => {
         const next = current.filter((item) => item.configId !== configId);
         voiceConfigsRef.current = next;
+        nextConfigs = next;
         return next;
       });
-      if (loadedConfigId === configId) setLoadedConfigId('');
+      if (nextConfigs[0]) {
+        applyVoiceConfig(nextConfigs[0], { silent: true });
+        await syncRankOneConfigToVoiceProfile(nextConfigs[0], { required: true, context: 'new rank #1 config after delete' });
+      } else if (loadedConfigId === configId) {
+        setLoadedConfigId('');
+      }
       setConfigSampleUrls((current) => {
         if (current[configId]) URL.revokeObjectURL(current[configId]);
         const next = { ...current };
@@ -1506,7 +1504,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setVoiceConfigs(sorted);
       if (sorted[0]) {
         applyVoiceConfig(sorted[0], { silent: true });
-        await syncConfigToVoiceProfile(sorted[0]);
+        await syncRankOneConfigToVoiceProfile(sorted[0], { required: true, context: 'new rank #1 config after reorder' });
       }
       console.info('[voice-configs] reordered configs', {
         voiceProfileId: selectedVoiceProfileId,
@@ -1537,7 +1535,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       voiceConfigsRef.current = sorted;
       setVoiceConfigs(sorted);
       if (sorted[0]) {
-        await syncConfigToVoiceProfile(sorted[0]);
+        applyVoiceConfig(sorted[0], { silent: true });
+        await syncRankOneConfigToVoiceProfile(sorted[0], { required: true, context: 'new rank #1 config after reorder' });
       }
       console.info('[voice-configs] reordered configs', {
         voiceProfileId: selectedVoiceProfileId,
@@ -1597,7 +1596,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         return next;
       });
       if (Number(saved.rank || 0) === 1) {
-        await syncConfigToVoiceProfile(saved);
+        await syncRankOneConfigToVoiceProfile(saved, { required: true, context: 'renamed rank #1 config' });
       }
       console.info('[voice-configs] renamed config', {
         voiceProfileId: selectedVoiceProfileId,
