@@ -437,13 +437,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     temperature: liveFullTemperature,
     repPenalty: liveFullRepPenalty,
   }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty]);
-  const liveFullRefParams = useMemo(() => buildLiveFullRefParams({
-    primaryPath: liveFullRefAudioPath,
-    promptText: liveFullPromptText,
-    promptLang: liveFullPromptLang,
-    auxRefAudios: liveFullAuxRefAudios,
-    settings: liveFullSettings,
-  }), [liveFullRefAudioPath, liveFullPromptText, liveFullPromptLang, liveFullAuxRefAudios, liveFullSettings]);
+  const liveFastRankOneReferenceSummary = useMemo(() => {
+    const rankOneConfig = voiceConfigs[0] || null;
+    const { primaryPath, auxPaths } = getConfigReferencePaths(rankOneConfig);
+    return {
+      config: rankOneConfig,
+      primaryPath,
+      auxPaths,
+      primaryName: primaryPath ? fallbackName(primaryPath) : 'none',
+    };
+  }, [voiceConfigs]);
+  const liveFullRefParams = useMemo(() => (
+    buildLiveFullRefParamsFromLiveFastRankOne(voiceConfigs[0], liveFullSettings)
+  ), [voiceConfigs, trainingAudioFiles, liveFullSettings]);
   const currentAutoSyncFingerprint = useMemo(() => createAutoVoiceProfileSyncFingerprint({
     sourceKey: selectedExpName,
     selectedGPT,
@@ -1002,6 +1008,24 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     };
   }
 
+  function buildLiveFullRefParamsFromLiveFastRankOne(config = voiceConfigsRef.current[0], settings = liveFullSettings) {
+    const reference = config?.referenceMetadata || {};
+    const { primaryPath, auxPaths } = getConfigReferencePaths(config);
+    if (!primaryPath) return null;
+
+    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const prompt = referencePromptText(reference.primary, primaryFile).trim();
+    if (!prompt) return null;
+
+    return buildLiveFullRefParams({
+      primaryPath,
+      promptText: prompt,
+      promptLang: referencePromptLang(reference.primary, primaryFile),
+      auxRefAudios: auxPaths.map((path) => resolveReferenceFile(path) || { path }),
+      settings,
+    });
+  }
+
   function syncLoadedModelReferenceSelection(result = {}) {
     const selection = extractModelSelectWarmedReferenceSelection(result);
     if (!selection) {
@@ -1236,9 +1260,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   function applyLiveFullConfig(config, { silent = false } = {}) {
-    const reference = config?.referenceMetadata || {};
     const defaults = config?.inferenceMetadata?.defaults || {};
-    applyLiveFullReferenceDefaultsFromConfig(config);
     setLiveFullSpeed(Number.isFinite(defaults.speed_factor) ? defaults.speed_factor : DEFAULT_LIVE_FULL_SETTINGS.speed);
     setLiveFullTopK(Number.isFinite(defaults.top_k) ? defaults.top_k : DEFAULT_LIVE_FULL_SETTINGS.topK);
     setLiveFullTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : DEFAULT_LIVE_FULL_SETTINGS.topP);
@@ -1251,6 +1273,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   function buildCurrentLiveFullConfigPayload({ configId = '', configName = '' } = {}) {
+    const rankOneConfig = voiceConfigsRef.current[0] || liveFastRankOneReferenceSummary.config;
     const resolvedConfigName = configName || (selectedProfile?.displayName
       ? `${selectedProfile.displayName} full`
       : 'Live Full default');
@@ -1261,13 +1284,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       language: liveLanguage,
       settings: liveFullSettings,
       trainingMetadata: trainingRunMetadata || activeVoiceProfile?.metadata?.training || {},
-      referenceMetadata: currentLiveFullReferenceMetadata,
+      referenceMetadata: {
+        source: 'liveFastRankOne',
+        liveFastConfigId: rankOneConfig?.configId || '',
+      },
     });
   }
 
   async function saveCurrentLiveFullConfig(existingConfig = null, { applySaved = true } = {}) {
-    if (!selectedVoiceProfileId || !liveFullRefAudioPath) {
-      setLiveFullMessage('Choose a Live Full primary reference before saving.');
+    if (!selectedVoiceProfileId) {
+      setLiveFullMessage('Load a voice profile before saving Live Full metadata.');
+      return;
+    }
+    if (!voiceConfigsRef.current[0]) {
+      setLiveFullMessage('Create Live Fast rank #1 before saving Live Full metadata.');
       return;
     }
     const configId = existingConfig?.configId || buildConfigId(`${selectedProfile?.displayName || selectedVoiceProfileId}-full`);
@@ -1352,42 +1382,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   async function generateLiveFullConfigSample(config) {
     if (!config?.configId || !selectedVoiceProfileId || streamingRoute !== null) return;
-    const reference = config.referenceMetadata || {};
     const inference = config.inferenceMetadata || {};
     const defaults = inference.defaults || {};
-    const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
-    if (!primaryPath) {
-      setLiveFullMessage('Live Full sample needs a primary reference.');
-      return;
-    }
-
-    const auxPaths = Array.isArray(reference.selectedPaths?.aux)
-      ? reference.selectedPaths.aux
-      : Array.isArray(reference.aux)
-        ? reference.aux.map((item) => item?.path).filter(Boolean)
-        : [];
-    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
-    const prompt = referencePromptText(reference.primary, primaryFile);
-    if (!prompt) {
-      setLiveFullMessage('Live Full sample needs a primary reference transcript.');
-      return;
-    }
-
     const sampleText = 'This is a short full inference voice configuration sample.';
-    const params = buildLiveFullRefParams({
-      primaryPath,
-      promptText: prompt,
-      promptLang: referencePromptLang(reference.primary, primaryFile),
-      auxRefAudios: auxPaths.map((path) => resolveReferenceFile(path) || { path }),
-      settings: {
-        speed: defaults.speed_factor ?? DEFAULT_LIVE_FULL_SETTINGS.speed,
-        topK: defaults.top_k ?? DEFAULT_LIVE_FULL_SETTINGS.topK,
-        topP: defaults.top_p ?? DEFAULT_LIVE_FULL_SETTINGS.topP,
-        temperature: defaults.temperature ?? DEFAULT_LIVE_FULL_SETTINGS.temperature,
-        repPenalty: defaults.repetition_penalty ?? DEFAULT_LIVE_FULL_SETTINGS.repPenalty,
-      },
+    const params = buildLiveFullRefParamsFromLiveFastRankOne(voiceConfigsRef.current[0], {
+      speed: defaults.speed_factor ?? DEFAULT_LIVE_FULL_SETTINGS.speed,
+      topK: defaults.top_k ?? DEFAULT_LIVE_FULL_SETTINGS.topK,
+      topP: defaults.top_p ?? DEFAULT_LIVE_FULL_SETTINGS.topP,
+      temperature: defaults.temperature ?? DEFAULT_LIVE_FULL_SETTINGS.temperature,
+      repPenalty: defaults.repetition_penalty ?? DEFAULT_LIVE_FULL_SETTINGS.repPenalty,
     });
-    if (!params) return;
+    if (!params) {
+      setLiveFullMessage('Live Full sample needs Live Fast rank #1 with a primary reference transcript.');
+      return;
+    }
 
     setGeneratingLiveFullSampleConfigId(config.configId);
     setStreamingRoute('full');
@@ -1786,7 +1794,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // request hits. It returns a sessionId immediately, streams progress over SSE, and
     // fetches the finished audio via a presigned URL (bytes never traverse the Lambda).
     if (!liveFullRefParams) {
-      setTtsError('Choose a Live Full primary reference before generating Full Inference audio.');
+      setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
       return;
     }
     setStreamingRoute(route);
@@ -2402,32 +2410,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   useEffect(() => {
     if (loadingVoiceConfigs || loadingTrainingAudio || !selectedVoiceProfileId) return;
     const savedLiveFullConfig = liveFullConfigs[0];
-    const source = savedLiveFullConfig ? 'liveFull' : 'best';
-    const key = savedLiveFullConfig
-      ? `${selectedVoiceProfileId}:${source}:${savedLiveFullConfig.configId || 'default'}:${trainingAudioFiles.length}`
-      : `${selectedVoiceProfileId}:${source}:${loadedTrainingAudioSourceKey}:${trainingAudioFiles.length}`;
+    if (!savedLiveFullConfig) return;
+    const key = `${selectedVoiceProfileId}:liveFull:${savedLiveFullConfig.configId || 'default'}`;
     if (liveFullDefaultKeyRef.current === key) return;
-    if (!savedLiveFullConfig && trainingAudioFiles.length === 0) return;
     liveFullDefaultKeyRef.current = key;
-    if (savedLiveFullConfig) {
-      applyLiveFullConfig(savedLiveFullConfig, { silent: true });
-      return;
-    }
-    applyBestLiveFullReference(trainingAudioFiles);
-    setLiveFullSpeed(DEFAULT_LIVE_FULL_SETTINGS.speed);
-    setLiveFullTopK(DEFAULT_LIVE_FULL_SETTINGS.topK);
-    setLiveFullTopP(DEFAULT_LIVE_FULL_SETTINGS.topP);
-    setLiveFullTemperature(DEFAULT_LIVE_FULL_SETTINGS.temperature);
-    setLiveFullRepPenalty(DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
-    setLoadedLiveFullConfigId('');
+    applyLiveFullConfig(savedLiveFullConfig, { silent: true });
   }, [
     loadingVoiceConfigs,
     loadingTrainingAudio,
     selectedVoiceProfileId,
     liveFullConfigs,
-    loadedTrainingAudioSourceKey,
-    trainingAudioFiles,
-    trainingAudioFiles.length,
   ]);
 
   useEffect(() => {
@@ -2435,16 +2427,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       loadingVoiceConfigs
       || loadingTrainingAudio
       || liveFullConfigs.length > 0
+      || voiceConfigs.length === 0
       || !selectedVoiceProfileId
       || !selectedProfile
-      || !liveFullRefAudioPath
       || savingLiveFullConfigId
       || streamingRoute !== null
     ) {
       return;
     }
 
-    const key = `${selectedVoiceProfileId}:${liveFullRefAudioPath}:${liveFullAuxRefAudios.map((item) => item.path).join(',')}`;
+    const rankOneConfig = voiceConfigs[0];
+    const key = `${selectedVoiceProfileId}:${rankOneConfig?.configId || 'default'}`;
     if (liveFullAutoDefaultSaveKeyRef.current === key) return;
     liveFullAutoDefaultSaveKeyRef.current = key;
     saveCurrentLiveFullConfig({
@@ -2457,10 +2450,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     loadingVoiceConfigs,
     loadingTrainingAudio,
     liveFullConfigs.length,
+    voiceConfigs,
     selectedVoiceProfileId,
     selectedProfile,
-    liveFullRefAudioPath,
-    liveFullAuxRefAudios,
     savingLiveFullConfigId,
     streamingRoute,
   ]);
@@ -2885,7 +2877,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   type="button"
                   size="sm"
                   onClick={() => saveCurrentLiveFullConfig()}
-                  disabled={!selectedVoiceProfileId || !liveFullRefAudioPath || Boolean(savingLiveFullConfigId)}
+                  disabled={!selectedVoiceProfileId || !voiceConfigs[0] || Boolean(savingLiveFullConfigId)}
                   className="h-8 rounded-lg"
                 >
                   {savingLiveFullConfigId && !liveFullConfigs.some((item) => item.configId === savingLiveFullConfigId)
@@ -3014,8 +3006,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">
                     <p className="font-semibold text-slate-700">Current Live Full config</p>
                     <p className="mt-1 truncate">
-                      Ref {currentLiveFullReferenceMetadata.selectedPaths.primary ? fallbackName(currentLiveFullReferenceMetadata.selectedPaths.primary) : 'none'} ·
-                      speed {liveFullSettings.speed.toFixed(1)} · temp {liveFullSettings.temperature.toFixed(2)}
+                      Refs from Live Fast #1: {liveFastRankOneReferenceSummary.primaryName} - speed {liveFullSettings.speed.toFixed(1)} - temp {liveFullSettings.temperature.toFixed(2)}
                     </p>
                     <p className="mt-1 truncate">
                       top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
@@ -3042,7 +3033,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       <div className="space-y-2">
                         {liveFullConfigs.map((config, index) => {
                           const defaults = config.inferenceMetadata?.defaults || {};
-                          const reference = config.referenceMetadata || {};
                           const busy = savingLiveFullConfigId === config.configId;
                           const loaded = loadedLiveFullConfigId === config.configId;
                           return (
@@ -3051,7 +3041,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                 <div className="min-w-0">
                                   <p className="truncate text-xs font-semibold text-slate-800">#{index + 1} {config.configName || config.configId}</p>
                                   <p className="mt-0.5 truncate text-[11px] text-slate-500">
-                                    Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
+                                    Refs from Live Fast #1: {liveFastRankOneReferenceSummary.primaryName} ·
                                     speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
                                   </p>
                                 </div>
@@ -3736,19 +3726,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => applyBestLiveFullReference()}
-                  disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || streamingRoute !== null}
-                  className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
-                >
-                  <Check size={13} />Use best
-                </Button>
-                <Button
-                  type="button"
                   size="sm"
                   onClick={() => saveCurrentLiveFullConfig()}
-                  disabled={!selectedVoiceProfileId || !liveFullRefAudioPath || Boolean(savingLiveFullConfigId)}
+                  disabled={!selectedVoiceProfileId || !voiceConfigs[0] || Boolean(savingLiveFullConfigId)}
                   className="h-8 rounded-xl"
                 >
                   {savingLiveFullConfigId && !liveFullConfigs.some((item) => item.configId === savingLiveFullConfigId)
@@ -3761,7 +3741,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
             <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
               <div className="space-y-4">
-                <div>
+                <div className="rounded-xl border border-blue-100 bg-white px-3 py-2 text-xs text-slate-500">
+                  <p className="font-semibold text-slate-700">References from Live Fast #1</p>
+                  {liveFastRankOneReferenceSummary.primaryPath ? (
+                    <>
+                      <p className="mt-1 truncate">
+                        {liveFastRankOneReferenceSummary.config?.configName || liveFastRankOneReferenceSummary.config?.configId || 'Rank #1'} - {liveFastRankOneReferenceSummary.primaryName}
+                      </p>
+                      <p className="mt-1 text-slate-400">
+                        {liveFastRankOneReferenceSummary.auxPaths.length}/5 auxiliary clips. Full load, sample, and TTS use this reference set.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-amber-600">
+                      No Live Fast rank #1 config yet. The app will auto-save best refs as rank #1 once clips are loaded.
+                    </p>
+                  )}
+                </div>
+
+                <div className="hidden">
                   <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Primary reference</Label>
                   <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
                     <Select
@@ -3812,7 +3810,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </div>
                 </div>
 
-                <div>
+                <div className="hidden">
                   <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Auxiliary clips</Label>
                   <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
                     {trainingAudioFiles.length === 0 ? (
@@ -3888,7 +3886,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   )}
                 </div>
 
-                <div className={cn(!liveFullPreviewReference.url && 'hidden')}>
+                <div className="hidden">
                   {liveFullPreviewReference.url && (
                     <p className="mb-1 truncate text-[11px] text-slate-400">
                       Previewing {liveFullPreviewReference.role}: {liveFullPreviewReference.filename}
@@ -3900,7 +3898,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   />
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px]">
+                <div className="hidden">
                   <div>
                     <Label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Primary transcript</Label>
                     <Textarea
@@ -3954,8 +3952,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">
                   <p className="font-semibold text-slate-700">Current Live Full config</p>
                   <p className="mt-1 truncate">
-                    Ref {currentLiveFullReferenceMetadata.selectedPaths.primary ? fallbackName(currentLiveFullReferenceMetadata.selectedPaths.primary) : 'none'} ·
-                    speed {liveFullSettings.speed.toFixed(1)} · temp {liveFullSettings.temperature.toFixed(2)}
+                    Refs from Live Fast #1: {liveFastRankOneReferenceSummary.primaryName} - speed {liveFullSettings.speed.toFixed(1)} - temp {liveFullSettings.temperature.toFixed(2)}
                   </p>
                   <p className="mt-1 truncate">
                     top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
@@ -3976,13 +3973,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </div>
                   {liveFullConfigs.length === 0 ? (
                     <p className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-2 text-xs text-amber-700">
-                      No saved Live Full configs yet. A default will be saved from the best references after clips load.
+                      No saved Live Full configs yet. A default metadata preset will be saved after Live Fast rank #1 exists.
                     </p>
                   ) : (
                     <div className="space-y-2">
                       {liveFullConfigs.map((config, index) => {
                         const defaults = config.inferenceMetadata?.defaults || {};
-                        const reference = config.referenceMetadata || {};
                         const busy = savingLiveFullConfigId === config.configId
                           || generatingLiveFullSampleConfigId === config.configId;
                         const loaded = loadedLiveFullConfigId === config.configId;
@@ -3994,8 +3990,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                   #{index + 1} {config.configName || config.configId}
                                   {loaded && <span className="ml-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">loaded</span>}
                                 </p>
-                                <p className="mt-0.5 truncate text-[11px] text-slate-500" title={fallbackName(reference.selectedPaths?.primary || reference.primary?.path)}>
-                                  Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)}
+                                <p className="mt-0.5 truncate text-[11px] text-slate-500" title={liveFastRankOneReferenceSummary.primaryName}>
+                                  Refs from Live Fast #1: {liveFastRankOneReferenceSummary.primaryName}
                                 </p>
                                 <p className="mt-0.5 truncate text-[11px] text-slate-400">
                                   speed {defaults.speed_factor ?? 'n/a'} · top k {defaults.top_k ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
