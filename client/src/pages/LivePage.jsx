@@ -1947,7 +1947,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setPronunciationEntries(res.data.dictionary?.entries || []);
       if (pronunciationArpabet.trim()) {
         setPronunciationReloadPending(true);
-        setPronunciationMessage(`Saved ${word}. Load pronunciation changes when you are ready to update GPT-SoVITS.`);
+        setPronunciationMessage(`Saved ${word}. Click "Load changes" to apply.`);
       } else {
         setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
       }
@@ -1986,7 +1986,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
       if (entry.arpabet) {
         setPronunciationReloadPending(true);
-        setPronunciationMessage(`Deleted ${word}. Load pronunciation changes when you are ready to update GPT-SoVITS.`);
+        setPronunciationMessage(`Deleted ${word}. Click "Load changes" to apply.`);
       } else {
         setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
       }
@@ -2089,7 +2089,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       await loadPronunciationEntries(pronunciationCategory);
       if (hasArpabet) {
         setPronunciationReloadPending(true);
-        setPronunciationMessage(`Imported ${rows.length} entries. Load pronunciation changes when you are ready to update GPT-SoVITS.`);
+        setPronunciationMessage(`Imported ${rows.length} entries. Click "Load changes" to apply.`);
         return;
       }
       setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
@@ -2102,7 +2102,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   async function loadPendingPronunciationChanges() {
     setPronunciationBusy(true);
-    setPronunciationMessage('Loading pronunciation changes into GPT-SoVITS...');
+    setPronunciationMessage('Loading pronunciation changes...');
     try {
       await stopInferenceServer();
       await startInferenceServer();
@@ -3247,11 +3247,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 </Button>
                 <input ref={pronunciationImportInputRef} type="file" accept=".csv,text/csv" onChange={importPronunciationCsv} className="hidden" />
               </div>
-              {pronunciationReloadPending && (
-                <p className="mt-2 text-xs font-medium text-amber-600">
-                  ARPAbet changes are saved but not loaded into GPT-SoVITS yet.
-                </p>
-              )}
               {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
               {pronunciationEntries.length > 0 && (
                 <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-100 bg-white">
