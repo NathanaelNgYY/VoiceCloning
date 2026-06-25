@@ -924,14 +924,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (markForAutoSync) {
         pendingAutoSyncFingerprintRef.current = '';
       }
-      setReferenceMessage(selection.reason); return;
+      setReferenceMessage(selection.reason);
+      return selection;
     }
     const nextPromptLang = normalizeReferenceLanguage(selection.primary.lang);
     setRefAudioPath(selection.primary.path);
     setPromptText(selection.primary.transcript || '');
     setPromptLang(nextPromptLang);
     setAuxRefAudios(selection.aux);
-    if (markForAutoSync) {
+    // Only persist a strict pick. A fallback pick means clip scores / ASR
+    // transcripts weren't ready yet, so it would freeze a mediocre ref + padded
+    // 5 aux into the saved rank #1 config. Show it in the UI but don't save it;
+    // a later load with scores present will produce (and persist) the strict set.
+    if (markForAutoSync && selection.mode !== 'strict') {
+      pendingAutoSyncFingerprintRef.current = '';
+    }
+    if (markForAutoSync && selection.mode === 'strict') {
       pendingAutoSyncFingerprintRef.current = createAutoVoiceProfileSyncFingerprint({
         sourceKey: selectedExpName,
         selectedGPT,
@@ -969,7 +977,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         speed_factor: speed,
       },
     }));
-    setReferenceMessage(`${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
+    setReferenceMessage(
+      selection.mode === 'strict'
+        ? `${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`
+        : `${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'} (clip scores not ready yet — not saved).`,
+    );
+    return selection;
   }
 
   function applyBestLiveFullReference(files = trainingAudioFiles) {
@@ -2624,8 +2637,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       fileCount: trainingAudioFiles.length,
       lastAppliedSourceKey: autoReferenceKeyRef.current,
     })) return;
-    autoReferenceKeyRef.current = selectedExpName;
-    applyBestReference(trainingAudioFiles, { markForAutoSync: true });
+    const selection = applyBestReference(trainingAudioFiles, { markForAutoSync: true });
+    // Only treat this source as "auto-applied" once we get a strict pick. A
+    // fallback pick (clip scores/transcripts not ready) is left un-locked so a
+    // later trainingAudioFiles re-fetch with scores can upgrade and persist it,
+    // instead of blindly freezing the fallback set.
+    if (selection?.mode === 'strict') {
+      autoReferenceKeyRef.current = selectedExpName;
+    }
   }, [
     selectedExpName,
     loadedTrainingAudioSourceKey,
