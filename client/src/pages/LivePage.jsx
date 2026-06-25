@@ -3763,15 +3763,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         const loaded = loadedLiveFullConfigId === config.configId;
                         return (
                           <div key={config.configId} className={cn('rounded-lg border bg-white p-2', loaded ? 'border-blue-200 ring-1 ring-blue-100' : 'border-slate-200')}>
-                            <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-2">
                               <div className="min-w-0">
-                                <p className="truncate text-xs font-semibold text-slate-800">#{index + 1} {config.configName || config.configId}</p>
-                                <p className="mt-0.5 truncate text-[11px] text-slate-500">
-                                  Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
-                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
+                                <p className="truncate text-xs font-semibold text-slate-800" title={config.configName || config.configId}>
+                                  #{index + 1} {config.configName || config.configId}
+                                  {loaded && <span className="ml-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">loaded</span>}
+                                </p>
+                                <p className="mt-0.5 truncate text-[11px] text-slate-500" title={fallbackName(reference.selectedPaths?.primary || reference.primary?.path)}>
+                                  Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)}
+                                </p>
+                                <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                                  speed {defaults.speed_factor ?? 'n/a'} · top k {defaults.top_k ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
                                 </p>
                               </div>
-                              <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                              <div className="flex flex-wrap gap-1">
                                 <button type="button" onClick={() => moveLiveFullConfig(config.configId, -1)} disabled={busy || index === 0} title="Move up" className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Up</button>
                                 <button type="button" onClick={() => moveLiveFullConfig(config.configId, 1)} disabled={busy || index === liveFullConfigs.length - 1} title="Move down" className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Down</button>
                                 <button type="button" onClick={() => loadSavedLiveFullConfig(config)} disabled={busy || streamingRoute !== null} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Load</button>
