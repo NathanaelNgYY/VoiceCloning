@@ -2153,23 +2153,59 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     loadPronunciationEntries(pronunciationCategory);
   }, [mode, pronunciationCategory]);
 
+  // Manual reference edits should persist just like an auto-picked set: mark the
+  // new selection as pending so the auto-sync effect saves it to the active voice
+  // profile. Without this, manual changes are silently reverted the next time the
+  // active profile re-fetches (model reload, gpu-ready) restores the saved set.
+  function markReferenceSelectionForAutoSync({
+    primaryPath = refAudioPath,
+    prompt = promptText,
+    lang = promptLang,
+    auxFiles = auxRefAudios,
+  } = {}) {
+    pendingAutoSyncFingerprintRef.current = createAutoVoiceProfileSyncFingerprint({
+      sourceKey: selectedExpName,
+      selectedGPT,
+      selectedSoVITS,
+      refAudioPath: primaryPath,
+      promptText: prompt,
+      promptLang: lang,
+      textLang: liveLanguage,
+      preferredRoute: 'sentence',
+      auxRefAudioPaths: auxFiles.map((item) => item.path),
+      defaults: {
+        top_k: topK,
+        top_p: topP,
+        temperature,
+        repetition_penalty: repPenalty,
+        speed_factor: speed,
+      },
+    });
+  }
+
   function handlePrimaryReferenceChange(path) {
     const file = trainingAudioFiles.find((item) => item.path === path);
     if (!file) return;
-    pendingAutoSyncFingerprintRef.current = '';
+    const nextLang = normalizeReferenceLanguage(file.lang);
+    const nextAux = auxRefAudios.filter((item) => item.path !== file.path).slice(0, 5);
     setRefAudioPath(file.path); setPromptText(file.transcript || '');
-    setPromptLang(normalizeReferenceLanguage(file.lang));
-    setAuxRefAudios((cur) => cur.filter((item) => item.path !== file.path).slice(0, 5));
+    setPromptLang(nextLang);
+    setAuxRefAudios(nextAux);
     setReferenceMessage(`${file.filename} is now the primary reference.`);
+    markReferenceSelectionForAutoSync({
+      primaryPath: file.path,
+      prompt: file.transcript || '',
+      lang: nextLang,
+      auxFiles: nextAux,
+    });
   }
 
   function handleAuxToggle(file, checked) {
     if (!file?.path || file.path === refAudioPath) return;
-    pendingAutoSyncFingerprintRef.current = '';
-    setAuxRefAudios((cur) => {
-      const without = cur.filter((item) => item.path !== file.path);
-      return checked ? [...without, file].slice(0, 5) : without;
-    });
+    const without = auxRefAudios.filter((item) => item.path !== file.path);
+    const nextAux = checked ? [...without, file].slice(0, 5) : without;
+    setAuxRefAudios(nextAux);
+    markReferenceSelectionForAutoSync({ auxFiles: nextAux });
   }
 
   function handleLiveFullPrimaryReferenceChange(path) {
