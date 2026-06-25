@@ -337,6 +337,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [auxRefAudios, setAuxRefAudios] = useState([]);
   const [referenceMessage, setReferenceMessage] = useState('');
   const [previewReference, setPreviewReference] = useState({ path: '', url: null, filename: '', role: '' });
+  const [liveFullPreviewReference, setLiveFullPreviewReference] = useState({ path: '', url: null, filename: '', role: '' });
   const [referenceAudioUrls, setReferenceAudioUrls] = useState({});
   const [loadingPreviewPath, setLoadingPreviewPath] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -377,6 +378,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
+  const liveFullPreviewAudioRef = useRef(null);
   const autoReferenceKeyRef = useRef('');
   const autoLoadAttemptKeyRef = useRef('');
   const urlVoiceKeyRef = useRef('');
@@ -476,6 +478,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
     primaryPath: refAudioPath, promptText, trainingAudioFiles, auxRefAudios,
   }), [refAudioPath, promptText, trainingAudioFiles, auxRefAudios]);
+  const selectedLiveFullReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
+    primaryPath: liveFullRefAudioPath,
+    promptText: liveFullPromptText,
+    trainingAudioFiles,
+    auxRefAudios: liveFullAuxRefAudios,
+  }), [liveFullRefAudioPath, liveFullPromptText, trainingAudioFiles, liveFullAuxRefAudios]);
   const referenceCandidateMap = useMemo(() => (
     Object.fromEntries(trainingAudioFiles.map((file) => [file.path, describeReferenceCandidate(file)]))
   ), [trainingAudioFiles]);
@@ -1109,15 +1117,26 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
       });
       if (Number(saved.rank || 0) === 1) {
-        await syncConfigToVoiceProfile(saved);
         if (applySaved) {
           applyVoiceConfig(saved, { silent: true });
         }
-        console.info('[voice-configs] synced saved config to voice profile', {
-          voiceProfileId: selectedVoiceProfileId,
-          configId: saved.configId,
-          rank: saved.rank,
-        });
+        try {
+          await syncConfigToVoiceProfile(saved);
+          console.info('[voice-configs] synced saved config to voice profile', {
+            voiceProfileId: selectedVoiceProfileId,
+            configId: saved.configId,
+            rank: saved.rank,
+          });
+        } catch (syncErr) {
+          applyConfigAsActiveLiveFastProfile(saved);
+          const syncMessage = syncErr.response?.data?.error || syncErr.message || 'voice profile sync failed';
+          setVoiceConfigError(`Saved config, but could not sync rank #1 to voice profile: ${syncMessage}`);
+          console.warn('[voice-configs] saved rank #1 but voice profile sync failed', {
+            voiceProfileId: selectedVoiceProfileId,
+            configId: saved.configId,
+            message: syncMessage,
+          });
+        }
       } else if (existingConfig?.configId === loadedConfigId) {
         applyConfigAsActiveLiveFastProfile(saved);
         if (applySaved) {
@@ -2074,6 +2093,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     audio.play().catch(() => setReferenceMessage(`Use the audio controls below to play ${filename}.`));
   }
 
+  async function handlePreviewLiveFullReference(item) {
+    if (!item?.path || !selectedExpName) return;
+    const filename = item.filename || fallbackName(item.path);
+    const url = referenceAudioUrls[item.path];
+    if (!url) { setLiveFullMessage(`${filename} is still loading. Try again.`); return; }
+    setLiveFullPreviewReference({ path: item.path, url, filename, role: item.role });
+    setLiveFullMessage('');
+    const audio = liveFullPreviewAudioRef.current;
+    if (!audio) return;
+    if (audio.getAttribute('src') !== url) { audio.src = url; audio.load(); }
+    audio.play().catch(() => setLiveFullMessage(`Use the audio controls below to play ${filename}.`));
+  }
+
   useEffect(() => {
     if (!selectedExpName || trainingAudioFiles.length === 0) { setReferenceAudioUrls({}); setLoadingPreviewPath(''); return; }
     let ignore = false;
@@ -2102,6 +2134,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }, [trainingAudioFiles, previewReference.path]);
 
   useEffect(() => {
+    if (!liveFullPreviewReference.path) return;
+    if (!trainingAudioFiles.some((item) => item.path === liveFullPreviewReference.path)) {
+      const audio = liveFullPreviewAudioRef.current;
+      if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+      setLiveFullPreviewReference({ path: '', url: null, filename: '', role: '' });
+    }
+  }, [trainingAudioFiles, liveFullPreviewReference.path]);
+
+  useEffect(() => {
     if (!previewReference.path) return;
     const nextUrl = referenceAudioUrls[previewReference.path];
     if (!nextUrl) {
@@ -2114,6 +2155,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }, [referenceAudioUrls, previewReference.path]);
 
   useEffect(() => {
+    if (!liveFullPreviewReference.path) return;
+    const nextUrl = referenceAudioUrls[liveFullPreviewReference.path];
+    if (!nextUrl) {
+      const audio = liveFullPreviewAudioRef.current;
+      if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+      setLiveFullPreviewReference({ path: '', url: null, filename: '', role: '' });
+      return;
+    }
+    setLiveFullPreviewReference((cur) => cur.url === nextUrl ? cur : { ...cur, url: nextUrl });
+  }, [referenceAudioUrls, liveFullPreviewReference.path]);
+
+  useEffect(() => {
     if (!previewReference.url) {
       const audio = referencePreviewAudioRef.current;
       if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
@@ -2124,14 +2177,27 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }, [previewReference.url]);
 
   useEffect(() => {
+    if (!liveFullPreviewReference.url) {
+      const audio = liveFullPreviewAudioRef.current;
+      if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+      return;
+    }
+    const audio = liveFullPreviewAudioRef.current;
+    if (audio && audio.getAttribute('src') !== liveFullPreviewReference.url) { audio.src = liveFullPreviewReference.url; audio.load(); }
+  }, [liveFullPreviewReference.url]);
+
+  useEffect(() => {
     if (trainingAudioFiles.length > 0) return;
     const audio = referencePreviewAudioRef.current;
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+    const liveFullAudio = liveFullPreviewAudioRef.current;
+    if (liveFullAudio) { liveFullAudio.pause(); liveFullAudio.removeAttribute('src'); liveFullAudio.load(); }
     setPreviewReference({ path: '', url: null, filename: '', role: '' });
+    setLiveFullPreviewReference({ path: '', url: null, filename: '', role: '' });
     setReferenceAudioUrls({}); setLoadingPreviewPath('');
   }, [trainingAudioFiles.length]);
 
-  useEffect(() => { return () => { referencePreviewAudioRef.current?.pause(); }; }, []);
+  useEffect(() => { return () => { referencePreviewAudioRef.current?.pause(); liveFullPreviewAudioRef.current?.pause(); }; }, []);
 
   useEffect(() => {
     if (loadingPreviewPath !== 'all') return;
@@ -3622,28 +3688,53 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <div className="space-y-4">
                 <div>
                   <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Primary reference</Label>
-                  <Select
-                    value={liveFullRefAudioPath}
-                    onValueChange={handleLiveFullPrimaryReferenceChange}
-                    disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || streamingRoute !== null}
-                  >
-                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white shadow-none">
-                      <SelectValue placeholder={loadingTrainingAudio ? 'Loading...' : 'Select primary'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {trainingAudioFiles.map((f) => {
-                        const candidate = referenceCandidateMap[f.path];
-                        return (
-                          <SelectItem key={f.path} value={f.path}>
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="truncate">{f.filename}</span>
-                              {candidate && <span className="text-[10px] text-slate-400">{Math.round(candidate.score)}</span>}
-                            </span>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
+                  <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
+                    <Select
+                      value={liveFullRefAudioPath}
+                      onValueChange={handleLiveFullPrimaryReferenceChange}
+                      disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || streamingRoute !== null}
+                    >
+                      <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white shadow-none">
+                        <SelectValue placeholder={loadingTrainingAudio ? 'Loading...' : 'Select primary'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {trainingAudioFiles.map((f) => {
+                          const candidate = referenceCandidateMap[f.path];
+                          return (
+                            <SelectItem key={f.path} value={f.path}>
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="truncate">{f.filename}</span>
+                                <span className={cn(
+                                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                                  candidate?.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                                )}>
+                                  {formatReferenceScore(candidate)}
+                                </span>
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                    {(() => {
+                      const pi = selectedLiveFullReferenceItems.find((item) => item.role === 'primary');
+                      const pUrl = pi ? referenceAudioUrls[pi.path] : null;
+                      const pLoading = Boolean(pi) && loadingPreviewPath === 'all' && !pUrl;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => handlePreviewLiveFullReference(pi)}
+                          disabled={!pi || !pUrl || pLoading}
+                          className={cn(
+                            'flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition-colors hover:border-slate-300 disabled:cursor-wait disabled:opacity-50',
+                            liveFullPreviewReference.path === pi?.path && 'border-slate-300 bg-slate-50'
+                          )}
+                        >
+                          {pLoading ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={15} />}
+                        </button>
+                      );
+                    })()}
+                  </div>
                 </div>
 
                 <div>
@@ -3654,6 +3745,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     ) : (
                       trainingAudioFiles.filter((f) => f.path !== liveFullRefAudioPath).map((f) => {
                         const checked = liveFullAuxRefAudios.some((item) => item.path === f.path);
+                        const fUrl = referenceAudioUrls[f.path];
+                        const loading = (loadingPreviewPath === 'all' && !fUrl) || loadingPreviewPath === f.path;
+                        const pi2 = { role: checked ? 'live full auxiliary' : 'live full preview', path: f.path, filename: f.filename, transcript: f.transcript || '' };
                         return (
                           <div key={f.path} className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50">
                             <Checkbox
@@ -3662,9 +3756,35 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                               disabled={streamingRoute !== null || (!checked && liveFullAuxRefAudios.length >= 5)}
                             />
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                                {referenceCandidateMap[f.path] && (
+                                  <span className={cn(
+                                    'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                                    referenceCandidateMap[f.path].eligible
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-slate-100 text-slate-500'
+                                  )}>
+                                    {Math.round(referenceCandidateMap[f.path].score)}
+                                  </span>
+                                )}
+                              </span>
                               {f.transcript && <span className="mt-0.5 block truncate text-xs text-slate-400">{f.transcript}</span>}
+                              {referenceCandidateMap[f.path]?.reasons?.[0] && (
+                                <span className="mt-0.5 block truncate text-[11px] text-amber-600">{referenceCandidateMap[f.path].reasons[0]}</span>
+                              )}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => handlePreviewLiveFullReference(pi2)}
+                              disabled={!selectedExpName || !fUrl || loading}
+                              className={cn(
+                                'mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-700 disabled:cursor-wait disabled:opacity-50',
+                                liveFullPreviewReference.path === f.path && 'border-slate-300 text-slate-700'
+                              )}
+                            >
+                              {loading ? <Loader2 size={11} className="animate-spin" /> : <PlayCircle size={12} />}
+                            </button>
                           </div>
                         );
                       })
@@ -3673,6 +3793,36 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   <p className="mt-1.5 text-xs text-slate-400">
                     {liveFullAuxRefAudios.length}/5 auxiliary · Primary: {liveFullRefAudioPath ? fallbackName(liveFullRefAudioPath) : 'none'}
                   </p>
+                  {currentLiveFullReferenceMetadata.primary && (
+                    <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-slate-700">Primary reference score</span>
+                        <span className={cn(
+                          'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                          currentLiveFullReferenceMetadata.primary.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                        )}>
+                          {Math.round(currentLiveFullReferenceMetadata.primary.score)} · {currentLiveFullReferenceMetadata.mode}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate">
+                        {currentLiveFullReferenceMetadata.primary.eligible
+                          ? 'Passed strict duration, sentence, cleanliness, loudness, and steady-tone checks.'
+                          : currentLiveFullReferenceMetadata.primary.reasons.join(' ')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className={cn(!liveFullPreviewReference.url && 'hidden')}>
+                  {liveFullPreviewReference.url && (
+                    <p className="mb-1 truncate text-[11px] text-slate-400">
+                      Previewing {liveFullPreviewReference.role}: {liveFullPreviewReference.filename}
+                    </p>
+                  )}
+                  <audio ref={liveFullPreviewAudioRef} className="w-full" controls preload="metadata"
+                    onError={() => { if (liveFullPreviewReference.filename) setLiveFullMessage(`Could not play ${liveFullPreviewReference.filename}.`); }}
+                    onPlay={() => setLiveFullMessage('')}
+                  />
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px]">
