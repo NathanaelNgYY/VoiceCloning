@@ -325,6 +325,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [liveFullConfigs, setLiveFullConfigs] = useState([]);
   const [loadedLiveFullConfigId, setLoadedLiveFullConfigId] = useState('');
   const [savingLiveFullConfigId, setSavingLiveFullConfigId] = useState('');
+  const [generatingLiveFullSampleConfigId, setGeneratingLiveFullSampleConfigId] = useState('');
   const [liveFullMessage, setLiveFullMessage] = useState('');
 
   const [trainingAudioFiles, setTrainingAudioFiles] = useState([]);
@@ -383,7 +384,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const previewRequestRef = useRef(0);
   const configSampleUrlsRef = useRef({});
   const autoDefaultConfigKeyRef = useRef('');
+  const autoLoadedLiveFastConfigProfileRef = useRef('');
   const liveFullDefaultKeyRef = useRef('');
+  const liveFullAutoDefaultSaveKeyRef = useRef('');
   const reorderingConfigRef = useRef(false);
   const pendingAutoSyncFingerprintRef = useRef('');
   const autoSyncRequestFingerprintRef = useRef('');
@@ -612,6 +615,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   async function loadVoiceConfigs(voiceProfileId = selectedVoiceProfileId) {
     if (!voiceProfileId) {
       setVoiceConfigs([]);
+      setLiveFullConfigs([]);
       setVoiceConfigError('');
       return;
     }
@@ -639,7 +643,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           sample: config.sample || null,
         })),
       });
-      if (liveFastConfigs[0]) {
+      if (liveFastConfigs[0] && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId) {
+        autoLoadedLiveFastConfigProfileRef.current = voiceProfileId;
         applyVoiceConfig(liveFastConfigs[0], { silent: true });
       }
       setVoiceConfigError('');
@@ -904,6 +909,24 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       },
     }));
     setReferenceMessage(`${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
+  }
+
+  function applyBestLiveFullReference(files = trainingAudioFiles) {
+    const selection = chooseBestReferenceSet(files);
+    if (!selection.primary) {
+      setLiveFullRefAudioPath('');
+      setLiveFullPromptText('');
+      setLiveFullPromptLang('en');
+      setLiveFullAuxRefAudios([]);
+      setLiveFullMessage(selection.reason);
+      return;
+    }
+
+    setLiveFullRefAudioPath(selection.primary.path);
+    setLiveFullPromptText(selection.primary.transcript || '');
+    setLiveFullPromptLang(normalizeReferenceLanguage(selection.primary.lang));
+    setLiveFullAuxRefAudios(selection.aux);
+    setLiveFullMessage(`${selection.primary.filename} selected for Live Full with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
   }
 
   function syncLoadedModelReferenceSelection(result = {}) {
@@ -1203,6 +1226,117 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setLiveFullMessage(err.response?.data?.error || err.message || 'Could not delete Live Full config.');
     } finally {
       setSavingLiveFullConfigId('');
+    }
+  }
+
+  async function moveLiveFullConfig(configId, direction) {
+    if (!selectedVoiceProfileId || !configId || savingLiveFullConfigId) return;
+    const currentIndex = liveFullConfigs.findIndex((item) => item.configId === configId);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= liveFullConfigs.length) return;
+
+    const reordered = [...liveFullConfigs];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    const reranked = reordered.map((config, index) => ({ ...config, rank: index + 1 }));
+
+    setSavingLiveFullConfigId(configId);
+    try {
+      const savedConfigs = [];
+      for (const config of reranked) {
+        const res = await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, config);
+        savedConfigs.push(res.data.config);
+      }
+      setLiveFullConfigs(savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0)));
+      setLiveFullMessage(`Moved ${moved.configName || moved.configId} to #${targetIndex + 1}.`);
+    } catch (err) {
+      setLiveFullMessage(err.response?.data?.error || err.message || 'Could not reorder Live Full configs.');
+    } finally {
+      setSavingLiveFullConfigId('');
+    }
+  }
+
+  async function generateLiveFullConfigSample(config) {
+    if (!config?.configId || !selectedVoiceProfileId || streamingRoute !== null) return;
+    const reference = config.referenceMetadata || {};
+    const inference = config.inferenceMetadata || {};
+    const defaults = inference.defaults || {};
+    const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
+    if (!primaryPath) {
+      setLiveFullMessage('Live Full sample needs a primary reference.');
+      return;
+    }
+
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux)
+      ? reference.selectedPaths.aux
+      : Array.isArray(reference.aux)
+        ? reference.aux.map((item) => item?.path).filter(Boolean)
+        : [];
+    const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
+    const prompt = primaryFile.transcript
+      || reference.primary?.file?.transcript
+      || reference.primary?.transcript
+      || '';
+    if (!prompt) {
+      setLiveFullMessage('Live Full sample needs a primary reference transcript.');
+      return;
+    }
+
+    const sampleText = 'This is a short full inference voice configuration sample.';
+    const params = buildLiveFullRefParams({
+      primaryPath,
+      promptText: prompt,
+      promptLang: normalizeReferenceLanguage(primaryFile.lang || reference.primary?.file?.lang || reference.primary?.lang),
+      auxRefAudios: auxPaths.map((path) => resolveReferenceFile(path) || { path }),
+      settings: {
+        speed: defaults.speed_factor ?? DEFAULT_LIVE_FULL_SETTINGS.speed,
+        topK: defaults.top_k ?? DEFAULT_LIVE_FULL_SETTINGS.topK,
+        topP: defaults.top_p ?? DEFAULT_LIVE_FULL_SETTINGS.topP,
+        temperature: defaults.temperature ?? DEFAULT_LIVE_FULL_SETTINGS.temperature,
+        repPenalty: defaults.repetition_penalty ?? DEFAULT_LIVE_FULL_SETTINGS.repPenalty,
+      },
+    });
+    if (!params) return;
+
+    setGeneratingLiveFullSampleConfigId(config.configId);
+    setStreamingRoute('full');
+    setTtsError('');
+    try {
+      applyLiveFullConfig(config, { silent: true });
+      const res = await startGeneration({
+        text: sampleText,
+        voiceProfileId: selectedVoiceProfileId,
+        text_lang: inference.language || liveLanguage,
+        ...params,
+        inference_mode: 'quality',
+      });
+      const { sessionId } = res.data;
+      pendingFullTtsRef.current = {
+        sessionId,
+        text: sampleText,
+        voiceName: selectedProfile?.displayName || loadedProfile?.displayName || '',
+        languageLabel: liveLanguageConfig.label,
+        route: 'full',
+      };
+      ttsInference.connect(sessionId, { initialStatus: 'waiting' });
+
+      const sample = {
+        text: sampleText,
+        route: 'full',
+        generatedAt: new Date().toISOString(),
+        sessionId,
+      };
+      await saveVoiceProfileConfig(selectedVoiceProfileId, config.configId, { ...config, sample });
+      setLiveFullConfigs((current) => current.map((item) => (
+        item.configId === config.configId ? { ...item, sample } : item
+      )));
+      setLiveFullMessage(`Generating sample for ${config.configName || config.configId}.`);
+    } catch (err) {
+      pendingFullTtsRef.current = null;
+      setStreamingRoute(null);
+      setLiveFullMessage(err.response?.data?.error || err.message || 'Could not generate Live Full sample.');
+    } finally {
+      setGeneratingLiveFullSampleConfigId('');
     }
   }
 
@@ -2050,6 +2184,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   useEffect(() => {
     restoredActiveVoiceProfileKeyRef.current = '';
+    autoReferenceKeyRef.current = '';
+    autoDefaultConfigKeyRef.current = '';
+    autoLoadedLiveFastConfigProfileRef.current = '';
+    liveFullDefaultKeyRef.current = '';
+    liveFullAutoDefaultSaveKeyRef.current = '';
   }, [selectedVoiceProfileId, selectedGPT, selectedSoVITS]);
 
   useEffect(() => {
@@ -2058,6 +2197,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   useEffect(() => {
     liveFullDefaultKeyRef.current = '';
+    liveFullAutoDefaultSaveKeyRef.current = '';
     setLoadedLiveFullConfigId('');
     setLiveFullMessage('');
   }, [selectedVoiceProfileId]);
@@ -2129,6 +2269,41 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     liveFullConfigs,
     voiceConfigs,
     trainingAudioFiles.length,
+  ]);
+
+  useEffect(() => {
+    if (
+      loadingVoiceConfigs
+      || loadingTrainingAudio
+      || liveFullConfigs.length > 0
+      || !selectedVoiceProfileId
+      || !selectedProfile
+      || !liveFullRefAudioPath
+      || savingLiveFullConfigId
+      || streamingRoute !== null
+    ) {
+      return;
+    }
+
+    const key = `${selectedVoiceProfileId}:${liveFullRefAudioPath}:${liveFullAuxRefAudios.map((item) => item.path).join(',')}`;
+    if (liveFullAutoDefaultSaveKeyRef.current === key) return;
+    liveFullAutoDefaultSaveKeyRef.current = key;
+    saveCurrentLiveFullConfig({
+      configId: 'live-full-default',
+      configName: `${selectedProfile.displayName} full default`,
+      rank: 1,
+      sample: {},
+    });
+  }, [
+    loadingVoiceConfigs,
+    loadingTrainingAudio,
+    liveFullConfigs.length,
+    selectedVoiceProfileId,
+    selectedProfile,
+    liveFullRefAudioPath,
+    liveFullAuxRefAudios,
+    savingLiveFullConfigId,
+    streamingRoute,
   ]);
 
   useEffect(() => {
@@ -2217,7 +2392,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   ]);
 
   useEffect(() => {
-    if (loadingActiveVoiceProfile || canRestoreActiveVoiceProfile) return;
+    if (loadingActiveVoiceProfile || loadingVoiceConfigs) return;
+    if (canRestoreActiveVoiceProfile && voiceConfigs.length > 0) return;
 
     if (!shouldAutoApplyBestReferenceSet({
       selectedSourceKey: selectedExpName,
@@ -2234,7 +2410,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     loadingTrainingAudio,
     trainingAudioFiles,
     loadingActiveVoiceProfile,
+    loadingVoiceConfigs,
     canRestoreActiveVoiceProfile,
+    voiceConfigs.length,
   ]);
 
   useEffect(() => {
@@ -2532,7 +2710,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </Button>
             </div>
 
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 p-4">
+            <div className="hidden">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-800">Live Full settings</p>
@@ -3380,6 +3558,220 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </div>
                   <Slider min={1.0} max={2.0} step={0.05} value={[repPenalty]} onValueChange={([v]) => setRepPenalty(v)} disabled={isConversationActive} />
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Live Full settings</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {loadedLiveFullConfigId || 'default full config'} · Full Inference only
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => applyBestLiveFullReference()}
+                  disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || streamingRoute !== null}
+                  className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
+                >
+                  <Check size={13} />Use best
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => saveCurrentLiveFullConfig()}
+                  disabled={!selectedVoiceProfileId || !liveFullRefAudioPath || Boolean(savingLiveFullConfigId)}
+                  className="h-8 rounded-xl"
+                >
+                  {savingLiveFullConfigId && !liveFullConfigs.some((item) => item.configId === savingLiveFullConfigId)
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <Check size={13} />}
+                  Save new
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="space-y-4">
+                <div>
+                  <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Primary reference</Label>
+                  <Select
+                    value={liveFullRefAudioPath}
+                    onValueChange={handleLiveFullPrimaryReferenceChange}
+                    disabled={loadingTrainingAudio || trainingAudioFiles.length === 0 || streamingRoute !== null}
+                  >
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white shadow-none">
+                      <SelectValue placeholder={loadingTrainingAudio ? 'Loading...' : 'Select primary'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {trainingAudioFiles.map((f) => {
+                        const candidate = referenceCandidateMap[f.path];
+                        return (
+                          <SelectItem key={f.path} value={f.path}>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="truncate">{f.filename}</span>
+                              {candidate && <span className="text-[10px] text-slate-400">{Math.round(candidate.score)}</span>}
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Auxiliary clips</Label>
+                  <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
+                    {trainingAudioFiles.length === 0 ? (
+                      <p className="px-2 py-1 text-xs text-slate-400">{loadingTrainingAudio ? 'Loading...' : 'No clips found.'}</p>
+                    ) : (
+                      trainingAudioFiles.filter((f) => f.path !== liveFullRefAudioPath).map((f) => {
+                        const checked = liveFullAuxRefAudios.some((item) => item.path === f.path);
+                        return (
+                          <div key={f.path} className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(v) => handleLiveFullAuxToggle(f, Boolean(v))}
+                              disabled={streamingRoute !== null || (!checked && liveFullAuxRefAudios.length >= 5)}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-mono text-xs text-slate-700">{f.filename}</span>
+                              {f.transcript && <span className="mt-0.5 block truncate text-xs text-slate-400">{f.transcript}</span>}
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-xs text-slate-400">
+                    {liveFullAuxRefAudios.length}/5 auxiliary · Primary: {liveFullRefAudioPath ? fallbackName(liveFullRefAudioPath) : 'none'}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px]">
+                  <div>
+                    <Label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Primary transcript</Label>
+                    <Textarea
+                      className="min-h-[82px] rounded-xl border-slate-200 bg-white shadow-none leading-6"
+                      value={liveFullPromptText}
+                      onChange={(event) => setLiveFullPromptText(event.target.value)}
+                      disabled={streamingRoute !== null}
+                    />
+                  </div>
+                  <div>
+                    <Label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">Ref language</Label>
+                    <Select value={liveFullPromptLang} onValueChange={setLiveFullPromptLang} disabled={streamingRoute !== null}>
+                      <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white shadow-none"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="en">English</SelectItem>
+                        <SelectItem value="zh">Chinese</SelectItem>
+                        <SelectItem value="ja">Japanese</SelectItem>
+                        <SelectItem value="ko">Korean</SelectItem>
+                        <SelectItem value="auto">Auto</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  {[
+                    { label: 'Speed', display: liveFullSpeed.toFixed(1) + 'x', min: 0.5, max: 2.0, step: 0.1, val: liveFullSpeed, set: setLiveFullSpeed },
+                    { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
+                    { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
+                    { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
+                  ].map(({ label, display, min, max, step, val, set }) => (
+                    <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{label}</Label>
+                        <span className="font-mono text-sm font-semibold text-slate-700">{display}</span>
+                      </div>
+                      <Slider min={min} max={max} step={step} value={[val]} onValueChange={([v]) => set(v)} disabled={streamingRoute !== null} />
+                    </div>
+                  ))}
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Repetition Penalty</Label>
+                      <span className="font-mono text-sm font-semibold text-slate-700">{liveFullRepPenalty.toFixed(2)}</span>
+                    </div>
+                    <Slider min={1.0} max={2.0} step={0.05} value={[liveFullRepPenalty]} onValueChange={([v]) => setLiveFullRepPenalty(v)} disabled={streamingRoute !== null} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">
+                  <p className="font-semibold text-slate-700">Current Live Full config</p>
+                  <p className="mt-1 truncate">
+                    Ref {currentLiveFullReferenceMetadata.selectedPaths.primary ? fallbackName(currentLiveFullReferenceMetadata.selectedPaths.primary) : 'none'} ·
+                    speed {liveFullSettings.speed.toFixed(1)} · temp {liveFullSettings.temperature.toFixed(2)}
+                  </p>
+                  <p className="mt-1 truncate">
+                    top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-slate-100 bg-white p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-700">Saved Live Full configs</p>
+                    <button
+                      type="button"
+                      onClick={() => loadVoiceConfigs(selectedVoiceProfileId)}
+                      disabled={loadingVoiceConfigs || !selectedVoiceProfileId}
+                      className="text-xs font-medium text-slate-500 hover:text-slate-800 disabled:opacity-40"
+                    >
+                      {loadingVoiceConfigs ? 'Loading...' : 'Refresh'}
+                    </button>
+                  </div>
+                  {liveFullConfigs.length === 0 ? (
+                    <p className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-2 text-xs text-amber-700">
+                      No saved Live Full configs yet. A default will be saved from the best references after clips load.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {liveFullConfigs.map((config, index) => {
+                        const defaults = config.inferenceMetadata?.defaults || {};
+                        const reference = config.referenceMetadata || {};
+                        const busy = savingLiveFullConfigId === config.configId
+                          || generatingLiveFullSampleConfigId === config.configId;
+                        const loaded = loadedLiveFullConfigId === config.configId;
+                        return (
+                          <div key={config.configId} className={cn('rounded-lg border bg-white p-2', loaded ? 'border-blue-200 ring-1 ring-blue-100' : 'border-slate-200')}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-semibold text-slate-800">#{index + 1} {config.configName || config.configId}</p>
+                                <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                                  Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
+                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                <button type="button" onClick={() => moveLiveFullConfig(config.configId, -1)} disabled={busy || index === 0} title="Move up" className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Up</button>
+                                <button type="button" onClick={() => moveLiveFullConfig(config.configId, 1)} disabled={busy || index === liveFullConfigs.length - 1} title="Move down" className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Down</button>
+                                <button type="button" onClick={() => loadSavedLiveFullConfig(config)} disabled={busy || streamingRoute !== null} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Load</button>
+                                <button type="button" onClick={() => saveCurrentLiveFullConfig(config)} disabled={busy || !loaded} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">Update</button>
+                                <button type="button" onClick={() => generateLiveFullConfigSample(config)} disabled={busy || streamingRoute !== null} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+                                  {generatingLiveFullSampleConfigId === config.configId ? 'Generating' : 'Sample'}
+                                </button>
+                                <button type="button" onClick={() => deleteSavedLiveFullConfig(config.configId)} disabled={busy} className="rounded-md border border-red-100 bg-white px-2 py-1 text-[11px] text-red-500 hover:bg-red-50 disabled:opacity-40">Delete</button>
+                              </div>
+                            </div>
+                            {config.sample?.generatedAt && (
+                              <p className="mt-2 text-[11px] text-slate-400">
+                                Sample metadata saved {new Date(config.sample.generatedAt).toLocaleString()}.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {liveFullMessage && <p className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">{liveFullMessage}</p>}
               </div>
             </div>
           </div>
