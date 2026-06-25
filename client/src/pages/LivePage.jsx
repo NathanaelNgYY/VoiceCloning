@@ -28,6 +28,7 @@ import {
   getLiveLanguageConfig,
   normalizeLiveLanguage,
   splitLiveReplyPhrases,
+  buildLiveSentenceParams,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -1674,19 +1675,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const primaryFile = resolveReferenceFile(primaryPath, reference.primary) || {};
     const auxPaths = Array.isArray(reference.selectedPaths?.aux) ? reference.selectedPaths.aux : [];
     const prompt = referencePromptText(reference.primary, primaryFile, promptText).trim();
-    const params = {
-      text: 'This is a short saved voice configuration sample.',
-      text_lang: inference.language || liveLanguage,
-      ref_audio_path: primaryPath,
-      prompt_text: prompt,
-      prompt_lang: referencePromptLang(reference.primary, primaryFile, promptLang),
-      aux_ref_audio_paths: auxPaths,
-      speed_factor: defaults.speed_factor ?? speed,
-      top_k: defaults.top_k ?? topK,
-      top_p: defaults.top_p ?? topP,
-      temperature: defaults.temperature ?? temperature,
-      repetition_penalty: defaults.repetition_penalty ?? repPenalty,
-    };
+    // Build through the same sentence helper the chatbot/TTS use so text_lang is a valid
+    // GPT-SoVITS code (getLiveTtsLanguage) and the text is cleaned. Passing the raw stored
+    // language could yield silent audio when an old config saved a display label.
+    const sampleLanguage = normalizeLiveLanguage(inference.language || liveLanguage);
+    const params = buildLiveSentenceParams(
+      'This is a short saved voice configuration sample.',
+      {
+        ref_audio_path: primaryPath,
+        prompt_text: prompt,
+        prompt_lang: referencePromptLang(reference.primary, primaryFile, promptLang),
+        aux_ref_audio_paths: auxPaths,
+        speed_factor: defaults.speed_factor ?? speed,
+        top_k: defaults.top_k ?? topK,
+        top_p: defaults.top_p ?? topP,
+        temperature: defaults.temperature ?? temperature,
+        repetition_penalty: defaults.repetition_penalty ?? repPenalty,
+      },
+      sampleLanguage,
+    );
     if (!params.ref_audio_path) {
       setModelError('Config has no primary reference audio.');
       return;
