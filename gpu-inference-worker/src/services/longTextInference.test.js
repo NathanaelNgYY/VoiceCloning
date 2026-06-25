@@ -143,7 +143,7 @@ test('quiet recoverable audio with a real waveform is not rejected as silent', (
   assert.doesNotMatch(result.reason || '', /silent/i, `quiet non-empty audio should be recoverable: ${result.reason}`);
 });
 
-test('full inference quality preset ignores caller sampling sliders', () => {
+test('full inference quality preset keeps caller sampling controls when provided', () => {
   const params = applyFullInferenceQualityPreset({
     text: 'Photosynthesis converts light into chemical energy.',
     top_k: 1,
@@ -151,6 +151,19 @@ test('full inference quality preset ignores caller sampling sliders', () => {
     temperature: 1,
     repetition_penalty: 1,
     speed_factor: 1.8,
+  });
+
+  assert.equal(params.inference_mode, 'quality');
+  assert.equal(params.top_k, 1);
+  assert.equal(params.top_p, 1);
+  assert.equal(params.temperature, 1);
+  assert.equal(params.repetition_penalty, 1);
+  assert.equal(params.speed_factor, 1.8);
+});
+
+test('full inference quality preset fills system defaults when controls are omitted', () => {
+  const params = applyFullInferenceQualityPreset({
+    text: 'Photosynthesis converts light into chemical energy.',
   });
 
   assert.equal(params.inference_mode, 'quality');

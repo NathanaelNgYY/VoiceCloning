@@ -48,9 +48,10 @@ function clampNumber(value, fallback) {
 
 export function applyFullInferenceQualityPreset(params = {}) {
   return {
-    ...params,
     inference_mode: 'quality',
     ...FULL_QUALITY_PRESET,
+    ...params,
+    inference_mode: 'quality',
   };
 }
 
