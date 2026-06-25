@@ -385,6 +385,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const restoredActiveVoiceProfileKeyRef = useRef('');
   const previewRequestRef = useRef(0);
   const configSampleUrlsRef = useRef({});
+  const voiceConfigsRef = useRef([]);
   const autoDefaultConfigKeyRef = useRef('');
   const autoLoadedLiveFastConfigProfileRef = useRef('');
   const liveFullDefaultKeyRef = useRef('');
@@ -554,6 +555,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     inFlightFingerprint: autoSyncRequestFingerprintRef.current,
   });
 
+  useEffect(() => {
+    voiceConfigsRef.current = voiceConfigs;
+  }, [voiceConfigs]);
+
   async function fetchModels() {
     setModelsFetched(false);
     try {
@@ -633,6 +638,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const configs = res.data.configs || [];
       const liveFastConfigs = filterLiveFastConfigs(configs);
       const nextLiveFullConfigs = filterLiveFullConfigs(configs);
+      voiceConfigsRef.current = liveFastConfigs;
       setVoiceConfigs(liveFastConfigs);
       setLiveFullConfigs(nextLiveFullConfigs);
       console.info('[voice-configs] loaded configs', {
@@ -946,6 +952,24 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setLiveFullMessage(`${selection.primary.filename} selected for Live Full with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`);
   }
 
+  function getConfigReferencePaths(config) {
+    const reference = config?.referenceMetadata || {};
+    const primaryPath = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
+    const auxPaths = Array.isArray(reference.selectedPaths?.aux)
+      ? reference.selectedPaths.aux
+      : Array.isArray(reference.aux)
+        ? reference.aux.map((item) => item?.path).filter(Boolean)
+        : [];
+    return {
+      primaryPath,
+      auxPaths: auxPaths
+        .map((path) => String(path || '').trim())
+        .filter(Boolean)
+        .filter((path) => path !== primaryPath)
+        .slice(0, 5),
+    };
+  }
+
   function syncLoadedModelReferenceSelection(result = {}) {
     const selection = extractModelSelectWarmedReferenceSelection(result);
     if (!selection) {
@@ -1003,10 +1027,29 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     if (!selectedProfile || isConversationActive) return;
     setLoadingModel(true); setModelError('');
     try {
+      const rankOneConfig = voiceConfigsRef.current[0] || null;
+      const rankOneReferences = getConfigReferencePaths(rankOneConfig);
       const response = await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
         voiceProfileId: selectedVoiceProfileId,
+        refAudioPath: rankOneReferences.primaryPath,
+        auxRefAudioPaths: rankOneReferences.auxPaths,
       }));
-      const syncedSelection = syncLoadedModelReferenceSelection(response.data || {});
+      const latestRankOneConfig = voiceConfigsRef.current[0] || rankOneConfig;
+      const syncedSelection = latestRankOneConfig
+        ? null
+        : syncLoadedModelReferenceSelection(response.data || {});
+      if (latestRankOneConfig) {
+        applyVoiceConfig(latestRankOneConfig, { silent: true });
+        try {
+          await syncConfigToVoiceProfile(latestRankOneConfig);
+        } catch (syncErr) {
+          console.warn('[voice-configs] rank #1 sync after model load failed', {
+            voiceProfileId: selectedVoiceProfileId,
+            configId: latestRankOneConfig.configId,
+            message: syncErr.response?.data?.error || syncErr.message,
+          });
+        }
+      }
       statusRequestVersionRef.current += 1;
       applyInferenceStatusState({
         serverReady: true,
@@ -1014,7 +1057,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         loadedSoVITSPath: selectedSoVITS,
       });
       setReferenceMessage(
-        syncedSelection
+        latestRankOneConfig
+          ? `Loaded rank #1 config ${latestRankOneConfig.configName || latestRankOneConfig.configId} after model load.`
+          : syncedSelection
           ? `${syncedSelection.primaryFilename} loaded with ${syncedSelection.auxRefAudioPaths.length} auxiliary clip${syncedSelection.auxRefAudioPaths.length === 1 ? '' : 's'}.`
           : 'Voice model loaded.',
       );
@@ -1114,7 +1159,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       });
       setVoiceConfigs((current) => {
         const without = current.filter((item) => item.configId !== saved.configId);
-        return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+        const next = [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+        voiceConfigsRef.current = next;
+        return next;
       });
       if (Number(saved.rank || 0) === 1) {
         if (applySaved) {
@@ -1414,7 +1461,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       await deleteVoiceProfileConfig(selectedVoiceProfileId, configId);
       console.info('[voice-configs] deleted config', { voiceProfileId: selectedVoiceProfileId, configId });
-      setVoiceConfigs((current) => current.filter((item) => item.configId !== configId));
+      setVoiceConfigs((current) => {
+        const next = current.filter((item) => item.configId !== configId);
+        voiceConfigsRef.current = next;
+        return next;
+      });
       if (loadedConfigId === configId) setLoadedConfigId('');
       setConfigSampleUrls((current) => {
         if (current[configId]) URL.revokeObjectURL(current[configId]);
@@ -1451,6 +1502,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         savedConfigs.push(res.data.config);
       }
       const sorted = savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      voiceConfigsRef.current = sorted;
       setVoiceConfigs(sorted);
       if (sorted[0]) {
         applyVoiceConfig(sorted[0], { silent: true });
@@ -1482,6 +1534,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         savedConfigs.push(res.data.config);
       }
       const sorted = savedConfigs.sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      voiceConfigsRef.current = sorted;
       setVoiceConfigs(sorted);
       if (sorted[0]) {
         await syncConfigToVoiceProfile(sorted[0]);
@@ -1517,6 +1570,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     reordered.splice(toIndex, 0, moved);
     const reranked = reordered.map((config, index) => ({ ...config, rank: index + 1 }));
     reorderingConfigRef.current = true;
+    voiceConfigsRef.current = reranked;
     setVoiceConfigs(reranked);
     if (reranked[0]) {
       applyVoiceConfig(reranked[0], { silent: true });
@@ -1535,9 +1589,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         configName,
       });
       const saved = res.data.config;
-      setVoiceConfigs((current) => current.map((item) => (
-        item.configId === saved.configId ? saved : item
-      )));
+      setVoiceConfigs((current) => {
+        const next = current.map((item) => (
+          item.configId === saved.configId ? saved : item
+        ));
+        voiceConfigsRef.current = next;
+        return next;
+      });
       if (Number(saved.rank || 0) === 1) {
         await syncConfigToVoiceProfile(saved);
       }
@@ -2419,6 +2477,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       return;
     }
     if (restoredActiveVoiceProfileKeyRef.current === activeVoiceProfileRestoreKey) {
+      return;
+    }
+    if (voiceConfigsRef.current.length > 0) {
+      restoredActiveVoiceProfileKeyRef.current = activeVoiceProfileRestoreKey;
       return;
     }
 
