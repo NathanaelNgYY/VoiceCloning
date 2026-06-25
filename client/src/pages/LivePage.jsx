@@ -1160,6 +1160,37 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     return { summary, payload };
   }
 
+  // Auto-sync of live Live Fast edits. When a rank #1 saved config exists it is the
+  // source of truth that reloads (model load) apply, so we must update the saved config
+  // itself from the current UI state - not just activate the voice profile. Otherwise the
+  // edit lands on the voice profile but the stale config overwrites it on the next refresh.
+  async function persistLiveFastAutoSync() {
+    const rankOneConfig = voiceConfigsRef.current[0] || null;
+    if (!rankOneConfig?.configId || !selectedVoiceProfileId) {
+      const { summary, payload } = await persistSelectedVoiceProfile();
+      return { displayName: summary.displayName || payload.displayName, voiceProfileId: summary.voiceProfileId || payload.voiceProfileId };
+    }
+
+    const payload = {
+      ...buildCurrentConfigPayload({
+        configId: rankOneConfig.configId,
+        configName: rankOneConfig.configName || currentLiveFastMetadata.configName,
+      }),
+      rank: rankOneConfig.rank || 1,
+      sample: rankOneConfig.sample || {},
+    };
+    const res = await saveVoiceProfileConfig(selectedVoiceProfileId, rankOneConfig.configId, payload);
+    const saved = res.data.config;
+    setVoiceConfigs((current) => {
+      const without = current.filter((item) => item.configId !== saved.configId);
+      const next = [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
+      voiceConfigsRef.current = next;
+      return next;
+    });
+    await syncRankOneConfigToVoiceProfile(saved, { required: true, context: 'auto-synced rank #1 config' });
+    return { displayName: selectedProfile?.displayName || '', voiceProfileId: selectedVoiceProfileId };
+  }
+
   async function saveSelectedVoiceProfile() {
     if (!selectedProfile || !selectedGPT || !selectedSoVITS || !liveRefParams) return;
 
@@ -2581,13 +2612,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setSavingProfile(true);
     setModelError('');
 
-    persistSelectedVoiceProfile()
-      .then(({ summary, payload }) => {
+    persistLiveFastAutoSync()
+      .then(({ displayName, voiceProfileId }) => {
         if (autoSyncRequestFingerprintRef.current !== requestFingerprint) return;
         lastAutoSyncedFingerprintRef.current = requestFingerprint;
         pendingAutoSyncFingerprintRef.current = '';
         setReferenceMessage(
-          `Active voice profile synced to ${summary.displayName || requestDisplayName} (${summary.voiceProfileId || payload.voiceProfileId}).`,
+          `Active voice profile synced to ${displayName || requestDisplayName} (${voiceProfileId}).`,
         );
       })
       .catch((err) => {
