@@ -8,10 +8,35 @@ import {
   findNextPhrasePlayback,
   getMicOffAction,
   splitLiveReplyPhrases,
+  shortenFirstFastPhrase,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
+
+test('shortenFirstFastPhrase splits a long first phrase at its first clause boundary', () => {
+  const phrases = [
+    'After the model finishes loading the weights, it starts generating audio right away.',
+    'Second phrase here.',
+  ];
+  const result = shortenFirstFastPhrase(phrases);
+  assert.equal(result.length, 3);
+  assert.equal(result[0], 'After the model finishes loading the weights.');
+  assert.equal(result[1], 'it starts generating audio right away.');
+  assert.equal(result[2], 'Second phrase here.');
+});
+
+test('shortenFirstFastPhrase leaves a short first phrase untouched', () => {
+  const phrases = ['Hello there, friend.', 'Next.'];
+  assert.deepEqual(shortenFirstFastPhrase(phrases), phrases);
+});
+
+test('shortenFirstFastPhrase does not split when a half would be too short', () => {
+  // First clause boundary leaves a tiny head, so the phrase stays intact rather
+  // than producing a clipped-sounding fragment.
+  const phrases = ['Yes, the inference server is fully warmed up and ready to synthesize now.'];
+  assert.deepEqual(shortenFirstFastPhrase(phrases), phrases);
+});
 
 test('buildLiveReplyParams forces English assistant text for full inference', () => {
   const params = buildLiveReplyParams(' Hello there. ', {

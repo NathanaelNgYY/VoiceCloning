@@ -182,6 +182,51 @@ export function splitLiveReplyPhrases(text) {
     .filter(Boolean);
 }
 
+const FAST_FIRST_PHRASE_MAX_CHARS = 70;
+const FAST_PHRASE_MIN_CHARS = 24;
+const FAST_PHRASE_MIN_WORDS = 3;
+const CLAUSE_BREAK_RE = /[,;:，；：]/u;
+
+function countWords(text) {
+  return (String(text).trim().match(/\S+/gu) || []).length;
+}
+
+// Live Fast plays the first clip the moment it is ready, so a long opening phrase
+// delays the very first audio. When the first phrase is long, break it at its first
+// natural clause boundary so audio starts sooner. To keep the shortened first phrase
+// sounding clean (GPT-SoVITS reads tiny fragments poorly), only split when BOTH halves
+// stay above a minimum length/word count and land on a real clause boundary, and give
+// each half proper terminal punctuation. If no boundary leaves two healthy halves, the
+// phrase is returned untouched.
+export function shortenFirstFastPhrase(phrases, {
+  maxFirstChars = FAST_FIRST_PHRASE_MAX_CHARS,
+  minChars = FAST_PHRASE_MIN_CHARS,
+  minWords = FAST_PHRASE_MIN_WORDS,
+} = {}) {
+  if (!Array.isArray(phrases) || phrases.length === 0) return phrases;
+  const first = phrases[0];
+  if (!first || first.length <= maxFirstChars) return phrases;
+
+  for (let i = 0; i < first.length; i += 1) {
+    if (!CLAUSE_BREAK_RE.test(first[i])) continue;
+    const head = first.slice(0, i).trim();
+    const tail = first.slice(i + 1).trim();
+    if (
+      head.length >= minChars
+      && tail.length >= minChars
+      && countWords(head) >= minWords
+      && countWords(tail) >= minWords
+    ) {
+      return [
+        ensurePhraseEnding(head),
+        ensurePhraseEnding(tail),
+        ...phrases.slice(1),
+      ];
+    }
+  }
+  return phrases;
+}
+
 export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
   return {
     text: cleanLiveTtsText(text, language),

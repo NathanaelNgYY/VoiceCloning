@@ -7,8 +7,9 @@ export async function generateLiveFastQueuedTts({
   createObjectUrl,
   onClipReady,
   onProgress,
+  splitText = splitLiveReplyPhrases,
 }) {
-  const phrases = splitLiveReplyPhrases(text);
+  const phrases = splitText(text);
   if (phrases.length === 0) {
     throw new Error('No text to synthesize');
   }
