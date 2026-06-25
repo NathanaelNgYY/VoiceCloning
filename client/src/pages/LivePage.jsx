@@ -1070,7 +1070,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
-  async function saveCurrentVoiceConfig(existingConfig = null) {
+  async function saveCurrentVoiceConfig(existingConfig = null, { applySaved = true } = {}) {
     if (!selectedVoiceProfileId || !refAudioPath) return;
     const configId = existingConfig?.configId || buildConfigId(selectedProfile?.displayName || selectedVoiceProfileId);
     setSavingConfigId(configId);
@@ -1101,6 +1101,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       });
       if (Number(saved.rank || 0) === 1) {
         await syncConfigToVoiceProfile(saved);
+        if (applySaved) {
+          applyVoiceConfig(saved, { silent: true });
+        }
         console.info('[voice-configs] synced saved config to voice profile', {
           voiceProfileId: selectedVoiceProfileId,
           configId: saved.configId,
@@ -1108,6 +1111,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         });
       } else if (existingConfig?.configId === loadedConfigId) {
         applyConfigAsActiveLiveFastProfile(saved);
+        if (applySaved) {
+          applyVoiceConfig(saved, { silent: true });
+        }
+      } else if (applySaved && !existingConfig) {
+        applyVoiceConfig(saved, { silent: true });
       }
       setReferenceMessage(`${existingConfig ? 'Updated' : 'Saved'} config ${saved.configName || saved.configId}.`);
       setLoadedConfigId(saved.configId);
@@ -1174,7 +1182,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     });
   }
 
-  async function saveCurrentLiveFullConfig(existingConfig = null) {
+  async function saveCurrentLiveFullConfig(existingConfig = null, { applySaved = true } = {}) {
     if (!selectedVoiceProfileId || !liveFullRefAudioPath) {
       setLiveFullMessage('Choose a Live Full primary reference before saving.');
       return;
@@ -1195,6 +1203,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         const without = current.filter((item) => item.configId !== saved.configId);
         return [...without, saved].sort((a, b) => Number(a.rank || 0) - Number(b.rank || 0));
       });
+      if (applySaved) {
+        applyLiveFullConfig(saved, { silent: true });
+      }
       setLoadedLiveFullConfigId(saved.configId);
       setLiveFullMessage(`${existingConfig ? 'Updated' : 'Saved'} Live Full config ${saved.configName || saved.configId}.`);
     } catch (err) {
@@ -2244,18 +2255,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   useEffect(() => {
     if (loadingVoiceConfigs || loadingTrainingAudio || !selectedVoiceProfileId) return;
-    const defaultConfig = liveFullConfigs[0] || voiceConfigs[0];
-    if (!defaultConfig) return;
-    const source = liveFullConfigs[0] ? 'liveFull' : 'liveFast';
-    const key = `${selectedVoiceProfileId}:${source}:${defaultConfig.configId || 'default'}:${trainingAudioFiles.length}`;
+    const savedLiveFullConfig = liveFullConfigs[0];
+    const source = savedLiveFullConfig ? 'liveFull' : 'best';
+    const key = savedLiveFullConfig
+      ? `${selectedVoiceProfileId}:${source}:${savedLiveFullConfig.configId || 'default'}:${trainingAudioFiles.length}`
+      : `${selectedVoiceProfileId}:${source}:${loadedTrainingAudioSourceKey}:${trainingAudioFiles.length}`;
     if (liveFullDefaultKeyRef.current === key) return;
-    if (liveFullDefaultKeyRef.current && source === 'liveFast') return;
+    if (!savedLiveFullConfig && trainingAudioFiles.length === 0) return;
     liveFullDefaultKeyRef.current = key;
-    if (source === 'liveFull') {
-      applyLiveFullConfig(defaultConfig, { silent: true });
+    if (savedLiveFullConfig) {
+      applyLiveFullConfig(savedLiveFullConfig, { silent: true });
       return;
     }
-    applyLiveFullReferenceDefaultsFromConfig(defaultConfig);
+    applyBestLiveFullReference(trainingAudioFiles);
     setLiveFullSpeed(DEFAULT_LIVE_FULL_SETTINGS.speed);
     setLiveFullTopK(DEFAULT_LIVE_FULL_SETTINGS.topK);
     setLiveFullTopP(DEFAULT_LIVE_FULL_SETTINGS.topP);
@@ -2267,7 +2279,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     loadingTrainingAudio,
     selectedVoiceProfileId,
     liveFullConfigs,
-    voiceConfigs,
+    loadedTrainingAudioSourceKey,
+    trainingAudioFiles,
     trainingAudioFiles.length,
   ]);
 
