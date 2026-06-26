@@ -93,6 +93,8 @@ function encodeOpenAiAudioChunk(input, inputSampleRate) {
 
 export function useLiveSpeech({
   refParams,
+  fullRefParams = null,
+  engine = 'fast',
   replyMode = LIVE_REPLY_MODES.full,
   language = 'en',
 } = {}) {
@@ -134,6 +136,30 @@ export function useLiveSpeech({
   const bargeInArmedRef = useRef(false);
   const bargeInFramesRef = useRef(0);
   const lastBargeInAtRef = useRef(0);
+  // Engine + ref params are read through refs so switching Live Fast <-> Live Full
+  // takes effect on the next reply even while a conversation is already open (the
+  // socket handler captured the render snapshot when start() ran).
+  const refParamsRef = useRef(refParams);
+  const fullRefParamsRef = useRef(fullRefParams);
+  const engineRef = useRef(engine);
+  useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
+  useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
+  useEffect(() => { engineRef.current = engine; }, [engine]);
+
+  // Live Full uses the accurate /inference route with its own ref params; it falls
+  // back to the Live Fast reference set when no dedicated Live Full set is ready.
+  function getActiveRefParams() {
+    if (engineRef.current === 'full') {
+      return fullRefParamsRef.current || refParamsRef.current;
+    }
+    return refParamsRef.current;
+  }
+
+  function synthesizeActivePhrase(params) {
+    return engineRef.current === 'full'
+      ? synthesizeWithRetry(params)
+      : synthesizeSentenceWithRetry(params);
+  }
 
   function setPhase(phase) {
     phaseRef.current = phase;
@@ -359,7 +385,8 @@ export function useLiveSpeech({
   }
 
   async function synthesizeFullAssistantReply(messageId, text, runId) {
-    if (!refParams) return;
+    const activeRefParams = getActiveRefParams();
+    if (!activeRefParams) return;
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
@@ -369,7 +396,7 @@ export function useLiveSpeech({
     patchMessage(messageId, { status: 'generating_voice', error: null });
 
     try {
-      const { blob } = await synthesizeWithRetry(buildLiveReplyParams(text, refParams, liveLanguage));
+      const { blob } = await synthesizeWithRetry(buildLiveReplyParams(text, activeRefParams, liveLanguage));
       if (
         isCancelledRef.current ||
         runId !== runIdRef.current ||
@@ -401,7 +428,8 @@ export function useLiveSpeech({
   }
 
   async function synthesizePhraseAssistantReply(messageId, text, runId) {
-    if (!refParams) return;
+    const activeRefParams = getActiveRefParams();
+    if (!activeRefParams) return;
 
     const phrases = splitLiveReplyPhrases(text);
     if (phrases.length === 0) return;
@@ -436,8 +464,8 @@ export function useLiveSpeech({
         }
 
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
-        const { blob } = await synthesizeSentenceWithRetry(
-          buildLiveSentenceParams(phrases[index], refParams, liveLanguage)
+        const { blob } = await synthesizeActivePhrase(
+          buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage)
         );
 
         if (
@@ -852,7 +880,7 @@ export function useLiveSpeech({
 
   async function start() {
     if (phaseRef.current !== 'idle') return;
-    if (!refParams) {
+    if (!getActiveRefParams()) {
       setError('No reference audio configured. Go to the Inference page first.');
       return;
     }

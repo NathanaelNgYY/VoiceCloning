@@ -361,6 +361,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [liveFullRepPenalty, setLiveFullRepPenalty] = useState(DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
+  // Chatbot synthesis engine: 'fast' (live/tts-sentence) or 'full' (/inference for accuracy).
+  // Both run the same frontend phrase-split + background queue; only the route/ref params differ.
+  const [liveEngine, setLiveEngine] = useState('fast');
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
@@ -553,7 +556,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     },
   }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed]);
 
-  const liveSpeech = useLiveSpeech({ refParams: liveRefParams, replyMode, language: liveLanguage });
+  const liveSpeech = useLiveSpeech({
+    refParams: liveRefParams,
+    fullRefParams: liveFullRefParams,
+    engine: liveEngine,
+    replyMode,
+    language: liveLanguage,
+  });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
   const liveSelectedModelLoaded = Boolean(
@@ -2922,6 +2931,36 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Synthesis engine toggle (chat only) — Live Fast vs Live Full */}
+          {!isTtsMode && (
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Engine</span>
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+                {[
+                  { value: 'fast', label: 'Live Fast' },
+                  { value: 'full', label: 'Live Full' },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setLiveEngine(option.value)}
+                    className={cn(
+                      'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+                      liveEngine === option.value
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-slate-500 hover:text-slate-800'
+                    )}
+                    title={option.value === 'full'
+                      ? 'Higher-accuracy /inference route; still splits and queues phrases in the background.'
+                      : 'Fastest first-word latency; live sentence route.'}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Model status + refresh */}
           <div className="ml-auto flex flex-col items-end gap-1.5">
