@@ -1184,6 +1184,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   async function persistLiveFastAutoSync() {
     const rankOneConfig = voiceConfigsRef.current[0] || null;
     if (!rankOneConfig?.configId || !selectedVoiceProfileId) {
+      // No saved config yet: just activate the voice profile here. Config #1 itself
+      // is auto-created separately (the default-config effect), which then syncs
+      // rank #1 to the profile and takes over as the source of truth.
       const { summary, payload } = await persistSelectedVoiceProfile();
       return { displayName: summary.displayName || payload.displayName, voiceProfileId: summary.voiceProfileId || payload.voiceProfileId };
     }
@@ -2296,6 +2299,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     audio.play().catch(() => setLiveFullMessage(`Use the audio controls below to play ${filename}.`));
   }
 
+  // Presigned preview URLs only depend on the clip *paths*, not on the quality
+  // scores / transcripts that the training-audio re-fetch loop is polling for. Key
+  // this effect on the stable path set so a 6s poll that returns the same clips
+  // (just with freshly-landed scores) does NOT re-issue a URL request per clip.
+  const trainingAudioPathKey = useMemo(
+    () => trainingAudioFiles.map((item) => item.path).join('\n'),
+    [trainingAudioFiles],
+  );
+
   useEffect(() => {
     if (!selectedExpName || trainingAudioFiles.length === 0) { setReferenceAudioUrls({}); setLoadingPreviewPath(''); return; }
     let ignore = false;
@@ -2312,7 +2324,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setReferenceAudioUrls(Object.fromEntries(entries.filter(([, url]) => Boolean(url))));
     }).finally(() => { if (!ignore && previewRequestRef.current === requestId) setLoadingPreviewPath(''); });
     return () => { ignore = true; };
-  }, [selectedExpName, trainingAudioFiles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedExpName, trainingAudioPathKey]);
 
   useEffect(() => {
     if (!previewReference.path) return;
@@ -2469,19 +2482,45 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   // Loop: while the selected model has clips loaded but no scored-strict pick yet,
   // re-fetch training audio on an interval so the auto-select upgrades (and finally
-  // persists) the moment quality scores / transcripts become available.
+  // persists) the moment quality scores / transcripts become available. If a
+  // scored-strict pick never materialises after a bounded number of attempts, stop
+  // polling and tell the user the training audio isn't good enough, instead of
+  // waiting (and re-fetching) forever.
   useEffect(() => {
     if (!selectedExpName) return undefined;
     if (loadedTrainingAudioSourceKey !== selectedExpName) return undefined;
     if (loadingTrainingAudio || referenceSelectionReady) return undefined;
+    // When a saved config #1 / restorable profile governs the reference, the
+    // auto-select isn't running, so there's nothing to upgrade — don't poll and
+    // don't nag about training audio quality.
+    if (canRestoreActiveVoiceProfile && voiceConfigs.length > 0) return undefined;
     let ignore = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 10; // ~60s at the 6s cadence below
     const interval = window.setInterval(() => {
+      attempts += 1;
       getTrainingAudioFiles(selectedExpName)
-        .then((res) => { if (!ignore) setTrainingAudioFiles(res.data.files || []); })
+        .then((res) => {
+          if (ignore) return;
+          const nextFiles = res.data.files || [];
+          // Only commit a new array when the clips actually changed (e.g. scores or
+          // transcripts landed). Replacing it unconditionally every 6s churns
+          // re-renders and re-runs the auto-select for no reason.
+          setTrainingAudioFiles((prev) => (
+            JSON.stringify(prev) === JSON.stringify(nextFiles) ? prev : nextFiles
+          ));
+          // Give up after MAX_ATTEMPTS if the freshly-fetched clips still can't
+          // produce a scored-strict pick. (If they can, the effect's
+          // referenceSelectionReady dependency flips and cleans this interval up.)
+          if (attempts >= MAX_ATTEMPTS && !chooseBestReferenceSet(nextFiles).ready) {
+            window.clearInterval(interval);
+            setReferenceMessage('Training audio not good enough for a strict reference yet — clips need measured quality scores and a clean 3-9s sentence. Retrain or add cleaner clips.');
+          }
+        })
         .catch(() => {});
     }, 6000);
     return () => { ignore = true; window.clearInterval(interval); };
-  }, [selectedExpName, loadedTrainingAudioSourceKey, loadingTrainingAudio, referenceSelectionReady]);
+  }, [selectedExpName, loadedTrainingAudioSourceKey, loadingTrainingAudio, referenceSelectionReady, canRestoreActiveVoiceProfile, voiceConfigs.length]);
 
   useEffect(() => {
     restoredActiveVoiceProfileKeyRef.current = '';

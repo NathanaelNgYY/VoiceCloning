@@ -114,10 +114,6 @@ function sumBreakdown(breakdown) {
   return Object.values(breakdown).reduce((sum, value) => sum + value, 0);
 }
 
-function scoreReferenceClip(file) {
-  return sumBreakdown(scoreBreakdown(file));
-}
-
 export function describeReferenceCandidate(file) {
   const filename = file?.filename || '';
   const durationSeconds = durationSecondsFromFilename(filename);
@@ -190,16 +186,25 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   }
 
   const described = candidates.map((file) => describeReferenceCandidate(file));
-  const strictRanked = rankCandidateMetadata(described.filter((candidate) => candidate.eligible));
-  const useStrict = strictRanked.length > 0;
-  const ranked = useStrict
-    ? strictRanked
-    : candidates
-      .map((file) => ({ ...describeReferenceCandidate(file), score: scoreReferenceClip(file) }))
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        return a.file.filename.localeCompare(b.file.filename);
-      });
+  const ranked = rankCandidateMetadata(described.filter((candidate) => candidate.eligible));
+
+  // Strict-only: we never fall back to a best-effort ranking of ineligible clips.
+  // If nothing passes strict eligibility we return no selection and let the caller
+  // wait (and re-fetch training audio) until strict-eligible clips show up.
+  if (ranked.length === 0) {
+    return {
+      primary: null,
+      aux: [],
+      primaryMetadata: null,
+      auxMetadata: [],
+      candidates: [],
+      rejected: described.filter((candidate) => !candidate.eligible),
+      mode: 'strict',
+      usedQualityScores: false,
+      ready: false,
+      reason: 'No clips passed strict reference filtering yet — need a 3-9s clip with a complete, single-speaker sentence. Waiting for an eligible clip.',
+    };
+  }
 
   const primaryMetadata = ranked[0];
   const primary = primaryMetadata.file;
@@ -211,23 +216,24 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   );
   const reason = usedQualityScores
     ? 'Auto-picked by measured audio quality (SNR, clarity, duration), with strict eligibility filtering and a transcript/language tie-break.'
-    : useStrict
-      ? 'Auto-picked after hard filtering for 3-9s duration, complete sentence transcript, clean single-speaker/stable-loudness markers, and steady voice/tone, then ranked by score.'
-      : 'No clips passed strict reference filtering, so auto-picked by best-effort ranking from clip length, transcript quality, language, file type, and clean-reference filename hints.';
+    : 'Auto-picked after hard filtering for 3-9s duration, complete sentence transcript, clean single-speaker/stable-loudness markers, and steady voice/tone, then ranked by score.';
 
   return {
     primary,
     aux,
     primaryMetadata,
     auxMetadata,
-    candidates: strictRanked,
+    candidates: ranked,
     rejected: described.filter((candidate) => !candidate.eligible),
-    mode: useStrict ? 'strict' : 'fallback',
+    mode: 'strict',
     usedQualityScores,
-    // A selection is only safe to freeze/persist once it is strict AND ranked by
-    // measured quality scores. Until then the frontend keeps re-selecting on each
-    // training-audio re-fetch instead of locking in a fallback.
-    ready: useStrict && usedQualityScores,
+    // We always want the *best* strict clip, ranked by measured quality scores
+    // (clip-scores.json). Those scores are computed after training and can land a
+    // few seconds after load, so a selection is only "ready" to lock/persist once
+    // scores are present. Until then the caller keeps re-fetching training audio so
+    // the pick upgrades to the score-ranked best (instead of freezing a pre-score
+    // pick). This never falls back to ineligible clips.
+    ready: usedQualityScores,
     reason,
   };
 }

@@ -15,27 +15,29 @@ test('chooseBestReferenceSet prefers clean transcript-rich wav files and adds au
       lang: 'en',
     },
     {
-      filename: 'clean_reference_02.wav',
-      path: 'training/datasets/alex/denoised/clean_reference_02.wav',
+      filename: 'clean_reference_02_0_160000.wav',
+      path: 'training/datasets/alex/denoised/clean_reference_02_0_160000.wav',
       transcript: 'The quick brown fox jumps over the lazy dog.',
       lang: 'EN',
     },
     {
-      filename: 'short.wav',
-      path: 'training/datasets/alex/denoised/short.wav',
+      filename: 'short_0_32000.wav',
+      path: 'training/datasets/alex/denoised/short_0_32000.wav',
       transcript: 'Hi.',
       lang: 'en',
     },
     {
-      filename: 'bright_best_aux.flac',
-      path: 'training/datasets/alex/denoised/bright_best_aux.flac',
+      filename: 'bright_best_aux_0_160000.flac',
+      path: 'training/datasets/alex/denoised/bright_best_aux_0_160000.flac',
       transcript: 'Please keep this voice natural and steady for the assistant.',
       lang: 'en',
     },
   ], { maxAux: 2 });
 
-  assert.equal(result.primary.filename, 'clean_reference_02.wav');
-  assert.deepEqual(result.aux.map((file) => file.filename), ['bright_best_aux.flac', 'short.wav']);
+  // Strict-only: the noisy/long take (risky name, unknown duration) and the 1-word
+  // "Hi." clip are rejected, leaving the two clean sentence clips.
+  assert.equal(result.primary.filename, 'clean_reference_02_0_160000.wav');
+  assert.deepEqual(result.aux.map((file) => file.filename), ['bright_best_aux_0_160000.flac']);
   assert.match(result.reason, /transcript/i);
 });
 
@@ -123,14 +125,14 @@ test('chooseBestReferenceSet returns no primary for an empty audio list', () => 
 test('chooseBestReferenceSet chooses five auxiliary clips by default', () => {
   const files = [
     {
-      filename: 'clean_reference.wav',
-      path: 'training/datasets/alex/denoised/clean_reference.wav',
+      filename: 'clean_reference_0_160000.wav',
+      path: 'training/datasets/alex/denoised/clean_reference_0_160000.wav',
       transcript: 'The quick brown fox jumps over the lazy dog.',
       lang: 'en',
     },
     ...Array.from({ length: 7 }, (_, index) => ({
-      filename: `steady_aux_${index + 1}.wav`,
-      path: `training/datasets/alex/denoised/steady_aux_${index + 1}.wav`,
+      filename: `steady_aux_${index + 1}_0_160000.wav`,
+      path: `training/datasets/alex/denoised/steady_aux_${index + 1}_0_160000.wav`,
       transcript: `This is auxiliary reference clip number ${index + 1}.`,
       lang: 'en',
     })),
@@ -138,27 +140,27 @@ test('chooseBestReferenceSet chooses five auxiliary clips by default', () => {
 
   const result = chooseBestReferenceSet(files);
 
-  assert.equal(result.primary.filename, 'clean_reference.wav');
+  assert.equal(result.primary.filename, 'clean_reference_0_160000.wav');
   assert.equal(result.aux.length, 5);
 });
 
 test('chooseBestReferenceSet prefers a fuller prompt over a tiny intro clip', () => {
   const result = chooseBestReferenceSet([
     {
-      filename: 'a_intro.wav',
-      path: 'training/datasets/alex/denoised/a_intro.wav',
-      transcript: 'My fellow Singaporeans',
+      filename: 'a_intro_0_100000.wav',
+      path: 'training/datasets/alex/denoised/a_intro_0_100000.wav',
+      transcript: 'Good morning to all.',
       lang: 'en',
     },
     {
-      filename: 'b_balanced.wav',
-      path: 'training/datasets/alex/denoised/b_balanced.wav',
+      filename: 'b_balanced_0_160000.wav',
+      path: 'training/datasets/alex/denoised/b_balanced_0_160000.wav',
       transcript: 'The morning air was calm and clear as people gathered outside.',
       lang: 'en',
     },
   ], { maxAux: 2 });
 
-  assert.equal(result.primary.filename, 'b_balanced.wav');
+  assert.equal(result.primary.filename, 'b_balanced_0_160000.wav');
 });
 
 test('shouldAutoApplyBestReferenceSet waits for the selected voice clip list instead of using stale files', () => {
@@ -187,21 +189,21 @@ test('shouldAutoApplyBestReferenceSet waits for the selected voice clip list ins
 
 test('chooseBestReferenceSet ranks by audio quality score when present', () => {
   const result = chooseBestReferenceSet([
-    { filename: 'a_0_1.wav', path: 'd/a_0_1.wav', transcript: 'A clear sentence here for the reference.', lang: 'en', qualityScore: 40 },
-    { filename: 'b_1_2.wav', path: 'd/b_1_2.wav', transcript: 'Another clear sentence here for reference.', lang: 'en', qualityScore: 85 },
-    { filename: 'c_2_3.wav', path: 'd/c_2_3.wav', transcript: 'Yet another clear sentence for the reference.', lang: 'en', qualityScore: 60 },
+    { filename: 'a_0_160000.wav', path: 'd/a_0_160000.wav', transcript: 'A clear sentence here for the reference.', lang: 'en', qualityScore: 40 },
+    { filename: 'b_160000_320000.wav', path: 'd/b_160000_320000.wav', transcript: 'Another clear sentence here for reference.', lang: 'en', qualityScore: 85 },
+    { filename: 'c_320000_480000.wav', path: 'd/c_320000_480000.wav', transcript: 'Yet another clear sentence for the reference.', lang: 'en', qualityScore: 60 },
   ], { maxAux: 2 });
 
-  assert.equal(result.primary.filename, 'b_1_2.wav');
-  assert.deepEqual(result.aux.map((file) => file.filename), ['c_2_3.wav', 'a_0_1.wav']);
+  assert.equal(result.primary.filename, 'b_160000_320000.wav');
+  assert.deepEqual(result.aux.map((file) => file.filename), ['c_320000_480000.wav', 'a_0_160000.wav']);
   assert.match(result.reason, /quality/i);
 });
 
 test('chooseBestReferenceSet transcript guard avoids an empty-transcript primary', () => {
   const result = chooseBestReferenceSet([
-    { filename: 'pristine_empty.wav', path: 'd/pristine_empty.wav', transcript: '', lang: 'en', qualityScore: 85 },
-    { filename: 'good_text.wav', path: 'd/good_text.wav', transcript: 'This is a perfectly usable reference sentence for cloning.', lang: 'en', qualityScore: 75 },
+    { filename: 'pristine_empty_0_160000.wav', path: 'd/pristine_empty_0_160000.wav', transcript: '', lang: 'en', qualityScore: 85 },
+    { filename: 'good_text_0_160000.wav', path: 'd/good_text_0_160000.wav', transcript: 'This is a perfectly usable reference sentence for cloning.', lang: 'en', qualityScore: 75 },
   ], { maxAux: 1 });
 
-  assert.equal(result.primary.filename, 'good_text.wav');
+  assert.equal(result.primary.filename, 'good_text_0_160000.wav');
 });
