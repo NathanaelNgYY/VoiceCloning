@@ -8,6 +8,8 @@ import {
   resolveRefAudioPath,
   warmReferenceAudioPaths,
 } from '../services/refAudioCache.js';
+import { inferenceServer } from '../services/inferenceServer.js';
+import { handleLiveTtsRequest } from './inference.js';
 
 const router = Router();
 
@@ -95,9 +97,37 @@ router.post('/ref-audio/warm', async (req, res) => {
 
   try {
     const warmed = await warmReferenceAudioPaths(req.body);
+
+    // Generation pre-warm: caching the reference audio above is cheap, but the FIRST
+    // real synth after a fresh weight load is cold (CUDA kernels + reference feature
+    // extraction), which adds seconds to the first live tts-sentence clip. Fire one
+    // tiny throwaway synth here so the generation path is hot by the time the first
+    // real request arrives. This runs on every model load (loadModelPair calls this
+    // route), so any consumer of /inference/tts — including external chatbots — gets a
+    // warm first clip without doing anything. Best-effort: the audio is discarded and
+    // any failure is swallowed so it never blocks the reference warm that already
+    // succeeded.
+    let synthWarmed = false;
+    try {
+      const status = await inferenceServer.getStatus();
+      if (status.ready) {
+        await handleLiveTtsRequest({
+          ...req.body,
+          ref_audio_path: warmed.ref_audio_path,
+          aux_ref_audio_paths: warmed.aux_ref_audio_paths,
+          text: req.body.warm_text || 'Ready.',
+          text_lang: req.body.text_lang || 'en',
+        });
+        synthWarmed = true;
+      }
+    } catch (warmErr) {
+      console.warn(`[ref-audio/warm] generation pre-warm failed: ${warmErr.message}`);
+    }
+
     res.json({
       ref_audio_path: warmed.ref_audio_path,
       aux_ref_audio_paths: warmed.aux_ref_audio_paths,
+      synthWarmed,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
