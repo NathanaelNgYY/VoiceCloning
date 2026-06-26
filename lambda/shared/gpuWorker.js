@@ -129,3 +129,15 @@ export async function inferencePostBinary(routePath, body = {}) {
     contentType: response.headers.get('content-type') || 'application/octet-stream',
   };
 }
+
+export async function inferenceGetBinary(routePath) {
+  const response = await fetch(`${inferenceBaseUrl()}${routePath}`);
+  if (!response.ok) {
+    const data = await parseResponse(response);
+    throw new Error(data.error || data.message || `Inference Worker GET ${routePath} failed (${response.status})`);
+  }
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'application/octet-stream',
+  };
+}

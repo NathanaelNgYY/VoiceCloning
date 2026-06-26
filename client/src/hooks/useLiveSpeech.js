@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { synthesize, synthesizeSentence } from '../services/api.js';
+import {
+  cancelGeneration,
+  getInferenceChunk,
+  startGeneration,
+  synthesize,
+  synthesizeSentence,
+} from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
+import { connectInferenceSSE } from '../services/sse.js';
 import {
   LIVE_REPLY_MODES,
   buildLiveSentenceParams,
@@ -135,6 +142,8 @@ export function useLiveSpeech({
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
+  const inferenceEventSourceRef = useRef(null);
+  const activeInferenceSessionIdRef = useRef('');
   const bargeInArmedRef = useRef(false);
   const bargeInFramesRef = useRef(0);
   const lastBargeInAtRef = useRef(0);
@@ -257,6 +266,14 @@ export function useLiveSpeech({
   }
 
   function cleanupConversation() {
+    if (inferenceEventSourceRef.current) {
+      inferenceEventSourceRef.current.close();
+      inferenceEventSourceRef.current = null;
+    }
+    if (activeInferenceSessionIdRef.current) {
+      cancelGeneration(activeInferenceSessionIdRef.current).catch(() => {});
+      activeInferenceSessionIdRef.current = '';
+    }
     for (const message of messagesRef.current) {
       revokeMessageAudio(message);
     }
@@ -446,6 +463,11 @@ export function useLiveSpeech({
     const activeRefParams = synthesis.refParams;
     if (!activeRefParams) return;
 
+    if (synthesis.engine === 'full') {
+      await synthesizeFullQueuedAssistantReply(messageId, text, runId, synthesis, activeRefParams);
+      return;
+    }
+
     const phrases = splitLiveReplyPhrases(text);
     if (phrases.length === 0) return;
 
@@ -522,6 +544,114 @@ export function useLiveSpeech({
       setPhase(nextPhase);
       syncOpenAiInputWithMic(nextPhase);
     } finally {
+      if (currentSynthesisMessageIdRef.current === messageId) {
+        currentSynthesisMessageIdRef.current = '';
+      }
+    }
+  }
+
+  async function synthesizeFullQueuedAssistantReply(messageId, text, runId, synthesis, activeRefParams) {
+    currentSynthesisMessageIdRef.current = messageId;
+    cancelledReplyIdsRef.current.delete(messageId);
+    pauseOpenAiInput();
+    setSelectedReplyId('');
+    setPhase('speaking');
+    patchMessage(messageId, { status: 'generating_voice', error: null, audioParts: [] });
+
+    try {
+      const res = await startGeneration(buildLiveReplyParams(text, activeRefParams, liveLanguage));
+      const sessionId = res.data?.sessionId;
+      if (!sessionId) throw new Error('Full inference session did not return a session id.');
+      activeInferenceSessionIdRef.current = sessionId;
+
+      await new Promise((resolve, reject) => {
+        const pendingChunkFetches = new Set();
+        const isStale = () => (
+          isCancelledRef.current ||
+          runId !== runIdRef.current ||
+          cancelledReplyIdsRef.current.has(messageId)
+        );
+
+        inferenceEventSourceRef.current = connectInferenceSSE(sessionId, {
+          onStart(data = {}) {
+            if (isStale()) return;
+            const chunks = Array.isArray(data.chunks) && data.chunks.length > 0
+              ? data.chunks
+              : [{ index: 0, text }];
+            patchMessage(messageId, {
+              status: 'generating_voice',
+              audioParts: chunks.map((chunk, order) => {
+                const index = Number.isInteger(chunk.index) ? chunk.index : order;
+                return {
+                  id: `${messageId}-part-${index + 1}`,
+                  index: index + 1,
+                  text: chunk.text || text,
+                  status: 'queued',
+                  audioUrl: null,
+                  error: null,
+                };
+              }),
+            });
+          },
+          onChunkStart(data = {}) {
+            if (isStale()) return;
+            const index = Number.isInteger(data.index) ? data.index : 0;
+            patchAudioPart(messageId, `${messageId}-part-${index + 1}`, { status: 'generating', error: null });
+          },
+          onChunkComplete(data = {}) {
+            if (isStale()) return;
+            const index = Number.isInteger(data.index) ? data.index : 0;
+            const partId = `${messageId}-part-${index + 1}`;
+            const fetchChunk = (async () => {
+              const blob = await getInferenceChunk(sessionId, index);
+              if (isStale()) return;
+              const url = URL.createObjectURL(blob);
+              patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
+              if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
+                setSelectedReplyId(partId);
+              }
+            })();
+            pendingChunkFetches.add(fetchChunk);
+            fetchChunk.catch(reject).finally(() => pendingChunkFetches.delete(fetchChunk));
+          },
+          onComplete() {
+            Promise.allSettled(Array.from(pendingChunkFetches)).then(() => {
+              if (isStale()) {
+                resolve();
+                return;
+              }
+              patchMessage(messageId, { status: 'ready' });
+              const message = messagesRef.current.find((item) => item.id === messageId);
+              if (!selectedReplyIdRef.current) {
+                const nextPart = firstReadyPart(message);
+                if (nextPart) setSelectedReplyId(nextPart.id);
+              }
+              resolve();
+            });
+          },
+          onError(data = {}) {
+            reject(new Error(data.message || 'Full inference voice generation failed'));
+          },
+        });
+      });
+    } catch (err) {
+      if (isCancelledRef.current || runId !== runIdRef.current) return;
+
+      patchMessage(messageId, {
+        status: 'error',
+        error: err.message || 'Voice generation failed',
+      });
+      setError(`Voice reply failed: ${err.message}`);
+      setSelectedReplyId('');
+      const nextPhase = socketRef.current ? 'listening' : 'idle';
+      setPhase(nextPhase);
+      syncOpenAiInputWithMic(nextPhase);
+    } finally {
+      if (inferenceEventSourceRef.current) {
+        inferenceEventSourceRef.current.close();
+        inferenceEventSourceRef.current = null;
+      }
+      activeInferenceSessionIdRef.current = '';
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
       }

@@ -91,6 +91,42 @@ test('inference result audio request redirects to the playable artifact URL', as
   });
 });
 
+test('inference chunk proxies chunk audio from the GPU worker', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    postBinary: async (routePath, payload) => {
+      calls.push({ type: 'postBinary', routePath, payload });
+      throw new Error('unexpected post');
+    },
+    getJson: async () => {
+      throw new Error('unexpected json');
+    },
+    buildInferencePublicUrl: () => '',
+    resolveSynthesisBody: async (body) => body,
+    shouldUseGpuWorkerArtifacts: () => false,
+    postJson: async () => ({}),
+    isWorkerUnavailable: () => false,
+    buildPresignedGetUrl: async () => '',
+    getBinary: async (routePath) => {
+      calls.push({ type: 'getBinary', routePath });
+      return {
+        buffer: Buffer.from('RIFFchunk'),
+        contentType: 'audio/wav',
+      };
+    },
+  });
+
+  const response = await localHandler({
+    requestContext: { http: { method: 'GET' } },
+    rawPath: '/api/inference/chunk/abc-123/2',
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.isBase64Encoded, true);
+  assert.equal(Buffer.from(response.body, 'base64').toString('utf-8'), 'RIFFchunk');
+  assert.deepEqual(calls, [{ type: 'getBinary', routePath: '/inference/chunk/abc-123/2' }]);
+});
+
 test('inference current returns idle when the GPU worker is not reachable', async () => {
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://localhost:3999';

@@ -1,5 +1,5 @@
 import { generatePresignedGetUrl } from '../shared/s3.js';
-import { inferencePost, inferenceGet, inferencePostBinary, inferencePublicUrl } from '../shared/gpuWorker.js';
+import { inferencePost, inferenceGet, inferencePostBinary, inferenceGetBinary, inferencePublicUrl } from '../shared/gpuWorker.js';
 import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { corsHeaders, ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
@@ -38,6 +38,7 @@ function redirect(location) {
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
   postBinary = inferencePostBinary,
+  getBinary = inferenceGetBinary,
   postJson = inferencePost,
   getJson = inferenceGet,
   isWorkerUnavailable = isWorkerUnavailableError,
@@ -88,6 +89,16 @@ export function createHandler({
         }
         const url = await buildPresignedGetUrl(`audio/output/${sessionId}/final.wav`);
         return event.queryStringParameters?.audio === '1' ? redirect(url) : ok({ url });
+      }
+
+      if (method === 'GET' && routePath.includes('/inference/chunk/')) {
+        const match = routePath.match(/\/inference\/chunk\/([A-Za-z0-9-]+)\/(\d+)\/?$/u);
+        if (!match) return err(400, 'Invalid inference chunk path');
+        const [, sessionId, index] = match;
+        const { buffer, contentType } = await getBinary(
+          `/inference/chunk/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`,
+        );
+        return binaryWav(buffer, contentType);
       }
 
       if (method === 'POST' && routePath.endsWith('/inference/cancel')) {
