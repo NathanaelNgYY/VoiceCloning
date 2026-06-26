@@ -225,16 +225,18 @@ test('models select auto-selects and warms references from training audio when r
             lang: 'zh',
           },
           {
-            filename: 'LhlChinese_reference.wav',
-            path: 'training/datasets/LhlChinese/denoised/LhlChinese_reference.wav',
+            filename: 'LhlChinese_reference_0_192000.wav',
+            path: 'training/datasets/LhlChinese/denoised/LhlChinese_reference_0_192000.wav',
             transcript: 'Today we are reviewing the quarterly planning update together.',
             lang: 'zh',
+            qualityScore: 80,
           },
           {
-            filename: 'support.wav',
-            path: 'training/datasets/LhlChinese/denoised/support.wav',
+            filename: 'support_0_160000.wav',
+            path: 'training/datasets/LhlChinese/denoised/support_0_160000.wav',
             transcript: 'The next section explains how the roadmap changes affect the launch timeline.',
             lang: 'zh',
+            qualityScore: 60,
           },
         ],
       }), {
@@ -286,10 +288,9 @@ test('models select auto-selects and warms references from training audio when r
         {
           url: 'http://localhost:3001/ref-audio/warm',
           body: {
-            ref_audio_path: 'training/datasets/LhlChinese/denoised/LhlChinese_reference.wav',
+            ref_audio_path: 'training/datasets/LhlChinese/denoised/LhlChinese_reference_0_192000.wav',
             aux_ref_audio_paths: [
-              'training/datasets/LhlChinese/denoised/support.wav',
-              'training/datasets/LhlChinese/denoised/intro.wav',
+              'training/datasets/LhlChinese/denoised/support_0_160000.wav',
             ],
           },
         },

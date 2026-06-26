@@ -223,6 +223,11 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
     candidates: strictRanked,
     rejected: described.filter((candidate) => !candidate.eligible),
     mode: useStrict ? 'strict' : 'fallback',
+    usedQualityScores,
+    // A selection is only safe to freeze/persist once it is strict AND ranked by
+    // measured quality scores. Until then the frontend keeps re-selecting on each
+    // training-audio re-fetch instead of locking in a fallback.
+    ready: useStrict && usedQualityScores,
     reason,
   };
 }

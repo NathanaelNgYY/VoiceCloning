@@ -217,16 +217,18 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
       listedExpNames.push(expName);
       return [
         {
-          filename: 'lecturer-a_reference.wav',
-          path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
+          filename: 'lecturer-a_reference_0_192000.wav',
+          path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
           transcript: 'This is the balanced reference clip for the lecturer voice.',
           lang: 'en',
+          qualityScore: 80,
         },
         {
-          filename: 'lecturer-a_support.wav',
-          path: 'training/datasets/lecturer-a/lecturer-a_support.wav',
+          filename: 'lecturer-a_support_0_160000.wav',
+          path: 'training/datasets/lecturer-a/lecturer-a_support_0_160000.wav',
           transcript: 'This support clip keeps the voice steady for synthesis.',
           lang: 'en',
+          qualityScore: 60,
         },
       ];
     },
@@ -247,12 +249,12 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
       displayName: 'Lecturer A',
       gptKey: 'models/user-models/gpt/lecturer-a-e25.ckpt',
       sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
-      ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
+      ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
       prompt_text: 'Manual prompt',
       prompt_lang: 'en',
       text_lang: 'en',
       preferredRoute: 'sentence',
-      aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+      aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
       defaults: {
         top_k: 7,
         top_p: 0.9,
@@ -270,12 +272,12 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
       displayName: 'Lecturer A',
       gptKey: 'models/user-models/gpt/lecturer-a-e25.ckpt',
       sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
-      ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
+      ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
       prompt_text: 'Manual prompt',
       prompt_lang: 'en',
       text_lang: 'en',
       preferredRoute: 'sentence',
-      aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+      aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
       defaults: {
         top_k: 7,
         top_p: 0.9,
@@ -290,19 +292,19 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
   assert.equal(writes[2].key, 'voice-profile-configs/lecturer-a-v1/default.json');
   assert.equal(writes[2].body.configId, 'default');
   assert.equal(writes[2].body.rank, 1);
-  assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference.wav');
-  assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support.wav']);
+  assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav');
+  assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav']);
   assert.equal(loadedProfiles.length, 1);
-  assert.deepEqual(loadedProfiles[0].aux_ref_audio_paths, ['training/datasets/lecturer-a/lecturer-a_support.wav']);
-  assert.equal(loadedProfiles[0].ref_audio_path, 'training/datasets/lecturer-a/lecturer-a_reference.wav');
+  assert.deepEqual(loadedProfiles[0].aux_ref_audio_paths, ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav']);
+  assert.equal(loadedProfiles[0].ref_audio_path, 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav');
   assert.deepEqual(resolved, {
     text: 'Use the strengthened saved profile behavior.',
     voiceProfileId: 'lecturer-a-v1',
-    ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
+    ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
     prompt_text: 'Manual prompt',
     prompt_lang: 'en',
     text_lang: 'en',
-    aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+    aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
     top_k: 7,
     top_p: 0.9,
     temperature: 0.65,

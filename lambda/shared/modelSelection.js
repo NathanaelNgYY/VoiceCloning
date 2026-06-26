@@ -80,6 +80,72 @@ function scoreReferenceClip(file) {
   return score;
 }
 
+// GPT-SoVITS slicer names each clip "..._<startSample>_<endSample>.<ext>" at 32 kHz,
+// so we can recover the clip duration from the filename without any audio analysis.
+const REF_SAMPLE_RATE_HZ = 32000;
+const STRICT_MIN_DURATION_SECONDS = 3;
+const STRICT_MAX_DURATION_SECONDS = 9;
+
+function durationSecondsFromFilename(filename = '') {
+  const match = String(filename).match(/_(\d+)_(\d+)\.[a-z0-9]+$/i);
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return (end - start) / REF_SAMPLE_RATE_HZ;
+}
+
+function hasSentenceEnding(transcript = '') {
+  return /[.!?。！？]\s*$/u.test(String(transcript || '').trim());
+}
+
+function transcriptWordCount(transcript = '') {
+  const clean = String(transcript || '').replace(/\s+/g, ' ').trim();
+  return clean ? clean.split(' ').filter(Boolean).length : 0;
+}
+
+// Mirrors the frontend's describeReferenceCandidate eligibility (referenceSelection.js):
+// a clip only qualifies as a STRICT reference if it is a known 3-9s slice with a
+// complete-sentence transcript, a preferred audio type, and no risky-name hints.
+// We never freeze a non-strict pick onto a profile, so a cold start with no eligible
+// clip yet (e.g. ASR/duration metadata still landing) waits instead of poisoning it.
+function isStrictReferenceCandidate(file) {
+  const filename = file?.filename || getBasename(file?.path);
+  if (!file?.path || !filename) return false;
+  const seconds = durationSecondsFromFilename(filename);
+  if (seconds == null || seconds < STRICT_MIN_DURATION_SECONDS || seconds > STRICT_MAX_DURATION_SECONDS) {
+    return false;
+  }
+  if (transcriptWordCount(file?.transcript) < 3) return false;
+  if (!hasSentenceEnding(file?.transcript)) return false;
+  if (RISKY_NAME_RE.test(filename)) return false;
+  const ext = extensionOf(filename);
+  if (!GOOD_AUDIO_EXTENSIONS.has(ext) && !OK_AUDIO_EXTENSIONS.has(ext)) return false;
+  if (file?.singleSpeaker === false) return false;
+  if (file?.clean === false) return false;
+  if (file?.stableLoudness === false) return false;
+  if (file?.steadyStyle === false) return false;
+  return true;
+}
+
+// Measured audio quality (SNR/clarity) from score_clips.py lands in clip-scores.json
+// after training. Until at least one clip carries a finite qualityScore the ranking
+// can't be trusted, so the caller should wait for the next pass rather than persist.
+function hasMeasuredQualityScores(files) {
+  return Array.isArray(files)
+    && files.some((file) => Number.isFinite(Number(file?.qualityScore)));
+}
+
+// A selection is only "ready" (safe to use AND persist) when quality scores have
+// landed and at least one clip passes strict eligibility. Anything short of this is
+// a fallback we must not freeze - the frontend re-fetch loop and subsequent warms
+// will retry until this becomes true.
+function isScoredStrictSelectionReady(files) {
+  return hasMeasuredQualityScores(files)
+    && Array.isArray(files)
+    && files.some((file) => isStrictReferenceCandidate(file));
+}
+
 function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
   const candidates = Array.isArray(files)
     ? files.filter((file) => file?.path && (file?.filename || getBasename(file?.path)))
@@ -89,7 +155,12 @@ function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
     return { primary: null, aux: [] };
   }
 
-  const ranked = candidates
+  // Prefer strictly-eligible clips when any exist (mirrors the frontend), so a high
+  // audio score on an out-of-spec clip can't outrank a clean 3-9s reference.
+  const strict = candidates.filter((file) => isStrictReferenceCandidate(file));
+  const pool = strict.length > 0 ? strict : candidates;
+
+  const ranked = pool
     .map((file) => ({ file, score: scoreReferenceClip(file) }))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -319,6 +390,13 @@ export async function resolveSavedProfileReferenceSelection(profile, {
   }
 
   const files = await listTrainingAudioFiles(expName);
+  // Passive loop: only auto-select once quality scores have landed and a strictly
+  // eligible clip exists. Otherwise keep whatever the profile already has so a cold
+  // GPU warm can't freeze a fallback (mediocre ref + padded aux) onto the profile;
+  // a later warm/model-load retries once scores are ready.
+  if (!isScoredStrictSelectionReady(files)) {
+    return existingSelection;
+  }
   const selection = chooseBestReferenceSet(files);
   if (!selection.primary) {
     return existingSelection;

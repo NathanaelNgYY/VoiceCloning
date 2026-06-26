@@ -936,14 +936,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPromptText(selection.primary.transcript || '');
     setPromptLang(nextPromptLang);
     setAuxRefAudios(selection.aux);
-    // Only persist a strict pick. A fallback pick means clip scores / ASR
-    // transcripts weren't ready yet, so it would freeze a mediocre ref + padded
-    // 5 aux into the saved rank #1 config. Show it in the UI but don't save it;
-    // a later load with scores present will produce (and persist) the strict set.
-    if (markForAutoSync && selection.mode !== 'strict') {
+    // Only persist a scored-strict pick. A fallback pick (or one made before clip
+    // quality scores / ASR transcripts landed) would freeze a mediocre ref + padded
+    // 5 aux into the saved rank #1 config. Show it in the UI but don't save it; a
+    // later load with scores present will produce (and persist) the scored-strict set.
+    if (markForAutoSync && !selection.ready) {
       pendingAutoSyncFingerprintRef.current = '';
     }
-    if (markForAutoSync && selection.mode === 'strict') {
+    if (markForAutoSync && selection.ready) {
       pendingAutoSyncFingerprintRef.current = createAutoVoiceProfileSyncFingerprint({
         sourceKey: selectedExpName,
         selectedGPT,
@@ -982,7 +982,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       },
     }));
     setReferenceMessage(
-      selection.mode === 'strict'
+      selection.ready
         ? `${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'}.`
         : `${selection.primary.filename} selected with ${selection.aux.length} auxiliary clip${selection.aux.length === 1 ? '' : 's'} (clip scores not ready yet — not saved).`,
     );
@@ -2458,6 +2458,31 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     return () => { ignore = true; };
   }, [selectedExpName]);
 
+  // A scored-strict reference pick needs measured clip quality scores (clip-scores.json)
+  // and ASR transcripts, which can still be landing for a while after training. Until
+  // such a pick is possible we deliberately do NOT lock or persist a fallback set.
+  const referenceSelectionReady = useMemo(() => (
+    Array.isArray(trainingAudioFiles)
+    && trainingAudioFiles.length > 0
+    && Boolean(chooseBestReferenceSet(trainingAudioFiles).ready)
+  ), [trainingAudioFiles]);
+
+  // Loop: while the selected model has clips loaded but no scored-strict pick yet,
+  // re-fetch training audio on an interval so the auto-select upgrades (and finally
+  // persists) the moment quality scores / transcripts become available.
+  useEffect(() => {
+    if (!selectedExpName) return undefined;
+    if (loadedTrainingAudioSourceKey !== selectedExpName) return undefined;
+    if (loadingTrainingAudio || referenceSelectionReady) return undefined;
+    let ignore = false;
+    const interval = window.setInterval(() => {
+      getTrainingAudioFiles(selectedExpName)
+        .then((res) => { if (!ignore) setTrainingAudioFiles(res.data.files || []); })
+        .catch(() => {});
+    }, 6000);
+    return () => { ignore = true; window.clearInterval(interval); };
+  }, [selectedExpName, loadedTrainingAudioSourceKey, loadingTrainingAudio, referenceSelectionReady]);
+
   useEffect(() => {
     restoredActiveVoiceProfileKeyRef.current = '';
     autoReferenceKeyRef.current = '';
@@ -2669,11 +2694,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       lastAppliedSourceKey: autoReferenceKeyRef.current,
     })) return;
     const selection = applyBestReference(trainingAudioFiles, { markForAutoSync: true });
-    // Only treat this source as "auto-applied" once we get a strict pick. A
-    // fallback pick (clip scores/transcripts not ready) is left un-locked so a
-    // later trainingAudioFiles re-fetch with scores can upgrade and persist it,
-    // instead of blindly freezing the fallback set.
-    if (selection?.mode === 'strict') {
+    // Only treat this source as "auto-applied" once we get a scored-strict pick. A
+    // fallback pick - or a strict pick made before clip quality scores landed - is
+    // left un-locked so a later trainingAudioFiles re-fetch with scores can upgrade
+    // and persist it, instead of blindly freezing a not-yet-scored set.
+    if (selection?.ready) {
       autoReferenceKeyRef.current = selectedExpName;
     }
   }, [
@@ -2724,7 +2749,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   ]);
 
   useEffect(() => {
-    function handleGpuReady() { fetchModels(); checkStatus(); loadActiveVoiceProfile(); }
+    async function handleGpuReady() {
+      fetchModels();
+      checkStatus();
+      // A GPU restart can leave the active voice profile holding a stale fallback
+      // reference set (the inference worker pre-warms on a cold GPU before clip
+      // scores/ASR are ready, freezing a mediocre ref + padded 5 aux onto the
+      // profile). The rank #1 saved config is the real source of truth, so re-push
+      // it to the profile *before* re-fetching - otherwise the restore effect would
+      // blindly re-apply the broken set and silently revert the saved config.
+      const rankOneConfig = voiceConfigsRef.current[0] || null;
+      if (rankOneConfig) {
+        try {
+          await syncRankOneConfigToVoiceProfile(rankOneConfig, { context: 'gpu-ready rank #1 config' });
+        } catch {
+          // Best effort: still re-fetch below so the UI reflects the server state.
+        }
+      }
+      loadActiveVoiceProfile();
+    }
     window.addEventListener('voice-cloning-gpu-ready', handleGpuReady);
     return () => window.removeEventListener('voice-cloning-gpu-ready', handleGpuReady);
   }, []);

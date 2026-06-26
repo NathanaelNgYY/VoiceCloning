@@ -238,16 +238,18 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
         listedExpNames.push(expName);
         return [
           {
-            filename: 'lecturer-a_reference.wav',
-            path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
+            filename: 'lecturer-a_reference_0_192000.wav',
+            path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
             transcript: 'This is the balanced reference clip for the lecturer voice.',
             lang: 'en',
+            qualityScore: 80,
           },
           {
-            filename: 'lecturer-a_support.wav',
-            path: 'training/datasets/lecturer-a/lecturer-a_support.wav',
+            filename: 'lecturer-a_support_0_160000.wav',
+            path: 'training/datasets/lecturer-a/lecturer-a_support_0_160000.wav',
             transcript: 'This support clip keeps the voice steady for synthesis.',
             lang: 'en',
+            qualityScore: 60,
           },
         ];
       },
@@ -263,8 +265,8 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
         displayName: 'Lecturer A',
         gptKey: 'models/user-models/gpt/lecturer-a-e25.ckpt',
         sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
-        ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
-        aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+        ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
+        aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
         updatedAt: writes[0].body.updatedAt,
       },
     });
@@ -275,8 +277,8 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
         displayName: 'Lecturer A',
         gptKey: 'models/user-models/gpt/lecturer-a-e25.ckpt',
         sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
-        ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
-        aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+        ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
+        aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
         activatedAt: '2026-06-03T08:00:00.000Z',
         updatedAt: writes[1].body.updatedAt,
       },
@@ -284,18 +286,18 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
     assert.equal(writes[2].key, 'voice-profile-configs/lecturer-a-v1/default.json');
     assert.equal(writes[2].body.configId, 'default');
     assert.equal(writes[2].body.rank, 1);
-    assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference.wav');
-    assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support.wav']);
+    assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav');
+    assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav']);
     assert.deepEqual(calls.at(-1), {
       routePath: '/ref-audio/warm',
       body: {
-        ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
-        aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+        ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
+        aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
       },
     });
     assert.deepEqual(response.warmedReferences, {
-      ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference.wav',
-      aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support.wav'],
+      ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
+      aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
     });
   });
 });
@@ -305,17 +307,17 @@ test('resolveSavedProfileReferenceSelection ranks training audio by audio qualit
     { sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth' },
     {
       listTrainingAudioFiles: async () => ([
-        { filename: 'a.wav', path: 'training/datasets/lecturer-a/denoised/a.wav', transcript: 'Clear reference sentence one for testing.', lang: 'en', qualityScore: 40 },
-        { filename: 'b.wav', path: 'training/datasets/lecturer-a/denoised/b.wav', transcript: 'Clear reference sentence two for testing.', lang: 'en', qualityScore: 90 },
-        { filename: 'c.wav', path: 'training/datasets/lecturer-a/denoised/c.wav', transcript: 'Clear reference sentence three for testing.', lang: 'en', qualityScore: 65 },
+        { filename: 'a_0_160000.wav', path: 'training/datasets/lecturer-a/denoised/a_0_160000.wav', transcript: 'Clear reference sentence one for testing.', lang: 'en', qualityScore: 40 },
+        { filename: 'b_0_192000.wav', path: 'training/datasets/lecturer-a/denoised/b_0_192000.wav', transcript: 'Clear reference sentence two for testing.', lang: 'en', qualityScore: 90 },
+        { filename: 'c_0_224000.wav', path: 'training/datasets/lecturer-a/denoised/c_0_224000.wav', transcript: 'Clear reference sentence three for testing.', lang: 'en', qualityScore: 65 },
       ]),
     },
   );
 
-  assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/b.wav');
+  assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/b_0_192000.wav');
   assert.deepEqual(selection.aux_ref_audio_paths, [
-    'training/datasets/lecturer-a/denoised/c.wav',
-    'training/datasets/lecturer-a/denoised/a.wav',
+    'training/datasets/lecturer-a/denoised/c_0_224000.wav',
+    'training/datasets/lecturer-a/denoised/a_0_160000.wav',
   ]);
 });
 
@@ -324,13 +326,13 @@ test('resolveSavedProfileReferenceSelection transcript guard avoids an empty-tra
     { sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth' },
     {
       listTrainingAudioFiles: async () => ([
-        { filename: 'pristine.wav', path: 'training/datasets/lecturer-a/denoised/pristine.wav', transcript: '', lang: 'en', qualityScore: 85 },
-        { filename: 'usable.wav', path: 'training/datasets/lecturer-a/denoised/usable.wav', transcript: 'This is a perfectly usable reference sentence for cloning.', lang: 'en', qualityScore: 75 },
+        { filename: 'pristine_0_192000.wav', path: 'training/datasets/lecturer-a/denoised/pristine_0_192000.wav', transcript: '', lang: 'en', qualityScore: 85 },
+        { filename: 'usable_0_160000.wav', path: 'training/datasets/lecturer-a/denoised/usable_0_160000.wav', transcript: 'This is a perfectly usable reference sentence for cloning.', lang: 'en', qualityScore: 75 },
       ]),
     },
   );
 
-  assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/usable.wav');
+  assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/usable_0_160000.wav');
 });
 
 test('loadModelPair returns canonical training paths even when ref warm resolves local cache paths', async () => {
