@@ -86,6 +86,19 @@ test('router resolves training metadata route', () => {
   );
 });
 
+test('router resolves generated inference chunk route', () => {
+  assert.deepEqual(
+    findRoute('GET', '/api/inference/chunk/abc-123/2'),
+    {
+      name: 'InferenceFunction',
+      methods: ['GET', 'POST'],
+      pattern: /^\/api\/inference(?:\/(?:generate|result\/[A-Za-z0-9-]+|chunk\/[A-Za-z0-9-]+\/\d+|cancel|current|status|start|stop))?\/?$/u,
+      modulePath: './inference/index.js',
+      lambdaPath: '/api/inference/chunk/abc-123/2',
+    },
+  );
+});
+
 test('router resolves per-person voice profile config routes', () => {
   assert.deepEqual(
     findRoute('GET', '/api/voice-profile/configs/michael-tan-v1'),

@@ -482,7 +482,9 @@ export function deletePronunciationEntry(entry) {
 }
 
 export async function getInferenceChunk(sessionId, index) {
-  const res = await api.get(`/inference/chunk/${sessionId}/${index}`, {
+  const res = await axios.get(resolveApiPath(
+    `/api/inference/chunk/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`,
+  ), {
     responseType: 'blob',
     validateStatus: () => true,
   });
