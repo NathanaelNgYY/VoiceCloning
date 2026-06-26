@@ -1938,6 +1938,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       const result = await fetchDatamuseArpabet(word);
       if (!result) {
+        setPronunciationArpabet('');
+        setPronunciationReadable('');
         setPronunciationMessage(`No pronunciation found for "${word}" — enter it manually.`);
         return;
       }
@@ -3240,7 +3242,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   {pronunciationGenerating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   Generate
                 </Button>
-                <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy} className="h-8 rounded-lg">
+                <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy || pronunciationGenerating} className="h-8 rounded-lg">
                   <Check size={13} />
                   {editingPronunciationWord ? 'Update entry' : 'Save entry'}
                 </Button>
@@ -3249,7 +3251,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   size="sm"
                   variant="outline"
                   onClick={() => testPronunciation()}
-                  disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady}
+                  disabled={pronunciationBusy || pronunciationGenerating || Boolean(pronunciationTestingWord) || !isReady}
                   className="h-8 rounded-lg border-slate-200 bg-white"
                 >
                   {pronunciationTestingWord === pronunciationWord.trim() ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
