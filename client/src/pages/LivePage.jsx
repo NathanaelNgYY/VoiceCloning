@@ -74,6 +74,7 @@ import {
 } from '@/lib/ttsHistory';
 import { concatWavBlobs } from '@/lib/wavConcat';
 import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
+import { fetchDatamuseArpabet, arpabetToReadable } from '@/lib/arpabet';
 import {
   parsePronunciationCsv,
   serializePronunciationCsv,
@@ -106,6 +107,7 @@ import {
   Pencil,
   PlayCircle,
   RefreshCw,
+  Sparkles,
   Square,
   Trash2,
   Upload,
@@ -374,6 +376,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
   const [pronunciationMessage, setPronunciationMessage] = useState('');
   const [pronunciationBusy, setPronunciationBusy] = useState(false);
+  const [pronunciationGenerating, setPronunciationGenerating] = useState(false);
   const [pronunciationTestingWord, setPronunciationTestingWord] = useState('');
   const [pronunciationReloadPending, setPronunciationReloadPending] = useState(false);
   const audioRef = useRef(null);
@@ -1924,6 +1927,30 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
+  async function generatePronunciation() {
+    const word = pronunciationWord.trim();
+    if (!word) {
+      setPronunciationMessage('Enter a word first.');
+      return;
+    }
+    setPronunciationGenerating(true);
+    setPronunciationMessage('');
+    try {
+      const result = await fetchDatamuseArpabet(word);
+      if (!result) {
+        setPronunciationMessage(`No pronunciation found for "${word}" — enter it manually.`);
+        return;
+      }
+      setPronunciationArpabet(result.arpabet);
+      setPronunciationReadable(arpabetToReadable(result.arpabet));
+      setPronunciationMessage('Generated — review and Save entry.');
+    } catch {
+      setPronunciationMessage('Could not reach Datamuse — check your connection or enter manually.');
+    } finally {
+      setPronunciationGenerating(false);
+    }
+  }
+
   async function savePronunciation() {
     const word = pronunciationWord.trim();
     if (!word) {
@@ -3202,6 +3229,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
               <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={generatePronunciation}
+                  disabled={pronunciationBusy || pronunciationGenerating || !pronunciationWord.trim()}
+                  className="h-8 rounded-lg border-slate-200 bg-white"
+                >
+                  {pronunciationGenerating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  Generate
+                </Button>
                 <Button type="button" size="sm" onClick={savePronunciation} disabled={pronunciationBusy} className="h-8 rounded-lg">
                   <Check size={13} />
                   {editingPronunciationWord ? 'Update entry' : 'Save entry'}
