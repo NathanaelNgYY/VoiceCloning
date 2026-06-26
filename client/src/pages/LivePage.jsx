@@ -1815,7 +1815,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
       try {
-        const phrases = shortenFirstFastPhrase(splitLiveReplyPhrases(text));
+        const phrases = splitLiveReplyPhrases(text);
         const clips = [];
         setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
         for (let index = 0; index < phrases.length; index += 1) {
@@ -2719,34 +2719,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const isReady = selectedModelLoaded && Boolean(liveRefParams);
   const isTtsMode = mode === 'tts';
 
-  // Pre-warm the inference server once a voice profile is ready on the TTS tab. The
-  // first synthesis after a model load is cold (CUDA kernels + reference features),
-  // which adds seconds to the first Live Fast clip. Firing one tiny throwaway synth
-  // ahead of time warms that path so the user's first real clip starts fast. It is
-  // best-effort: errors are swallowed and the result is discarded.
-  const ttsWarmKeyRef = useRef('');
-  useEffect(() => {
-    if (!isTtsMode || !isReady || !liveRefParams || !selectedVoiceProfileId) return;
-    const key = `${selectedVoiceProfileId}:${liveRefParams.ref_audio_path || ''}`;
-    if (ttsWarmKeyRef.current === key) return;
-    ttsWarmKeyRef.current = key;
-
-    let cancelled = false;
-    (async () => {
-      try {
-        await synthesizeSentence({
-          text: 'Ready.',
-          voiceProfileId: selectedVoiceProfileId,
-          text_lang: liveLanguage,
-          ...liveRefParams,
-        });
-      } catch {
-        // Warm-up is best-effort; allow another attempt if the profile/ref changes.
-        if (!cancelled) ttsWarmKeyRef.current = '';
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [isTtsMode, isReady, liveRefParams, selectedVoiceProfileId, liveLanguage]);
+  // Generation pre-warm now lives on the inference worker: every model load fires a
+  // throwaway synth via /ref-audio/warm, so the first real clip is hot for all
+  // consumers (this TTS tab and external callers like the chatbot). No client-side
+  // warm-up needed here.
   const ttsFastHistory = getTtsHistoryByRoute(ttsHistory, 'fast');
   const ttsFullHistory = getTtsHistoryByRoute(ttsHistory, 'full');
   const isListening = liveSpeech.isMicInputEnabled && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking');
