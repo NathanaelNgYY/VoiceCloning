@@ -7,6 +7,7 @@ import {
   buildLiveReplyParams,
   cleanLiveText,
   createChatMessage,
+  createLiveSynthesisSnapshot,
   findFirstReplayablePart,
   findNextPhrasePlayback,
   findSelectedPlayback,
@@ -97,6 +98,7 @@ export function useLiveSpeech({
   engine = 'fast',
   replyMode = LIVE_REPLY_MODES.full,
   language = 'en',
+  voiceProfileId = '',
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -142,21 +144,29 @@ export function useLiveSpeech({
   const refParamsRef = useRef(refParams);
   const fullRefParamsRef = useRef(fullRefParams);
   const engineRef = useRef(engine);
+  const voiceProfileIdRef = useRef(voiceProfileId);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
+  useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
 
   // Live Full uses the accurate /inference route with its own ref params; it falls
   // back to the Live Fast reference set when no dedicated Live Full set is ready.
-  function getActiveRefParams() {
-    if (engineRef.current === 'full') {
-      return fullRefParamsRef.current || refParamsRef.current;
-    }
-    return refParamsRef.current;
+  function getActiveSynthesisSnapshot() {
+    return createLiveSynthesisSnapshot({
+      engine: engineRef.current,
+      refParams: refParamsRef.current,
+      fullRefParams: fullRefParamsRef.current,
+      voiceProfileId: voiceProfileIdRef.current,
+    });
   }
 
-  function synthesizeActivePhrase(params) {
-    return engineRef.current === 'full'
+  function getActiveRefParams() {
+    return getActiveSynthesisSnapshot().refParams;
+  }
+
+  function synthesizeForEngine(engine, params) {
+    return engine === 'full'
       ? synthesizeWithRetry(params)
       : synthesizeSentenceWithRetry(params);
   }
@@ -385,7 +395,8 @@ export function useLiveSpeech({
   }
 
   async function synthesizeFullAssistantReply(messageId, text, runId) {
-    const activeRefParams = getActiveRefParams();
+    const synthesis = getActiveSynthesisSnapshot();
+    const activeRefParams = synthesis.refParams;
     if (!activeRefParams) return;
 
     currentSynthesisMessageIdRef.current = messageId;
@@ -396,7 +407,10 @@ export function useLiveSpeech({
     patchMessage(messageId, { status: 'generating_voice', error: null });
 
     try {
-      const { blob } = await synthesizeWithRetry(buildLiveReplyParams(text, activeRefParams, liveLanguage));
+      const { blob } = await synthesizeForEngine(
+        synthesis.engine,
+        buildLiveReplyParams(text, activeRefParams, liveLanguage)
+      );
       if (
         isCancelledRef.current ||
         runId !== runIdRef.current ||
@@ -428,7 +442,8 @@ export function useLiveSpeech({
   }
 
   async function synthesizePhraseAssistantReply(messageId, text, runId) {
-    const activeRefParams = getActiveRefParams();
+    const synthesis = getActiveSynthesisSnapshot();
+    const activeRefParams = synthesis.refParams;
     if (!activeRefParams) return;
 
     const phrases = splitLiveReplyPhrases(text);
@@ -464,7 +479,8 @@ export function useLiveSpeech({
         }
 
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
-        const { blob } = await synthesizeActivePhrase(
+        const { blob } = await synthesizeForEngine(
+          synthesis.engine,
           buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage)
         );
 

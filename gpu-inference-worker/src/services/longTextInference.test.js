@@ -255,6 +255,23 @@ test('long-text synthesis keeps best-effort audio instead of aborting on a silen
   }
 });
 
+test('single-chunk full inference is peak-normalized like joined chunks', async () => {
+  mock.method(inferenceServer, 'synthesize', async () => makeNoiseWav(4.0));
+  try {
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text: 'A normal sentence should keep consistent playback volume.' }),
+      fullInferenceQualityOptions({ retryCount: 0 }),
+    );
+    const analysis = analyzeAudioQuality(result.audioBuffer, 'A normal sentence should keep consistent playback volume.');
+    assert.ok(
+      analysis.metrics.absPeak > 0.65,
+      `single chunk should be normalized near target peak: ${JSON.stringify(analysis.metrics)}`,
+    );
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 // A genuine inference-server failure (no audio ever produced) must still surface
 // as an error — best-effort fallback only applies when we actually got audio.
 test('long-text synthesis still surfaces a genuine inference-server failure', async () => {

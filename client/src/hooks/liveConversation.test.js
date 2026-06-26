@@ -7,12 +7,44 @@ import {
   findSelectedPlayback,
   findNextPhrasePlayback,
   getMicOffAction,
+  createLiveSynthesisSnapshot,
   splitLiveReplyPhrases,
   shortenFirstFastPhrase,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
+
+test('createLiveSynthesisSnapshot freezes Live Full engine and config for a queued reply', () => {
+  const fastRefParams = { ref_audio_path: 'fast-ref.wav' };
+  const fullRefParams = { ref_audio_path: 'full-ref.wav', top_k: 5 };
+  const snapshot = createLiveSynthesisSnapshot({
+    engine: 'full',
+    refParams: fastRefParams,
+    fullRefParams,
+    voiceProfileId: 'alexv1',
+  });
+
+  assert.deepEqual(snapshot, {
+    engine: 'full',
+    refParams: {
+      ...fullRefParams,
+      voiceProfileId: 'alexv1',
+      inference_mode: 'quality',
+    },
+  });
+});
+
+test('buildLiveReplyParams preserves full inference identity and quality mode', () => {
+  const params = buildLiveReplyParams('Hello.', {
+    ref_audio_path: 'refs/sample.wav',
+    voiceProfileId: 'alexv1',
+    inference_mode: 'quality',
+  });
+
+  assert.equal(params.voiceProfileId, 'alexv1');
+  assert.equal(params.inference_mode, 'quality');
+});
 
 test('shortenFirstFastPhrase splits a long first phrase at its first clause boundary', () => {
   const phrases = [

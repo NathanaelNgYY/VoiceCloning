@@ -3,6 +3,27 @@ export const LIVE_REPLY_MODES = {
   full: 'full',
   phrases: 'phrases',
 };
+
+export function createLiveSynthesisSnapshot({
+  engine = 'fast',
+  refParams = null,
+  fullRefParams = null,
+  voiceProfileId = '',
+} = {}) {
+  const activeEngine = engine === 'full' ? 'full' : 'fast';
+  const activeRefParams = activeEngine === 'full' ? (fullRefParams || refParams) : refParams;
+  return {
+    engine: activeEngine,
+    refParams: activeEngine === 'full' && activeRefParams
+      ? {
+          ...activeRefParams,
+          ...(voiceProfileId ? { voiceProfileId } : {}),
+          inference_mode: 'quality',
+        }
+      : activeRefParams,
+  };
+}
+
 export const LIVE_LANGUAGES = {
   en: 'en',
   zh: 'zh',
@@ -240,6 +261,8 @@ export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_
     ...(refParams.temperature !== undefined ? { temperature: refParams.temperature } : {}),
     ...(refParams.repetition_penalty !== undefined ? { repetition_penalty: refParams.repetition_penalty } : {}),
     ...(refParams.speed_factor !== undefined ? { speed_factor: refParams.speed_factor } : {}),
+    ...(refParams.voiceProfileId ? { voiceProfileId: refParams.voiceProfileId } : {}),
+    ...(refParams.inference_mode ? { inference_mode: refParams.inference_mode } : {}),
   };
 }
 

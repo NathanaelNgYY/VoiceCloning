@@ -362,7 +362,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   // Chatbot synthesis engine: 'fast' (live/tts-sentence) or 'full' (/inference for accuracy).
-  // Both run the same frontend phrase-split + background queue; only the route/ref params differ.
   const [liveEngine, setLiveEngine] = useState('fast');
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
@@ -562,6 +561,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     engine: liveEngine,
     replyMode,
     language: liveLanguage,
+    voiceProfileId: selectedVoiceProfileId,
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
@@ -2952,7 +2952,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         : 'text-slate-500 hover:text-slate-800'
                     )}
                     title={option.value === 'full'
-                      ? 'Higher-accuracy /inference route; still splits and queues phrases in the background.'
+                      ? 'Higher-accuracy /inference route; queues each phrase as soon as it is generated.'
                       : 'Fastest first-word latency; live sentence route.'}
                   >
                     {option.label}

@@ -932,7 +932,7 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
         buffers.push(subResult.audioBuffer);
         attempts += subResult.attempts;
       }
-      const audioBuffer = buffers.length === 1 ? buffers[0] : concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+      const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
       return { audioBuffer, attempts, split: true };
     } catch (err) {
       if (err?.bestCandidate) salvage.push(err.bestCandidate);
@@ -1064,9 +1064,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
     const pauses = computeChunkPauses(chunks, basePause);
     const fades = computeChunkFades(chunks);
-    const finalBuffer = chunkBuffers.length === 1
-      ? chunkBuffers[0]
-      : concatWavs(chunkBuffers, pauses, fades);
+    const finalBuffer = concatWavs(chunkBuffers, pauses, fades);
 
     const finalPath = path.join(sessionDir, 'final.wav');
     fs.writeFileSync(finalPath, finalBuffer);
@@ -1118,9 +1116,7 @@ export async function synthesizeLongText(params, options = {}) {
   const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
   const pauses = computeChunkPauses(chunks, basePause);
   const fades = computeChunkFades(chunks);
-  const finalBuffer = buffers.length === 1
-    ? buffers[0]
-    : concatWavs(buffers, pauses, fades);
+  const finalBuffer = concatWavs(buffers, pauses, fades);
 
   return { audioBuffer: finalBuffer, chunks: metadata };
 }
