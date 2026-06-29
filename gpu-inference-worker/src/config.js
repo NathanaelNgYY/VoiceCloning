@@ -64,6 +64,14 @@ export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'small';
 // words and is retried.
 export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(readEnv('TRANSCRIPTION_MIN_COVERAGE'), 0.8)));
 
+// Speaker-similarity gate: score each take against the reference voice and reject
+// any that drifted, so cranking the take budget for completeness can never ship a
+// take that stopped sounding like the target. Degrades gracefully (skips the gate)
+// if the sidecar/model is unavailable. SPEAKER_MIN_SIMILARITY is cosine 0..1; kept
+// conservative by default to avoid false rejections of genuine (synthesized) takes.
+export const SPEAKER_VERIFY_ENABLED = parseBooleanEnv(readEnv('SPEAKER_VERIFY_ENABLED'), true);
+export const SPEAKER_MIN_SIMILARITY = Math.min(1, Math.max(0, parseFloatEnv(readEnv('SPEAKER_MIN_SIMILARITY'), 0.62)));
+
 const runtimeDir = path.join(GPT_SOVITS_ROOT, 'runtime');
 const pythonCandidates = [
   process.env.PYTHON_EXEC || '',
@@ -79,6 +87,7 @@ export const SCRIPTS = {
   // Shipped with the worker (not the GPT-SoVITS bundle); runs in the same venv,
   // which has faster-whisper installed.
   transcriptionServer: fileURLToPath(new URL('../python/transcription_server.py', import.meta.url)),
+  speakerSimilarityServer: fileURLToPath(new URL('../python/speaker_similarity_server.py', import.meta.url)),
 };
 
 export function buildPythonEnv(extraEnv = {}) {

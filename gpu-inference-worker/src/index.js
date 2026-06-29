@@ -7,7 +7,8 @@ import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { transcriptionVerifier } from './services/transcriptionVerifier.js';
-import { TRANSCRIPTION_VERIFY_ENABLED } from './config.js';
+import { speakerSimilarity } from './services/speakerSimilarity.js';
+import { TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from './config.js';
 import { buildCorsOriginOption } from './services/corsOrigin.js';
 import {
   clearStartupModelCache,
@@ -42,6 +43,13 @@ const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
     });
   } else {
     console.log('[transcription] verification DISABLED via TRANSCRIPTION_VERIFY_ENABLED');
+  }
+  if (SPEAKER_VERIFY_ENABLED) {
+    speakerSimilarity.warmup().catch((err) => {
+      console.warn(`[speaker] warmup failed: ${err.message}`);
+    });
+  } else {
+    console.log('[speaker] similarity gate DISABLED via SPEAKER_VERIFY_ENABLED');
   }
 });
 

@@ -32,11 +32,11 @@ const FULL_QUALITY_OPTIONS = {
   maxChunkLength: 220,
   maxSentencesPerChunk: 1,
   chunkJoinPauseMs: 145,
-  // Up to 3 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
+  // Up to 5 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
   // as soon as ASR confirms a complete read. Each take keeps the natural voice
   // parameters, so more takes never costs voice fidelity — only GPU time on the
-  // chunks that actually need it.
-  retryCount: 2,
+  // chunks that actually need it (a clean chunk still costs a single take).
+  retryCount: 4,
   allowBestEffortFallback: true,
 };
 
@@ -853,11 +853,17 @@ function scoreAudioCandidate(analysis, verification = null) {
   // Word coverage (when ASR verification ran) dominates the comparison: among
   // takes with acceptable audio, the one that actually spoke the most of the
   // intended words wins, so the best-effort fallback never keeps a take that
-  // dropped words when a more complete one exists.
+  // dropped words when a more complete one exists. Speaker similarity is a
+  // secondary tie-breaker so, between two equally complete takes, the one that
+  // sounds most like the reference voice is preferred.
   const coverageBonus = verification ? clampNumber(verification.coverage, 1) * 10 : 0;
+  const similarityBonus = Number.isFinite(verification?.similarity)
+    ? clampNumber(verification.similarity, 0) * 4
+    : 0;
 
   return (
     coverageBonus
+    + similarityBonus
     + durationSec
     + Math.min(rms * 20, 3)
     - (zeroishRatio * 2)
@@ -898,12 +904,16 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       if (verification && !verification.ok) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
         const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
+        const voiceDrift = verification.similarityOk === false
+          ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
+          : '';
         const detail = [
           missing ? `missing: ${missing}` : '',
           clipped ? `clipped: ${clipped}` : '',
+          voiceDrift,
         ].filter(Boolean).join('; ');
         throw new Error(
-          `Incomplete read — covered ${(verification.coverage * 100).toFixed(0)}% of the text`
+          `Take rejected — covered ${(verification.coverage * 100).toFixed(0)}% of the text`
           + (detail ? ` (${detail})` : ''),
         );
       }
