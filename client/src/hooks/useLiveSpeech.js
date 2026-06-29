@@ -106,6 +106,7 @@ export function useLiveSpeech({
   replyMode = LIVE_REPLY_MODES.full,
   language = 'en',
   voiceProfileId = '',
+  systemPrompt = '',
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -154,10 +155,12 @@ export function useLiveSpeech({
   const fullRefParamsRef = useRef(fullRefParams);
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
+  const systemPromptRef = useRef(systemPrompt);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
+  useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
 
   // Live Full uses the accurate /inference route with its own ref params; it falls
   // back to the Live Fast reference set when no dedicated Live Full set is ready.
@@ -1065,6 +1068,7 @@ export function useLiveSpeech({
 
     const socket = createLiveChatSocket({
       language: liveLanguage,
+      systemPrompt: systemPromptRef.current,
       onOpen: () => {
         if (runId === runIdRef.current) {
           setNotice('Connected. Preparing live chat...');
