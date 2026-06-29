@@ -18,7 +18,6 @@ export function createLiveSynthesisSnapshot({
       ? {
           ...activeRefParams,
           ...(voiceProfileId ? { voiceProfileId } : {}),
-          inference_mode: 'quality',
         }
       : activeRefParams,
   };
@@ -262,7 +261,6 @@ export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_
     ...(refParams.repetition_penalty !== undefined ? { repetition_penalty: refParams.repetition_penalty } : {}),
     ...(refParams.speed_factor !== undefined ? { speed_factor: refParams.speed_factor } : {}),
     ...(refParams.voiceProfileId ? { voiceProfileId: refParams.voiceProfileId } : {}),
-    ...(refParams.inference_mode ? { inference_mode: refParams.inference_mode } : {}),
   };
 }
 

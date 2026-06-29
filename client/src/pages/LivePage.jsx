@@ -1467,7 +1467,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         voiceProfileId: selectedVoiceProfileId,
         text_lang: inference.language || liveLanguage,
         ...params,
-        inference_mode: 'quality',
       });
       const { sessionId } = res.data;
       pendingFullTtsRef.current = {
@@ -1860,7 +1859,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
     setStreamingRoute(route);
     try {
-      const res = await startGeneration({ ...baseParams, ...liveFullRefParams, inference_mode: 'quality' });
+      const res = await startGeneration({ ...baseParams, ...liveFullRefParams });
       const { sessionId } = res.data;
       pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel, route };
       ttsInference.connect(sessionId, { initialStatus: 'waiting' });

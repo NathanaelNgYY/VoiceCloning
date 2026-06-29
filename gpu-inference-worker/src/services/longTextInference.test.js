@@ -154,7 +154,6 @@ test('full inference quality preset keeps caller sampling controls when provided
     speed_factor: 1.8,
   });
 
-  assert.equal(params.inference_mode, 'quality');
   assert.equal(params.top_k, 1);
   assert.equal(params.top_p, 1);
   assert.equal(params.temperature, 1);
@@ -167,7 +166,6 @@ test('full inference quality preset fills system defaults when controls are omit
     text: 'Photosynthesis converts light into chemical energy.',
   });
 
-  assert.equal(params.inference_mode, 'quality');
   assert.equal(params.top_k, 15);
   assert.equal(params.top_p, 0.85);
   assert.equal(params.temperature, 0.62);
@@ -209,15 +207,6 @@ test('quality retry variants become progressively safer after the natural first 
   assert.equal(safe.top_k, 8);
   assert.equal(safe.text_split_method, 'cut1');
   assert.equal(safe.split_bucket, false);
-});
-
-test('quality retry variants strip internal control fields before GPT-SoVITS synthesis', () => {
-  const params = buildAttemptVariants(applyFullInferenceQualityPreset({
-    text: 'Internal request fields must not reach GPT SoVITS.',
-    inference_mode: 'quality',
-  }), 0);
-
-  assert.equal('inference_mode' in params, false);
 });
 
 // In full-inference mode (maxSentencesPerChunk: 1) the chunker used to strand a

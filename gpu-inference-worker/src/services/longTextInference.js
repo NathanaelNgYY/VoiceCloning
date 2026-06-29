@@ -48,10 +48,8 @@ function clampNumber(value, fallback) {
 
 export function applyFullInferenceQualityPreset(params = {}) {
   return {
-    inference_mode: 'quality',
     ...FULL_QUALITY_PRESET,
     ...params,
-    inference_mode: 'quality',
   };
 }
 
@@ -721,7 +719,7 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
 }
 
 export function buildAttemptVariants(baseParams, attemptIndex) {
-  const { inference_mode: _inferenceMode, ...synthesisBaseParams } = baseParams;
+  const synthesisBaseParams = baseParams;
   const safeTemperature = clampNumber(baseParams.temperature, 1);
   const safeTopP = clampNumber(baseParams.top_p, 1);
   const safeTopK = clampNumber(baseParams.top_k, 5);

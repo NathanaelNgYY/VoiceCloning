@@ -30,20 +30,17 @@ test('createLiveSynthesisSnapshot freezes Live Full engine and config for a queu
     refParams: {
       ...fullRefParams,
       voiceProfileId: 'alexv1',
-      inference_mode: 'quality',
     },
   });
 });
 
-test('buildLiveReplyParams preserves full inference identity and quality mode', () => {
+test('buildLiveReplyParams preserves full inference voice identity', () => {
   const params = buildLiveReplyParams('Hello.', {
     ref_audio_path: 'refs/sample.wav',
     voiceProfileId: 'alexv1',
-    inference_mode: 'quality',
   });
 
   assert.equal(params.voiceProfileId, 'alexv1');
-  assert.equal(params.inference_mode, 'quality');
 });
 
 test('shortenFirstFastPhrase splits a long first phrase at its first clause boundary', () => {

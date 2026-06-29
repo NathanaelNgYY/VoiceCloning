@@ -37,7 +37,6 @@ function readInferenceParams(body) {
     repetition_penalty = 1.35,
     speed_factor = 1.0,
     seed = -1,
-    inference_mode = '',
   } = body;
 
   return {
@@ -53,7 +52,6 @@ function readInferenceParams(body) {
     repetition_penalty,
     speed_factor,
     seed,
-    inference_mode,
   };
 }
 
