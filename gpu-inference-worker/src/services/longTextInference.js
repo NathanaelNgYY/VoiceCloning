@@ -29,7 +29,10 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  maxChunkLength: 220,
+  // Shorter chunks give the AR model less context to drift through, which is the
+  // main cause of a word being clipped mid-utterance ("says it halfway then
+  // skips"). 160 chars keeps clauses intact while cutting that drift.
+  maxChunkLength: 160,
   maxSentencesPerChunk: 1,
   chunkJoinPauseMs: 145,
   retryCount: 4,
@@ -754,6 +757,14 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     speed_factor: speed,
   };
 
+  // Retry strategy is "anti-drop": the dominant failure for medical text is the
+  // model CLIPPING a word partway, and a high repetition_penalty (which penalizes
+  // repeated tokens, and phonemes repeat) makes that worse. So each retry LOWERS
+  // repetition_penalty toward 1.0 (= no penalty) while also lowering temperature
+  // for stability and re-seeding. The penalty floor is 1.0; going below would
+  // invite the stutter/looping that repetition_penalty exists to suppress.
+  const REP_PENALTY_FLOOR = 1.0;
+
   if (attemptIndex === 0) {
     return base;
   }
@@ -762,7 +773,7 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     return {
       ...base,
       seed: (baseSeed + 17) >>> 0,
-      repetition_penalty: safeRepPenalty + 0.1,
+      repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.1),
       temperature: Math.max(0.5, safeTemperature * 0.88),
       fragment_interval: baseInterval + 0.02,
     };
@@ -775,7 +786,7 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
       top_p: Math.min(0.92, safeTopP),
       top_k: Math.max(8, Math.min(safeTopK, 15)),
       fragment_interval: baseInterval + 0.05,
-      repetition_penalty: safeRepPenalty + 0.15,
+      repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.2),
       seed: (baseSeed + 31) >>> 0,
       text_split_method: 'cut4',
     };
@@ -788,7 +799,7 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
       top_p: 0.78,
       top_k: 8,
       fragment_interval: baseInterval + 0.1,
-      repetition_penalty: safeRepPenalty + 0.2,
+      repetition_penalty: REP_PENALTY_FLOOR,
       seed: (baseSeed + 47) >>> 0,
       text_split_method: 'cut1',
       split_bucket: false,
@@ -809,7 +820,9 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     top_p: 0.85,
     top_k: 5,
     fragment_interval: baseInterval,
-    repetition_penalty: 1.35,
+    // Keep the penalty low here too (last-resort path) so this attempt doesn't
+    // re-introduce the clipping the earlier anti-drop retries were avoiding.
+    repetition_penalty: 1.1,
     seed: (baseSeed + 67) >>> 0,
     text_split_method: 'cut5',
   };

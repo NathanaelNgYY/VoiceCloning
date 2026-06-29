@@ -199,12 +199,16 @@ test('quality retry variants become progressively safer after the natural first 
   assert.equal(first.text_split_method, 'cut5');
 
   assert.ok(second.temperature < first.temperature);
-  assert.ok(second.repetition_penalty > first.repetition_penalty);
+  // Anti-drop: retries LOWER repetition_penalty toward 1.0 (high penalty clips
+  // words), never raise it.
+  assert.ok(second.repetition_penalty < first.repetition_penalty);
+  assert.ok(second.repetition_penalty >= 1.0);
   assert.equal(second.seed, 117);
 
   assert.equal(safe.temperature, 0.42);
   assert.equal(safe.top_p, 0.78);
   assert.equal(safe.top_k, 8);
+  assert.equal(safe.repetition_penalty, 1.0);
   assert.equal(safe.text_split_method, 'cut1');
   assert.equal(safe.split_bucket, false);
 });
