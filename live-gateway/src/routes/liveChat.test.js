@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getLiveChatLanguage, handleBrowserMessage, originAllowed } from './liveChat.js';
+import {
+  applyLiveChatInitToBridge,
+  getLiveChatLanguage,
+  handleBrowserMessage,
+  originAllowed,
+  parseLiveChatInit,
+} from './liveChat.js';
 
 test('originAllowed accepts configured production origin and same-origin upgrades', () => {
   assert.equal(originAllowed('https://app.example.com', {
@@ -83,4 +89,33 @@ test('handleBrowserMessage forwards browser controls to bridge methods', () => {
     ['commit'],
     ['cancel'],
   ]);
+});
+
+test('parseLiveChatInit returns the systemPrompt for a session.init message', () => {
+  assert.deepEqual(
+    parseLiveChatInit(Buffer.from(JSON.stringify({ type: 'session.init', systemPrompt: 'Be a GI tutor.' }))),
+    { systemPrompt: 'Be a GI tutor.' },
+  );
+});
+
+test('parseLiveChatInit coerces a missing systemPrompt to empty string', () => {
+  assert.deepEqual(
+    parseLiveChatInit(Buffer.from(JSON.stringify({ type: 'session.init' }))),
+    { systemPrompt: '' },
+  );
+});
+
+test('parseLiveChatInit returns null for non-init or malformed messages', () => {
+  assert.equal(parseLiveChatInit(Buffer.from(JSON.stringify({ type: 'audio.chunk', audio: 'x' }))), null);
+  assert.equal(parseLiveChatInit(Buffer.from('not json')), null);
+});
+
+test('applyLiveChatInitToBridge overrides systemPrompt only when non-empty', () => {
+  const bridge = { systemPrompt: 'server default' };
+
+  applyLiveChatInitToBridge(bridge, { systemPrompt: '   ' });
+  assert.equal(bridge.systemPrompt, 'server default');
+
+  applyLiveChatInitToBridge(bridge, { systemPrompt: 'Be a GI tutor.' });
+  assert.equal(bridge.systemPrompt, 'Be a GI tutor.');
 });
