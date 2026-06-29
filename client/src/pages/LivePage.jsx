@@ -3593,7 +3593,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       )}
 
       {/* ── Advanced settings collapsible ── */}
-      {!kiosk && (
       <Collapsible open={showSettings} onOpenChange={setShowSettings}>
         <CollapsibleTrigger asChild>
           <button
@@ -4281,7 +4280,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
         </CollapsibleContent>
       </Collapsible>
-      )}
 
       <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} />
     </div>
