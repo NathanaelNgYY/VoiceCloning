@@ -966,6 +966,16 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   throw failure;
 }
 
+// Break a stubborn chunk into small pieces (~64 chars) at word boundaries so each
+// problem word ends up in a short, low-drift fragment — the closest we can get to
+// the "say the word on its own" case the model handles cleanly — without globally
+// shrinking every chunk. Tiny fragments are merged so none is short enough to
+// trigger GPT-SoVITS' near-silent-buffer failure.
+function splitChunkFine(text, maxLen = 64) {
+  const pieces = splitLongSentence(text, maxLen);
+  return mergeShortChunks(pieces, MIN_CHUNK_LENGTH);
+}
+
 function pickBestCandidate(candidates) {
   return candidates
     .filter(Boolean)
@@ -975,9 +985,10 @@ function pickBestCandidate(candidates) {
 // Synthesize one chunk with escalating effort and — as a last resort — keep the
 // best audio we produced rather than letting a single stubborn chunk sink an
 // entire long generation. Order: (1) full retry suite on the whole chunk;
-// (2) split the chunk in half and retry each sub-chunk harder; (3) if everything
-// still fails, return the least-bad candidate seen. Only a genuine
-// inference-server error (no audio ever produced) propagates.
+// (2) split the chunk in half and retry each sub-chunk harder; (3) fine-split into
+// small fragments to isolate the offending word; (4) if everything still fails,
+// return the least-bad candidate seen. Only a genuine inference-server error
+// (no audio ever produced) propagates.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   const escalate = { ...options, allowBestEffortFallback: false };
   const salvage = [];
@@ -1012,7 +1023,29 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     }
   }
 
-  // Pass 3: keep the best audio we saw — never abort the whole job for one chunk.
+  // Pass 3: fine split into small fragments and retry each. This isolates the
+  // offending word in a short, low-drift context (near the "word on its own"
+  // case), which is what finally fixes a word that clips even after re-seeding.
+  const fineChunks = splitChunkFine(chunkText);
+  if (fineChunks.length > subChunks.length) {
+    if (onSplit) onSplit(fineChunks);
+    try {
+      const buffers = [];
+      let attempts = 0;
+      for (const fine of fineChunks) {
+        const fineResult = await synthesizeChunkWithRetry(fine, { ...baseParams, text: fine }, escalate);
+        buffers.push(fineResult.audioBuffer);
+        attempts += fineResult.attempts;
+      }
+      const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+      return { audioBuffer, attempts, split: true };
+    } catch (err) {
+      if (err?.bestCandidate) salvage.push(err.bestCandidate);
+      lastError = err;
+    }
+  }
+
+  // Pass 4: keep the best audio we saw — never abort the whole job for one chunk.
   const best = pickBestCandidate(salvage);
   if (best) {
     console.warn(

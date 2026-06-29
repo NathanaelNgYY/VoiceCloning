@@ -87,7 +87,13 @@ export async function handleLiveTtsRequest(body, {
 router.get('/inference/status', async (_req, res) => {
   try {
     const status = await inferenceServer.getStatus();
-    res.json(status);
+    res.json({
+      ...status,
+      verification: {
+        enabled: TRANSCRIPTION_VERIFY_ENABLED,
+        ...transcriptionVerifier.getStatus(),
+      },
+    });
   } catch (err) {
     res.status(500).json({
       ready: false,

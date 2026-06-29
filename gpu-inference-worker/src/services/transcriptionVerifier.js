@@ -172,7 +172,42 @@ class TranscriptionVerifier {
     // those via per-word confidence/timing so the chunk still gets re-rolled.
     const { suspectWords } = findClippedWords(expectedText, words);
     const ok = coverage >= minCoverage && suspectWords.length === 0;
+    if (!ok) {
+      console.log(
+        `[transcription] chunk REJECTED coverage=${(coverage * 100).toFixed(0)}% `
+        + `missing=[${missingWords.join(', ')}] clipped=[${suspectWords.join(', ')}] `
+        + `heard="${text.slice(0, 120)}"`,
+      );
+    }
     return { ok, coverage, missingWords, suspectWords, transcript: text };
+  }
+
+  /** Is the ASR sidecar usable right now? */
+  isAvailable() {
+    return this.process !== null && !this.unavailable;
+  }
+
+  getStatus() {
+    return {
+      running: this.process !== null,
+      unavailable: this.unavailable,
+      model: TRANSCRIPTION_MODEL,
+    };
+  }
+
+  /**
+   * Start the sidecar ahead of the first request and report the outcome loudly,
+   * so a misconfigured/missing Whisper install is obvious in the logs instead of
+   * silently turning verification off.
+   */
+  async warmup() {
+    const ok = await this.ensureStarted();
+    if (ok) {
+      console.log(`[transcription] verification ACTIVE (model=${TRANSCRIPTION_MODEL})`);
+    } else {
+      console.warn('[transcription] verification UNAVAILABLE — chunks will NOT be checked for skipped/clipped words');
+    }
+    return ok;
   }
 }
 
