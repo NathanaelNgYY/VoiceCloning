@@ -1,0 +1,174 @@
+import { spawn } from 'child_process';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import readline from 'readline';
+import {
+  PYTHON_EXEC,
+  SCRIPTS,
+  LOCAL_TEMP_ROOT,
+  buildPythonEnv,
+  TRANSCRIPTION_MODEL,
+  TRANSCRIPTION_MIN_COVERAGE,
+} from '../config.js';
+import { computeWordCoverage } from './wordCoverage.js';
+
+const STARTUP_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Manages a persistent faster-whisper sidecar (python/transcription_server.py).
+ * The model loads once; requests are JSON lines over stdin/stdout keyed by id.
+ */
+class TranscriptionVerifier {
+  constructor() {
+    this.process = null;
+    this.rl = null;
+    this.startPromise = null;
+    this.pending = new Map(); // id -> { resolve, reject, timer }
+    this.unavailable = false; // set when startup fails; disables verification
+  }
+
+  async ensureStarted() {
+    if (this.process) return true;
+    if (this.unavailable) return false;
+    if (this.startPromise) return this.startPromise;
+
+    this.startPromise = new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(ok);
+      };
+
+      let proc;
+      try {
+        proc = spawn(PYTHON_EXEC, [SCRIPTS.transcriptionServer], {
+          cwd: path.dirname(SCRIPTS.transcriptionServer),
+          env: buildPythonEnv({ TRANSCRIPTION_MODEL }),
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch (err) {
+        console.warn(`[transcription] could not spawn sidecar: ${err.message}`);
+        this.unavailable = true;
+        return finish(false);
+      }
+
+      const timer = setTimeout(() => {
+        console.warn('[transcription] sidecar startup timed out; verification disabled');
+        this.unavailable = true;
+        try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+        finish(false);
+      }, STARTUP_TIMEOUT_MS);
+
+      const rl = readline.createInterface({ input: proc.stdout });
+      rl.on('line', (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let message;
+        try {
+          message = JSON.parse(trimmed);
+        } catch {
+          return; // ignore non-JSON noise on stdout
+        }
+        if (!settled) {
+          if (message.ready === true) {
+            this.process = proc;
+            this.rl = rl;
+            finish(true);
+          } else if (message.ready === false) {
+            console.warn(`[transcription] sidecar failed to load: ${message.error}`);
+            this.unavailable = true;
+            try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+            finish(false);
+          }
+          return;
+        }
+        this._handleResponse(message);
+      });
+
+      proc.stderr.on('data', (data) => {
+        const text = data.toString().trim();
+        if (text) console.log('[transcription]', text);
+      });
+
+      proc.on('error', (err) => {
+        console.warn(`[transcription] sidecar error: ${err.message}`);
+        this.unavailable = true;
+        finish(false);
+      });
+
+      proc.on('close', () => {
+        this.process = null;
+        this.rl = null;
+        // Reject any in-flight requests so callers don't hang.
+        for (const [, entry] of this.pending) {
+          clearTimeout(entry.timer);
+          entry.reject(new Error('Transcription sidecar exited'));
+        }
+        this.pending.clear();
+        finish(false);
+      });
+    }).finally(() => {
+      this.startPromise = null;
+    });
+
+    return this.startPromise;
+  }
+
+  _handleResponse(message) {
+    const entry = this.pending.get(message.id);
+    if (!entry) return;
+    this.pending.delete(message.id);
+    clearTimeout(entry.timer);
+    if (message.error) entry.reject(new Error(message.error));
+    else entry.resolve(String(message.text || ''));
+  }
+
+  async transcribeBuffer(audioBuffer) {
+    const started = await this.ensureStarted();
+    if (!started || !this.process) throw new Error('Transcription sidecar unavailable');
+
+    const id = crypto.randomUUID();
+    const tempDir = path.join(LOCAL_TEMP_ROOT, 'verify');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const filePath = path.join(tempDir, `${id}.wav`);
+    fs.writeFileSync(filePath, audioBuffer);
+
+    try {
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error('Transcription timed out'));
+        }, REQUEST_TIMEOUT_MS);
+        this.pending.set(id, { resolve, reject, timer });
+        this.process.stdin.write(`${JSON.stringify({ id, path: filePath })}\n`);
+      });
+    } finally {
+      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Transcribe a chunk and score how completely it covers the expected words.
+   * Returns null when verification is unavailable (so callers treat it as "no
+   * opinion" rather than a failure and never block synthesis on ASR problems).
+   *
+   * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
+   */
+  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE } = {}) {
+    let transcript;
+    try {
+      transcript = await this.transcribeBuffer(audioBuffer);
+    } catch (err) {
+      console.warn(`[transcription] verification skipped: ${err.message}`);
+      return null;
+    }
+    const { coverage, missingWords } = computeWordCoverage(expectedText, transcript);
+    return { ok: coverage >= minCoverage, coverage, missingWords, transcript };
+  }
+}
+
+export const transcriptionVerifier = new TranscriptionVerifier();

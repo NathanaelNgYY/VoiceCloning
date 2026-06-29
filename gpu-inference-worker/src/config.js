@@ -50,6 +50,20 @@ export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVIT
 // at each comma / clause break. Bump it for longer comma pauses, lower for tighter speech.
 export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUSE_SECONDS'), 0.1));
 
+// ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
+// skips or cuts off words; transcribing each chunk and checking the intended
+// words are present lets us re-roll the bad ones. Critical for medical text.
+function parseBooleanEnv(value, fallback) {
+  if (value === '' || value === undefined) return fallback;
+  return /^(1|true|yes|on)$/iu.test(String(value).trim());
+}
+export const TRANSCRIPTION_VERIFY_ENABLED = parseBooleanEnv(readEnv('TRANSCRIPTION_VERIFY_ENABLED'), true);
+export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'small';
+// Minimum fraction of a chunk's expected words that must appear in the transcript
+// for the read to be accepted. Below this, the chunk is treated as having dropped
+// words and is retried.
+export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(readEnv('TRANSCRIPTION_MIN_COVERAGE'), 0.8)));
+
 const runtimeDir = path.join(GPT_SOVITS_ROOT, 'runtime');
 const pythonCandidates = [
   process.env.PYTHON_EXEC || '',
@@ -62,6 +76,9 @@ export const PYTHON_EXEC = pythonCandidates.find(c => fs.existsSync(c))
 
 export const SCRIPTS = {
   apiServer: path.join(GPT_SOVITS_ROOT, 'api_v2.py'),
+  // Shipped with the worker (not the GPT-SoVITS bundle); runs in the same venv,
+  // which has faster-whisper installed.
+  transcriptionServer: fileURLToPath(new URL('../python/transcription_server.py', import.meta.url)),
 };
 
 export function buildPythonEnv(extraEnv = {}) {

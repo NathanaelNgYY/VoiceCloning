@@ -15,13 +15,22 @@ import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
-import { COMMA_PAUSE_SECONDS } from '../config.js';
+import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
 } from '../services/runtimePronunciationDictionary.js';
+import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 
 const router = Router();
+
+// ASR word-coverage verification for the chunked full-quality path. Returns
+// extra options merged into the quality options so each chunk's audio is checked
+// against the intended words and re-rolled if GPT-SoVITS dropped any.
+function verificationOptions() {
+  if (!TRANSCRIPTION_VERIFY_ENABLED) return {};
+  return { verifyChunk: (audioBuffer, expectedText) => transcriptionVerifier.verifyChunk(audioBuffer, expectedText) };
+}
 
 function readInferenceParams(body) {
   const {
@@ -91,7 +100,15 @@ router.get('/inference/status', async (_req, res) => {
 
 router.post('/inference/start', async (_req, res) => {
   try {
-    await syncHotDictionaryOverrides();
+    const sync = await syncHotDictionaryOverrides();
+    // engdict-hot.rep is only read by api_v2.py at startup. When the admin
+    // pronunciation dictionary changed, a server that is already running still
+    // holds the previous pronunciations in memory — so newly added words come
+    // out mispronounced even though they're "in the dictionary". Stop the live
+    // process so start() below respawns it and reloads the updated dictionary.
+    if (sync.changed && inferenceServer.isRunning()) {
+      inferenceServer.stop();
+    }
     const status = await inferenceServer.start();
     activityState.mark();
     res.json(status);
@@ -192,7 +209,7 @@ router.post('/inference', async (req, res) => {
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
-    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions());
+    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions(verificationOptions()));
     activityState.mark();
 
     res.set({
@@ -234,7 +251,7 @@ router.post('/inference/generate', async (req, res) => {
     sseManager.prepareSession(sessionId);
     res.json({ sessionId });
 
-    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions()).catch((err) => {
+    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions(verificationOptions())).catch((err) => {
       console.error(`[inference/generate] failed for ${sessionId}:`, err.message);
       inferenceState.setError(err.message);
       sseManager.send(sessionId, 'error', { message: err.message });

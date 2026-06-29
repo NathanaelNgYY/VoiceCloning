@@ -60,17 +60,18 @@ function hotDictionaryWords(entries = []) {
 
 export function writeHotDictionaryOverrides(gptSovitsRoot = GPT_SOVITS_ROOT, entries = []) {
   const lines = buildHotDictionaryLines(entries);
-  if (!gptSovitsRoot) return { written: false, lines: 0 };
+  if (!gptSovitsRoot) return { written: false, lines: 0, changed: false };
 
   const filePath = path.join(gptSovitsRoot, 'GPT_SoVITS', 'text', 'engdict-hot.rep');
-  if (!fs.existsSync(filePath)) return { written: false, lines: 0 };
+  if (!fs.existsSync(filePath)) return { written: false, lines: 0, changed: false };
 
   const current = fs.readFileSync(filePath, 'utf-8');
   const pattern = new RegExp(`\\n?${escapeRegExp(BEGIN_MARKER)}[\\s\\S]*?${escapeRegExp(END_MARKER)}\\n?`, 'u');
   if (lines.length === 0) {
     const next = `${current.replace(pattern, '\n').trimEnd()}\n`;
-    if (next !== current) fs.writeFileSync(filePath, next, 'utf-8');
-    return { written: true, lines: 0 };
+    const changed = next !== current;
+    if (changed) fs.writeFileSync(filePath, next, 'utf-8');
+    return { written: true, lines: 0, changed };
   }
 
   const block = `${BEGIN_MARKER}\n${lines.join('\n')}\n${END_MARKER}`;
@@ -85,8 +86,9 @@ export function writeHotDictionaryOverrides(gptSovitsRoot = GPT_SOVITS_ROOT, ent
     .join('\n');
   const next = `${withoutAdminWords.trimEnd()}\n\n${block}\n`;
 
-  if (next !== current) fs.writeFileSync(filePath, next, 'utf-8');
-  return { written: true, lines: lines.length };
+  const changed = next !== current;
+  if (changed) fs.writeFileSync(filePath, next, 'utf-8');
+  return { written: true, lines: lines.length, changed };
 }
 
 export async function loadRuntimePronunciationEntries({

@@ -857,7 +857,7 @@ function splitChunkInHalf(text) {
   return [left, right];
 }
 
-function scoreAudioCandidate(analysis) {
+function scoreAudioCandidate(analysis, verification = null) {
   const metrics = analysis?.metrics || {};
   const rms = clampNumber(metrics.rms, 0);
   const zeroishRatio = clampNumber(metrics.zeroishRatio, 1);
@@ -874,8 +874,15 @@ function scoreAudioCandidate(analysis) {
     return -1000 + Math.min(rms * 100, 1) + Math.min(absPeak * 100, 1) - clippedRatio;
   }
 
+  // Word coverage (when ASR verification ran) dominates the comparison: among
+  // takes with acceptable audio, the one that actually spoke the most of the
+  // intended words wins, so the best-effort fallback never keeps a take that
+  // dropped words when a more complete one exists.
+  const coverageBonus = verification ? clampNumber(verification.coverage, 1) * 10 : 0;
+
   return (
-    durationSec
+    coverageBonus
+    + durationSec
     + Math.min(rms * 20, 3)
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
@@ -887,6 +894,7 @@ function scoreAudioCandidate(analysis) {
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   const allowBestEffortFallback = Boolean(options.allowBestEffortFallback);
+  const verifyChunk = typeof options.verifyChunk === 'function' ? options.verifyChunk : null;
   let lastError = null;
   let bestCandidate = null;
 
@@ -896,14 +904,29 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     try {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);
-      const score = scoreAudioCandidate(analysis);
+
+      // Only spend ASR on takes whose audio already looks usable; a silent or
+      // clipped take is rejected by analysis alone and needs no transcript.
+      let verification = null;
+      if (verifyChunk && analysis.ok) {
+        verification = await verifyChunk(audioBuffer, chunkText);
+      }
+
+      const score = scoreAudioCandidate(analysis, verification);
       if (!bestCandidate || score > bestCandidate.score) {
-        bestCandidate = { audioBuffer, analysis, paramsUsed: params, attempts: attempt + 1, score };
+        bestCandidate = { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1, score };
       }
       if (!analysis.ok) {
         throw new Error(analysis.reason);
       }
-      return { audioBuffer, analysis, paramsUsed: params, attempts: attempt + 1 };
+      if (verification && !verification.ok) {
+        const missing = verification.missingWords.slice(0, 6).join(', ');
+        throw new Error(
+          `Dropped words — read covered ${(verification.coverage * 100).toFixed(0)}% of the text`
+          + (missing ? ` (missing: ${missing})` : ''),
+        );
+      }
+      return { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
     } catch (error) {
       lastError = error;
     }
@@ -913,6 +936,7 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     return {
       audioBuffer: bestCandidate.audioBuffer,
       analysis: bestCandidate.analysis,
+      verification: bestCandidate.verification,
       paramsUsed: bestCandidate.paramsUsed,
       attempts: retryCount + 1,
       fallback: true,
