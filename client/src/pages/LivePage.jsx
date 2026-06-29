@@ -80,6 +80,7 @@ import {
   serializePronunciationCsv,
 } from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
+import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
 import {
   buildSavedVoiceProfileRestoreKey,
   findSavedVoiceProfileKey,
@@ -2417,9 +2418,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }, [loadingPreviewPath]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const voiceParam = params.get('voice');
-    if (voiceParam) urlVoiceKeyRef.current = voiceParam.toLowerCase().replace(/[\s_-]+/g, '');
+    const initialVoiceKey = resolveInitialVoiceKey({
+      search: window.location.search,
+      envVoiceId: import.meta.env.VITE_CHATBOT_VOICE_PROFILE_ID,
+    });
+    if (initialVoiceKey) urlVoiceKeyRef.current = initialVoiceKey;
     fetchModels(); checkStatus(); loadActiveVoiceProfile();
   }, []);
 
