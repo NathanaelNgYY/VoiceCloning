@@ -81,6 +81,12 @@ import {
 } from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
+import {
+  resolveChatbotSystemPrompt,
+  getDefaultChatbotSystemPrompt,
+  persistChatbotSystemPrompt,
+  clearChatbotSystemPrompt,
+} from '@/lib/chatbotSystemPrompt';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
   buildSavedVoiceProfileRestoreKey,
@@ -305,6 +311,7 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const kiosk = APP_MODE_CONFIG.kiosk;
+  const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -565,6 +572,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     replyMode,
     language: liveLanguage,
     voiceProfileId: selectedVoiceProfileId,
+    systemPrompt: kiosk ? chatbotSystemPrompt : '',
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
@@ -2874,6 +2882,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       stopping: 'Stopping...',
     }[liveSpeech.phase] || 'Tap the mic to start.';
 
+  function handleChatbotSystemPromptChange(value) {
+    setChatbotSystemPrompt(value);
+    persistChatbotSystemPrompt(value);
+  }
+
+  function handleResetChatbotSystemPrompt() {
+    const next = getDefaultChatbotSystemPrompt();
+    clearChatbotSystemPrompt();
+    setChatbotSystemPrompt(next);
+  }
+
   return (
     /* flex-1 + min-h-0 lets this fill the main flex column */
     <div className="animate-fade-in flex min-h-0 flex-1 flex-col gap-3">
@@ -3476,6 +3495,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </aside>
         </div>
       ) : (
+      <div className={cn('flex min-h-0 flex-1 gap-3', kiosk ? 'flex-row' : 'flex-col')}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
 
         {/* Messages */}
@@ -3589,6 +3609,34 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             </p>
           </div>
         </div>
+      </div>
+      {kiosk && (
+        <aside className="flex min-h-0 w-[380px] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+              Assistant instructions
+            </span>
+            <button
+              type="button"
+              onClick={handleResetChatbotSystemPrompt}
+              disabled={isConversationActive}
+              className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-700 disabled:opacity-40"
+            >
+              Reset to default
+            </button>
+          </div>
+          <Textarea
+            value={chatbotSystemPrompt}
+            onChange={(e) => handleChatbotSystemPromptChange(e.target.value)}
+            disabled={isConversationActive}
+            spellCheck={false}
+            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-white px-4 py-3 text-xs leading-5 text-slate-700 shadow-none focus-visible:ring-0"
+          />
+          <p className="border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">
+            Applied to the next conversation. Locked while a chat is active.
+          </p>
+        </aside>
+      )}
       </div>
       )}
 
