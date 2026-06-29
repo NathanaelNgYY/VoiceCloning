@@ -15,12 +15,15 @@ function tokenize(text) {
     .filter(Boolean);
 }
 
-// Words we don't hold against a read: pure numerals (Whisper spells them out, so
-// "19" vs "nineteen" is a wording mismatch, not a skip) and single characters
-// (spelled-out acronym letters render as "E C G" and transcribe unreliably).
+// Words we don't hold against a read, because ASR can't reliably confirm them and
+// would produce false "missing" flags:
+//   - single characters (spelled-out acronym letters render as "E C G")
+//   - anything containing a digit: pure numerals (Whisper spells "19" as
+//     "nineteen") AND alphanumeric codes / IDs like "nct01675856", which Whisper
+//     mangles even when the audio is correct.
 function isCountable(token) {
   if (token.length < 2) return false;
-  if (/^\p{N}+$/u.test(token)) return false;
+  if (/\p{N}/u.test(token)) return false;
   return true;
 }
 
@@ -72,6 +75,22 @@ export function computeWordCoverage(expectedText, transcript) {
   const missingWords = [];
   let matchedCount = 0;
 
+  // A word is "absorbed" when it appears in the space-stripped transcript but is
+  // NOT itself a standalone transcript token. This reconciles the two ways the
+  // pronunciation dictionary and Whisper disagree on word boundaries — without it
+  // every such term reads as a false skip:
+  //   - dictionary split a hard word ("endoscopy" -> "endos copy") and Whisper
+  //     wrote it whole ("endoscopy" contains both "endos" and "copy");
+  //   - the source ran words together ("ClinicalTrials") and Whisper split them
+  //     ("clinical trials", whose join contains "clinicaltrials").
+  // Excluding standalone tokens means a repeated plain word ("very very" vs a
+  // single "very") is still correctly counted as one match, not absorbed.
+  const actualTokenSet = new Set(actual);
+  const joinedActual = actual.join('');
+  const isAbsorbedFragment = (word) => (
+    word.length >= 4 && !actualTokenSet.has(word) && joinedActual.includes(word)
+  );
+
   for (const word of expected) {
     let foundIndex = -1;
     // Prefer an exact, unconsumed match; fall back to a fuzzy one.
@@ -84,6 +103,10 @@ export function computeWordCoverage(expectedText, transcript) {
       }
     }
     if (foundIndex === -1) {
+      if (isAbsorbedFragment(word)) {
+        matchedCount += 1;
+        continue;
+      }
       missingWords.push(word);
     } else {
       consumed[foundIndex] = true;

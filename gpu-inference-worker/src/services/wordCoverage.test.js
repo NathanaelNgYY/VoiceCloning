@@ -54,6 +54,31 @@ test('empty expected text is fully covered', () => {
   assert.equal(result.expectedCount, 0);
 });
 
+test('dictionary-split words match the single word Whisper actually wrote', () => {
+  // The pronunciation dictionary splits hard terms ("endoscopy" -> "endos copy")
+  // to force pronunciation; Whisper transcribes the real single word. These must
+  // NOT read as skipped.
+  const result = computeWordCoverage(
+    'gastroen terologic endos copy was performed',
+    'gastroenterologic endoscopy was performed',
+  );
+  assert.equal(result.coverage, 1);
+  assert.deepEqual(result.missingWords, []);
+});
+
+test('codes and numbers are not held against the read', () => {
+  // "ClinicalTrials.gov number NCT01675856" — Whisper can't transcribe the code;
+  // only the real words "clinical"/"trials"/"number" should be required.
+  const result = computeWordCoverage(
+    'clinicaltrials gov number NCT01675856',
+    'clinical trials number n c t',
+  );
+  // "clinicaltrials" matches via the space-stripped transcript ("clinicaltrials"),
+  // "number" matches directly; "gov" and the code are not counted.
+  assert.ok(result.coverage >= 0.5);
+  assert.ok(!result.missingWords.includes('nct01675856'));
+});
+
 test('findClippedWords flags a long word with an implausibly short span', () => {
   // "acetaminophen" (13 chars) given only 0.2s of audio = clearly clipped, even
   // though Whisper transcribed it in full with high confidence.
