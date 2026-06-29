@@ -81,6 +81,7 @@ import {
 } from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
+import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
   buildSavedVoiceProfileRestoreKey,
   findSavedVoiceProfileKey,
@@ -303,6 +304,7 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 }
 
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
+  const kiosk = APP_MODE_CONFIG.kiosk;
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -2884,6 +2886,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </span>
         </h1>
 
+        {!kiosk && (
         <div className="flex flex-1 flex-wrap items-center gap-3">
           {/* Voice model selector */}
           <div className="flex items-center gap-2">
@@ -3012,6 +3015,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {modelError && (
@@ -3589,6 +3593,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       )}
 
       {/* ── Advanced settings collapsible ── */}
+      {!kiosk && (
       <Collapsible open={showSettings} onOpenChange={setShowSettings}>
         <CollapsibleTrigger asChild>
           <button
@@ -4276,6 +4281,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
         </CollapsibleContent>
       </Collapsible>
+      )}
 
       <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} />
     </div>
