@@ -7,6 +7,7 @@ import {
   fullInferenceQualityOptions,
   buildAttemptVariants,
   synthesizeLongText,
+  concatWavs,
 } from './longTextInference.js';
 import { inferenceServer } from './inferenceServer.js';
 
@@ -255,21 +256,42 @@ test('long-text synthesis keeps best-effort audio instead of aborting on a silen
   }
 });
 
-test('single-chunk full inference is peak-normalized like joined chunks', async () => {
+test('single-chunk full inference preserves the model\'s natural loudness', async () => {
+  // makeNoiseWav generates audio at ~0.3 peak. A single chunk has no siblings to
+  // even out against, so it must NOT be boosted toward an absolute target — that
+  // inflation is what made Live Full sound louder and less like the reference.
   mock.method(inferenceServer, 'synthesize', async () => makeNoiseWav(4.0));
   try {
     const result = await synthesizeLongText(
-      applyFullInferenceQualityPreset({ text: 'A normal sentence should keep consistent playback volume.' }),
+      applyFullInferenceQualityPreset({ text: 'A normal sentence should keep its natural playback volume.' }),
       fullInferenceQualityOptions({ retryCount: 0 }),
     );
-    const analysis = analyzeAudioQuality(result.audioBuffer, 'A normal sentence should keep consistent playback volume.');
+    const analysis = analyzeAudioQuality(result.audioBuffer, 'A normal sentence should keep its natural playback volume.');
     assert.ok(
-      analysis.metrics.absPeak > 0.65,
-      `single chunk should be normalized near target peak: ${JSON.stringify(analysis.metrics)}`,
+      analysis.metrics.absPeak < 0.4,
+      `single chunk should keep its natural peak, not be boosted: ${JSON.stringify(analysis.metrics)}`,
     );
   } finally {
     mock.restoreAll();
   }
+});
+
+test('joined chunks are matched to a shared loudness without inflation', () => {
+  // Two chunks at different peaks (0.3 and 0.6) should converge toward their
+  // median (~0.45) so playback is even — but the result must not be pushed above
+  // the louder source chunk.
+  const quiet = makeNoiseWav(1.0);          // ~0.3 peak
+  const loud = makeNoiseWav(1.0);
+  for (let i = 44; i + 1 < loud.length; i += 2) {
+    const doubled = Math.max(-32768, Math.min(32767, loud.readInt16LE(i) * 2));
+    loud.writeInt16LE(doubled, i);          // ~0.6 peak
+  }
+  const joined = concatWavs([Buffer.from(quiet), Buffer.from(loud)], 0);
+  const analysis = analyzeAudioQuality(joined, 'shared loudness check');
+  assert.ok(
+    analysis.metrics.absPeak > 0.3 && analysis.metrics.absPeak <= 0.62,
+    `joined chunks should sit near the median, not be inflated: ${JSON.stringify(analysis.metrics)}`,
+  );
 });
 
 // A genuine inference-server failure (no audio ever produced) must still surface

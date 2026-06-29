@@ -292,25 +292,53 @@ function buildWav(fmtChunk, dataChunk) {
 }
 
 /**
- * Normalize PCM16 chunk data so peak amplitude hits targetPeak (~-3dB at 0.7).
- * Prevents volume jumps between chunks. Skips if already close or silent.
+ * Measure the peak amplitude (0..1) of PCM16 chunk data. Returns 0 for silent
+ * or empty buffers.
  */
-function normalizeChunkPeak(data, targetPeak = 0.7) {
+function getChunkAbsPeak(data) {
   const bytesPerSample = 2;
   const sampleCount = Math.floor(data.length / bytesPerSample);
-  if (sampleCount === 0) return;
+  if (sampleCount === 0) return 0;
 
   let absPeak = 0;
   for (let i = 0; i < sampleCount; i++) {
     const sample = Math.abs(data.readInt16LE(i * bytesPerSample));
     if (sample > absPeak) absPeak = sample;
   }
+  return absPeak / 32767;
+}
 
+/**
+ * Compute a shared target peak from per-chunk peaks so chunks can be matched to a
+ * common loudness WITHOUT inflating the overall level. Uses the median of the
+ * non-silent chunk peaks, which preserves the model's natural loudness (and the
+ * similarity to the reference voice) instead of forcing an absolute target.
+ * A single chunk yields its own peak, so it is left untouched.
+ */
+export function computeSharedChunkPeak(peaks) {
+  const audible = peaks.filter((peak) => peak >= 0.003).sort((a, b) => a - b);
+  if (audible.length === 0) return 0;
+  const mid = Math.floor(audible.length / 2);
+  return audible.length % 2 === 0
+    ? (audible[mid - 1] + audible[mid]) / 2
+    : audible[mid];
+}
+
+/**
+ * Scale PCM16 chunk data so its peak matches targetPeak. Used to even out
+ * volume jumps between chunks. Skips if effectively silent, already within 2%
+ * of target, or the target is not a usable level.
+ */
+function normalizeChunkPeak(data, targetPeak) {
+  if (!(targetPeak > 0)) return;
+
+  const currentPeak = getChunkAbsPeak(data);
   // Skip if effectively silent or already within 2% of target
-  if (absPeak < 100) return;
-  const currentPeak = absPeak / 32767;
+  if (currentPeak < 0.003) return;
   if (Math.abs(currentPeak - targetPeak) / targetPeak < 0.02) return;
 
+  const bytesPerSample = 2;
+  const sampleCount = Math.floor(data.length / bytesPerSample);
   const scale = targetPeak / currentPeak;
   for (let i = 0; i < sampleCount; i++) {
     const offset = i * bytesPerSample;
@@ -513,11 +541,18 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
   const pauses = Array.isArray(pauseMs) ? pauseMs : Array(parsed.length - 1).fill(pauseMs);
   const fades = Array.isArray(fadeDurations) ? fadeDurations : Array(parsed.length - 1).fill(defaultFadeMs);
 
+  // Match chunks to a shared, natural loudness (median of their own peaks) so we
+  // even out inter-chunk jumps without boosting the overall level above what the
+  // model produced — preserving similarity to the reference voice.
+  const sharedPeak = isPCM16
+    ? computeSharedChunkPeak(parsed.map((wav) => getChunkAbsPeak(wav.dataChunk)))
+    : 0;
+
   const joinedChunks = [];
   parsed.forEach((wav, index) => {
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
-      normalizeChunkPeak(chunk);
+      normalizeChunkPeak(chunk, sharedPeak);
       const fadeIn = index > 0 ? (fades[index - 1] ?? defaultFadeMs) : 0;
       const fadeOut = index < parsed.length - 1 ? (fades[index] ?? defaultFadeMs) : 0;
       if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
