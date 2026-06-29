@@ -4,6 +4,7 @@ dist/
 client/dist-training/
 client/dist-live-fast/
 client/dist-combined/
+client/dist-chatbot/
 .dist/
 .env
 .claude/
