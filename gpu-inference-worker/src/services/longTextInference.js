@@ -29,10 +29,7 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  // Shorter chunks give the AR model less context to drift through, which is the
-  // main cause of a word being clipped mid-utterance ("says it halfway then
-  // skips"). 160 chars keeps clauses intact while cutting that drift.
-  maxChunkLength: 160,
+  maxChunkLength: 220,
   maxSentencesPerChunk: 1,
   chunkJoinPauseMs: 145,
   retryCount: 4,
@@ -934,9 +931,14 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       }
       if (verification && !verification.ok) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
+        const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
+        const detail = [
+          missing ? `missing: ${missing}` : '',
+          clipped ? `clipped: ${clipped}` : '',
+        ].filter(Boolean).join('; ');
         throw new Error(
-          `Dropped words — read covered ${(verification.coverage * 100).toFixed(0)}% of the text`
-          + (missing ? ` (missing: ${missing})` : ''),
+          `Incomplete read — covered ${(verification.coverage * 100).toFixed(0)}% of the text`
+          + (detail ? ` (${detail})` : ''),
         );
       }
       return { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1 };

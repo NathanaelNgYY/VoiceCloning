@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+
+// Helper: build a Whisper-style word entry.
+function word(w, durationSec, probability = 0.95) {
+  return { w, start: 0, end: durationSec, p: probability };
+}
 
 test('full match yields coverage 1 and no missing words', () => {
   const result = computeWordCoverage(
@@ -47,6 +52,41 @@ test('empty expected text is fully covered', () => {
   const result = computeWordCoverage('', 'anything at all');
   assert.equal(result.coverage, 1);
   assert.equal(result.expectedCount, 0);
+});
+
+test('findClippedWords flags a long word with an implausibly short span', () => {
+  // "acetaminophen" (13 chars) given only 0.2s of audio = clearly clipped, even
+  // though Whisper transcribed it in full with high confidence.
+  const { suspectWords } = findClippedWords('the acetaminophen dosage', [
+    word('the', 0.15), word('acetaminophen', 0.2, 0.97), word('dosage', 0.4),
+  ]);
+  assert.deepEqual(suspectWords, ['acetaminophen']);
+});
+
+test('findClippedWords flags a low-confidence long word', () => {
+  const { suspectWords } = findClippedWords('administer epinephrine now', [
+    word('administer', 0.7), word('epinephrine', 0.7, 0.15), word('now', 0.3),
+  ]);
+  assert.deepEqual(suspectWords, ['epinephrine']);
+});
+
+test('findClippedWords does not flag a fully, confidently spoken word', () => {
+  const { suspectWords } = findClippedWords('the acetaminophen dosage', [
+    word('the', 0.15), word('acetaminophen', 0.95, 0.97), word('dosage', 0.4),
+  ]);
+  assert.deepEqual(suspectWords, []);
+});
+
+test('findClippedWords ignores short words (too noisy to judge)', () => {
+  const { suspectWords } = findClippedWords('it is on', [
+    word('it', 0.02, 0.2), word('is', 0.02, 0.2), word('on', 0.02, 0.2),
+  ]);
+  assert.deepEqual(suspectWords, []);
+});
+
+test('findClippedWords returns nothing without word timing data', () => {
+  const { suspectWords } = findClippedWords('acetaminophen dosage', []);
+  assert.deepEqual(suspectWords, []);
 });
 
 test('repeated expected word needs two occurrences in transcript', () => {

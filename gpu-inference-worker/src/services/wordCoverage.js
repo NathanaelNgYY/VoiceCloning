@@ -98,3 +98,62 @@ export function computeWordCoverage(expectedText, transcript) {
     matchedCount,
   };
 }
+
+// A long word the model is most likely to clip. Short words are too noisy to
+// judge on timing/confidence, so we only scrutinize substantial ones (medical
+// terms tend to be long, which is exactly the at-risk case).
+const MIN_SCRUTINY_LENGTH = 6;
+
+/**
+ * Detect words that were probably spoken only partway ("half-said then skipped").
+ * Whisper transcribes such a word in full from context, so it passes coverage —
+ * but the audio it aligned to is short and/or low-confidence. We flag an expected
+ * content word when its aligned transcript word is below a probability floor OR
+ * its spoken span is implausibly short for its length.
+ *
+ * @param {string} expectedText
+ * @param {Array<{w:string,start:number,end:number,p:number}>} words - ASR word data
+ * @param {object} opts
+ * @returns {{ suspectWords: string[] }}
+ */
+export function findClippedWords(expectedText, words = [], opts = {}) {
+  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.35;
+  // Seconds of audio per character below which a word was almost certainly cut
+  // short. Natural speech is ~0.06-0.09 s/char; 0.03 is comfortably below that.
+  const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.03;
+
+  const expected = tokenize(expectedText).filter((t) => isCountable(t) && t.length >= MIN_SCRUTINY_LENGTH);
+  if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
+    return { suspectWords: [] };
+  }
+
+  const actual = words.map((entry) => ({
+    token: tokenize(entry.w)[0] || '',
+    duration: Math.max(0, Number(entry.end) - Number(entry.start)),
+    probability: Number.isFinite(entry.p) ? entry.p : 1,
+  })).filter((entry) => entry.token);
+
+  const consumed = new Array(actual.length).fill(false);
+  const suspectWords = [];
+
+  for (const word of expected) {
+    let foundIndex = -1;
+    for (let i = 0; i < actual.length; i++) {
+      if (!consumed[i] && actual[i].token === word) { foundIndex = i; break; }
+    }
+    if (foundIndex === -1) {
+      for (let i = 0; i < actual.length; i++) {
+        if (!consumed[i] && isFuzzyMatch(word, actual[i].token)) { foundIndex = i; break; }
+      }
+    }
+    if (foundIndex === -1) continue; // fully missing — that's the coverage check's job
+
+    consumed[foundIndex] = true;
+    const match = actual[foundIndex];
+    const tooQuiet = match.probability < minProbability;
+    const tooShort = match.duration > 0 && match.duration / word.length < minSecPerChar;
+    if (tooQuiet || tooShort) suspectWords.push(word);
+  }
+
+  return { suspectWords };
+}

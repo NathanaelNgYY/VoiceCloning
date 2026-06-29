@@ -86,9 +86,25 @@ def main():
                 language=language,
                 beam_size=int(os.environ.get("TRANSCRIPTION_BEAM_SIZE", "1")),
                 condition_on_previous_text=False,
+                # Per-word timing + probability lets the worker spot a word that
+                # Whisper "filled in" from context but the audio only said halfway
+                # (low probability and/or an implausibly short span) — the
+                # clipped-word case plain coverage can't see.
+                word_timestamps=True,
             )
-            text = " ".join(segment.text.strip() for segment in segments).strip()
-            print(json.dumps({"id": request_id, "text": text}), flush=True)
+            words = []
+            text_parts = []
+            for segment in segments:
+                text_parts.append(segment.text.strip())
+                for word in (segment.words or []):
+                    words.append({
+                        "w": word.word.strip(),
+                        "start": round(float(word.start), 3),
+                        "end": round(float(word.end), 3),
+                        "p": round(float(word.probability), 4),
+                    })
+            text = " ".join(text_parts).strip()
+            print(json.dumps({"id": request_id, "text": text, "words": words}), flush=True)
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"id": request_id, "error": str(exc)}), flush=True)
 

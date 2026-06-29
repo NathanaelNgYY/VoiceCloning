@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -124,7 +124,7 @@ class TranscriptionVerifier {
     this.pending.delete(message.id);
     clearTimeout(entry.timer);
     if (message.error) entry.reject(new Error(message.error));
-    else entry.resolve(String(message.text || ''));
+    else entry.resolve({ text: String(message.text || ''), words: Array.isArray(message.words) ? message.words : [] });
   }
 
   async transcribeBuffer(audioBuffer) {
@@ -159,15 +159,20 @@ class TranscriptionVerifier {
    * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
    */
   async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE } = {}) {
-    let transcript;
+    let result;
     try {
-      transcript = await this.transcribeBuffer(audioBuffer);
+      result = await this.transcribeBuffer(audioBuffer);
     } catch (err) {
       console.warn(`[transcription] verification skipped: ${err.message}`);
       return null;
     }
-    const { coverage, missingWords } = computeWordCoverage(expectedText, transcript);
-    return { ok: coverage >= minCoverage, coverage, missingWords, transcript };
+    const { text, words } = result;
+    const { coverage, missingWords } = computeWordCoverage(expectedText, text);
+    // A word can pass coverage (Whisper fills it in) yet have been clipped — catch
+    // those via per-word confidence/timing so the chunk still gets re-rolled.
+    const { suspectWords } = findClippedWords(expectedText, words);
+    const ok = coverage >= minCoverage && suspectWords.length === 0;
+    return { ok, coverage, missingWords, suspectWords, transcript: text };
   }
 }
 
