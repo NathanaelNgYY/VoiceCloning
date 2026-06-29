@@ -55,7 +55,7 @@ export function getDefaultChatbotSystemPrompt() {
 
 export function resolveChatbotSystemPrompt() {
   try {
-    const stored = window.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    const stored = globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
     if (typeof stored === 'string' && stored.length > 0) {
       return stored;
     }
@@ -67,7 +67,7 @@ export function resolveChatbotSystemPrompt() {
 
 export function persistChatbotSystemPrompt(value) {
   try {
-    window.localStorage.setItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, String(value ?? ''));
+    globalThis.localStorage.setItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, String(value ?? ''));
   } catch {
     // Best-effort; ignore persistence failures.
   }
@@ -75,7 +75,7 @@ export function persistChatbotSystemPrompt(value) {
 
 export function clearChatbotSystemPrompt() {
   try {
-    window.localStorage.removeItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    globalThis.localStorage.removeItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
   } catch {
     // Best-effort; ignore removal failures.
   }

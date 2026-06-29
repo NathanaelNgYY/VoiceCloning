@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import {
   CHATBOT_SYSTEM_PROMPT_STORAGE_KEY,
   DEFAULT_CHATBOT_SYSTEM_PROMPT,
@@ -8,41 +9,45 @@ import {
   resolveChatbotSystemPrompt,
 } from './chatbotSystemPrompt.js';
 
-describe('chatbotSystemPrompt', () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-  });
-  afterEach(() => {
-    window.localStorage.clear();
-    vi.restoreAllMocks();
-  });
+function installMemoryStorage() {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem(key) { return store.has(key) ? store.get(key) : null; },
+    setItem(key, value) { store.set(key, String(value)); },
+    removeItem(key) { store.delete(key); },
+    clear() { store.clear(); },
+  };
+  return store;
+}
 
-  it('default prompt mentions the GI bleeding role', () => {
-    expect(DEFAULT_CHATBOT_SYSTEM_PROMPT).toContain('GI bleeding');
-    expect(getDefaultChatbotSystemPrompt()).toBe(DEFAULT_CHATBOT_SYSTEM_PROMPT);
-  });
+test('default prompt mentions the GI bleeding role', () => {
+  installMemoryStorage();
+  assert.ok(DEFAULT_CHATBOT_SYSTEM_PROMPT.includes('GI bleeding'));
+  assert.equal(getDefaultChatbotSystemPrompt(), DEFAULT_CHATBOT_SYSTEM_PROMPT);
+});
 
-  it('resolves to the default when nothing is stored', () => {
-    expect(resolveChatbotSystemPrompt()).toBe(getDefaultChatbotSystemPrompt());
-  });
+test('resolves to the default when nothing is stored', () => {
+  installMemoryStorage();
+  assert.equal(resolveChatbotSystemPrompt(), getDefaultChatbotSystemPrompt());
+});
 
-  it('persists and resolves a stored override', () => {
-    persistChatbotSystemPrompt('Custom prompt');
-    expect(window.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY)).toBe('Custom prompt');
-    expect(resolveChatbotSystemPrompt()).toBe('Custom prompt');
-  });
+test('persists and resolves a stored override', () => {
+  installMemoryStorage();
+  persistChatbotSystemPrompt('Custom prompt');
+  assert.equal(globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY), 'Custom prompt');
+  assert.equal(resolveChatbotSystemPrompt(), 'Custom prompt');
+});
 
-  it('clear() restores the default', () => {
-    persistChatbotSystemPrompt('Custom prompt');
-    clearChatbotSystemPrompt();
-    expect(window.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY)).toBeNull();
-    expect(resolveChatbotSystemPrompt()).toBe(getDefaultChatbotSystemPrompt());
-  });
+test('clear() restores the default', () => {
+  installMemoryStorage();
+  persistChatbotSystemPrompt('Custom prompt');
+  clearChatbotSystemPrompt();
+  assert.equal(globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY), null);
+  assert.equal(resolveChatbotSystemPrompt(), getDefaultChatbotSystemPrompt());
+});
 
-  it('does not throw when localStorage access fails', () => {
-    vi.spyOn(window.localStorage.__proto__, 'setItem').mockImplementation(() => {
-      throw new Error('quota');
-    });
-    expect(() => persistChatbotSystemPrompt('x')).not.toThrow();
-  });
+test('does not throw when localStorage access fails', () => {
+  installMemoryStorage();
+  globalThis.localStorage.setItem = () => { throw new Error('quota'); };
+  assert.doesNotThrow(() => persistChatbotSystemPrompt('x'));
 });
