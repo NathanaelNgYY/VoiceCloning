@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - All packages use ES modules (`import`/`export`).
+- **Client tests use Node's built-in test runner (`node:test` + `node:assert/strict`), run with `node --test <file>` — NOT Vitest.** All 20 existing `client/src/**/*.test.js` files follow this. Do not add Vitest/jsdom or change `vite.config.js`/`package.json` test config. (CLAUDE.md's "Vitest" note is inaccurate.)
 - Client path alias `@/` maps to `client/src/`.
 - The panel and any non-empty system prompt MUST only ever appear/send in `kiosk` mode (`APP_MODE_CONFIG.kiosk`, i.e. `VITE_APP_MODE=chatbot`). Non-kiosk builds send `systemPrompt: ''`.
 - An empty/whitespace `systemPrompt` MUST leave the gateway's existing `OPENAI_REALTIME_SYSTEM_PROMPT` default in force (never override with empty).
@@ -41,10 +42,11 @@ Pure module owning the default GI prompt, env override, localStorage persistence
 
 - [ ] **Step 1: Write the failing test**
 
-Create `client/src/lib/chatbotSystemPrompt.test.js`:
+Create `client/src/lib/chatbotSystemPrompt.test.js` (node:test style, matching the other client lib tests; a fresh in-memory `localStorage` is installed on `globalThis` per test since Node has no browser storage):
 
 ```javascript
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import {
   CHATBOT_SYSTEM_PROMPT_STORAGE_KEY,
   DEFAULT_CHATBOT_SYSTEM_PROMPT,
@@ -54,49 +56,53 @@ import {
   resolveChatbotSystemPrompt,
 } from './chatbotSystemPrompt.js';
 
-describe('chatbotSystemPrompt', () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-  });
-  afterEach(() => {
-    window.localStorage.clear();
-    vi.restoreAllMocks();
-  });
+function installMemoryStorage() {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem(key) { return store.has(key) ? store.get(key) : null; },
+    setItem(key, value) { store.set(key, String(value)); },
+    removeItem(key) { store.delete(key); },
+    clear() { store.clear(); },
+  };
+  return store;
+}
 
-  it('default prompt mentions the GI bleeding role', () => {
-    expect(DEFAULT_CHATBOT_SYSTEM_PROMPT).toContain('GI bleeding');
-    expect(getDefaultChatbotSystemPrompt()).toBe(DEFAULT_CHATBOT_SYSTEM_PROMPT);
-  });
+test('default prompt mentions the GI bleeding role', () => {
+  installMemoryStorage();
+  assert.ok(DEFAULT_CHATBOT_SYSTEM_PROMPT.includes('GI bleeding'));
+  assert.equal(getDefaultChatbotSystemPrompt(), DEFAULT_CHATBOT_SYSTEM_PROMPT);
+});
 
-  it('resolves to the default when nothing is stored', () => {
-    expect(resolveChatbotSystemPrompt()).toBe(getDefaultChatbotSystemPrompt());
-  });
+test('resolves to the default when nothing is stored', () => {
+  installMemoryStorage();
+  assert.equal(resolveChatbotSystemPrompt(), getDefaultChatbotSystemPrompt());
+});
 
-  it('persists and resolves a stored override', () => {
-    persistChatbotSystemPrompt('Custom prompt');
-    expect(window.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY)).toBe('Custom prompt');
-    expect(resolveChatbotSystemPrompt()).toBe('Custom prompt');
-  });
+test('persists and resolves a stored override', () => {
+  installMemoryStorage();
+  persistChatbotSystemPrompt('Custom prompt');
+  assert.equal(globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY), 'Custom prompt');
+  assert.equal(resolveChatbotSystemPrompt(), 'Custom prompt');
+});
 
-  it('clear() restores the default', () => {
-    persistChatbotSystemPrompt('Custom prompt');
-    clearChatbotSystemPrompt();
-    expect(window.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY)).toBeNull();
-    expect(resolveChatbotSystemPrompt()).toBe(getDefaultChatbotSystemPrompt());
-  });
+test('clear() restores the default', () => {
+  installMemoryStorage();
+  persistChatbotSystemPrompt('Custom prompt');
+  clearChatbotSystemPrompt();
+  assert.equal(globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY), null);
+  assert.equal(resolveChatbotSystemPrompt(), getDefaultChatbotSystemPrompt());
+});
 
-  it('does not throw when localStorage access fails', () => {
-    vi.spyOn(window.localStorage.__proto__, 'setItem').mockImplementation(() => {
-      throw new Error('quota');
-    });
-    expect(() => persistChatbotSystemPrompt('x')).not.toThrow();
-  });
+test('does not throw when localStorage access fails', () => {
+  installMemoryStorage();
+  globalThis.localStorage.setItem = () => { throw new Error('quota'); };
+  assert.doesNotThrow(() => persistChatbotSystemPrompt('x'));
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd client && npx vitest run src/lib/chatbotSystemPrompt.test.js`
+Run: `cd client && node --test src/lib/chatbotSystemPrompt.test.js`
 Expected: FAIL — cannot resolve `./chatbotSystemPrompt.js`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -161,7 +167,7 @@ export function getDefaultChatbotSystemPrompt() {
 
 export function resolveChatbotSystemPrompt() {
   try {
-    const stored = window.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    const stored = globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
     if (typeof stored === 'string' && stored.length > 0) {
       return stored;
     }
@@ -173,7 +179,7 @@ export function resolveChatbotSystemPrompt() {
 
 export function persistChatbotSystemPrompt(value) {
   try {
-    window.localStorage.setItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, String(value ?? ''));
+    globalThis.localStorage.setItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, String(value ?? ''));
   } catch {
     // Best-effort; ignore persistence failures.
   }
@@ -181,7 +187,7 @@ export function persistChatbotSystemPrompt(value) {
 
 export function clearChatbotSystemPrompt() {
   try {
-    window.localStorage.removeItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    globalThis.localStorage.removeItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
   } catch {
     // Best-effort; ignore removal failures.
   }
@@ -190,7 +196,7 @@ export function clearChatbotSystemPrompt() {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd client && npx vitest run src/lib/chatbotSystemPrompt.test.js`
+Run: `cd client && node --test src/lib/chatbotSystemPrompt.test.js`
 Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
@@ -478,10 +484,11 @@ export function createLiveChatSocket({ language = 'en', systemPrompt = '', onOpe
 
 (Leave the rest of the function — `message`/`error`/`close` listeners and the returned object — unchanged.)
 
-- [ ] **Step 2: Verify the existing client test suite still passes**
+- [ ] **Step 2: Verify no regression**
 
-Run: `cd client && npx vitest run`
-Expected: PASS (no regressions; this change is additive).
+This change is additive and has no dedicated unit test. Sanity-check that an existing client test still runs green:
+Run: `cd client && node --test src/lib/appMode.test.js`
+Expected: PASS (no regressions).
 
 - [ ] **Step 3: Commit**
 
@@ -542,10 +549,11 @@ In `start()` (around line 1066), add `systemPrompt` to the `createLiveChatSocket
 
 (Leave the remaining `onOpen`/`onMessage`/`onError`/`onClose` handlers unchanged.)
 
-- [ ] **Step 3: Verify the client test suite still passes**
+- [ ] **Step 3: Verify no regression**
 
-Run: `cd client && npx vitest run`
-Expected: PASS (additive change).
+Additive change; the closest existing test is the live conversation helpers. Run:
+Run: `cd client && node --test src/hooks/liveConversation.test.js`
+Expected: PASS (no regressions).
 
 - [ ] **Step 4: Commit**
 
@@ -675,8 +683,8 @@ The structure after this edit: outer wrapper `<div>` (row in kiosk, column other
 
 - [ ] **Step 6: Verify build + lint-free render**
 
-Run: `cd client && npx vitest run` (no regressions) and `cd client && npm run build:chatbot`
-Expected: Vitest PASS; `build:chatbot` completes and emits `dist-chatbot` with no errors.
+Run: `cd client && node --test src/lib/chatbotSystemPrompt.test.js` (helper still green) and `cd client && npm run build:chatbot`
+Expected: tests PASS; `build:chatbot` completes and emits `dist-chatbot` with no errors. (LivePage.jsx has no unit test; rely on the build + manual check in Step 7.)
 
 - [ ] **Step 7: Manual verification (chatbot dev server)**
 
