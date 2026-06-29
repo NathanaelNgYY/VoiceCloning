@@ -49,3 +49,27 @@ test('getAppModeConfig exposes only live fast in live-fast mode', () => {
     ['Live Fast', 'Text to Speech'],
   );
 });
+
+test('normalizeAppMode resolves chatbot and its aliases', () => {
+  assert.equal(normalizeAppMode('chatbot'), 'chatbot');
+  assert.equal(normalizeAppMode('dean'), 'chatbot');
+  assert.equal(normalizeAppMode('kiosk'), 'chatbot');
+});
+
+test('getAppModeConfig exposes only the chatbot with no nav in chatbot mode', () => {
+  const config = getAppModeConfig('chatbot');
+
+  assert.equal(config.kiosk, true);
+  assert.equal(config.showTraining, false);
+  assert.equal(config.showLiveFast, true);
+  assert.equal(config.showTextToSpeech, false);
+  assert.equal(config.defaultPath, '/');
+  assert.equal(config.subtitle, 'Live Fast Chatbot');
+  assert.deepEqual(config.navItems, []);
+});
+
+test('getAppModeConfig leaves live-fast mode unchanged', () => {
+  const config = getAppModeConfig('live-fast');
+  assert.equal(config.kiosk, false);
+  assert.deepEqual(config.navItems.map((i) => i.label), ['Live Fast', 'Text to Speech']);
+});
