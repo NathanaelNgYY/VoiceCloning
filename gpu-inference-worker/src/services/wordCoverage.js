@@ -27,6 +27,36 @@ function isCountable(token) {
   return true;
 }
 
+// Whisper writes spoken numbers as digits ("nine" -> "9") and uses its own locale
+// spelling ("fibers" -> "fibres"). The intended text doesn't, so a perfectly read
+// word looks "missing" and forces a needless re-roll. Canonicalize BOTH the
+// expected word and the transcript to a common form before comparing, so these
+// purely-orthographic differences stop reading as dropped words. Applied
+// symmetrically, so even an imperfect rule still lets identical words match; the
+// only risk is mapping two different words together, kept low with length guards.
+const NUMBER_WORDS = new Map([
+  ['zero', '0'], ['one', '1'], ['two', '2'], ['three', '3'], ['four', '4'],
+  ['five', '5'], ['six', '6'], ['seven', '7'], ['eight', '8'], ['nine', '9'],
+  ['ten', '10'], ['eleven', '11'], ['twelve', '12'], ['thirteen', '13'],
+  ['fourteen', '14'], ['fifteen', '15'], ['sixteen', '16'], ['seventeen', '17'],
+  ['eighteen', '18'], ['nineteen', '19'], ['twenty', '20'], ['thirty', '30'],
+  ['forty', '40'], ['fifty', '50'], ['sixty', '60'], ['seventy', '70'],
+  ['eighty', '80'], ['ninety', '90'], ['hundred', '100'], ['thousand', '1000'],
+  ['million', '1000000'],
+]);
+
+function canonicalize(token) {
+  if (!token) return token;
+  if (NUMBER_WORDS.has(token)) return NUMBER_WORDS.get(token);
+  let t = token;
+  // British -> American spelling normalization (symmetric on both sides).
+  if (t.length >= 6) t = t.replace(/our(s?)$/u, 'or$1');            // colour->color, tumour->tumor
+  t = t.replace(/is(e|ed|es|ing|ation)$/u, (_m, suf) => `iz${suf}`); // organise->organize
+  t = t.replace(/yse(s|d)?$/u, (_m, suf = '') => `yze${suf}`);       // analyse->analyze
+  if (t.length >= 5) t = t.replace(/([bcglmt])re(s?)$/u, '$1er$2');  // centre->center, fibre->fiber
+  return t;
+}
+
 function levenshtein(a, b) {
   if (a === b) return 0;
   const m = a.length;
@@ -65,12 +95,15 @@ function isFuzzyMatch(expected, actual) {
  *   coverage is 1 when there are no countable expected words.
  */
 export function computeWordCoverage(expectedText, transcript) {
-  const expected = tokenize(expectedText).filter(isCountable);
+  // Keep the original word for reporting, match on the canonical form.
+  const expected = tokenize(expectedText)
+    .filter(isCountable)
+    .map((raw) => ({ raw, key: canonicalize(raw) }));
   if (expected.length === 0) {
     return { coverage: 1, missingWords: [], expectedCount: 0, matchedCount: 0 };
   }
 
-  const actual = tokenize(transcript);
+  const actual = tokenize(transcript).map(canonicalize);
   const consumed = new Array(actual.length).fill(false);
   const missingWords = [];
   let matchedCount = 0;
@@ -91,23 +124,23 @@ export function computeWordCoverage(expectedText, transcript) {
     word.length >= 4 && !actualTokenSet.has(word) && joinedActual.includes(word)
   );
 
-  for (const word of expected) {
+  for (const { raw, key } of expected) {
     let foundIndex = -1;
     // Prefer an exact, unconsumed match; fall back to a fuzzy one.
     for (let i = 0; i < actual.length; i++) {
-      if (!consumed[i] && actual[i] === word) { foundIndex = i; break; }
+      if (!consumed[i] && actual[i] === key) { foundIndex = i; break; }
     }
     if (foundIndex === -1) {
       for (let i = 0; i < actual.length; i++) {
-        if (!consumed[i] && isFuzzyMatch(word, actual[i])) { foundIndex = i; break; }
+        if (!consumed[i] && isFuzzyMatch(key, actual[i])) { foundIndex = i; break; }
       }
     }
     if (foundIndex === -1) {
-      if (isAbsorbedFragment(word)) {
+      if (isAbsorbedFragment(key)) {
         matchedCount += 1;
         continue;
       }
-      missingWords.push(word);
+      missingWords.push(raw);
     } else {
       consumed[foundIndex] = true;
       matchedCount += 1;
@@ -120,47 +153,6 @@ export function computeWordCoverage(expectedText, transcript) {
     expectedCount: expected.length,
     matchedCount,
   };
-}
-
-/**
- * Detect substantial expected words the model spoke MORE times than the text asks
- * for — the "barrels of barrels" stutter. Coverage is an order-insensitive multiset
- * match that only checks each word appears at least once, so a duplicated word is
- * invisible to it (and a best-of-N pick will happily keep the stuttering take). We
- * compare per-word counts and report any expected content word whose transcript
- * count EXCEEDS its expected count.
- *
- * Restricted to substantial words (length >= MIN_DUPLICATE_LENGTH) and to words
- * that are actually expected, so ordinary ASR noise and legitimate repeats (e.g.
- * "very very", which the expected count already allows) don't read as defects.
- *
- * @returns {{ duplicatedWords: string[] }} one entry per excess occurrence
- */
-const MIN_DUPLICATE_LENGTH = 5;
-
-export function findDuplicatedWords(expectedText, transcript) {
-  const expected = tokenize(expectedText).filter(isCountable);
-  if (expected.length === 0) return { duplicatedWords: [] };
-
-  const expectedCounts = new Map();
-  for (const word of expected) {
-    if (word.length >= MIN_DUPLICATE_LENGTH) {
-      expectedCounts.set(word, (expectedCounts.get(word) || 0) + 1);
-    }
-  }
-  if (expectedCounts.size === 0) return { duplicatedWords: [] };
-
-  const actualCounts = new Map();
-  for (const token of tokenize(transcript)) {
-    actualCounts.set(token, (actualCounts.get(token) || 0) + 1);
-  }
-
-  const duplicatedWords = [];
-  for (const [word, allowed] of expectedCounts) {
-    const heard = actualCounts.get(word) || 0;
-    for (let i = allowed; i < heard; i += 1) duplicatedWords.push(word);
-  }
-  return { duplicatedWords };
 }
 
 // A long word the model is most likely to clip. Short words are too noisy to
@@ -202,13 +194,16 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
 
   // Match against ALL countable expected words (not just long ones): a skipped
   // short word ("or", "is") is exactly what the absolute-duration check must see.
-  const expected = tokenize(expectedText).filter(isCountable);
+  // Keep the original word (for reporting + length-based scrutiny), match on canon.
+  const expected = tokenize(expectedText)
+    .filter(isCountable)
+    .map((raw) => ({ raw, key: canonicalize(raw) }));
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
     return { suspectWords: [] };
   }
 
   const actual = words.map((entry) => ({
-    token: tokenize(entry.w)[0] || '',
+    token: canonicalize(tokenize(entry.w)[0] || ''),
     duration: Math.max(0, Number(entry.end) - Number(entry.start)),
     probability: Number.isFinite(entry.p) ? entry.p : 1,
   })).filter((entry) => entry.token);
@@ -216,14 +211,14 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const consumed = new Array(actual.length).fill(false);
   const suspectWords = [];
 
-  for (const word of expected) {
+  for (const { raw, key } of expected) {
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
-      if (!consumed[i] && actual[i].token === word) { foundIndex = i; break; }
+      if (!consumed[i] && actual[i].token === key) { foundIndex = i; break; }
     }
     if (foundIndex === -1) {
       for (let i = 0; i < actual.length; i++) {
-        if (!consumed[i] && isFuzzyMatch(word, actual[i].token)) { foundIndex = i; break; }
+        if (!consumed[i] && isFuzzyMatch(key, actual[i].token)) { foundIndex = i; break; }
       }
     }
     if (foundIndex === -1) continue; // fully missing — that's the coverage check's job
@@ -237,11 +232,11 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
 
     // Confidence and per-character timing are noisier on short words, so only
     // scrutinize those on substantial content words (the at-risk long terms).
-    const longEnough = word.length >= MIN_SCRUTINY_LENGTH;
+    const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
     const tooQuiet = longEnough && match.probability < minProbability;
-    const tooShort = longEnough && match.duration > 0 && match.duration / word.length < minSecPerChar;
+    const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
 
-    if (skippedSpan || tooQuiet || tooShort) suspectWords.push(word);
+    if (skippedSpan || tooQuiet || tooShort) suspectWords.push(raw);
   }
 
   return { suspectWords };

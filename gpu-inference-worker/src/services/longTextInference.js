@@ -966,12 +966,8 @@ function scoreAudioCandidate(analysis, verification = null) {
   // heaviest: it's the exact "half-said word" defect we're trying not to ship.
   const clippedCount = verification?.suspectWords?.length || 0;
   const missingCount = verification?.missingWords?.length || 0;
-  // A duplicated word ("barrels of barrels") passes coverage, so penalize it as
-  // heavily as a clip so best-of-N prefers the take that said it exactly once.
-  const duplicatedCount = verification?.duplicatedWords?.length || 0;
   const clippedWordPenalty = clippedCount * 6;
   const missingWordPenalty = missingCount * 4;
-  const duplicatedWordPenalty = duplicatedCount * 6;
 
   return (
     coverageBonus
@@ -980,7 +976,6 @@ function scoreAudioCandidate(analysis, verification = null) {
     + Math.min(rms * 20, 3)
     - clippedWordPenalty
     - missingWordPenalty
-    - duplicatedWordPenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)

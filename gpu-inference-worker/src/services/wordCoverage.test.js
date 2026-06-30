@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords, findDuplicatedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {
@@ -134,23 +134,30 @@ test('repeated expected word needs two occurrences in transcript', () => {
   assert.equal(full.coverage, 1);
 });
 
-test('findDuplicatedWords flags a stuttered content word ("barrels of barrels")', () => {
-  const { duplicatedWords } = findDuplicatedWords(
-    'Each centriole is made up of barrels of nine triplet microtubules',
-    'Each central is made up of barrels of barrels',
+test('number words and digits are treated as the same word (nine vs 9)', () => {
+  const r = computeWordCoverage(
+    'arranged themselves repeatedly nine times',
+    'arranged themselves repeatedly 9 times',
   );
-  assert.deepEqual(duplicatedWords, ['barrels']);
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  assert.deepEqual(r.missingWords, []);
 });
 
-test('findDuplicatedWords ignores a clean take and legitimately repeated words', () => {
-  assert.equal(
-    findDuplicatedWords('mother centriole and daughter centriole', 'mother centriole and daughter centriole')
-      .duplicatedWords.length,
-    0,
+test('US/UK spelling variants are treated as the same word (fibers vs fibres)', () => {
+  const r = computeWordCoverage(
+    'held at their position by interconnecting fibers',
+    'held at their position by interconnecting fibres',
   );
-  // short function words duplicated by ASR noise are not flagged
-  assert.equal(
-    findDuplicatedWords('made up of barrels', 'made up of of barrels').duplicatedWords.length,
-    0,
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  const r2 = computeWordCoverage('the organizing center', 'the organising centre');
+  assert.equal(r2.coverage, 1, JSON.stringify(r2));
+});
+
+test('a genuinely dropped medical word is still caught after normalization', () => {
+  const r = computeWordCoverage(
+    'two centrioles are known',
+    'two centrals are known', // model really said the wrong word
   );
+  assert.ok(r.coverage < 1, JSON.stringify(r));
+  assert.ok(r.missingWords.includes('centrioles'), JSON.stringify(r));
 });

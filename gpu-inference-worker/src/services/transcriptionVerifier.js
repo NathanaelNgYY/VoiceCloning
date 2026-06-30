@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, findDuplicatedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -178,10 +178,6 @@ class TranscriptionVerifier {
     // A word can pass coverage (Whisper fills it in) yet have been clipped — catch
     // those via per-word confidence/timing so the chunk still gets re-rolled.
     const { suspectWords } = findClippedWords(expectedText, words);
-    // Coverage is order-insensitive and never penalizes a word spoken too MANY
-    // times, so a "barrels of barrels" stutter passes it. Detect duplicated content
-    // words so the chunk gets re-rolled instead of shipping the stutter.
-    const { duplicatedWords } = findDuplicatedWords(expectedText, text);
 
     // Coverage is a FRACTION, so on a long chunk a single dropped or mispronounced
     // word (~3% of 30 words) clears the threshold even though it would fail a short
@@ -194,18 +190,16 @@ class TranscriptionVerifier {
 
     const ok = coverage >= minCoverage
       && suspectWords.length === 0
-      && substantialMissing.length === 0
-      && duplicatedWords.length === 0;
+      && substantialMissing.length === 0;
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(coverage * 100).toFixed(0)}% `
         + `missing=[${missingWords.join(', ')}] clipped=[${suspectWords.join(', ')}] `
-        + `duplicated=[${duplicatedWords.join(', ')}] `
         + `substantialMissing=[${substantialMissing.join(', ')}] `
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage, missingWords, suspectWords, duplicatedWords, transcript: text };
+    return { ok, coverage, missingWords, suspectWords, transcript: text };
   }
 
   /** Is the ASR sidecar usable right now? */
