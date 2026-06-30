@@ -15,13 +15,45 @@ import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
-import { COMMA_PAUSE_SECONDS } from '../config.js';
+import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
 } from '../services/runtimePronunciationDictionary.js';
+import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
+import { speakerSimilarity } from '../services/speakerSimilarity.js';
 
 const router = Router();
+
+// Per-chunk acceptance check for the chunked full-quality path. A take is accepted
+// only when ASR confirms it spoke all the words (no skipped/clipped words) AND it
+// still sounds like the reference voice. Either check degrades to "no opinion" if
+// its sidecar is unavailable, so synthesis is never blocked by a verification fault.
+function verificationOptions(params = {}) {
+  const useAsr = TRANSCRIPTION_VERIFY_ENABLED;
+  const refAudioPath = params.ref_audio_path || '';
+  const useSpeaker = SPEAKER_VERIFY_ENABLED && Boolean(refAudioPath);
+  if (!useAsr && !useSpeaker) return {};
+
+  return {
+    verifyChunk: async (audioBuffer, expectedText) => {
+      const [asr, speaker] = await Promise.all([
+        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText) : null,
+        useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
+      ]);
+      if (!asr && !speaker) return null;
+      return {
+        ok: (asr ? asr.ok : true) && (speaker ? speaker.ok : true),
+        coverage: asr?.coverage ?? 1,
+        missingWords: asr?.missingWords ?? [],
+        suspectWords: asr?.suspectWords ?? [],
+        transcript: asr?.transcript,
+        similarity: speaker?.similarity,
+        similarityOk: speaker ? speaker.ok : null,
+      };
+    },
+  };
+}
 
 function readInferenceParams(body) {
   const {
@@ -78,7 +110,17 @@ export async function handleLiveTtsRequest(body, {
 router.get('/inference/status', async (_req, res) => {
   try {
     const status = await inferenceServer.getStatus();
-    res.json(status);
+    res.json({
+      ...status,
+      verification: {
+        enabled: TRANSCRIPTION_VERIFY_ENABLED,
+        ...transcriptionVerifier.getStatus(),
+      },
+      speaker: {
+        enabled: SPEAKER_VERIFY_ENABLED,
+        ...speakerSimilarity.getStatus(),
+      },
+    });
   } catch (err) {
     res.status(500).json({
       ready: false,
@@ -91,7 +133,15 @@ router.get('/inference/status', async (_req, res) => {
 
 router.post('/inference/start', async (_req, res) => {
   try {
-    await syncHotDictionaryOverrides();
+    const sync = await syncHotDictionaryOverrides();
+    // engdict-hot.rep is only read by api_v2.py at startup. When the admin
+    // pronunciation dictionary changed, a server that is already running still
+    // holds the previous pronunciations in memory — so newly added words come
+    // out mispronounced even though they're "in the dictionary". Stop the live
+    // process so start() below respawns it and reloads the updated dictionary.
+    if (sync.changed && inferenceServer.isRunning()) {
+      inferenceServer.stop();
+    }
     const status = await inferenceServer.start();
     activityState.mark();
     res.json(status);
@@ -192,7 +242,7 @@ router.post('/inference', async (req, res) => {
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
-    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions());
+    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions(verificationOptions(qualityParams)));
     activityState.mark();
 
     res.set({
@@ -234,7 +284,7 @@ router.post('/inference/generate', async (req, res) => {
     sseManager.prepareSession(sessionId);
     res.json({ sessionId });
 
-    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions()).catch((err) => {
+    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions(verificationOptions(qualityParams))).catch((err) => {
       console.error(`[inference/generate] failed for ${sessionId}:`, err.message);
       inferenceState.setError(err.message);
       sseManager.send(sessionId, 'error', { message: err.message });

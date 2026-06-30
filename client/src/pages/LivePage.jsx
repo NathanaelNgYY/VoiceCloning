@@ -14,6 +14,7 @@ import {
   startGeneration,
   getCurrentInference,
   getGenerationResultSource,
+  getInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
   savePronunciationEntry,
@@ -419,6 +420,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
   const completingFullTtsSessionRef = useRef('');
+  // Tracks which Full Inference chunks have already been pulled for queued playback.
+  const fullQueuedFetchRef = useRef({ sessionId: '', fetched: 0, busy: false });
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -1868,6 +1871,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
       return;
     }
+    // Full Inference Queue: play each chunk as the server finishes it (progressive
+    // playback), instead of waiting for the whole passage — same UX as Live Fast Queue.
+    if (route === 'fullQueued') {
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true };
+      fullQueuedFetchRef.current = { sessionId: '', fetched: 0, busy: false };
+    }
     setStreamingRoute(route);
     try {
       const res = await startGeneration({ ...baseParams, ...liveFullRefParams });
@@ -2213,6 +2222,48 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       window.clearInterval(interval);
     };
   }, [streamingRoute, ttsInference.reset]);
+
+  // Full Inference Queue progressive playback: each time the server reports another
+  // chunk finished (completedChunks), pull that chunk's audio and enqueue it so it
+  // starts playing before the whole passage is done — the Full-inference analogue
+  // of Live Fast Queue.
+  useEffect(() => {
+    if (streamingRoute !== 'fullQueued') return undefined;
+    const pending = pendingFullTtsRef.current;
+    if (!pending) return undefined;
+
+    const { sessionId } = pending;
+    if (fullQueuedFetchRef.current.sessionId !== sessionId) {
+      fullQueuedFetchRef.current = { sessionId, fetched: 0, busy: false };
+    }
+    const completed = ttsInference.completedChunks;
+    if (completed <= fullQueuedFetchRef.current.fetched) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      const tracker = fullQueuedFetchRef.current;
+      if (tracker.busy) return;
+      tracker.busy = true;
+      try {
+        while (!cancelled && tracker.fetched < completed && queuedTtsRef.current.active) {
+          const index = tracker.fetched;
+          try {
+            const blob = await getInferenceChunk(sessionId, index);
+            queuedTtsRef.current.clips[index] = { index, url: URL.createObjectURL(blob) };
+            playNextQueuedTtsClip();
+          } catch {
+            // Chunk not retrievable yet; a later completedChunks tick will retry it.
+            break;
+          }
+          tracker.fetched = index + 1;
+        }
+      } finally {
+        tracker.busy = false;
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [streamingRoute, ttsInference.completedChunks]);
 
   useEffect(() => {
     if (mode !== 'tts') return;
@@ -3101,7 +3152,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </p>
             )}
             <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Button
                 type="button"
                 onClick={() => generateTextToSpeech('fast')}
@@ -3130,6 +3181,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               >
                 {streamingRoute === 'full' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference TTS
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => generateTextToSpeech('fullQueued')}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
+              >
+                {streamingRoute === 'fullQueued' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                Full Inference Queue
               </Button>
             </div>
 

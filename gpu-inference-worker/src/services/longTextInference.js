@@ -32,6 +32,10 @@ const FULL_QUALITY_OPTIONS = {
   maxChunkLength: 220,
   maxSentencesPerChunk: 1,
   chunkJoinPauseMs: 145,
+  // Up to 5 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
+  // as soon as ASR confirms a complete read. Each take keeps the natural voice
+  // parameters, so more takes never costs voice fidelity — only GPU time on the
+  // chunks that actually need it (a clean chunk still costs a single take).
   retryCount: 4,
   allowBestEffortFallback: true,
 };
@@ -720,9 +724,6 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
 
 export function buildAttemptVariants(baseParams, attemptIndex) {
   const synthesisBaseParams = baseParams;
-  const safeTemperature = clampNumber(baseParams.temperature, 1);
-  const safeTopP = clampNumber(baseParams.top_p, 1);
-  const safeTopK = clampNumber(baseParams.top_k, 5);
   const speed = clampNumber(baseParams.speed_factor, 1);
 
   const requestedSeed = Number(baseParams.seed);
@@ -754,64 +755,39 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     speed_factor: speed,
   };
 
+  // Best-of-N strategy (voice-faithful): the dominant failure is the model
+  // CLIPPING a word partway. Rather than fix a bad take by changing HOW it speaks
+  // (lower temperature, cut1, splitting) — which drifts away from the cloned voice
+  // — every take keeps the natural quality parameters (temperature, top_k, top_p,
+  // cut5) and varies ONLY the seed. Each take is therefore a full, faithful read;
+  // the caller keeps generating (up to retryCount) until ASR confirms a complete
+  // one, then stops (early-accept).
+  //
+  // The single exception is repetition_penalty: a high value penalizes repeated
+  // tokens, and phonemes repeat, so it *causes* clipping while contributing
+  // nothing to voice character. We relax it gently toward the 1.0 floor across
+  // takes — this reduces clipping without touching the delivery. (Below 1.0 would
+  // invite the stutter/looping the penalty exists to suppress.)
+  const REP_PENALTY_FLOOR = 1.0;
+
   if (attemptIndex === 0) {
     return base;
   }
 
-  if (attemptIndex === 1) {
-    return {
-      ...base,
-      seed: (baseSeed + 17) >>> 0,
-      repetition_penalty: safeRepPenalty + 0.1,
-      temperature: Math.max(0.5, safeTemperature * 0.88),
-      fragment_interval: baseInterval + 0.02,
-    };
-  }
-
-  if (attemptIndex === 2) {
-    return {
-      ...base,
-      temperature: Math.max(0.5, safeTemperature * 0.75),
-      top_p: Math.min(0.92, safeTopP),
-      top_k: Math.max(8, Math.min(safeTopK, 15)),
-      fragment_interval: baseInterval + 0.05,
-      repetition_penalty: safeRepPenalty + 0.15,
-      seed: (baseSeed + 31) >>> 0,
-      text_split_method: 'cut4',
-    };
-  }
-
-  if (attemptIndex === 3) {
-    return {
-      ...base,
-      temperature: 0.42,
-      top_p: 0.78,
-      top_k: 8,
-      fragment_interval: baseInterval + 0.1,
-      repetition_penalty: safeRepPenalty + 0.2,
-      seed: (baseSeed + 47) >>> 0,
-      text_split_method: 'cut1',
-      split_bucket: false,
-    };
-  }
-
-  const {
-    batch_size: _batchSize,
-    streaming_mode: _streamingMode,
-    split_bucket: _splitBucket,
-    parallel_infer: _parallelInfer,
-    ...compatBase
-  } = base;
+  // Deterministic, well-spread seed offsets so each take explores a genuinely
+  // different generation without changing any voice-shaping parameter.
+  const SEED_OFFSETS = [0, 17, 31, 47, 67, 89];
+  const seedOffset = attemptIndex < SEED_OFFSETS.length
+    ? SEED_OFFSETS[attemptIndex]
+    : SEED_OFFSETS[SEED_OFFSETS.length - 1] + attemptIndex;
 
   return {
-    ...compatBase,
-    temperature: 0.7,
-    top_p: 0.85,
-    top_k: 5,
-    fragment_interval: baseInterval,
-    repetition_penalty: 1.35,
-    seed: (baseSeed + 67) >>> 0,
-    text_split_method: 'cut5',
+    ...base,
+    seed: (baseSeed + seedOffset) >>> 0,
+    // Gently relax the clip-inducing penalty (1.35 → 1.25 → 1.15 → …), floored at 1.0.
+    repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.1 * attemptIndex),
+    // Tiny pause nudge only; does not alter the voice.
+    fragment_interval: baseInterval + 0.01 * attemptIndex,
   };
 }
 
@@ -857,7 +833,7 @@ function splitChunkInHalf(text) {
   return [left, right];
 }
 
-function scoreAudioCandidate(analysis) {
+function scoreAudioCandidate(analysis, verification = null) {
   const metrics = analysis?.metrics || {};
   const rms = clampNumber(metrics.rms, 0);
   const zeroishRatio = clampNumber(metrics.zeroishRatio, 1);
@@ -874,8 +850,21 @@ function scoreAudioCandidate(analysis) {
     return -1000 + Math.min(rms * 100, 1) + Math.min(absPeak * 100, 1) - clippedRatio;
   }
 
+  // Word coverage (when ASR verification ran) dominates the comparison: among
+  // takes with acceptable audio, the one that actually spoke the most of the
+  // intended words wins, so the best-effort fallback never keeps a take that
+  // dropped words when a more complete one exists. Speaker similarity is a
+  // secondary tie-breaker so, between two equally complete takes, the one that
+  // sounds most like the reference voice is preferred.
+  const coverageBonus = verification ? clampNumber(verification.coverage, 1) * 10 : 0;
+  const similarityBonus = Number.isFinite(verification?.similarity)
+    ? clampNumber(verification.similarity, 0) * 4
+    : 0;
+
   return (
-    durationSec
+    coverageBonus
+    + similarityBonus
+    + durationSec
     + Math.min(rms * 20, 3)
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
@@ -887,6 +876,7 @@ function scoreAudioCandidate(analysis) {
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   const allowBestEffortFallback = Boolean(options.allowBestEffortFallback);
+  const verifyChunk = typeof options.verifyChunk === 'function' ? options.verifyChunk : null;
   let lastError = null;
   let bestCandidate = null;
 
@@ -896,14 +886,38 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     try {
       const audioBuffer = await inferenceServer.synthesize(params, { timeoutMs: 180000 });
       const analysis = analyzeAudioQuality(audioBuffer, chunkText);
-      const score = scoreAudioCandidate(analysis);
+
+      // Only spend ASR on takes whose audio already looks usable; a silent or
+      // clipped take is rejected by analysis alone and needs no transcript.
+      let verification = null;
+      if (verifyChunk && analysis.ok) {
+        verification = await verifyChunk(audioBuffer, chunkText);
+      }
+
+      const score = scoreAudioCandidate(analysis, verification);
       if (!bestCandidate || score > bestCandidate.score) {
-        bestCandidate = { audioBuffer, analysis, paramsUsed: params, attempts: attempt + 1, score };
+        bestCandidate = { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1, score };
       }
       if (!analysis.ok) {
         throw new Error(analysis.reason);
       }
-      return { audioBuffer, analysis, paramsUsed: params, attempts: attempt + 1 };
+      if (verification && !verification.ok) {
+        const missing = verification.missingWords.slice(0, 6).join(', ');
+        const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
+        const voiceDrift = verification.similarityOk === false
+          ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
+          : '';
+        const detail = [
+          missing ? `missing: ${missing}` : '',
+          clipped ? `clipped: ${clipped}` : '',
+          voiceDrift,
+        ].filter(Boolean).join('; ');
+        throw new Error(
+          `Take rejected — covered ${(verification.coverage * 100).toFixed(0)}% of the text`
+          + (detail ? ` (${detail})` : ''),
+        );
+      }
+      return { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
     } catch (error) {
       lastError = error;
     }
@@ -913,6 +927,7 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     return {
       audioBuffer: bestCandidate.audioBuffer,
       analysis: bestCandidate.analysis,
+      verification: bestCandidate.verification,
       paramsUsed: bestCandidate.paramsUsed,
       attempts: retryCount + 1,
       fallback: true,
@@ -927,6 +942,16 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   throw failure;
 }
 
+// Break a stubborn chunk into small pieces (~64 chars) at word boundaries so each
+// problem word ends up in a short, low-drift fragment — the closest we can get to
+// the "say the word on its own" case the model handles cleanly — without globally
+// shrinking every chunk. Tiny fragments are merged so none is short enough to
+// trigger GPT-SoVITS' near-silent-buffer failure.
+function splitChunkFine(text, maxLen = 64) {
+  const pieces = splitLongSentence(text, maxLen);
+  return mergeShortChunks(pieces, MIN_CHUNK_LENGTH);
+}
+
 function pickBestCandidate(candidates) {
   return candidates
     .filter(Boolean)
@@ -936,9 +961,10 @@ function pickBestCandidate(candidates) {
 // Synthesize one chunk with escalating effort and — as a last resort — keep the
 // best audio we produced rather than letting a single stubborn chunk sink an
 // entire long generation. Order: (1) full retry suite on the whole chunk;
-// (2) split the chunk in half and retry each sub-chunk harder; (3) if everything
-// still fails, return the least-bad candidate seen. Only a genuine
-// inference-server error (no audio ever produced) propagates.
+// (2) split the chunk in half and retry each sub-chunk harder; (3) fine-split into
+// small fragments to isolate the offending word; (4) if everything still fails,
+// return the least-bad candidate seen. Only a genuine inference-server error
+// (no audio ever produced) propagates.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   const escalate = { ...options, allowBestEffortFallback: false };
   const salvage = [];
@@ -973,7 +999,29 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     }
   }
 
-  // Pass 3: keep the best audio we saw — never abort the whole job for one chunk.
+  // Pass 3: fine split into small fragments and retry each. This isolates the
+  // offending word in a short, low-drift context (near the "word on its own"
+  // case), which is what finally fixes a word that clips even after re-seeding.
+  const fineChunks = splitChunkFine(chunkText);
+  if (fineChunks.length > subChunks.length) {
+    if (onSplit) onSplit(fineChunks);
+    try {
+      const buffers = [];
+      let attempts = 0;
+      for (const fine of fineChunks) {
+        const fineResult = await synthesizeChunkWithRetry(fine, { ...baseParams, text: fine }, escalate);
+        buffers.push(fineResult.audioBuffer);
+        attempts += fineResult.attempts;
+      }
+      const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+      return { audioBuffer, attempts, split: true };
+    } catch (err) {
+      if (err?.bestCandidate) salvage.push(err.bestCandidate);
+      lastError = err;
+    }
+  }
+
+  // Pass 4: keep the best audio we saw — never abort the whole job for one chunk.
   const best = pickBestCandidate(salvage);
   if (best) {
     console.warn(

@@ -6,6 +6,9 @@ import modelsRoutes from './routes/models.js';
 import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
 import { inferenceServer } from './services/inferenceServer.js';
+import { transcriptionVerifier } from './services/transcriptionVerifier.js';
+import { speakerSimilarity } from './services/speakerSimilarity.js';
+import { TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from './config.js';
 import { buildCorsOriginOption } from './services/corsOrigin.js';
 import {
   clearStartupModelCache,
@@ -32,6 +35,22 @@ app.use('/', activityRoutes);
 
 const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
   console.log(`[gpu-inference-worker] Running on http://${WORKER_HOST}:${WORKER_PORT}`);
+  // Bring the ASR verification sidecar up at boot so its readiness (or failure)
+  // is logged immediately, instead of silently no-op'ing on the first request.
+  if (TRANSCRIPTION_VERIFY_ENABLED) {
+    transcriptionVerifier.warmup().catch((err) => {
+      console.warn(`[transcription] warmup failed: ${err.message}`);
+    });
+  } else {
+    console.log('[transcription] verification DISABLED via TRANSCRIPTION_VERIFY_ENABLED');
+  }
+  if (SPEAKER_VERIFY_ENABLED) {
+    speakerSimilarity.warmup().catch((err) => {
+      console.warn(`[speaker] warmup failed: ${err.message}`);
+    });
+  } else {
+    console.log('[speaker] similarity gate DISABLED via SPEAKER_VERIFY_ENABLED');
+  }
 });
 
 server.timeout = 0;

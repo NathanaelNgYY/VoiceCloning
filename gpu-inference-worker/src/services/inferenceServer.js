@@ -89,6 +89,10 @@ class InferenceServer {
     this.currentSoVITSWeights = '';
   }
 
+  isRunning() {
+    return this.process !== null;
+  }
+
   getLoadedWeights() {
     return {
       gptPath: this.currentGPTWeights,
