@@ -101,6 +101,29 @@ export function handleBrowserMessage(bridge, data) {
   }
 }
 
+export function parseLiveChatInit(data) {
+  let message;
+  try {
+    message = JSON.parse(data.toString());
+  } catch {
+    return null;
+  }
+
+  if (typeof message !== 'object' || message === null || message.type !== 'session.init') {
+    return null;
+  }
+
+  return {
+    systemPrompt: typeof message.systemPrompt === 'string' ? message.systemPrompt : '',
+  };
+}
+
+export function applyLiveChatInitToBridge(bridge, init) {
+  if (init && typeof init.systemPrompt === 'string' && init.systemPrompt.trim()) {
+    bridge.systemPrompt = init.systemPrompt;
+  }
+}
+
 export function attachLiveChatSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
   const activeClients = new Map();
@@ -148,19 +171,42 @@ export function attachLiveChatSocket(server) {
       }
     });
 
+    let connected = false;
+    const ensureConnected = () => {
+      if (connected) return;
+      connected = true;
+      clearTimeout(initTimer);
+      bridge.connect();
+    };
+    // Safety net: a client that never sends session.init must not hang.
+    // Kept short so frontends that don't send a handshake (e.g. the normal
+    // client, which waits for session.ready before sending anything) connect
+    // promptly; still leaves margin for a chatbot client's session.init,
+    // which is sent the instant the socket opens.
+    const initTimer = setTimeout(ensureConnected, 200);
+
     browserSocket.on('message', (data) => {
+      if (!connected) {
+        const init = parseLiveChatInit(data);
+        if (init) {
+          applyLiveChatInitToBridge(bridge, init);
+          ensureConnected();
+          return; // session.init is handshake-only; do not forward downstream.
+        }
+        // First real message arrived before any handshake — connect, then handle it.
+        ensureConnected();
+      }
       handleBrowserMessage(bridge, data);
     });
 
     const closeBridge = () => {
       activeClients.delete(browserSocket);
+      clearTimeout(initTimer);
       bridge.close();
     };
 
     browserSocket.on('close', closeBridge);
     browserSocket.on('error', closeBridge);
-
-    bridge.connect();
   });
 
   return {
