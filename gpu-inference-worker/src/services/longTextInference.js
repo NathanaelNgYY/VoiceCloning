@@ -20,23 +20,31 @@ const DEFAULTS = {
   retryCount: 2,
 };
 
+// Mirror the Live Fast sampling settings: in real GPU tests Live Fast (top_k 5,
+// temperature 0.7) pronounced hard medical words cleanly while this path's hotter
+// sampling (top_k 15) destabilized on the same words. Higher top_k samples from 3×
+// more candidate tokens, which is what let the model wander into "central" /
+// "Tools and Tools" on short isolated chunks. Match Live Fast so Full Inference is
+// at least as stable as the path the user confirmed works.
 const FULL_QUALITY_PRESET = {
-  top_k: 15,
+  top_k: 5,
   top_p: 0.85,
-  temperature: 0.62,
+  temperature: 0.7,
   repetition_penalty: 1.35,
   speed_factor: 1.0,
 };
 
 const FULL_QUALITY_OPTIONS = {
-  // Shorter chunks keep each dictionary-overridden word in a low-drift context.
-  // GPT-SoVITS honours a hot-dictionary pronunciation far more reliably when the
-  // word sits in a short read; in a long chunk it still says the word (no skip)
-  // but the phonemes drift toward the model's own guess. 160 chars (~1 short
-  // clause) is the sweet spot the user confirmed sounds accurate, while still
-  // long enough to avoid the rushed micro-chunk failure mode.
-  maxChunkLength: 200,
-  maxSentencesPerChunk: 1,
+  // Give the model CONTEXT, like Live Fast does. Isolating a short sentence as its
+  // own chunk ("It consists of two centrioles,") removes the surrounding prosody
+  // the model needs and is exactly where it degenerated into "two centrals" /
+  // "Tools and Tools" — while Live Fast, which feeds the whole text, said the same
+  // words cleanly. Group up to a few sentences per chunk so each read has a run-up,
+  // matching the path the user confirmed works. (The earlier one-sentence-per-chunk
+  // theory — that short chunks help hot-dictionary pronunciation — was contradicted
+  // by real audio: the short isolated chunks were the WORST.)
+  maxChunkLength: 320,
+  maxSentencesPerChunk: 3,
   chunkJoinPauseMs: 120,
   // Up to 7 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
   // as soon as ASR confirms a complete read. Each take keeps the natural voice
@@ -843,25 +851,12 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     speed_factor: speed,
   };
 
-  // Best-of-N strategy (voice-faithful): the dominant failure is the model
-  // CLIPPING a word partway. Rather than fix a bad take by changing HOW it speaks
-  // (lower temperature, cut1, splitting) — which drifts away from the cloned voice
-  // — every take keeps the natural quality parameters (temperature, top_k, top_p,
-  // cut5) and varies ONLY the seed. Each take is therefore a full, faithful read;
-  // the caller keeps generating (up to retryCount) until ASR confirms a complete
-  // one, then stops (early-accept).
-  //
-  // The single exception is repetition_penalty: a high value penalizes repeated
-  // tokens, and phonemes repeat, so it *causes* clipping while contributing
-  // nothing to voice character. We relax it gently toward the 1.0 floor across
-  // takes — this reduces clipping without touching the delivery. (Below 1.0 would
-  // invite the stutter/looping the penalty exists to suppress.)
-  // Floored at 1.15, not 1.0: at/near 1.0 GPT-SoVITS readily falls into the
-  // repetition loop heard as a dragging "aaaa" / laughing / drone. Since the
-  // stricter coverage gate now drives more retries, more takes reach the late
-  // (low-penalty) end — so we keep a safety margin above 1.0 and relax in smaller
-  // 0.05 steps. Still enough to ease clipping, without inviting the loop.
-  const REP_PENALTY_FLOOR = 1.15;
+  // Best-of-N strategy (voice-faithful): every take keeps the natural quality
+  // parameters (temperature, top_k, top_p, cut5, repetition_penalty) — identical to
+  // the Live Fast settings that pronounce correctly — and varies ONLY the seed. Each
+  // take is a full, faithful read; the caller keeps generating (up to retryCount)
+  // until ASR confirms a complete one, then stops (early-accept). Nothing about HOW
+  // the model speaks changes between takes, so the cloned voice never drifts.
 
   if (attemptIndex === 0) {
     return base;
@@ -877,8 +872,11 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   return {
     ...base,
     seed: (baseSeed + seedOffset) >>> 0,
-    // Gently relax the clip-inducing penalty (1.35 → 1.30 → 1.25 → …), floored at 1.15.
-    repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.05 * attemptIndex),
+    // Keep repetition_penalty pinned at the base (1.35), like Live Fast. Relaxing it
+    // toward 1.0 to "reduce clipping" was what invited the "barrels of barrels" /
+    // "darrels of darrels" repetition; Live Fast never relaxes it and never stutters.
+    // Retries now vary ONLY the seed — a genuinely different read, no degeneration.
+    repetition_penalty: safeRepPenalty,
     // Tiny pause nudge only; does not alter the voice.
     fragment_interval: baseInterval + 0.01 * attemptIndex,
   };

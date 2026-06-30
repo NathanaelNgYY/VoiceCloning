@@ -166,9 +166,9 @@ test('full inference quality preset fills system defaults when controls are omit
     text: 'Photosynthesis converts light into chemical energy.',
   });
 
-  assert.equal(params.top_k, 15);
+  assert.equal(params.top_k, 5);
   assert.equal(params.top_p, 0.85);
-  assert.equal(params.temperature, 0.62);
+  assert.equal(params.temperature, 0.7);
   assert.equal(params.repetition_penalty, 1.35);
   assert.equal(params.speed_factor, 1.0);
 });
@@ -183,7 +183,7 @@ test('full inference quality chunks keep normal sentences together for flow', ()
   ]);
 });
 
-test('retry takes are voice-faithful: only seed + repetition_penalty change', () => {
+test('retry takes are voice-faithful: ONLY the seed changes', () => {
   const base = applyFullInferenceQualityPreset({
     text: 'Cellular respiration releases energy from glucose.',
     seed: 100,
@@ -193,30 +193,27 @@ test('retry takes are voice-faithful: only seed + repetition_penalty change', ()
   const second = buildAttemptVariants(base, 1);
   const third = buildAttemptVariants(base, 2);
 
-  assert.equal(first.temperature, 0.62);
+  // Sampling params mirror Live Fast (top_k 5, temperature 0.7).
+  assert.equal(first.temperature, 0.7);
   assert.equal(first.top_p, 0.85);
-  assert.equal(first.top_k, 15);
+  assert.equal(first.top_k, 5);
   assert.equal(first.text_split_method, 'cut5');
 
   // Every later take keeps the SAME voice-shaping parameters as the first — the
-  // cloned voice never drifts to recover a word.
+  // cloned voice never drifts to recover a word, and repetition_penalty stays pinned
+  // (relaxing it was what caused the "barrels of barrels" stutter).
   for (const take of [second, third]) {
     assert.equal(take.temperature, first.temperature, 'temperature must not change');
     assert.equal(take.top_p, first.top_p, 'top_p must not change');
     assert.equal(take.top_k, first.top_k, 'top_k must not change');
     assert.equal(take.text_split_method, first.text_split_method, 'split method must not change');
     assert.equal(take.speed_factor, first.speed_factor, 'speed must not change');
+    assert.equal(take.repetition_penalty, first.repetition_penalty, 'repetition_penalty must not change');
   }
 
-  // Only the seed varies (to explore a different read) ...
+  // Only the seed varies (to explore a different read).
   assert.equal(second.seed, 117);
   assert.notEqual(third.seed, second.seed);
-
-  // ... and repetition_penalty relaxes gently toward the 1.0 floor (it causes
-  // clipping but isn't a voice-character parameter).
-  assert.ok(second.repetition_penalty < first.repetition_penalty);
-  assert.ok(third.repetition_penalty < second.repetition_penalty);
-  assert.ok(third.repetition_penalty >= 1.0);
 });
 
 // In full-inference mode (maxSentencesPerChunk: 1) the chunker used to strand a
@@ -355,7 +352,6 @@ test('even a late retry take stays voice-faithful (natural params, just a new se
   assert.equal(params.top_p, first.top_p);
   assert.equal(params.top_k, first.top_k);
   assert.equal(params.text_split_method, first.text_split_method);
-  // repetition_penalty is floored at 1.15 by this point (kept above the
-  // looping-prone 1.0 region).
-  assert.ok(Math.abs(params.repetition_penalty - 1.15) < 1e-9);
+  // repetition_penalty stays pinned at the base across every take (no relaxation).
+  assert.equal(params.repetition_penalty, first.repetition_penalty);
 });
