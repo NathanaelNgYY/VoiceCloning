@@ -38,11 +38,13 @@ const FULL_QUALITY_OPTIONS = {
   maxChunkLength: 200,
   maxSentencesPerChunk: 1,
   chunkJoinPauseMs: 120,
-  // Up to 5 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
+  // Up to 7 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
   // as soon as ASR confirms a complete read. Each take keeps the natural voice
   // parameters, so more takes never costs voice fidelity — only GPU time on the
-  // chunks that actually need it (a clean chunk still costs a single take).
-  retryCount: 4,
+  // chunks that actually need it (a clean chunk still costs a single take). Raised
+  // from 4: when the model drops a hard word in some takes, more takes raise the
+  // odds at least one complete read exists for the best-of-N to keep.
+  retryCount: 6,
   allowBestEffortFallback: true,
 };
 
