@@ -184,3 +184,18 @@ test('only a near-zero audio span is a hard skip', () => {
   ]);
   assert.ok(skippedWords.includes('cells'), JSON.stringify(skippedWords));
 });
+
+test('a HALF-CUT word (short audio AND low confidence together) is a hard skip', () => {
+  // "microtubules" given 0.2s (too short for 12 chars) AND low confidence (0.1) =
+  // the model said part of it then cut, and Whisper is unsure. Must re-roll.
+  const cut = findClippedWords('barrels of nine triplet microtubules', [
+    word('barrels', 0.5), word('of', 0.2), word('nine', 0.3), word('triplet', 0.5), word('microtubules', 0.2, 0.1),
+  ]);
+  assert.ok(cut.skippedWords.includes('microtubules'), JSON.stringify(cut));
+
+  // Same short span but CONFIDENT (brisk complete word) -> NOT a hard skip.
+  const brisk = findClippedWords('barrels of nine triplet microtubules', [
+    word('barrels', 0.5), word('of', 0.2), word('nine', 0.3), word('triplet', 0.5), word('microtubules', 0.2, 0.97),
+  ]);
+  assert.ok(!brisk.skippedWords.includes('microtubules'), JSON.stringify(brisk));
+});

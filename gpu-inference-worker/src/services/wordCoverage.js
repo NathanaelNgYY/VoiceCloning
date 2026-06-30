@@ -237,22 +237,22 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     const match = actual[foundIndex];
 
     // skippedSpan = near-zero audio under the word: the model never really spoke it
-    // and Whisper hallucinated it back from context. This is the ONE reliable hard
-    // signal, because it does not depend on Whisper's (imprecise) word-boundary times.
+    // and Whisper hallucinated it back from context. Reliable hard skip on its own.
     const skippedSpan = match.duration < minWordDuration;
 
-    // tooShort (per-char duration) and tooQuiet (confidence) are NOISY: Whisper's
-    // adjacent word boundaries are fuzzy, so a briskly-spoken complete word looks
-    // "too short", and rare words get low confidence even when perfectly said. Using
-    // them as a hard gate re-rolled fully-correct (100%-coverage) takes endlessly and
-    // made generation slow. They are now ADVISORY only — they steer best-of-N toward
-    // the cleanest take, but never force a re-roll. Genuine drops are still caught by
-    // skippedSpan (no audio) and by the coverage / substantial-missing check.
+    // tooShort and tooQuiet are each NOISY alone — a briskly-spoken COMPLETE word
+    // looks "too short" (Whisper's word boundaries are fuzzy), and a rare COMPLETE
+    // word gets low confidence. Using either alone re-rolled fully-correct takes
+    // endlessly. But a genuine HALF-CUT word is BOTH: short audio AND low confidence
+    // (Whisper is unsure precisely because the audio doesn't cover the whole word).
+    // So the half-cut hard signal requires BOTH together, which fires on real cuts
+    // without flagging complete words. Each signal alone stays advisory (scoring).
     const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
     const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
     const tooQuiet = longEnough && match.probability < minProbability;
+    const halfCut = tooShort && tooQuiet;
 
-    if (skippedSpan) skippedWords.push(raw);
+    if (skippedSpan || halfCut) skippedWords.push(raw);
     if (skippedSpan || tooShort || tooQuiet) suspectWords.push(raw);
   }
 

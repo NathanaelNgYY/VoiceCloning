@@ -86,6 +86,26 @@ test('a short-span word with real audio is advisory only and does NOT re-roll', 
   }
 });
 
+test('a half-cut word (short audio AND low confidence) forces a re-roll', async () => {
+  // 100% coverage, but "microtubules" got too little audio AND low confidence =
+  // said partway then cut. Must re-roll even though all words are transcribed.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'barrels of nine triplet microtubules',
+    words: [w('barrels', 0.5), w('of', 0.2), w('nine', 0.3), w('triplet', 0.5), w('microtubules', 0.2, 0.1)],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'barrels of nine triplet microtubules',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.skippedWords.includes('microtubules'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a genuinely skipped word (near-zero audio span) still forces a re-roll', async () => {
   // Whisper hallucinated "centriole" back from context but gave it a 10ms span — no
   // audio under it = real skip. This must still reject even at high coverage.
