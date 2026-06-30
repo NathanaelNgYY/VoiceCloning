@@ -239,6 +239,27 @@ test('a short trailing clause is folded back instead of stranded as a tiny chunk
   }
 });
 
+// A short lead-in to the NEXT sentence ("Structurally,") used to be folded
+// backward onto the previous COMPLETE sentence, producing a chunk that straddled a
+// full stop with a dangling trailing word — the exact chunk the model mangled and
+// dropped words from. It must fold forward into the clause it introduces instead.
+test('a lead-in fragment folds forward, never straddling the previous full stop', () => {
+  const text = 'Each centriole is made up of barrels of nine triplet microtubules. Structurally, three microtubule filaments arrange themselves repeatedly.';
+  const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });
+  for (const chunk of chunks) {
+    assert.ok(chunk.trim().length >= 24, `chunk too short: ${JSON.stringify(chunks)}`);
+    // No chunk should contain a sentence-final period followed by more words.
+    assert.ok(
+      !/[.!?]\s+\S/.test(chunk),
+      `chunk straddles a sentence boundary: ${JSON.stringify(chunk)}`,
+    );
+  }
+  assert.ok(
+    chunks.some(c => /Structurally,\s+three microtubule/i.test(c)),
+    `"Structurally," should lead the next clause: ${JSON.stringify(chunks)}`,
+  );
+});
+
 // The whole point of the long-text path is that one stubborn chunk must never
 // sink a long generation. When every retry yields silence, keep the best-effort
 // audio and finish the job rather than throwing.

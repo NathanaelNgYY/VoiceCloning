@@ -212,22 +212,49 @@ export function splitTextIntoChunks(text, options = {}) {
 // that one of them defeats every retry (and aborts the whole job) climb with
 // length. Fold any sub-minLength fragment into a neighbour so no chunk is ever
 // short enough to trigger that failure mode.
+function endsSentence(text) {
+  const trimmed = String(text || '').trimEnd();
+  if (trimmed.endsWith('...') || trimmed.endsWith('…')) return true;
+  return '.!?。！？'.includes(trimmed.slice(-1));
+}
+
 function mergeShortChunks(chunks, minLength) {
   if (chunks.length <= 1) return chunks;
+
+  // Pass 1: fold a short fragment backward into the previous chunk — but NOT when
+  // that previous chunk already ends a sentence. Gluing e.g. "Structurally," onto
+  // "…microtubules." makes a chunk that straddles a full stop and trails a dangling
+  // lead-in, which the model reliably mangles. Such a fragment is a lead-in to what
+  // FOLLOWS, so leave it standalone here and let pass 2 fold it forward.
   const merged = [];
   for (const chunk of chunks) {
     const text = chunk.trim();
     if (!text) continue;
-    if (merged.length > 0 && text.length < minLength) {
-      merged[merged.length - 1] = `${merged[merged.length - 1]} ${text}`.trim();
+    const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+    if (prev && text.length < minLength && !endsSentence(prev)) {
+      merged[merged.length - 1] = `${prev} ${text}`.trim();
     } else {
       merged.push(text);
     }
   }
-  // A short *leading* fragment has no previous chunk to attach to — fold it forward.
-  while (merged.length > 1 && merged[0].length < minLength) {
-    merged[1] = `${merged[0]} ${merged[1]}`.trim();
-    merged.shift();
+
+  // Pass 2: fold any remaining short chunk forward into its following neighbour.
+  // Covers a short leading fragment ("Typically,") and a lead-in deferred from a
+  // completed sentence ("Structurally,") — both belong with the clause after them.
+  for (let i = 0; i < merged.length - 1;) {
+    if (merged[i].length < minLength) {
+      merged[i + 1] = `${merged[i]} ${merged[i + 1]}`.trim();
+      merged.splice(i, 1);
+    } else {
+      i += 1;
+    }
+  }
+
+  // Pass 3: a short *trailing* chunk has no forward neighbour left — fold it
+  // backward as a last resort so no chunk is ever short enough to render silent.
+  while (merged.length > 1 && merged[merged.length - 1].length < minLength) {
+    merged[merged.length - 2] = `${merged[merged.length - 2]} ${merged[merged.length - 1]}`.trim();
+    merged.pop();
   }
   return merged;
 }
@@ -939,8 +966,12 @@ function scoreAudioCandidate(analysis, verification = null) {
   // heaviest: it's the exact "half-said word" defect we're trying not to ship.
   const clippedCount = verification?.suspectWords?.length || 0;
   const missingCount = verification?.missingWords?.length || 0;
+  // A duplicated word ("barrels of barrels") passes coverage, so penalize it as
+  // heavily as a clip so best-of-N prefers the take that said it exactly once.
+  const duplicatedCount = verification?.duplicatedWords?.length || 0;
   const clippedWordPenalty = clippedCount * 6;
   const missingWordPenalty = missingCount * 4;
+  const duplicatedWordPenalty = duplicatedCount * 6;
 
   return (
     coverageBonus
@@ -949,6 +980,7 @@ function scoreAudioCandidate(analysis, verification = null) {
     + Math.min(rms * 20, 3)
     - clippedWordPenalty
     - missingWordPenalty
+    - duplicatedWordPenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, findDuplicatedWords } from './wordCoverage.js';
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {
@@ -132,4 +132,25 @@ test('repeated expected word needs two occurrences in transcript', () => {
 
   const full = computeWordCoverage('very very mild', 'very very mild');
   assert.equal(full.coverage, 1);
+});
+
+test('findDuplicatedWords flags a stuttered content word ("barrels of barrels")', () => {
+  const { duplicatedWords } = findDuplicatedWords(
+    'Each centriole is made up of barrels of nine triplet microtubules',
+    'Each central is made up of barrels of barrels',
+  );
+  assert.deepEqual(duplicatedWords, ['barrels']);
+});
+
+test('findDuplicatedWords ignores a clean take and legitimately repeated words', () => {
+  assert.equal(
+    findDuplicatedWords('mother centriole and daughter centriole', 'mother centriole and daughter centriole')
+      .duplicatedWords.length,
+    0,
+  );
+  // short function words duplicated by ASR noise are not flagged
+  assert.equal(
+    findDuplicatedWords('made up of barrels', 'made up of of barrels').duplicatedWords.length,
+    0,
+  );
 });

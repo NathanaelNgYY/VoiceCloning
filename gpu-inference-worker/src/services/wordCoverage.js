@@ -122,6 +122,47 @@ export function computeWordCoverage(expectedText, transcript) {
   };
 }
 
+/**
+ * Detect substantial expected words the model spoke MORE times than the text asks
+ * for — the "barrels of barrels" stutter. Coverage is an order-insensitive multiset
+ * match that only checks each word appears at least once, so a duplicated word is
+ * invisible to it (and a best-of-N pick will happily keep the stuttering take). We
+ * compare per-word counts and report any expected content word whose transcript
+ * count EXCEEDS its expected count.
+ *
+ * Restricted to substantial words (length >= MIN_DUPLICATE_LENGTH) and to words
+ * that are actually expected, so ordinary ASR noise and legitimate repeats (e.g.
+ * "very very", which the expected count already allows) don't read as defects.
+ *
+ * @returns {{ duplicatedWords: string[] }} one entry per excess occurrence
+ */
+const MIN_DUPLICATE_LENGTH = 5;
+
+export function findDuplicatedWords(expectedText, transcript) {
+  const expected = tokenize(expectedText).filter(isCountable);
+  if (expected.length === 0) return { duplicatedWords: [] };
+
+  const expectedCounts = new Map();
+  for (const word of expected) {
+    if (word.length >= MIN_DUPLICATE_LENGTH) {
+      expectedCounts.set(word, (expectedCounts.get(word) || 0) + 1);
+    }
+  }
+  if (expectedCounts.size === 0) return { duplicatedWords: [] };
+
+  const actualCounts = new Map();
+  for (const token of tokenize(transcript)) {
+    actualCounts.set(token, (actualCounts.get(token) || 0) + 1);
+  }
+
+  const duplicatedWords = [];
+  for (const [word, allowed] of expectedCounts) {
+    const heard = actualCounts.get(word) || 0;
+    for (let i = allowed; i < heard; i += 1) duplicatedWords.push(word);
+  }
+  return { duplicatedWords };
+}
+
 // A long word the model is most likely to clip. Short words are too noisy to
 // judge on timing/confidence, so we only scrutinize substantial ones (medical
 // terms tend to be long, which is exactly the at-risk case).
