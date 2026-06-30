@@ -50,6 +50,13 @@ export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVIT
 // at each comma / clause break. Bump it for longer comma pauses, lower for tighter speech.
 export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUSE_SECONDS'), 0.1));
 
+// Milliseconds of silence the FULL-INFERENCE path splices into the finished audio at
+// each comma/clause break. Full Inference synthesizes with cut0 (smooth, natural
+// prosody like Live Fast) which gives no comma pause on its own, so we insert a small
+// tunable breath using the Whisper word timestamps. Set 0 to disable. Keep it gentle
+// (~100-160ms); too long sounds stilted.
+export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 120));
+
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended
 // words are present lets us re-roll the bad ones. Critical for medical text.

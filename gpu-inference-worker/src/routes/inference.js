@@ -59,6 +59,7 @@ function verificationOptions(params = {}) {
         missingWords: asr?.missingWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
         skippedWords: asr?.skippedWords ?? [],
+        words: asr?.words ?? [],
         transcript: asr?.transcript,
         similarity: speaker?.similarity,
         similarityOk: speaker ? speaker.ok : null,

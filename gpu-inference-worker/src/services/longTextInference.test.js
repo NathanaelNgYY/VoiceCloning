@@ -8,6 +8,8 @@ import {
   buildAttemptVariants,
   synthesizeLongText,
   concatWavs,
+  insertCommaPauses,
+  parseWav,
 } from './longTextInference.js';
 import { inferenceServer } from './inferenceServer.js';
 
@@ -303,6 +305,34 @@ test('best-effort fallback covers the whole chunk, never a partial span', async 
   } finally {
     mock.restoreAll();
   }
+});
+
+test('insertCommaPauses splices exactly one silence per comma using word timings', () => {
+  const sampleRate = 32000;
+  const audio = makeNoiseWav(2.0, sampleRate); // 2.0s mono PCM16
+  const words = [
+    { w: 'hello', start: 0.0, end: 0.5 },
+    { w: 'world', start: 0.5, end: 1.0 },
+    { w: 'goodbye', start: 1.1, end: 1.6 },
+    { w: 'now', start: 1.6, end: 2.0 },
+  ];
+  const pauseMs = 120;
+  const out = insertCommaPauses(audio, 'hello world, goodbye now', words, pauseMs);
+  const before = parseWav(audio).dataChunk.length;
+  const after = parseWav(out).dataChunk.length;
+  const expectedSilence = Math.round((pauseMs / 1000) * sampleRate) * 2; // mono, 2 bytes/frame
+  assert.equal(after - before, expectedSilence, 'exactly one comma breath inserted');
+});
+
+test('insertCommaPauses is a no-op when disabled, no comma, or word count drifts', () => {
+  const audio = makeNoiseWav(1.0, 32000);
+  const words = [{ w: 'a', start: 0, end: 0.5 }, { w: 'b', start: 0.5, end: 1.0 }];
+  // disabled
+  assert.equal(insertCommaPauses(audio, 'a, b', words, 0).length, audio.length);
+  // no comma
+  assert.equal(insertCommaPauses(audio, 'a b', words, 120).length, audio.length);
+  // word-count drift > 2 (placement would be unreliable) → unchanged
+  assert.equal(insertCommaPauses(audio, 'a, b c d e f', words, 120).length, audio.length);
 });
 
 test('single-chunk full inference preserves the model\'s natural loudness', async () => {

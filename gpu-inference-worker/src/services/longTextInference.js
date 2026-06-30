@@ -4,7 +4,7 @@ import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
-import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS } from '../config.js';
+import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
 
@@ -50,6 +50,9 @@ const FULL_QUALITY_OPTIONS = {
   // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
   retryCount: 3,
   allowBestEffortFallback: true,
+  // Custom comma breath spliced into the finished cut0 audio (ms). Gives a gentle
+  // pause at commas/clauses without cut5's choppiness. Tunable via COMMA_PAUSE_MS.
+  commaPauseMs: COMMA_PAUSE_MS,
 };
 
 // Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a
@@ -333,6 +336,81 @@ function buildWav(fmtChunk, dataChunk) {
   dataChunk.copy(output, dataHeaderOffset + 8);
 
   return output;
+}
+
+// Index (among spoken words, in order) of every expected word that is immediately
+// followed by a comma / clause break — i.e. where we want a small breath. Counts a
+// "word" the same way ASR lists them (one per whitespace-separated token containing a
+// letter/digit) so the index lines up with the Whisper `words` array.
+function commaBreakWordIndices(text) {
+  const set = new Set();
+  const tokens = String(text || '').trim().split(/\s+/u);
+  let wordIndex = -1;
+  for (const tok of tokens) {
+    if (!/[\p{L}\p{N}]/u.test(tok)) continue; // punctuation-only token: not a word
+    wordIndex += 1;
+    // strip trailing closing quotes/brackets, then check for a clause-break mark.
+    const tail = tok.replace(/['")\]]+$/u, '');
+    if (/[,;:，；：]$/u.test(tail)) set.add(wordIndex);
+  }
+  return set;
+}
+
+/**
+ * Splice a small silence into finished (cut0) audio at each comma/clause break, using
+ * the Whisper word timestamps for placement. Keeps cut0's smooth, natural prosody but
+ * adds the gentle comma breath cut0 lacks — without cut5's per-fragment choppiness.
+ *
+ * Degrades safely: if the audio isn't PCM16, there are no breaks, the timestamps are
+ * missing, or the heard word count doesn't line up with the expected words (so
+ * placement would be unreliable), it returns the audio unchanged (plain cut0).
+ *
+ * @param {Buffer} audioBuffer  finished chunk WAV (PCM16)
+ * @param {string} expectedText the chunk text (source of comma positions)
+ * @param {Array<{w:string,start:number,end:number}>} words Whisper word timings
+ * @param {number} pauseMs      silence to insert per break
+ */
+export function insertCommaPauses(audioBuffer, expectedText, words, pauseMs) {
+  if (!(pauseMs > 0) || !Array.isArray(words) || words.length === 0) return audioBuffer;
+  const breakIndices = commaBreakWordIndices(expectedText);
+  if (breakIndices.size === 0) return audioBuffer;
+
+  let wav;
+  try { wav = parseWav(audioBuffer); } catch { return audioBuffer; }
+  if (wav.bitsPerSample !== 16 || wav.sampleRate <= 0) return audioBuffer;
+
+  // Alignment guard: only place breaths when the heard word count is close to the
+  // expected count, otherwise the index→timestamp mapping would drift and drop a
+  // breath in the wrong place. (A real skip would already have been re-rolled.)
+  const expectedWordCount = String(expectedText || '').trim().split(/\s+/u)
+    .filter((t) => /[\p{L}\p{N}]/u.test(t)).length;
+  if (expectedWordCount === 0 || Math.abs(words.length - expectedWordCount) > 2) return audioBuffer;
+
+  const bytesPerFrame = wav.numChannels * 2;
+  const silence = Buffer.alloc(Math.round((pauseMs / 1000) * wav.sampleRate) * bytesPerFrame);
+  if (silence.length === 0) return audioBuffer;
+
+  // Byte offsets (frame-aligned, ascending) just after each pre-break word ends.
+  const offsets = [];
+  for (const idx of breakIndices) {
+    const word = words[idx];
+    if (!word || !Number.isFinite(word.end)) continue;
+    const frame = Math.round(word.end * wav.sampleRate);
+    const byte = Math.max(0, Math.min(wav.dataChunk.length, frame * bytesPerFrame));
+    offsets.push(byte);
+  }
+  if (offsets.length === 0) return audioBuffer;
+  offsets.sort((a, b) => a - b);
+
+  const parts = [];
+  let prev = 0;
+  for (const off of offsets) {
+    parts.push(wav.dataChunk.slice(prev, off));
+    parts.push(silence);
+    prev = off;
+  }
+  parts.push(wav.dataChunk.slice(prev));
+  return buildWav(wav.fmtChunk, Buffer.concat(parts));
 }
 
 /**
@@ -981,6 +1059,15 @@ function scoreAudioCandidate(analysis, verification = null) {
   );
 }
 
+// Apply the custom comma breath to a finished take, if enabled and we have the
+// Whisper word timings from verification. No-op (returns audio unchanged) otherwise,
+// so the non-verified path just keeps plain cut0.
+function withCommaPauses(audioBuffer, chunkText, verification, options) {
+  const pauseMs = clampNumber(options.commaPauseMs, 0);
+  if (!(pauseMs > 0) || !verification || !Array.isArray(verification.words)) return audioBuffer;
+  return insertCommaPauses(audioBuffer, chunkText, verification.words, pauseMs);
+}
+
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   const allowBestEffortFallback = Boolean(options.allowBestEffortFallback);
@@ -1025,7 +1112,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
           + (detail ? ` (${detail})` : ''),
         );
       }
-      return { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
+      const paused = withCommaPauses(audioBuffer, chunkText, verification, options);
+      return { audioBuffer: paused, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
     } catch (error) {
       lastError = error;
     }
@@ -1033,7 +1121,7 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
 
   if (allowBestEffortFallback && bestCandidate) {
     return {
-      audioBuffer: bestCandidate.audioBuffer,
+      audioBuffer: withCommaPauses(bestCandidate.audioBuffer, chunkText, bestCandidate.verification, options),
       analysis: bestCandidate.analysis,
       verification: bestCandidate.verification,
       paramsUsed: bestCandidate.paramsUsed,

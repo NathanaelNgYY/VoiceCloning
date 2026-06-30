@@ -224,7 +224,7 @@ class TranscriptionVerifier {
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, transcript: text };
+    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, transcript: text, words };
   }
 
   /** Is the ASR sidecar usable right now? */
