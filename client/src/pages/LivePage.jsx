@@ -373,7 +373,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   // Chatbot synthesis engine: 'fast' (live/tts-sentence) or 'full' (/inference for accuracy).
-  const [liveEngine, setLiveEngine] = useState('fast');
+  // Kiosk defaults to Live Full for best voice quality; the toggle stays visible.
+  const [liveEngine, setLiveEngine] = useState(APP_MODE_CONFIG.defaultLiveEngine);
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);

@@ -73,3 +73,10 @@ test('getAppModeConfig leaves live-fast mode unchanged', () => {
   assert.equal(config.kiosk, false);
   assert.deepEqual(config.navItems.map((i) => i.label), ['Live Fast', 'Text to Speech']);
 });
+
+test('getAppModeConfig defaults the live engine to full only in chatbot mode', () => {
+  assert.equal(getAppModeConfig('chatbot').defaultLiveEngine, 'full');
+  assert.equal(getAppModeConfig('combined').defaultLiveEngine, 'fast');
+  assert.equal(getAppModeConfig('live-fast').defaultLiveEngine, 'fast');
+  assert.equal(getAppModeConfig('training').defaultLiveEngine, 'fast');
+});
