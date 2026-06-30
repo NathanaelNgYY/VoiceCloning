@@ -21,6 +21,15 @@ function tokenize(text) {
 //   - anything containing a digit: pure numerals (Whisper spells "19" as
 //     "nineteen") AND alphanumeric codes / IDs like "nct01675856", which Whisper
 //     mangles even when the audio is correct.
+// Total spoken-word token count. A SKIP removes a token; a MISPRONUNCIATION keeps
+// the count (one word in, one (wrong) word out). So comparing expected vs heard
+// token counts is a robust "were all the words actually spoken?" signal that does
+// NOT depend on Whisper spelling a rare medical term correctly. Used to forgive a
+// dictionary word that Whisper mis-transcribed but the model did speak.
+export function countWords(text) {
+  return tokenize(text).length;
+}
+
 function isCountable(token) {
   if (token.length < 2) return false;
   if (/\p{N}/u.test(token)) return false;
@@ -199,7 +208,7 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     .filter(isCountable)
     .map((raw) => ({ raw, key: canonicalize(raw) }));
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
-    return { suspectWords: [] };
+    return { suspectWords: [], skippedWords: [] };
   }
 
   const actual = words.map((entry) => ({
@@ -210,6 +219,7 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
 
   const consumed = new Array(actual.length).fill(false);
   const suspectWords = [];
+  const skippedWords = [];
 
   for (const { raw, key } of expected) {
     let foundIndex = -1;
@@ -227,17 +237,23 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     const match = actual[foundIndex];
 
     // Absolute-duration check runs on EVERY word (catches hallucinated skips of any
-    // length). A 0-duration span counts too — that's the strongest skip signal.
+    // length). A 0-duration span counts too — that's the strongest skip signal. This
+    // is the RELIABLE signal (no audio under the word = genuinely skipped), so it is
+    // the only one allowed to force a re-roll.
     const skippedSpan = match.duration < minWordDuration;
 
     // Confidence and per-character timing are noisier on short words, so only
-    // scrutinize those on substantial content words (the at-risk long terms).
+    // scrutinize those on substantial content words (the at-risk long terms). These
+    // are ADVISORY: they false-positive on briskly/quietly-spoken real words (e.g.
+    // a clean take rejected over "daughter"), so they feed best-of-N scoring only,
+    // never a hard re-roll.
     const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
     const tooQuiet = longEnough && match.probability < minProbability;
     const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
 
+    if (skippedSpan) skippedWords.push(raw);
     if (skippedSpan || tooQuiet || tooShort) suspectWords.push(raw);
   }
 
-  return { suspectWords };
+  return { suspectWords, skippedWords };
 }

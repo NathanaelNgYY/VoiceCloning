@@ -35,24 +35,21 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  // Give the model CONTEXT, like Live Fast does. Isolating a short sentence as its
-  // own chunk ("It consists of two centrioles,") removes the surrounding prosody
-  // the model needs and is exactly where it degenerated into "two centrals" /
-  // "Tools and Tools" — while Live Fast, which feeds the whole text, said the same
-  // words cleanly. Group up to a few sentences per chunk so each read has a run-up,
-  // matching the path the user confirmed works. (The earlier one-sentence-per-chunk
-  // theory — that short chunks help hot-dictionary pronunciation — was contradicted
-  // by real audio: the short isolated chunks were the WORST.)
-  maxChunkLength: 320,
-  maxSentencesPerChunk: 3,
+  // Give the model CONTEXT like Live Fast, which feeds the whole text and pronounces
+  // cleanly. Isolating a short sentence ("It consists of two centrioles,") removed
+  // the surrounding prosody and was exactly where the model degenerated into "two
+  // centrals" / "Tools and Tools". So group generously and break only at SENTENCE
+  // ends (never at commas — those become natural cut5 pauses inside the chunk, like
+  // Live Fast), capped so a re-roll never re-does an entire long document. Typical
+  // short replies (incl. Live Full Queue) become a single Live-Fast-style chunk.
+  maxChunkLength: 500,
+  maxSentencesPerChunk: 50, // effectively length-governed; sentence cap is just a guard
   chunkJoinPauseMs: 120,
-  // Up to 7 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
-  // as soon as ASR confirms a complete read. Each take keeps the natural voice
-  // parameters, so more takes never costs voice fidelity — only GPU time on the
-  // chunks that actually need it (a clean chunk still costs a single take). Raised
-  // from 4: when the model drops a hard word in some takes, more takes raise the
-  // odds at least one complete read exists for the best-of-N to keep.
-  retryCount: 6,
+  // Voice-faithful takes per chunk (retryCount = takes - 1), early-accept as soon as
+  // ASR confirms a complete read. Lowered from 6 to 3: with sampling now matching
+  // Live Fast, the relaxed advisory-clip gate, and dictionary-word presence checking,
+  // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
+  retryCount: 3,
   allowBestEffortFallback: true,
 };
 
@@ -197,16 +194,19 @@ export function splitTextIntoChunks(text, options = {}) {
       sentenceCount += 1;
     }
 
-    // Force a chunk boundary after any pause-worthy punctuation so silence is inserted between chunks
+    // Break a chunk only at a SENTENCE end (never at a comma -- commas stay inside
+    // the chunk and become natural cut5 pauses, like Live Fast, instead of a
+    // chunk-join silence), and only once the chunk is reasonably full. This lets
+    // several short sentences group into one context-rich, naturally-flowing read
+    // while still breaking at clean sentence boundaries near the length cap.
     const trimmed = current.trimEnd();
     const lastChar = trimmed.slice(-1);
-    const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
-    if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
-      if (trimmed.length >= MIN_CHUNK_LENGTH) {
-        chunks.push(trimmed);
-        current = '';
-        sentenceCount = 0;
-      }
+    const endsSentence = trimmed.endsWith('...') || trimmed.endsWith('…') || '.!?。！？'.includes(lastChar);
+    const fullEnough = trimmed.length >= Math.floor(maxChunkLength * 0.6);
+    if (trimmed && endsSentence && fullEnough) {
+      chunks.push(trimmed);
+      current = '';
+      sentenceCount = 0;
     }
   }
 

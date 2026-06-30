@@ -19,6 +19,7 @@ import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABL
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
+  loadRuntimePronunciationEntries,
 } from '../services/runtimePronunciationDictionary.js';
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
@@ -37,8 +38,18 @@ function verificationOptions(params = {}) {
 
   return {
     verifyChunk: async (audioBuffer, expectedText) => {
+      // Admin pronunciation-dictionary words are rare medical terms Whisper often
+      // mis-transcribes; pass them so the verifier checks their PRESENCE (word count)
+      // rather than demanding correct spelling — kills wasted re-rolls on those words.
+      let dictionaryWords = [];
+      if (useAsr) {
+        try {
+          const entries = await loadRuntimePronunciationEntries();
+          dictionaryWords = entries.map((e) => e.word).filter(Boolean);
+        } catch { /* no dictionary → strict spelling check, as before */ }
+      }
       const [asr, speaker] = await Promise.all([
-        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText) : null,
+        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
       if (!asr && !speaker) return null;
@@ -47,6 +58,7 @@ function verificationOptions(params = {}) {
         coverage: asr?.coverage ?? 1,
         missingWords: asr?.missingWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
+        skippedWords: asr?.skippedWords ?? [],
         transcript: asr?.transcript,
         similarity: speaker?.similarity,
         similarityOk: speaker ? speaker.ok : null,

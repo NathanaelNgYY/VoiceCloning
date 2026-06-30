@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, countWords } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -165,7 +165,7 @@ class TranscriptionVerifier {
    *
    * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
    */
-  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE } = {}) {
+  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [] } = {}) {
     let result;
     try {
       result = await this.transcribeBuffer(audioBuffer);
@@ -174,32 +174,55 @@ class TranscriptionVerifier {
       return null;
     }
     const { text, words } = result;
-    const { coverage, missingWords } = computeWordCoverage(expectedText, text);
-    // A word can pass coverage (Whisper fills it in) yet have been clipped — catch
-    // those via per-word confidence/timing so the chunk still gets re-rolled.
-    const { suspectWords } = findClippedWords(expectedText, words);
+    const { coverage, missingWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
+    // skippedWords = words with no audio under them (reliable genuine skips → re-roll).
+    // suspectWords = low-confidence/short (advisory only → best-of-N scoring, never a
+    // hard re-roll, because they false-positive on clean takes like "daughter").
+    const { suspectWords, skippedWords } = findClippedWords(expectedText, words);
 
-    // Coverage is a FRACTION, so on a long chunk a single dropped or mispronounced
-    // word (~3% of 30 words) clears the threshold even though it would fail a short
-    // chunk. That asymmetry is why long chunks ship half-said / mispronounced words
-    // while short ones don't. Gate on the ABSOLUTE count of substantial content
-    // words (the at-risk medical/technical terms) so a 30-word chunk is as strict
-    // per-word as a 5-word one: any substantial word missing → re-roll, regardless
-    // of the overall percentage.
-    const substantialMissing = missingWords.filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
+    // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
+    // strict per-word as a short one.
+    let substantialMissing = missingWords.filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
 
-    const ok = coverage >= minCoverage
-      && suspectWords.length === 0
+    // Dictionary (admin ARPAbet) words are rare medical terms Whisper-medium often
+    // mis-transcribes even when the model said them correctly ("centriole"→"central"),
+    // which used to force endless wasted re-rolls. For these words we trust the
+    // ARPAbet and verify PRESENCE, not spelling: a mispronunciation keeps the spoken
+    // word count, a skip lowers it. So if the only substantial misses are dictionary
+    // words AND the heard word count matches the expected count (nothing dropped),
+    // treat them as spoken-but-mistranscribed instead of missing. A real skip lowers
+    // the count → not forgiven → still re-rolled (safe for medical text).
+    const dictSet = new Set(dictionaryWords.map((w) => String(w || '').toLowerCase()).filter(Boolean));
+    let forgivenDict = [];
+    let adjustedCoverage = coverage;
+    if (dictSet.size > 0) {
+      const expectedTokens = countWords(expectedText);
+      const heardTokens = countWords(text);
+      const countConsistent = expectedTokens > 0 && heardTokens >= Math.floor(expectedTokens * 0.9);
+      if (countConsistent) {
+        forgivenDict = missingWords.filter((w) => dictSet.has(w.toLowerCase()));
+        if (forgivenDict.length > 0) {
+          substantialMissing = substantialMissing.filter((w) => !dictSet.has(w.toLowerCase()));
+          adjustedCoverage = expectedCount > 0
+            ? (matchedCount + forgivenDict.length) / expectedCount
+            : 1;
+        }
+      }
+    }
+
+    const ok = adjustedCoverage >= minCoverage
+      && skippedWords.length === 0
       && substantialMissing.length === 0;
     if (!ok) {
       console.log(
-        `[transcription] chunk REJECTED coverage=${(coverage * 100).toFixed(0)}% `
-        + `missing=[${missingWords.join(', ')}] clipped=[${suspectWords.join(', ')}] `
-        + `substantialMissing=[${substantialMissing.join(', ')}] `
+        `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
+        + `missing=[${missingWords.join(', ')}] skipped=[${skippedWords.join(', ')}] `
+        + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
+        + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage, missingWords, suspectWords, transcript: text };
+    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, transcript: text };
   }
 
   /** Is the ASR sidecar usable right now? */
