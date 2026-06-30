@@ -370,25 +370,30 @@ function commaBreakWordIndices(text) {
  * @param {Array<{w:string,start:number,end:number}>} words Whisper word timings
  * @param {number} pauseMs      silence to insert per break
  */
-export function insertCommaPauses(audioBuffer, expectedText, words, pauseMs) {
-  if (!(pauseMs > 0) || !Array.isArray(words) || words.length === 0) return audioBuffer;
+// Returns { audioBuffer, inserted, reason }. `reason` is set only when nothing was
+// inserted, so callers can log WHY the breath was skipped.
+function computeCommaPauses(audioBuffer, expectedText, words, pauseMs) {
+  if (!(pauseMs > 0)) return { audioBuffer, inserted: 0, reason: 'disabled' };
+  if (!Array.isArray(words) || words.length === 0) return { audioBuffer, inserted: 0, reason: 'no-timings' };
   const breakIndices = commaBreakWordIndices(expectedText);
-  if (breakIndices.size === 0) return audioBuffer;
+  if (breakIndices.size === 0) return { audioBuffer, inserted: 0, reason: 'no-comma' };
 
   let wav;
-  try { wav = parseWav(audioBuffer); } catch { return audioBuffer; }
-  if (wav.bitsPerSample !== 16 || wav.sampleRate <= 0) return audioBuffer;
+  try { wav = parseWav(audioBuffer); } catch { return { audioBuffer, inserted: 0, reason: 'unparseable-wav' }; }
+  if (wav.bitsPerSample !== 16 || wav.sampleRate <= 0) return { audioBuffer, inserted: 0, reason: 'not-pcm16' };
 
   // Alignment guard: only place breaths when the heard word count is close to the
   // expected count, otherwise the index→timestamp mapping would drift and drop a
   // breath in the wrong place. (A real skip would already have been re-rolled.)
   const expectedWordCount = String(expectedText || '').trim().split(/\s+/u)
     .filter((t) => /[\p{L}\p{N}]/u.test(t)).length;
-  if (expectedWordCount === 0 || Math.abs(words.length - expectedWordCount) > 2) return audioBuffer;
+  if (expectedWordCount === 0 || Math.abs(words.length - expectedWordCount) > 2) {
+    return { audioBuffer, inserted: 0, reason: `word-count-drift(expected ${expectedWordCount}, heard ${words.length})` };
+  }
 
   const bytesPerFrame = wav.numChannels * 2;
   const silence = Buffer.alloc(Math.round((pauseMs / 1000) * wav.sampleRate) * bytesPerFrame);
-  if (silence.length === 0) return audioBuffer;
+  if (silence.length === 0) return { audioBuffer, inserted: 0, reason: 'zero-silence' };
 
   // Byte offsets (frame-aligned, ascending) just after each pre-break word ends.
   const offsets = [];
@@ -399,7 +404,7 @@ export function insertCommaPauses(audioBuffer, expectedText, words, pauseMs) {
     const byte = Math.max(0, Math.min(wav.dataChunk.length, frame * bytesPerFrame));
     offsets.push(byte);
   }
-  if (offsets.length === 0) return audioBuffer;
+  if (offsets.length === 0) return { audioBuffer, inserted: 0, reason: 'no-valid-offsets' };
   offsets.sort((a, b) => a - b);
 
   const parts = [];
@@ -410,7 +415,25 @@ export function insertCommaPauses(audioBuffer, expectedText, words, pauseMs) {
     prev = off;
   }
   parts.push(wav.dataChunk.slice(prev));
-  return buildWav(wav.fmtChunk, Buffer.concat(parts));
+  return { audioBuffer: buildWav(wav.fmtChunk, Buffer.concat(parts)), inserted: offsets.length, reason: null };
+}
+
+/**
+ * Splice a small silence into finished (cut0) audio at each comma/clause break, using
+ * the Whisper word timestamps for placement. Keeps cut0's smooth, natural prosody but
+ * adds the gentle comma breath cut0 lacks — without cut5's per-fragment choppiness.
+ *
+ * Degrades safely: if the audio isn't PCM16, there are no breaks, the timestamps are
+ * missing, or the heard word count doesn't line up with the expected words (so
+ * placement would be unreliable), it returns the audio unchanged (plain cut0).
+ *
+ * @param {Buffer} audioBuffer  finished chunk WAV (PCM16)
+ * @param {string} expectedText the chunk text (source of comma positions)
+ * @param {Array<{w:string,start:number,end:number}>} words Whisper word timings
+ * @param {number} pauseMs      silence to insert per break
+ */
+export function insertCommaPauses(audioBuffer, expectedText, words, pauseMs) {
+  return computeCommaPauses(audioBuffer, expectedText, words, pauseMs).audioBuffer;
 }
 
 /**
@@ -1064,8 +1087,18 @@ function scoreAudioCandidate(analysis, verification = null) {
 // so the non-verified path just keeps plain cut0.
 function withCommaPauses(audioBuffer, chunkText, verification, options) {
   const pauseMs = clampNumber(options.commaPauseMs, 0);
-  if (!(pauseMs > 0) || !verification || !Array.isArray(verification.words)) return audioBuffer;
-  return insertCommaPauses(audioBuffer, chunkText, verification.words, pauseMs);
+  if (!(pauseMs > 0)) return audioBuffer;
+  const words = verification && Array.isArray(verification.words) ? verification.words : [];
+  const { audioBuffer: out, inserted, reason } = computeCommaPauses(audioBuffer, chunkText, words, pauseMs);
+  const preview = chunkText.slice(0, 50);
+  if (inserted > 0) {
+    console.log(`[comma-pause] inserted ${inserted} breath(s) @${pauseMs}ms into "${preview}"`);
+  } else if (reason && reason !== 'no-comma' && reason !== 'disabled') {
+    // 'no-comma'/'disabled' are normal and silent; log only the informative skips
+    // (esp. word-count-drift / no-timings) so a missing pause is explainable.
+    console.log(`[comma-pause] skipped (${reason}) for "${preview}"`);
+  }
+  return out;
 }
 
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
