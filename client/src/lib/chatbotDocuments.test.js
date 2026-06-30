@@ -80,6 +80,6 @@ test('resolveChatbotDocuments returns [] when storage is empty or invalid', () =
   });
 });
 
-test('MAX_DOCUMENTS_CHARS is 100000', () => {
-  assert.equal(MAX_DOCUMENTS_CHARS, 100000);
+test('MAX_DOCUMENTS_CHARS is 180000', () => {
+  assert.equal(MAX_DOCUMENTS_CHARS, 180000);
 });

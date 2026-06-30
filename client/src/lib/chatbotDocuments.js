@@ -1,5 +1,5 @@
 export const CHATBOT_DOCUMENTS_STORAGE_KEY = 'chatbot.documents';
-export const MAX_DOCUMENTS_CHARS = 100000;
+export const MAX_DOCUMENTS_CHARS = 180000;
 
 export function resolveChatbotDocuments() {
   try {
