@@ -29,9 +29,15 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  maxChunkLength: 220,
+  // Shorter chunks keep each dictionary-overridden word in a low-drift context.
+  // GPT-SoVITS honours a hot-dictionary pronunciation far more reliably when the
+  // word sits in a short read; in a long chunk it still says the word (no skip)
+  // but the phonemes drift toward the model's own guess. 160 chars (~1 short
+  // clause) is the sweet spot the user confirmed sounds accurate, while still
+  // long enough to avoid the rushed micro-chunk failure mode.
+  maxChunkLength: 160,
   maxSentencesPerChunk: 1,
-  chunkJoinPauseMs: 145,
+  chunkJoinPauseMs: 120,
   // Up to 5 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
   // as soon as ASR confirms a complete read. Each take keeps the natural voice
   // parameters, so more takes never costs voice fidelity — only GPU time on the
@@ -382,6 +388,55 @@ function findZeroCrossing(data, edge, searchRange = 64) {
 }
 
 /**
+ * Trim leading/trailing near-silence from a PCM16 chunk so the ONLY gap between
+ * chunks is the deterministic join pause we insert ourselves.
+ *
+ * GPT-SoVITS appends a variable amount of trailing silence (and sometimes a
+ * leading lead-in) to every chunk. Because Live Full forces a chunk boundary
+ * after each punctuation mark, a passage spawns many chunks, and that model
+ * silence STACKS on top of our join pause — so the same sentence pauses for very
+ * different lengths run to run, which reads as "the pause is sometimes too long".
+ * Stripping it makes every inter-chunk gap equal to pauseForPunctuation alone.
+ *
+ * A guard margin is preserved at each edge so a real speech onset/offset (a soft
+ * consonant, a trailing breath) is never clipped — we only remove the dead air
+ * past that margin.
+ */
+function trimEdgeSilence(data, parsedWav, { thresholdAbs = 0.0035, guardMs = 30 } = {}) {
+  const blockAlign = parsedWav.blockAlign;
+  const totalFrames = Math.floor(data.length / blockAlign);
+  if (totalFrames < 256) return data; // too short to safely trim
+
+  const threshold = Math.round(thresholdAbs * 32768);
+  const guardFrames = Math.round((guardMs / 1000) * parsedWav.sampleRate);
+
+  const frameAbsPeak = (frame) => {
+    let peak = 0;
+    for (let ch = 0; ch < parsedWav.numChannels; ch++) {
+      const offset = frame * blockAlign + ch * 2;
+      if (offset + 1 < data.length) {
+        const sample = Math.abs(data.readInt16LE(offset));
+        if (sample > peak) peak = sample;
+      }
+    }
+    return peak;
+  };
+
+  let firstAudible = 0;
+  while (firstAudible < totalFrames && frameAbsPeak(firstAudible) <= threshold) firstAudible += 1;
+  if (firstAudible >= totalFrames) return data; // entirely silent — leave for analysis to reject
+
+  let lastAudible = totalFrames - 1;
+  while (lastAudible > firstAudible && frameAbsPeak(lastAudible) <= threshold) lastAudible -= 1;
+
+  const startFrame = Math.max(0, firstAudible - guardFrames);
+  const endFrame = Math.min(totalFrames, lastAudible + 1 + guardFrames);
+  if (startFrame === 0 && endFrame === totalFrames) return data;
+
+  return data.subarray(startFrame * blockAlign, endFrame * blockAlign);
+}
+
+/**
  * Trim a PCM16 chunk buffer to nearest zero crossings at both edges.
  */
 function trimToZeroCrossings(data, blockAlign) {
@@ -560,7 +615,8 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
       if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
       if (fadeOut > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeOut, 'out');
     }
-    const trimmed = isPCM16 ? trimToZeroCrossings(chunk, first.blockAlign) : chunk;
+    const desilenced = isPCM16 ? trimEdgeSilence(chunk, first) : chunk;
+    const trimmed = isPCM16 ? trimToZeroCrossings(desilenced, first.blockAlign) : desilenced;
     joinedChunks.push(trimmed);
     if (index < parsed.length - 1) {
       const gap = pauses[index] ?? DEFAULTS.chunkJoinPauseMs;
