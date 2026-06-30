@@ -134,12 +134,14 @@ router.get('/inference/status', async (_req, res) => {
 router.post('/inference/start', async (_req, res) => {
   try {
     const sync = await syncHotDictionaryOverrides();
-    // engdict-hot.rep is only read by api_v2.py at startup. When the admin
-    // pronunciation dictionary changed, a server that is already running still
-    // holds the previous pronunciations in memory — so newly added words come
-    // out mispronounced even though they're "in the dictionary". Stop the live
-    // process so start() below respawns it and reloads the updated dictionary.
-    if (sync.changed && inferenceServer.isRunning()) {
+    // engdict-hot.rep is only read by api_v2.py when it rebuilds the compiled
+    // dictionary (engdict_cache.pickle). The sync rewrites the hot file AND drops a
+    // stale cache so the rebuild actually happens; either event means a running
+    // process still holds the previous pronunciations in memory. Stop it so start()
+    // below respawns it, regenerates the cache from the hot file, and reloads the
+    // updated dictionary. (cacheInvalidated covers an already-current hot file whose
+    // entries never made it into a pre-existing stale cache.)
+    if ((sync.changed || sync.cacheInvalidated) && inferenceServer.isRunning()) {
       inferenceServer.stop();
     }
     const status = await inferenceServer.start();
