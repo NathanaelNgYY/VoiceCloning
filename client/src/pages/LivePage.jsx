@@ -2996,6 +2996,37 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     persistChatbotDocuments(next);
   }
 
+  // Live Fast / Live Full engine toggle — shared so it can render in both the
+  // full-app top bar and the kiosk (where the rest of the top-bar chrome is hidden).
+  const engineToggle = (
+    <div className="flex items-center gap-2">
+      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Engine</span>
+      <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+        {[
+          { value: 'fast', label: 'Live Fast' },
+          { value: 'full', label: 'Live Full' },
+        ].map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => setLiveEngine(option.value)}
+            className={cn(
+              'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+              liveEngine === option.value
+                ? 'bg-primary/10 text-primary'
+                : 'text-slate-500 hover:text-slate-800'
+            )}
+            title={option.value === 'full'
+              ? 'Higher-accuracy /inference route; queues each phrase as soon as it is generated.'
+              : 'Fastest first-word latency; live sentence route.'}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     /* flex-1 + min-h-0 lets this fill the main flex column */
     <div className="animate-fade-in flex min-h-0 flex-1 flex-col gap-3">
@@ -3007,6 +3038,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {isTtsMode ? 'Text to Speech' : 'Live Voice Chat'}
           </span>
         </h1>
+
+        {/* Kiosk: expose only the engine toggle (the rest of the top bar is hidden). */}
+        {kiosk && !isTtsMode && (
+          <div className="flex flex-1 flex-wrap items-center gap-3">
+            {engineToggle}
+          </div>
+        )}
 
         {!kiosk && (
         <div className="flex flex-1 flex-wrap items-center gap-3">
@@ -3060,34 +3098,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
 
           {/* Synthesis engine toggle (chat only) — Live Fast vs Live Full */}
-          {!isTtsMode && (
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Engine</span>
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
-                {[
-                  { value: 'fast', label: 'Live Fast' },
-                  { value: 'full', label: 'Live Full' },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setLiveEngine(option.value)}
-                    className={cn(
-                      'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
-                      liveEngine === option.value
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-slate-500 hover:text-slate-800'
-                    )}
-                    title={option.value === 'full'
-                      ? 'Higher-accuracy /inference route; queues each phrase as soon as it is generated.'
-                      : 'Fastest first-word latency; live sentence route.'}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {!isTtsMode && engineToggle}
 
           {/* Model status + refresh */}
           <div className="ml-auto flex flex-col items-end gap-1.5">
