@@ -334,6 +334,7 @@ test('even a late retry take stays voice-faithful (natural params, just a new se
   assert.equal(params.top_p, first.top_p);
   assert.equal(params.top_k, first.top_k);
   assert.equal(params.text_split_method, first.text_split_method);
-  // repetition_penalty is floored at 1.0 by this point.
-  assert.equal(params.repetition_penalty, 1.0);
+  // repetition_penalty is floored at 1.15 by this point (kept above the
+  // looping-prone 1.0 region).
+  assert.ok(Math.abs(params.repetition_penalty - 1.15) < 1e-9);
 });

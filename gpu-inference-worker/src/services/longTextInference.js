@@ -534,11 +534,11 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   const last = trimmed[trimmed.length - 1] || '';
 
   // Ellipsis — trailing thought, moderate pause
-  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 3.0);
+  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 3.6);
   // Em dash / double dash — brief dramatic pause
   if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 1.2);
   // Period, question mark, exclamation
-  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 2.6);
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 3.2);
   // Colon
   if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 2.0);
   // Semicolon
@@ -766,7 +766,10 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
     reason = 'Generated audio appears heavily clipped or corrupted';
   } else if (durationSec > 1.2 && longestQuietSec > 2.0) {
     reason = `Generated audio contains a long internal pause (${longestQuietSec.toFixed(2)}s)`;
-  } else if (loopScore > 0.6) {
+  } else if (loopScore > 0.5) {
+    // Lowered from 0.6: the dragging "aaaa" / laughing drone is a repetition loop,
+    // and 0.6 let milder (but still audible) loops through. 0.5 catches them while
+    // staying above the autocorrelation of normal sustained vowels.
     reason = `Audio appears to contain repetitive looping (score: ${loopScore.toFixed(2)})`;
   }
 
@@ -824,7 +827,12 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   // nothing to voice character. We relax it gently toward the 1.0 floor across
   // takes — this reduces clipping without touching the delivery. (Below 1.0 would
   // invite the stutter/looping the penalty exists to suppress.)
-  const REP_PENALTY_FLOOR = 1.0;
+  // Floored at 1.15, not 1.0: at/near 1.0 GPT-SoVITS readily falls into the
+  // repetition loop heard as a dragging "aaaa" / laughing / drone. Since the
+  // stricter coverage gate now drives more retries, more takes reach the late
+  // (low-penalty) end — so we keep a safety margin above 1.0 and relax in smaller
+  // 0.05 steps. Still enough to ease clipping, without inviting the loop.
+  const REP_PENALTY_FLOOR = 1.15;
 
   if (attemptIndex === 0) {
     return base;
@@ -840,8 +848,8 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   return {
     ...base,
     seed: (baseSeed + seedOffset) >>> 0,
-    // Gently relax the clip-inducing penalty (1.35 → 1.25 → 1.15 → …), floored at 1.0.
-    repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.1 * attemptIndex),
+    // Gently relax the clip-inducing penalty (1.35 → 1.30 → 1.25 → …), floored at 1.15.
+    repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.05 * attemptIndex),
     // Tiny pause nudge only; does not alter the voice.
     fragment_interval: baseInterval + 0.01 * attemptIndex,
   };
@@ -899,7 +907,11 @@ function scoreAudioCandidate(analysis, verification = null) {
   const durationSec = clampNumber(analysis?.durationSec, 0);
 
   const absPeak = clampNumber(metrics.absPeak, 0);
-  if ((rms < 0.003 && absPeak < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2) {
+  // A clear repetition loop (the dragging "aaaa" / laughing drone) is as
+  // unacceptable as silence — rank it down in the deeply-negative band so a
+  // best-effort fallback prefers ANY non-looping take and never ships the loop
+  // unless every single take looped.
+  if ((rms < 0.003 && absPeak < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2 || loopScore > 0.5) {
     // Unacceptable audio still earns a finite, comparable score (deeply negative,
     // ordered by residual energy) so a last-resort fallback can pick the
     // least-bad take instead of discarding them all and aborting the whole job.
