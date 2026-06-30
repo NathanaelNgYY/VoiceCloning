@@ -65,6 +65,27 @@ test('an advisory clipped word (low confidence, real audio) no longer forces a r
   }
 });
 
+test('a HALF-CUT word (full coverage but too little audio for its length) re-rolls', async () => {
+  // "microtubules" (12 chars) given only 0.2s of audio = ~0.017 s/char, well under
+  // natural pace = said partway then cut. Whisper spells it in full from context so
+  // coverage passes — duration must still catch it and force a re-roll.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'barrels of nine triplet microtubules',
+    words: [w('barrels', 0.5), w('of', 0.2), w('nine', 0.3), w('triplet', 0.5), w('microtubules', 0.2)],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'barrels of nine triplet microtubules',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.skippedWords.includes('microtubules'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a genuinely skipped word (near-zero audio span) still forces a re-roll', async () => {
   // Whisper hallucinated "centriole" back from context but gave it a 10ms span — no
   // audio under it = real skip. This must still reject even at high coverage.

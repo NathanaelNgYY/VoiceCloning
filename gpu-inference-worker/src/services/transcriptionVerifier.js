@@ -175,9 +175,11 @@ class TranscriptionVerifier {
     }
     const { text, words } = result;
     const { coverage, missingWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
-    // skippedWords = words with no audio under them (reliable genuine skips → re-roll).
-    // suspectWords = low-confidence/short (advisory only → best-of-N scoring, never a
-    // hard re-roll, because they false-positive on clean takes like "daughter").
+    // skippedWords = words whose audio span is too short for their length: a genuine
+    // skip (near-zero audio) OR a half-cut word (said partway then stopped). Both are
+    // reliable, duration-based, and force a re-roll. suspectWords additionally
+    // includes low-confidence words, which are ADVISORY only (best-of-N scoring) — a
+    // confident-but-quiet real word ("daughter") must not trigger a re-roll.
     const { suspectWords, skippedWords } = findClippedWords(expectedText, words);
 
     // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
@@ -216,7 +218,7 @@ class TranscriptionVerifier {
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
-        + `missing=[${missingWords.join(', ')}] skipped=[${skippedWords.join(', ')}] `
+        + `missing=[${missingWords.join(', ')}] skipped/cut=[${skippedWords.join(', ')}] `
         + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
         + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
         + `heard="${text.slice(0, 120)}"`,

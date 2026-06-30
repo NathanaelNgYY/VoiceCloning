@@ -236,23 +236,24 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     consumed[foundIndex] = true;
     const match = actual[foundIndex];
 
-    // Absolute-duration check runs on EVERY word (catches hallucinated skips of any
-    // length). A 0-duration span counts too — that's the strongest skip signal. This
-    // is the RELIABLE signal (no audio under the word = genuinely skipped), so it is
-    // the only one allowed to force a re-roll.
-    const skippedSpan = match.duration < minWordDuration;
-
-    // Confidence and per-character timing are noisier on short words, so only
-    // scrutinize those on substantial content words (the at-risk long terms). These
-    // are ADVISORY: they false-positive on briskly/quietly-spoken real words (e.g.
-    // a clean take rejected over "daughter"), so they feed best-of-N scoring only,
-    // never a hard re-roll.
+    // DURATION signals are physical and reliable, and they force a re-roll:
+    //  - skippedSpan: near-zero audio under the word = a hallucinated skip (Whisper
+    //    wrote the word from context but it was never really spoken).
+    //  - tooShort: a substantial word given far too little audio for its length = a
+    //    HALF-CUT word (model said the first part then stopped). Whisper still spells
+    //    it in full from context, so coverage passes — duration is the only signal
+    //    that catches it, and we must NOT let those ship for medical text.
     const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
-    const tooQuiet = longEnough && match.probability < minProbability;
+    const skippedSpan = match.duration < minWordDuration;
     const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
 
-    if (skippedSpan) skippedWords.push(raw);
-    if (skippedSpan || tooQuiet || tooShort) suspectWords.push(raw);
+    // CONFIDENCE is the noisy signal — it false-positives on briskly/quietly-spoken
+    // but fully-present words (a clean take rejected over "daughter"). So it is
+    // ADVISORY only: it feeds best-of-N scoring, never a hard re-roll.
+    const tooQuiet = longEnough && match.probability < minProbability;
+
+    if (skippedSpan || tooShort) skippedWords.push(raw);
+    if (skippedSpan || tooShort || tooQuiet) suspectWords.push(raw);
   }
 
   return { suspectWords, skippedWords };
