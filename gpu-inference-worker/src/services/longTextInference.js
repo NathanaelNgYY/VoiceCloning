@@ -35,7 +35,7 @@ const FULL_QUALITY_OPTIONS = {
   // but the phonemes drift toward the model's own guess. 160 chars (~1 short
   // clause) is the sweet spot the user confirmed sounds accurate, while still
   // long enough to avoid the rushed micro-chunk failure mode.
-  maxChunkLength: 160,
+  maxChunkLength: 200,
   maxSentencesPerChunk: 1,
   chunkJoinPauseMs: 120,
   // Up to 5 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
@@ -544,7 +544,7 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   // Semicolon
   if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.1);
   // Comma — should be brief, not a full pause
-  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.7);
+  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.45);
   // No terminal punctuation — gentle transition
   return Math.round(basePauseMs * 0.6);
 }
