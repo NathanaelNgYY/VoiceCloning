@@ -370,6 +370,23 @@ function commaBreakWordIndices(text) {
  * @param {Array<{w:string,start:number,end:number}>} words Whisper word timings
  * @param {number} pauseMs      silence to insert per break
  */
+// Linearly ramp the first (`in`) or last (`out`) `frames` of a PCM16 buffer so the
+// boundary touching an inserted silence fades smoothly instead of jumping (which
+// clicks/pops). Mutates the buffer in place.
+function fadeEdge(buf, channels, frames, direction) {
+  const bytesPerFrame = channels * 2;
+  const total = Math.floor(buf.length / bytesPerFrame);
+  const n = Math.min(frames, total);
+  for (let k = 0; k < n; k += 1) {
+    const frame = direction === 'in' ? k : total - 1 - k;
+    const gain = (k + 1) / (n + 1); // ramps 0→1 from the silent edge inward
+    for (let c = 0; c < channels; c += 1) {
+      const pos = frame * bytesPerFrame + c * 2;
+      buf.writeInt16LE(Math.round(buf.readInt16LE(pos) * gain), pos);
+    }
+  }
+}
+
 // Returns { audioBuffer, inserted, reason }. `reason` is set only when nothing was
 // inserted, so callers can log WHY the breath was skipped.
 function computeCommaPauses(audioBuffer, expectedText, words, pauseMs) {
@@ -395,26 +412,45 @@ function computeCommaPauses(audioBuffer, expectedText, words, pauseMs) {
   const silence = Buffer.alloc(Math.round((pauseMs / 1000) * wav.sampleRate) * bytesPerFrame);
   if (silence.length === 0) return { audioBuffer, inserted: 0, reason: 'zero-silence' };
 
-  // Byte offsets (frame-aligned, ascending) just after each pre-break word ends.
+  const frameToByte = (frame) => Math.max(0, Math.min(wav.dataChunk.length,
+    Math.round(frame) * bytesPerFrame));
+
+  // Place each breath in the natural GAP after the pre-break word, NOT exactly at the
+  // word's end timestamp. Whisper marks word-end slightly early, so splicing at end
+  // clipped the word's tail and sounded like a cut. We nudge into the silent gap
+  // before the next word (capped), landing the pause where the audio is already quiet.
   const offsets = [];
   for (const idx of breakIndices) {
     const word = words[idx];
     if (!word || !Number.isFinite(word.end)) continue;
-    const frame = Math.round(word.end * wav.sampleRate);
-    const byte = Math.max(0, Math.min(wav.dataChunk.length, frame * bytesPerFrame));
-    offsets.push(byte);
+    const next = words[idx + 1];
+    const gap = next && Number.isFinite(next.start) ? Math.max(0, next.start - word.end) : 0;
+    const insertSec = word.end + Math.min(gap * 0.5, 0.05); // up to 50ms into the gap
+    offsets.push(frameToByte(insertSec * wav.sampleRate));
   }
   if (offsets.length === 0) return { audioBuffer, inserted: 0, reason: 'no-valid-offsets' };
   offsets.sort((a, b) => a - b);
 
-  const parts = [];
+  // Build segments, then taper the edge touching each inserted silence so the
+  // transition into/out of silence is smooth (a hard amplitude jump clicks/pops,
+  // which also reads as a glitch). ~5ms ramp.
+  const fadeFrames = Math.max(1, Math.round(0.005 * wav.sampleRate));
+  const audioSegs = [];
   let prev = 0;
   for (const off of offsets) {
-    parts.push(wav.dataChunk.slice(prev, off));
-    parts.push(silence);
+    audioSegs.push(Buffer.from(wav.dataChunk.slice(prev, off)));
     prev = off;
   }
-  parts.push(wav.dataChunk.slice(prev));
+  audioSegs.push(Buffer.from(wav.dataChunk.slice(prev)));
+
+  const parts = [];
+  for (let i = 0; i < audioSegs.length; i += 1) {
+    const seg = audioSegs[i];
+    if (i > 0) fadeEdge(seg, wav.numChannels, fadeFrames, 'in');   // follows a silence
+    if (i < audioSegs.length - 1) fadeEdge(seg, wav.numChannels, fadeFrames, 'out'); // precedes a silence
+    parts.push(seg);
+    if (i < audioSegs.length - 1) parts.push(silence);
+  }
   return { audioBuffer: buildWav(wav.fmtChunk, Buffer.concat(parts)), inserted: offsets.length, reason: null };
 }
 

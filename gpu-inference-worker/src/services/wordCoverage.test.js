@@ -161,3 +161,25 @@ test('a genuinely dropped medical word is still caught after normalization', () 
   assert.ok(r.coverage < 1, JSON.stringify(r));
   assert.ok(r.missingWords.includes('centrioles'), JSON.stringify(r));
 });
+
+test('a low-confidence TRAILING word is a hard skip, but the same word interior is only advisory', () => {
+  // "centriole" said with real audio (0.5s) but low confidence.
+  const trailing = findClippedWords('the mother centriole', [
+    word('the', 0.2), word('mother', 0.5), word('centriole', 0.5, 0.1),
+  ]);
+  assert.ok(trailing.skippedWords.includes('centriole'), 'trailing low-confidence word forces re-roll');
+
+  const interior = findClippedWords('centriole is important here', [
+    word('centriole', 0.5, 0.1), word('is', 0.2), word('important', 0.6), word('here', 0.3),
+  ]);
+  assert.ok(!interior.skippedWords.includes('centriole'), 'interior low-confidence word is advisory only');
+  assert.ok(interior.suspectWords.includes('centriole'), 'interior low-confidence word still scored');
+});
+
+test('a 5-letter content word is now scrutinized for clipping (threshold 5, not 6)', () => {
+  // "cells" (5 chars) given 0.05s = ~0.01 s/char -> half-cut, must be flagged now.
+  const { skippedWords } = findClippedWords('the nerve cells fire', [
+    word('the', 0.2), word('nerve', 0.4), word('cells', 0.05), word('fire', 0.3),
+  ]);
+  assert.ok(skippedWords.includes('cells'), JSON.stringify(skippedWords));
+});

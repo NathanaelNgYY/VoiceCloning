@@ -21,7 +21,9 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // independent of the overall coverage fraction. Short function words ("the", "of")
 // are noisy in ASR and left to the coverage percentage. Matches the scrutiny
 // length used by findClippedWords so the missing-word and clipped-word gates agree.
-const SUBSTANTIAL_WORD_LENGTH = 6;
+// Set to 5 (was 6) so a missing 5-letter content word ("times", "nerve") also
+// forces a re-roll instead of being left to the coverage percentage.
+const SUBSTANTIAL_WORD_LENGTH = 5;
 
 /**
  * Manages a persistent faster-whisper sidecar (python/transcription_server.py).

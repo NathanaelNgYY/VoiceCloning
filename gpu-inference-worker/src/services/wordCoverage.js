@@ -164,10 +164,10 @@ export function computeWordCoverage(expectedText, transcript) {
   };
 }
 
-// A long word the model is most likely to clip. Short words are too noisy to
-// judge on timing/confidence, so we only scrutinize substantial ones (medical
-// terms tend to be long, which is exactly the at-risk case).
-const MIN_SCRUTINY_LENGTH = 6;
+// A substantial word the model is most likely to clip. Words shorter than this are
+// too noisy to judge on timing/confidence. Set to 5 (was 6) so 5-letter content
+// words ("times", "cells", "nerve") are also tracked for retry, not just 6+.
+const MIN_SCRUTINY_LENGTH = 5;
 
 /**
  * Detect words that were probably spoken only partway ("half-said then skipped").
@@ -221,7 +221,8 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const suspectWords = [];
   const skippedWords = [];
 
-  for (const { raw, key } of expected) {
+  for (let e = 0; e < expected.length; e += 1) {
+    const { raw, key } = expected[e];
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
       if (!consumed[i] && actual[i].token === key) { foundIndex = i; break; }
@@ -249,10 +250,13 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
 
     // CONFIDENCE is the noisy signal — it false-positives on briskly/quietly-spoken
     // but fully-present words (a clean take rejected over "daughter"). So it is
-    // ADVISORY only: it feeds best-of-N scoring, never a hard re-roll.
+    // ADVISORY only for interior words. EXCEPTION: the LAST content word of a chunk
+    // is the spot the model most often trails off / Whisper hallucinates back from
+    // context, so for the trailing word we treat low confidence as a HARD skip too.
     const tooQuiet = longEnough && match.probability < minProbability;
+    const isTrailingWord = e === expected.length - 1;
 
-    if (skippedSpan || tooShort) skippedWords.push(raw);
+    if (skippedSpan || tooShort || (isTrailingWord && tooQuiet)) skippedWords.push(raw);
     if (skippedSpan || tooShort || tooQuiet) suspectWords.push(raw);
   }
 
