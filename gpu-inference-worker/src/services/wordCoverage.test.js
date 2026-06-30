@@ -162,24 +162,25 @@ test('a genuinely dropped medical word is still caught after normalization', () 
   assert.ok(r.missingWords.includes('centrioles'), JSON.stringify(r));
 });
 
-test('a low-confidence TRAILING word is a hard skip, but the same word interior is only advisory', () => {
-  // "centriole" said with real audio (0.5s) but low confidence.
-  const trailing = findClippedWords('the mother centriole', [
-    word('the', 0.2), word('mother', 0.5), word('centriole', 0.5, 0.1),
+test('low-confidence and short-span words are ADVISORY only (no hard re-roll)', () => {
+  // Whisper word-boundary timing is imprecise, so a complete-but-brisk or low-
+  // confidence word must NOT force a re-roll — only feed scoring. (Real drops are
+  // caught by near-zero span and by the coverage / substantial-missing check.)
+  const lowConf = findClippedWords('the mother centriole', [
+    word('the', 0.2), word('mother', 0.5), word('centriole', 0.5, 0.1), // real audio, low conf
   ]);
-  assert.ok(trailing.skippedWords.includes('centriole'), 'trailing low-confidence word forces re-roll');
+  assert.ok(!lowConf.skippedWords.includes('centriole'), 'low-confidence word is not a hard skip');
+  assert.ok(lowConf.suspectWords.includes('centriole'), 'but still scored (advisory)');
 
-  const interior = findClippedWords('centriole is important here', [
-    word('centriole', 0.5, 0.1), word('is', 0.2), word('important', 0.6), word('here', 0.3),
+  const shortSpan = findClippedWords('the nerve cells fire', [
+    word('the', 0.2), word('nerve', 0.4), word('cells', 0.08), word('fire', 0.3), // brisk, real audio
   ]);
-  assert.ok(!interior.skippedWords.includes('centriole'), 'interior low-confidence word is advisory only');
-  assert.ok(interior.suspectWords.includes('centriole'), 'interior low-confidence word still scored');
+  assert.ok(!shortSpan.skippedWords.includes('cells'), 'short-but-present word is not a hard skip');
 });
 
-test('a 5-letter content word is now scrutinized for clipping (threshold 5, not 6)', () => {
-  // "cells" (5 chars) given 0.05s = ~0.01 s/char -> half-cut, must be flagged now.
+test('only a near-zero audio span is a hard skip', () => {
   const { skippedWords } = findClippedWords('the nerve cells fire', [
-    word('the', 0.2), word('nerve', 0.4), word('cells', 0.05), word('fire', 0.3),
+    word('the', 0.2), word('nerve', 0.4), word('cells', 0.01), word('fire', 0.3), // 10ms = no real audio
   ]);
   assert.ok(skippedWords.includes('cells'), JSON.stringify(skippedWords));
 });

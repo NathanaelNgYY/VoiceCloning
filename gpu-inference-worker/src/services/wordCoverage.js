@@ -221,8 +221,7 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const suspectWords = [];
   const skippedWords = [];
 
-  for (let e = 0; e < expected.length; e += 1) {
-    const { raw, key } = expected[e];
+  for (const { raw, key } of expected) {
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
       if (!consumed[i] && actual[i].token === key) { foundIndex = i; break; }
@@ -237,26 +236,23 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     consumed[foundIndex] = true;
     const match = actual[foundIndex];
 
-    // DURATION signals are physical and reliable, and they force a re-roll:
-    //  - skippedSpan: near-zero audio under the word = a hallucinated skip (Whisper
-    //    wrote the word from context but it was never really spoken).
-    //  - tooShort: a substantial word given far too little audio for its length = a
-    //    HALF-CUT word (model said the first part then stopped). Whisper still spells
-    //    it in full from context, so coverage passes — duration is the only signal
-    //    that catches it, and we must NOT let those ship for medical text.
-    const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
+    // skippedSpan = near-zero audio under the word: the model never really spoke it
+    // and Whisper hallucinated it back from context. This is the ONE reliable hard
+    // signal, because it does not depend on Whisper's (imprecise) word-boundary times.
     const skippedSpan = match.duration < minWordDuration;
+
+    // tooShort (per-char duration) and tooQuiet (confidence) are NOISY: Whisper's
+    // adjacent word boundaries are fuzzy, so a briskly-spoken complete word looks
+    // "too short", and rare words get low confidence even when perfectly said. Using
+    // them as a hard gate re-rolled fully-correct (100%-coverage) takes endlessly and
+    // made generation slow. They are now ADVISORY only — they steer best-of-N toward
+    // the cleanest take, but never force a re-roll. Genuine drops are still caught by
+    // skippedSpan (no audio) and by the coverage / substantial-missing check.
+    const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
     const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
-
-    // CONFIDENCE is the noisy signal — it false-positives on briskly/quietly-spoken
-    // but fully-present words (a clean take rejected over "daughter"). So it is
-    // ADVISORY only for interior words. EXCEPTION: the LAST content word of a chunk
-    // is the spot the model most often trails off / Whisper hallucinates back from
-    // context, so for the trailing word we treat low confidence as a HARD skip too.
     const tooQuiet = longEnough && match.probability < minProbability;
-    const isTrailingWord = e === expected.length - 1;
 
-    if (skippedSpan || tooShort || (isTrailingWord && tooQuiet)) skippedWords.push(raw);
+    if (skippedSpan) skippedWords.push(raw);
     if (skippedSpan || tooShort || tooQuiet) suspectWords.push(raw);
   }
 

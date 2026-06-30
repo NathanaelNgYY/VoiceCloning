@@ -65,10 +65,10 @@ test('an advisory clipped word (low confidence, real audio) no longer forces a r
   }
 });
 
-test('a HALF-CUT word (full coverage but too little audio for its length) re-rolls', async () => {
-  // "microtubules" (12 chars) given only 0.2s of audio = ~0.017 s/char, well under
-  // natural pace = said partway then cut. Whisper spells it in full from context so
-  // coverage passes — duration must still catch it and force a re-roll.
+test('a short-span word with real audio is advisory only and does NOT re-roll', async () => {
+  // "microtubules" given 0.2s is brisk but has real audio. Whisper word-boundary
+  // timing is imprecise, so this must NOT force a re-roll (it used to, which made
+  // generation slow by re-rolling fully-correct takes). It stays advisory.
   mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
     text: 'barrels of nine triplet microtubules',
     words: [w('barrels', 0.5), w('of', 0.2), w('nine', 0.3), w('triplet', 0.5), w('microtubules', 0.2)],
@@ -79,8 +79,8 @@ test('a HALF-CUT word (full coverage but too little audio for its length) re-rol
       'barrels of nine triplet microtubules',
       {},
     );
-    assert.equal(res.ok, false, JSON.stringify(res));
-    assert.ok(res.skippedWords.includes('microtubules'), JSON.stringify(res));
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(res.suspectWords.includes('microtubules'), 'still flagged advisory for scoring');
   } finally {
     mock.restoreAll();
   }
