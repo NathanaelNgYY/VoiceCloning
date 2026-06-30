@@ -223,6 +223,12 @@ export function ensureSentenceBoundaries(text, { minRunWords = 12 } = {}) {
   const input = String(text || '');
   if (!input.trim()) return input;
 
+  // Fallback ONLY for output that has no sentence-ending punctuation at all.
+  // Already-punctuated text is returned byte-for-byte unchanged — even a single
+  // sentence longer than minRunWords with no internal comma. Otherwise the
+  // word-count trigger jams a period mid-sentence (e.g. "...any of. these steps.").
+  if (/[.!?…]/u.test(input)) return input;
+
   const words = input.match(/\S+/gu);
   if (!words || words.length < minRunWords) return input;
 
