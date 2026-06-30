@@ -165,9 +165,9 @@ export function computeWordCoverage(expectedText, transcript) {
 }
 
 // A substantial word the model is most likely to clip. Words shorter than this are
-// too noisy to judge on timing/confidence. Set to 5 (was 6) so 5-letter content
-// words ("times", "cells", "nerve") are also tracked for retry, not just 6+.
-const MIN_SCRUTINY_LENGTH = 5;
+// too noisy to judge on timing/confidence. Set to 4 so short content words like
+// "very", "fast", "cell", and "rate" are tracked for retry too.
+const MIN_SCRUTINY_LENGTH = 4;
 
 /**
  * Detect words that were probably spoken only partway ("half-said then skipped").

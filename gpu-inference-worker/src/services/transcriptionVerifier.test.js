@@ -45,6 +45,45 @@ test('dictionary word actually skipped (word count short) is NOT forgiven — st
   }
 });
 
+test('common dictionary words are not forgiven when a phrase is missing', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'At another end of the spectrum of cell division tumor cells in contrast',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'At another end of the spectrum of cell division, tumor cells, in contrast, divide very fast and unregulated.',
+      { dictionaryWords: ['divide', 'very', 'fast'] },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.missingWords.includes('divide'), JSON.stringify(res));
+    assert.ok(res.missingWords.includes('very'), JSON.stringify(res));
+    assert.ok(res.missingWords.includes('fast'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('missing four-letter content words force a re-roll', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'tumor cells in contrast divide and unregulated',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'tumor cells in contrast divide very fast and unregulated',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.missingWords.includes('very'), JSON.stringify(res));
+    assert.ok(res.missingWords.includes('fast'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('an advisory clipped word (low confidence, real audio) no longer forces a re-roll', async () => {
   // 100% coverage; "daughter" is low-confidence but has real audio under it (not a
   // skip). This used to reject a perfect take; now it is advisory only.

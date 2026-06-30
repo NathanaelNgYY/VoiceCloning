@@ -199,3 +199,12 @@ test('a HALF-CUT word (short audio AND low confidence together) is a hard skip',
   ]);
   assert.ok(!brisk.skippedWords.includes('microtubules'), JSON.stringify(brisk));
 });
+
+test('four-letter content words are scrutinized for half-cuts', () => {
+  const cut = findClippedWords('divide very fast and unregulated', [
+    word('divide', 0.4), word('very', 0.08, 0.1), word('fast', 0.08, 0.1), word('and', 0.2), word('unregulated', 0.7),
+  ]);
+
+  assert.ok(cut.skippedWords.includes('very'), JSON.stringify(cut));
+  assert.ok(cut.skippedWords.includes('fast'), JSON.stringify(cut));
+});

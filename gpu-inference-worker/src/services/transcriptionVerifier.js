@@ -21,9 +21,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // independent of the overall coverage fraction. Short function words ("the", "of")
 // are noisy in ASR and left to the coverage percentage. Matches the scrutiny
 // length used by findClippedWords so the missing-word and clipped-word gates agree.
-// Set to 5 (was 6) so a missing 5-letter content word ("times", "nerve") also
-// forces a re-roll instead of being left to the coverage percentage.
-const SUBSTANTIAL_WORD_LENGTH = 5;
+// Set to 4 so missing short-but-meaningful content words ("very", "fast",
+// "cell") force a re-roll instead of being hidden by high overall coverage.
+const SUBSTANTIAL_WORD_LENGTH = 4;
+const DICTIONARY_FORGIVEN_MIN_LENGTH = 7;
 
 /**
  * Manages a persistent faster-whisper sidecar (python/transcription_server.py).
@@ -196,7 +197,11 @@ class TranscriptionVerifier {
     // words AND the heard word count matches the expected count (nothing dropped),
     // treat them as spoken-but-mistranscribed instead of missing. A real skip lowers
     // the count → not forgiven → still re-rolled (safe for medical text).
-    const dictSet = new Set(dictionaryWords.map((w) => String(w || '').toLowerCase()).filter(Boolean));
+    const dictSet = new Set(
+      dictionaryWords
+        .map((w) => String(w || '').toLowerCase())
+        .filter((w) => w.length >= DICTIONARY_FORGIVEN_MIN_LENGTH),
+    );
     let forgivenDict = [];
     let adjustedCoverage = coverage;
     if (dictSet.size > 0) {
