@@ -370,6 +370,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
   const [streamingRoute, setStreamingRoute] = useState(null);
+  // Progressive-queue playback controls (Live Fast Queue / Full Inference Queue).
+  const [queuePlayback, setQueuePlayback] = useState({ active: false, paused: false });
   const [ttsError, setTtsError] = useState('');
   const [pronunciationCategory, setPronunciationCategory] = useState('general');
   const [pronunciationWord, setPronunciationWord] = useState('');
@@ -405,13 +407,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
   const queuedTtsAudioRef = useRef(null);
-  const queuedTtsRef = useRef({ clips: [], playingIndex: -1, active: false });
+  const queuedTtsRef = useRef({ clips: [], playingIndex: -1, active: false, paused: false });
   const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
   const completingFullTtsSessionRef = useRef('');
   // Tracks which Full Inference chunks have already been pulled for queued playback.
   const fullQueuedFetchRef = useRef({ sessionId: '', fetched: 0, busy: false });
+  // True while a queue route is still producing clips, so playback end-detection
+  // knows whether a missing "next clip" means done vs. waiting for more.
+  const queueProducingRef = useRef(false);
 
   const voiceProfiles = useMemo(() => buildVoiceProfiles(gptModels, sovitsModels), [gptModels, sovitsModels]);
   const availableProfiles = useMemo(() => voiceProfiles.filter((p) => p.complete), [voiceProfiles]);
@@ -1802,7 +1807,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     if (route === 'fastQueued') {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
-      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true };
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true, paused: false };
+      setQueuePlayback({ active: true, paused: false });
+      queueProducingRef.current = true;
       try {
         const result = await generateLiveFastQueuedTts({
           text,
@@ -1819,9 +1826,26 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         if (result.clips.length === 0) {
           throw new Error('No audio clips were generated.');
         }
+        // Record the full passage to the Live Fast output panel so the queue lands
+        // somewhere when it finishes (matching the non-queued Live Fast button).
+        const blobs = result.clips.map((clip) => clip.blob).filter(Boolean);
+        if (blobs.length > 0) {
+          const blob = blobs.length > 1 ? await concatWavBlobs(blobs, { pauseMs: 120 }) : blobs[0];
+          recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
+        }
       } catch (err) {
         setTtsError(err.response?.data?.error || err.message || 'Could not generate queued Live Fast audio.');
       } finally {
+        queueProducingRef.current = false;
+        // If playback already drained while we were still generating, clear the controls.
+        const queue = queuedTtsRef.current;
+        if (queue.active && !queue.paused && !queue.clips[queue.playingIndex + 1]) {
+          const audio = queuedTtsAudioRef.current;
+          if (!audio || audio.paused) {
+            queue.active = false;
+            setQueuePlayback({ active: false, paused: false });
+          }
+        }
         setTtsFastGenerating(false);
         setTtsFastProgress({ total: 0, current: 0, text: '' });
       }
@@ -1863,8 +1887,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // Full Inference Queue: play each chunk as the server finishes it (progressive
     // playback), instead of waiting for the whole passage — same UX as Live Fast Queue.
     if (route === 'fullQueued') {
-      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true };
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true, paused: false };
       fullQueuedFetchRef.current = { sessionId: '', fetched: 0, busy: false };
+      setQueuePlayback({ active: true, paused: false });
+      queueProducingRef.current = true;
     }
     setStreamingRoute(route);
     try {
@@ -1876,11 +1902,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       pendingFullTtsRef.current = null;
       setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
       setStreamingRoute(null);
+      if (route === 'fullQueued') stopQueuedTtsPlayback();
     }
   }
 
   function playNextQueuedTtsClip() {
     const queue = queuedTtsRef.current;
+    if (queue.paused) return;
     const nextIndex = queue.playingIndex + 1;
     const nextClip = queue.clips[nextIndex];
     const audio = queuedTtsAudioRef.current;
@@ -1889,12 +1917,57 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     queue.playingIndex = nextIndex;
     audio.src = nextClip.url;
     audio.play().catch((err) => {
-      setTtsError(err.message || 'Browser blocked queued Live Fast playback.');
+      setTtsError(err.message || 'Browser blocked queued playback.');
     });
   }
 
   function handleQueuedTtsEnded() {
+    const queue = queuedTtsRef.current;
+    const hasNext = Boolean(queue.clips[queue.playingIndex + 1]);
+    // No more clips and nothing left to produce -> the queue is fully played out.
+    if (!hasNext && !queueProducingRef.current && !queue.paused) {
+      queue.active = false;
+      setQueuePlayback({ active: false, paused: false });
+      return;
+    }
     playNextQueuedTtsClip();
+  }
+
+  function pauseQueuedTtsPlayback() {
+    const queue = queuedTtsRef.current;
+    queue.paused = true;
+    const audio = queuedTtsAudioRef.current;
+    if (audio && !audio.paused) audio.pause();
+    setQueuePlayback({ active: true, paused: true });
+  }
+
+  function resumeQueuedTtsPlayback() {
+    const queue = queuedTtsRef.current;
+    queue.paused = false;
+    setQueuePlayback({ active: true, paused: false });
+    const audio = queuedTtsAudioRef.current;
+    // Resume the current clip if it was paused mid-play; otherwise advance.
+    if (audio && audio.src && audio.currentTime > 0 && audio.currentTime < (audio.duration || Infinity)) {
+      audio.play().catch((err) => {
+        setTtsError(err.message || 'Browser blocked queued playback.');
+      });
+    } else {
+      playNextQueuedTtsClip();
+    }
+  }
+
+  function stopQueuedTtsPlayback() {
+    const queue = queuedTtsRef.current;
+    queue.active = false;
+    queue.paused = false;
+    queueProducingRef.current = false;
+    const audio = queuedTtsAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    setQueuePlayback({ active: false, paused: false });
   }
 
   function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
@@ -1929,6 +2002,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         pendingFullTtsRef.current = null;
       }
       completingFullTtsSessionRef.current = '';
+      // Server is done producing chunks; let queue end-detection finish naturally.
+      queueProducingRef.current = false;
+      const queue = queuedTtsRef.current;
+      if (queue.active && !queue.paused && !queue.clips[queue.playingIndex + 1]) {
+        const audio = queuedTtsAudioRef.current;
+        if (!audio || audio.paused) {
+          queue.active = false;
+          setQueuePlayback({ active: false, paused: false });
+        }
+      }
       setStreamingRoute(null);
       ttsInference.reset();
     }
@@ -2176,6 +2259,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
       pendingFullTtsRef.current = null;
       setStreamingRoute(null);
+      if (pending.route === 'fullQueued') stopQueuedTtsPlayback();
       ttsInference.reset();
     }
   }, [ttsInference.status, ttsInference.error]);
@@ -2197,6 +2281,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           setTtsError(state.error || 'Could not generate text to speech audio.');
           pendingFullTtsRef.current = null;
           setStreamingRoute(null);
+          if (pending.route === 'fullQueued') stopQueuedTtsPlayback();
           ttsInference.reset();
         }
       } catch {
@@ -3126,6 +3211,27 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </p>
             )}
             <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
+            {queuePlayback.active && (
+              <div className="mt-3 flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-700">
+                <span className="font-medium">
+                  {queuePlayback.paused ? 'Queue paused' : 'Playing queue…'}
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  {queuePlayback.paused ? (
+                    <Button type="button" size="sm" variant="outline" onClick={resumeQueuedTtsPlayback} className="h-8 rounded-lg">
+                      <PlayCircle size={14} /> Resume
+                    </Button>
+                  ) : (
+                    <Button type="button" size="sm" variant="outline" onClick={pauseQueuedTtsPlayback} className="h-8 rounded-lg">
+                      <Square size={14} /> Pause
+                    </Button>
+                  )}
+                  <Button type="button" size="sm" variant="outline" onClick={stopQueuedTtsPlayback} className="h-8 rounded-lg">
+                    <X size={14} /> Stop
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Button
                 type="button"
