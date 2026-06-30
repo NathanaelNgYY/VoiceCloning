@@ -544,7 +544,7 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   // Semicolon
   if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.1);
   // Comma — should be brief, not a full pause
-  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.3);
+  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.4);
   // No terminal punctuation — gentle transition
   return Math.round(basePauseMs * 0.6);
 }
