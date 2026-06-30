@@ -16,6 +16,13 @@ import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
 
+// A missing word at least this long is a substantial content word (medical /
+// technical term) whose absence is never acceptable — even one forces a re-roll,
+// independent of the overall coverage fraction. Short function words ("the", "of")
+// are noisy in ASR and left to the coverage percentage. Matches the scrutiny
+// length used by findClippedWords so the missing-word and clipped-word gates agree.
+const SUBSTANTIAL_WORD_LENGTH = 6;
+
 /**
  * Manages a persistent faster-whisper sidecar (python/transcription_server.py).
  * The model loads once; requests are JSON lines over stdin/stdout keyed by id.
@@ -171,11 +178,24 @@ class TranscriptionVerifier {
     // A word can pass coverage (Whisper fills it in) yet have been clipped — catch
     // those via per-word confidence/timing so the chunk still gets re-rolled.
     const { suspectWords } = findClippedWords(expectedText, words);
-    const ok = coverage >= minCoverage && suspectWords.length === 0;
+
+    // Coverage is a FRACTION, so on a long chunk a single dropped or mispronounced
+    // word (~3% of 30 words) clears the threshold even though it would fail a short
+    // chunk. That asymmetry is why long chunks ship half-said / mispronounced words
+    // while short ones don't. Gate on the ABSOLUTE count of substantial content
+    // words (the at-risk medical/technical terms) so a 30-word chunk is as strict
+    // per-word as a 5-word one: any substantial word missing → re-roll, regardless
+    // of the overall percentage.
+    const substantialMissing = missingWords.filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
+
+    const ok = coverage >= minCoverage
+      && suspectWords.length === 0
+      && substantialMissing.length === 0;
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(coverage * 100).toFixed(0)}% `
         + `missing=[${missingWords.join(', ')}] clipped=[${suspectWords.join(', ')}] `
+        + `substantialMissing=[${substantialMissing.join(', ')}] `
         + `heard="${text.slice(0, 120)}"`,
       );
     }
