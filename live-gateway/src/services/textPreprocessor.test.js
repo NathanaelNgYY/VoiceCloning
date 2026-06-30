@@ -33,6 +33,14 @@ test('ensureSentenceBoundaries leaves long comma/em-dash punctuated text unchang
   assert.equal(ensureSentenceBoundaries(input), input);
 });
 
+test('ensureSentenceBoundaries leaves a long sentence with a final period but no internal comma unchanged', () => {
+  // Regression: a properly-punctuated sentence over the word threshold with no
+  // internal pause must NOT get a spurious mid-sentence period jammed in
+  // (e.g. "...any of. these steps.").
+  const input = 'Let me know if you would like more details on any of these steps.';
+  assert.equal(ensureSentenceBoundaries(input), input);
+});
+
 test('preprocessText splits intra-word hyphens so TTS does not say "minus"', () => {
   assert.equal(preprocessText('Michelin-starred restaurants'), 'Michelin starred restaurants');
   assert.equal(preprocessText('a vibrant city-state'), 'a vibrant city state');
