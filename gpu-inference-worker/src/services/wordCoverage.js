@@ -125,7 +125,7 @@ export function computeWordCoverage(expectedText, transcript) {
 // A long word the model is most likely to clip. Short words are too noisy to
 // judge on timing/confidence, so we only scrutinize substantial ones (medical
 // terms tend to be long, which is exactly the at-risk case).
-const MIN_SCRUTINY_LENGTH = 6;
+const MIN_SCRUTINY_LENGTH = 5;
 
 /**
  * Detect words that were probably spoken only partway ("half-said then skipped").
@@ -140,10 +140,14 @@ const MIN_SCRUTINY_LENGTH = 6;
  * @returns {{ suspectWords: string[] }}
  */
 export function findClippedWords(expectedText, words = [], opts = {}) {
-  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.35;
+  // Stricter floor: a low Whisper word-confidence is the strongest signal of a
+  // word that was clipped OR mispronounced (the model's phonemes drifted, so the
+  // ASR is unsure). 0.5 rejects those takes instead of letting them pass.
+  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.5;
   // Seconds of audio per character below which a word was almost certainly cut
-  // short. Natural speech is ~0.06-0.09 s/char; 0.03 is comfortably below that.
-  const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.03;
+  // short. Natural speech is ~0.06-0.09 s/char; 0.045 catches partial reads
+  // without flagging a merely brisk one.
+  const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.045;
 
   const expected = tokenize(expectedText).filter((t) => isCountable(t) && t.length >= MIN_SCRUTINY_LENGTH);
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {

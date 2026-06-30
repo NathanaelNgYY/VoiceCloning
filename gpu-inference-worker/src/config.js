@@ -62,7 +62,7 @@ export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'small';
 // Minimum fraction of a chunk's expected words that must appear in the transcript
 // for the read to be accepted. Below this, the chunk is treated as having dropped
 // words and is retried.
-export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(readEnv('TRANSCRIPTION_MIN_COVERAGE'), 0.8)));
+export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(readEnv('TRANSCRIPTION_MIN_COVERAGE'), 0.9)));
 
 // Speaker-similarity gate: score each take against the reference voice and reject
 // any that drifted, so cranking the take budget for completeness can never ship a
