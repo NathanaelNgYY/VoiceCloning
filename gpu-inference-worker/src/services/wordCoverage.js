@@ -125,7 +125,7 @@ export function computeWordCoverage(expectedText, transcript) {
 // A long word the model is most likely to clip. Short words are too noisy to
 // judge on timing/confidence, so we only scrutinize substantial ones (medical
 // terms tend to be long, which is exactly the at-risk case).
-const MIN_SCRUTINY_LENGTH = 5;
+const MIN_SCRUTINY_LENGTH = 6;
 
 /**
  * Detect words that were probably spoken only partway ("half-said then skipped").
@@ -140,15 +140,17 @@ const MIN_SCRUTINY_LENGTH = 5;
  * @returns {{ suspectWords: string[] }}
  */
 export function findClippedWords(expectedText, words = [], opts = {}) {
-  // Stricter floor: a low Whisper word-confidence is the strongest signal of a
-  // word that was clipped OR mispronounced (the model's phonemes drifted, so the
-  // ASR is unsure). 0.5 rejects those takes instead of letting them pass.
-  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.42;
+  // Confidence is the RELIABLE clip signal: a half-said or mispronounced word is
+  // low-confidence, while a fast-but-complete word stays high-confidence. We lean
+  // on it (0.45) and treat timing as only a coarse backstop, because per-word
+  // duration false-positives on briskly-spoken common words ("there", "phase",
+  // "protein") — flagging complete sentences as clipped and rejecting good takes.
+  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.45;
   // Seconds of audio per character below which a word was almost certainly cut
-  // short. Natural speech is ~0.06-0.09 s/char; 0.046 catches partial reads more
-  // aggressively (a half-said word's audio is well under this) while still leaving
-  // headroom below a merely brisk natural read.
-  const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.046;
+  // short. Natural speech is ~0.06-0.09 s/char, but a quick common word can dip
+  // well below that WITHOUT being clipped — so keep this low (0.03) to catch only
+  // egregiously short spans and let confidence handle the rest.
+  const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.03;
 
   const expected = tokenize(expectedText).filter((t) => isCountable(t) && t.length >= MIN_SCRUTINY_LENGTH);
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
