@@ -179,7 +179,11 @@ export function attachLiveChatSocket(server) {
       bridge.connect();
     };
     // Safety net: a client that never sends session.init must not hang.
-    const initTimer = setTimeout(ensureConnected, 1000);
+    // Kept short so frontends that don't send a handshake (e.g. the normal
+    // client, which waits for session.ready before sending anything) connect
+    // promptly; still leaves margin for a chatbot client's session.init,
+    // which is sent the instant the socket opens.
+    const initTimer = setTimeout(ensureConnected, 200);
 
     browserSocket.on('message', (data) => {
       if (!connected) {
