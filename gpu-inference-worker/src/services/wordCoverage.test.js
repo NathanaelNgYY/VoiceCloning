@@ -102,11 +102,22 @@ test('findClippedWords does not flag a fully, confidently spoken word', () => {
   assert.deepEqual(suspectWords, []);
 });
 
-test('findClippedWords ignores short words (too noisy to judge)', () => {
+test('findClippedWords ignores short words on confidence/timing noise', () => {
+  // Realistic short-word durations (~0.12s) with low confidence must NOT flag —
+  // confidence/per-char timing are too noisy to judge short words.
   const { suspectWords } = findClippedWords('it is on', [
-    word('it', 0.02, 0.2), word('is', 0.02, 0.2), word('on', 0.02, 0.2),
+    word('it', 0.12, 0.2), word('is', 0.11, 0.2), word('on', 0.13, 0.2),
   ]);
   assert.deepEqual(suspectWords, []);
+});
+
+test('findClippedWords flags a skipped short word (near-zero spoken span)', () => {
+  // A hallucinated skip: Whisper wrote "is" but gave it a 10ms span — no real
+  // audio under it. This is the case coverage can't see, so it must be flagged.
+  const { suspectWords } = findClippedWords('it is on', [
+    word('it', 0.12, 0.95), word('is', 0.01, 0.95), word('on', 0.13, 0.95),
+  ]);
+  assert.deepEqual(suspectWords, ['is']);
 });
 
 test('findClippedWords returns nothing without word timing data', () => {

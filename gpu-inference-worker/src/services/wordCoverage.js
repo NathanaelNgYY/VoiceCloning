@@ -151,8 +151,17 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   // well below that WITHOUT being clipped — so keep this low (0.03) to catch only
   // egregiously short spans and let confidence handle the rest.
   const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.03;
+  // Absolute floor on a word's spoken duration. This is the signal that catches a
+  // SKIPPED word Whisper hallucinated back from context (coverage passes, so no
+  // other check fires): the hallucinated word has no real audio under it, so
+  // Whisper gives it a near-zero / absurdly tiny span. No genuinely-spoken word —
+  // even "a" or "or" — lasts under ~50 ms, so this almost never false-positives,
+  // and unlike the per-char check it applies to words of ANY length.
+  const minWordDuration = Number.isFinite(opts.minWordDuration) ? opts.minWordDuration : 0.05;
 
-  const expected = tokenize(expectedText).filter((t) => isCountable(t) && t.length >= MIN_SCRUTINY_LENGTH);
+  // Match against ALL countable expected words (not just long ones): a skipped
+  // short word ("or", "is") is exactly what the absolute-duration check must see.
+  const expected = tokenize(expectedText).filter(isCountable);
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
     return { suspectWords: [] };
   }
@@ -180,9 +189,18 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
 
     consumed[foundIndex] = true;
     const match = actual[foundIndex];
-    const tooQuiet = match.probability < minProbability;
-    const tooShort = match.duration > 0 && match.duration / word.length < minSecPerChar;
-    if (tooQuiet || tooShort) suspectWords.push(word);
+
+    // Absolute-duration check runs on EVERY word (catches hallucinated skips of any
+    // length). A 0-duration span counts too — that's the strongest skip signal.
+    const skippedSpan = match.duration < minWordDuration;
+
+    // Confidence and per-character timing are noisier on short words, so only
+    // scrutinize those on substantial content words (the at-risk long terms).
+    const longEnough = word.length >= MIN_SCRUTINY_LENGTH;
+    const tooQuiet = longEnough && match.probability < minProbability;
+    const tooShort = longEnough && match.duration > 0 && match.duration / word.length < minSecPerChar;
+
+    if (skippedSpan || tooQuiet || tooShort) suspectWords.push(word);
   }
 
   return { suspectWords };
