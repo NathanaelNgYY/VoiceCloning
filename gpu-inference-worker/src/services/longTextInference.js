@@ -534,15 +534,15 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   const last = trimmed[trimmed.length - 1] || '';
 
   // Ellipsis — trailing thought, moderate pause
-  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 1.5);
+  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 3.0);
   // Em dash / double dash — brief dramatic pause
-  if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 0.8);
+  if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 1.2);
   // Period, question mark, exclamation
-  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.2);
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 2.6);
   // Colon
-  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.3);
+  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 2.0);
   // Semicolon
-  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.1);
+  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.6);
   // Comma — should be brief, not a full pause
   if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.4);
   // No terminal punctuation — gentle transition
