@@ -273,6 +273,38 @@ test('long-text synthesis keeps best-effort audio instead of aborting on a silen
   }
 });
 
+// Regression: when no clean read exists, the best-effort fallback must speak the
+// WHOLE chunk. It used to substitute a single passing sub-span (e.g. a good first
+// half) for the entire chunk, dropping the rest — that was "it skipped barrels all
+// the way". The fallback must synthesize every span so no words are lost.
+test('best-effort fallback covers the whole chunk, never a partial span', async () => {
+  const text = 'Each centriole is made up of barrels of nine triplet microtubules.';
+  const seen = [];
+  mock.method(inferenceServer, 'synthesize', async (params) => {
+    seen.push(params.text);
+    return makeNoiseWav(Math.max(2, params.text.length * 0.1)); // natural length so audio isn't flagged "too short"
+  });
+  try {
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text }),
+      fullInferenceQualityOptions({
+        retryCount: 0,
+        // Always-reject verifier forces every clean retry to fail and the full-span
+        // best-effort fallback to run.
+        verifyChunk: async () => ({ ok: false, coverage: 0.5, missingWords: ['centriole'], suspectWords: [] }),
+      }),
+    );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
+    // The spans synthesized in the fallback must together reconstruct the full text.
+    const joined = seen.join(' ').toLowerCase();
+    for (const word of ['barrels', 'nine', 'triplet', 'microtubules']) {
+      assert.ok(joined.includes(word), `fallback dropped "${word}": synthesized ${JSON.stringify(seen)}`);
+    }
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('single-chunk full inference preserves the model\'s natural loudness', async () => {
   // makeNoiseWav generates audio at ~0.3 peak. A single chunk has no siblings to
   // even out against, so it must NOT be boosted toward an absolute target — that

@@ -1060,12 +1060,6 @@ function splitChunkFine(text, maxLen = 64) {
   return mergeShortChunks(pieces, MIN_CHUNK_LENGTH);
 }
 
-function pickBestCandidate(candidates) {
-  return candidates
-    .filter(Boolean)
-    .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))[0] || null;
-}
-
 // Synthesize one chunk with escalating effort and — as a last resort — keep the
 // best audio we produced rather than letting a single stubborn chunk sink an
 // entire long generation. Order: (1) full retry suite on the whole chunk;
@@ -1075,7 +1069,6 @@ function pickBestCandidate(candidates) {
 // (no audio ever produced) propagates.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   const escalate = { ...options, allowBestEffortFallback: false };
-  const salvage = [];
   let lastError = null;
 
   // Pass 1: full retry suite on the whole chunk.
@@ -1083,11 +1076,12 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     const result = await synthesizeChunkWithRetry(chunkText, { ...baseParams, text: chunkText }, escalate);
     return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
   } catch (err) {
-    if (err?.bestCandidate) salvage.push(err.bestCandidate);
     lastError = err;
   }
 
-  // Pass 2: split the chunk in half and retry each sub-chunk harder.
+  // Pass 2: split the chunk in half and retry each sub-chunk harder. Only return
+  // if EVERY sub-chunk passes clean — a half that passes is not allowed to stand in
+  // for a half that failed (that would drop the failed half's words).
   const subChunks = splitChunkInHalf(chunkText);
   if (subChunks.length >= 2) {
     if (onSplit) onSplit(subChunks);
@@ -1102,7 +1096,6 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
       const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
       return { audioBuffer, attempts, split: true };
     } catch (err) {
-      if (err?.bestCandidate) salvage.push(err.bestCandidate);
       lastError = err;
     }
   }
@@ -1124,28 +1117,42 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
       const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
       return { audioBuffer, attempts, split: true };
     } catch (err) {
-      if (err?.bestCandidate) salvage.push(err.bestCandidate);
       lastError = err;
     }
   }
 
-  // Pass 4: keep the best audio we saw — never abort the whole job for one chunk.
-  const best = pickBestCandidate(salvage);
-  if (best) {
-    console.warn(
-      `[inference] chunk kept best-effort audio after exhausting retries: ${lastError?.message}; `
-      + `metrics=${JSON.stringify(best.analysis?.metrics)}; text="${chunkText.slice(0, 80)}"`,
+  // Pass 4 (safety net): no clean read exists. NEVER substitute a partial span for
+  // the whole chunk — that is what dropped "barrels of nine triplet microtubules"
+  // when a passing first half outscored the failing full chunk. Instead, best-effort
+  // EVERY span and concatenate, so the entire chunk text is always spoken even if
+  // some spans stay imperfect (a mispronounced word is acceptable; a dropped one is
+  // not — this is medical text). Finest granularity isolates each problem word.
+  const spanChunks = fineChunks.length >= 2
+    ? fineChunks
+    : (subChunks.length >= 2 ? subChunks : [chunkText]);
+  const buffers = [];
+  let attempts = 0;
+  for (const span of spanChunks) {
+    const spanResult = await synthesizeChunkWithRetry(
+      span,
+      { ...baseParams, text: span },
+      { ...options, allowBestEffortFallback: true },
     );
-    return {
-      audioBuffer: best.audioBuffer,
-      attempts: best.attempts || 1,
-      analysis: best.analysis,
-      fallback: true,
-      fallbackReason: lastError?.message || best.analysis?.reason || 'best-effort chunk',
-    };
+    buffers.push(spanResult.audioBuffer);
+    attempts += spanResult.attempts;
   }
-
-  throw lastError || new Error('Chunk synthesis failed');
+  const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+  console.warn(
+    `[inference] chunk kept best-effort FULL-SPAN audio after exhausting clean retries `
+    + `(${spanChunks.length} span(s)): ${lastError?.message}; text="${chunkText.slice(0, 80)}"`,
+  );
+  return {
+    audioBuffer,
+    attempts,
+    split: spanChunks.length > 1,
+    fallback: true,
+    fallbackReason: lastError?.message || 'best-effort full-span chunk',
+  };
 }
 
 export function cancelSession(sessionId) {
