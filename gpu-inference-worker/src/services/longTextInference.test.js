@@ -197,7 +197,7 @@ test('retry takes are voice-faithful: ONLY the seed changes', () => {
   assert.equal(first.temperature, 0.7);
   assert.equal(first.top_p, 0.85);
   assert.equal(first.top_k, 5);
-  assert.equal(first.text_split_method, 'cut5');
+  assert.equal(first.text_split_method, 'cut0');
 
   // Every later take keeps the SAME voice-shaping parameters as the first — the
   // cloned voice never drifts to recover a word, and repetition_penalty stays pinned

@@ -35,15 +35,14 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  // Give the model CONTEXT like Live Fast, which feeds the whole text and pronounces
-  // cleanly. Isolating a short sentence ("It consists of two centrioles,") removed
-  // the surrounding prosody and was exactly where the model degenerated into "two
-  // centrals" / "Tools and Tools". So group generously and break only at SENTENCE
-  // ends (never at commas — those become natural cut5 pauses inside the chunk, like
-  // Live Fast), capped so a re-roll never re-does an entire long document. Typical
-  // short replies (incl. Live Full Queue) become a single Live-Fast-style chunk.
-  maxChunkLength: 500,
-  maxSentencesPerChunk: 50, // effectively length-governed; sentence cap is just a guard
+  // The "best zone" is 1 full sentence to ~3 connected sentences: enough context for
+  // natural pronunciation, but short enough that the model keeps control and (with
+  // cut0) its natural pacing doesn't drift. Break only at SENTENCE ends (commas stay
+  // inside the chunk and are handled by the model, not turned into chunk-join
+  // silences), grouped up to ~280 chars (≈ 2-3 medical sentences). Going bigger only
+  // hurts retry granularity and risks tail-drop, for little naturalness gain.
+  maxChunkLength: 280,
+  maxSentencesPerChunk: 50, // length governs grouping; sentence cap is just a guard
   chunkJoinPauseMs: 120,
   // Voice-faithful takes per chunk (retryCount = takes - 1), early-accept as soon as
   // ASR confirms a complete read. Lowered from 6 to 3: with sampling now matching
@@ -195,8 +194,8 @@ export function splitTextIntoChunks(text, options = {}) {
     }
 
     // Break a chunk only at a SENTENCE end (never at a comma -- commas stay inside
-    // the chunk and become natural cut5 pauses, like Live Fast, instead of a
-    // chunk-join silence), and only once the chunk is reasonably full. This lets
+    // the chunk and are handled by the model's natural prosody under cut0, instead
+    // of a chunk-join silence), and only once the chunk is reasonably full. This lets
     // several short sentences group into one context-rich, naturally-flowing read
     // while still breaking at clean sentence boundaries near the length cap.
     const trimmed = current.trimEnd();
@@ -837,11 +836,12 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     ...synthesisBaseParams,
     aux_ref_audio_paths: baseParams.aux_ref_audio_paths || [],
     seed: baseSeed,
-    // cut5 = "split on every punctuation": GPT-SoVITS breaks on each comma/clause
-    // mark and inserts a deterministic fragment_interval of silence between fragments.
-    // This makes comma pauses consistent instead of leaving them to the model's
-    // stochastic prosody (cut0 fed the whole chunk in, so internal commas were a coin flip).
-    text_split_method: baseParams.text_split_method || 'cut5',
+    // cut0 = "no forced split": feed the whole chunk in and let the model decide its
+    // own pauses, the same as Live Fast (lambda/live sends cut0). cut5 forced a
+    // deterministic pause at EVERY comma, which the user confirmed sounds robotic /
+    // choppy for Live Full; cut0 gives natural prosody. Chunks are kept short (~2-3
+    // sentences) so cut0's pacing stays controlled without forced fragment pauses.
+    text_split_method: baseParams.text_split_method || 'cut0',
     batch_size: 1,
     streaming_mode: false,
     split_bucket: true,
@@ -852,7 +852,7 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   };
 
   // Best-of-N strategy (voice-faithful): every take keeps the natural quality
-  // parameters (temperature, top_k, top_p, cut5, repetition_penalty) — identical to
+  // parameters (temperature, top_k, top_p, cut0, repetition_penalty) — identical to
   // the Live Fast settings that pronounce correctly — and varies ONLY the seed. Each
   // take is a full, faithful read; the caller keeps generating (up to retryCount)
   // until ASR confirms a complete one, then stops (early-accept). Nothing about HOW
