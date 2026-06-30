@@ -929,11 +929,24 @@ function scoreAudioCandidate(analysis, verification = null) {
     ? clampNumber(verification.similarity, 0) * 4
     : 0;
 
+  // A half-cut word PASSES coverage (Whisper fills it in from context), so coverage
+  // alone can't tell a clipped take from a clean one — they tie, and noise decides
+  // which ships. That's why a best-effort fallback was landing on a clipped take
+  // even when a clean one was in the same batch. Penalize the explicit clipped /
+  // missing word lists so the cleanest take wins decisively. Clipped is weighted
+  // heaviest: it's the exact "half-said word" defect we're trying not to ship.
+  const clippedCount = verification?.suspectWords?.length || 0;
+  const missingCount = verification?.missingWords?.length || 0;
+  const clippedWordPenalty = clippedCount * 6;
+  const missingWordPenalty = missingCount * 4;
+
   return (
     coverageBonus
     + similarityBonus
     + durationSec
     + Math.min(rms * 20, 3)
+    - clippedWordPenalty
+    - missingWordPenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)
