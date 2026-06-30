@@ -143,6 +143,16 @@ test('number words and digits are treated as the same word (nine vs 9)', () => {
   assert.deepEqual(r.missingWords, []);
 });
 
+test('one and a half matches Whisper decimal form 1.5', () => {
+  const r = computeWordCoverage(
+    'they double every one and a half to three hours while bacteria divide every twenty minutes',
+    'they double every 1.5 to 3 hours while bacteria divide every 20 minutes',
+  );
+
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  assert.deepEqual(r.missingWords, []);
+});
+
 test('US/UK spelling variants are treated as the same word (fibers vs fibres)', () => {
   const r = computeWordCoverage(
     'held at their position by interconnecting fibers',

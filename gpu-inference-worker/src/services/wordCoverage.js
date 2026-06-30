@@ -7,6 +7,8 @@
 function tokenize(text) {
   return String(text || '')
     .toLowerCase()
+    .replace(/\b(?:one|1)[\s-]+and[\s-]+a[\s-]+half\b/gu, ' oneandahalf ')
+    .replace(/\b1[.,]5\b/gu, ' oneandahalf ')
     // keep letters, digits and intra-word apostrophes; everything else is a break
     .replace(/[^\p{L}\p{N}']+/gu, ' ')
     .replace(/(^|\s)'+|'+(\s|$)/gu, '$1$2')

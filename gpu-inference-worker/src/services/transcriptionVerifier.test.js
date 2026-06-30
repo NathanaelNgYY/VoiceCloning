@@ -84,6 +84,24 @@ test('missing four-letter content words force a re-roll', async () => {
   }
 });
 
+test('one and a half is accepted when Whisper writes 1.5', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'They double every 1.5 to 3 hours while bacteria divide every 20 minutes',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'They double every one and a half to three hours, while bacteria divide every twenty minutes.',
+      {},
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.deepEqual(res.missingWords, []);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('an advisory clipped word (low confidence, real audio) no longer forces a re-roll', async () => {
   // 100% coverage; "daughter" is low-confidence but has real audio under it (not a
   // skip). This used to reject a perfect take; now it is advisory only.
