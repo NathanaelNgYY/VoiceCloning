@@ -389,6 +389,19 @@ test('joined chunks are matched to a shared loudness without inflation', () => {
   );
 });
 
+test('concatWavs preserves generated chunk samples at joins', () => {
+  const first = makeNoiseWav(0.25);
+  const second = makeNoiseWav(0.25);
+  const joined = concatWavs([Buffer.from(first), Buffer.from(second)], 0);
+
+  const expected = Buffer.concat([
+    parseWav(first).dataChunk,
+    parseWav(second).dataChunk,
+  ]);
+
+  assert.deepEqual(parseWav(joined).dataChunk, expected);
+});
+
 // A genuine inference-server failure (no audio ever produced) must still surface
 // as an error — best-effort fallback only applies when we actually got audio.
 test('long-text synthesis still surfaces a genuine inference-server failure', async () => {

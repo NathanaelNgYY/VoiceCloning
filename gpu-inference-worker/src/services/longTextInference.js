@@ -759,10 +759,8 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
     }
   }
 
-  const defaultFadeMs = 25;
   const isPCM16 = first.audioFormat === 1 && first.bitsPerSample === 16;
   const pauses = Array.isArray(pauseMs) ? pauseMs : Array(parsed.length - 1).fill(pauseMs);
-  const fades = Array.isArray(fadeDurations) ? fadeDurations : Array(parsed.length - 1).fill(defaultFadeMs);
 
   // Match chunks to a shared, natural loudness (median of their own peaks) so we
   // even out inter-chunk jumps without boosting the overall level above what the
@@ -776,14 +774,10 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
       normalizeChunkPeak(chunk, sharedPeak);
-      const fadeIn = index > 0 ? (fades[index - 1] ?? defaultFadeMs) : 0;
-      const fadeOut = index < parsed.length - 1 ? (fades[index] ?? defaultFadeMs) : 0;
-      if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
-      if (fadeOut > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeOut, 'out');
     }
-    const desilenced = isPCM16 ? trimEdgeSilence(chunk, first) : chunk;
-    const trimmed = isPCM16 ? trimToZeroCrossings(desilenced, first.blockAlign) : desilenced;
-    joinedChunks.push(trimmed);
+    // Preserve every generated sample. Fading or trimming edges here can shave
+    // soft consonants/word tails and sound like words were cut after synthesis.
+    joinedChunks.push(chunk);
     if (index < parsed.length - 1) {
       const gap = pauses[index] ?? DEFAULTS.chunkJoinPauseMs;
       if (gap > 0) joinedChunks.push(createSilenceBytes(gap, first));
