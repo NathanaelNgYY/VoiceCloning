@@ -185,6 +185,22 @@ test('full inference quality chunks keep normal sentences together for flow', ()
   ]);
 });
 
+test('long sentences avoid comma-ended chunk boundaries', () => {
+  const text = 'This extended introductory clause contains enough descriptive words to reach the safe split zone, and the following phrase continues with several more words so the sentence exceeds the chunk limit without requiring a comma cut.';
+  const chunks = splitTextIntoChunks(text, { maxChunkLength: 120, maxSentencesPerChunk: 50 });
+
+  assert.ok(chunks.length > 1, `expected a split for an over-limit sentence: ${JSON.stringify(chunks)}`);
+  assert.ok(
+    !chunks.slice(0, -1).some(chunk => /,\s*$/u.test(chunk)),
+    `no intermediate chunk should end at a comma: ${JSON.stringify(chunks)}`,
+  );
+});
+
+test('full inference quality does not enable timestamp comma splicing by default', () => {
+  const options = fullInferenceQualityOptions();
+  assert.equal(options.commaPauseMs, 0);
+});
+
 test('retry takes are voice-faithful: ONLY the seed changes', () => {
   const base = applyFullInferenceQualityPreset({
     text: 'Cellular respiration releases energy from glucose.',

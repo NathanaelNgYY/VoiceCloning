@@ -4,7 +4,7 @@ import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
-import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS } from '../config.js';
+import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
 
@@ -50,9 +50,10 @@ const FULL_QUALITY_OPTIONS = {
   // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
   retryCount: 3,
   allowBestEffortFallback: true,
-  // Custom comma breath spliced into the finished cut0 audio (ms). Gives a gentle
-  // pause at commas/clauses without cut5's choppiness. Tunable via COMMA_PAUSE_MS.
-  commaPauseMs: COMMA_PAUSE_MS,
+  // Keep the default full-inference path on plain cut0 audio. Timestamp-spliced
+  // comma breaths can land inside comma-adjacent words when ASR timings drift,
+  // which sounds like a glitch or a skipped/merged word.
+  commaPauseMs: 0,
 };
 
 // Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a
@@ -114,7 +115,7 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…:：;；,，])\s+|(?<=—)\s*(?=\S)|\n+/u)
+    .split(/(?<=[.!?。！？…:：;；])\s+|(?<=—)\s*(?=\S)|\n+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
@@ -132,9 +133,9 @@ function splitLongSentence(sentence, maxChunkLength) {
   let remaining = protected_.trim();
   const minCut = Math.floor(maxChunkLength * 0.6);
 
-  // Priority tiers for split points
+  // Priority tiers for split points. Do not prefer commas here: a comma-ended
+  // synthesized chunk plus a chunk join can sound like a skipped or merged word.
   const clauseSeparators = [';', ':', '；', '：'];      // clause boundaries (preferred)
-  const commaSeparators = [',', '，'];                   // comma breaks (fallback)
 
   while (remaining.length > maxChunkLength) {
     const searchWindow = remaining.slice(0, maxChunkLength + 1);
@@ -146,20 +147,12 @@ function splitLongSentence(sentence, maxChunkLength) {
       if (idx > cut) cut = idx;
     }
 
-    // Tier 2: fall back to comma if clause separator was too early
-    if (cut < minCut) {
-      for (const sep of commaSeparators) {
-        const idx = searchWindow.lastIndexOf(sep);
-        if (idx > cut) cut = idx;
-      }
-    }
-
-    // Tier 3: break at a normal space (never at NBSP — that's a protected unit)
+    // Tier 2: break at a normal space (never at NBSP — that's a protected unit)
     if (cut < minCut) {
       cut = searchWindow.lastIndexOf(' ');
     }
 
-    // Tier 4: hard cut at max length
+    // Tier 3: hard cut at max length
     if (cut < minCut) {
       cut = maxChunkLength;
     }
