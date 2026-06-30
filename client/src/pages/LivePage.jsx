@@ -88,6 +88,16 @@ import {
   persistChatbotSystemPrompt,
   clearChatbotSystemPrompt,
 } from '@/lib/chatbotSystemPrompt';
+import {
+  MAX_DOCUMENTS_CHARS,
+  resolveChatbotDocuments,
+  persistChatbotDocuments,
+  addChatbotDocument,
+  removeChatbotDocument,
+  buildDocumentsContext,
+  combineSystemPromptWithDocuments,
+} from '@/lib/chatbotDocuments';
+import { extractPdfText } from '@/lib/chatbotPdf';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
   buildSavedVoiceProfileRestoreKey,
@@ -313,6 +323,15 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const kiosk = APP_MODE_CONFIG.kiosk;
   const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
+  const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
+  const [chatbotDocError, setChatbotDocError] = useState('');
+  const chatbotCombinedSystemPrompt = useMemo(
+    () => combineSystemPromptWithDocuments(
+      chatbotSystemPrompt,
+      buildDocumentsContext(chatbotDocuments).text,
+    ),
+    [chatbotSystemPrompt, chatbotDocuments],
+  );
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -576,7 +595,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     replyMode,
     language: liveLanguage,
     voiceProfileId: selectedVoiceProfileId,
-    systemPrompt: kiosk ? chatbotSystemPrompt : '',
+    systemPrompt: kiosk ? chatbotCombinedSystemPrompt : '',
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
@@ -2945,6 +2964,38 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setChatbotSystemPrompt(next);
   }
 
+  async function handleAddChatbotDocuments(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setChatbotDocError('');
+    let next = chatbotDocuments;
+    for (const file of files) {
+      if (file.type !== 'application/pdf') {
+        setChatbotDocError(`${file.name}: not a PDF.`);
+        continue;
+      }
+      try {
+        const doc = await extractPdfText(file);
+        if (!doc.text) {
+          setChatbotDocError(`${file.name}: no extractable text (scanned image?).`);
+          continue;
+        }
+        next = addChatbotDocument(next, doc);
+      } catch {
+        setChatbotDocError(`${file.name}: could not read PDF.`);
+      }
+    }
+    setChatbotDocuments(next);
+    const { ok } = persistChatbotDocuments(next);
+    if (!ok) setChatbotDocError('Documents too large to save; kept for this session only.');
+  }
+
+  function handleRemoveChatbotDocument(name) {
+    const next = removeChatbotDocument(chatbotDocuments, name);
+    setChatbotDocuments(next);
+    persistChatbotDocuments(next);
+  }
+
   return (
     /* flex-1 + min-h-0 lets this fill the main flex column */
     <div className="animate-fade-in flex min-h-0 flex-1 flex-col gap-3">
@@ -3694,6 +3745,67 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             spellCheck={false}
             className="min-h-0 flex-1 resize-none rounded-none border-0 bg-white px-4 py-3 text-xs leading-5 text-slate-700 shadow-none focus-visible:ring-0"
           />
+          <div className="border-t border-slate-100 px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Reference documents
+              </span>
+              <label
+                className={cn(
+                  'cursor-pointer text-xs font-medium text-primary hover:text-primary/80',
+                  isConversationActive && 'pointer-events-none opacity-40',
+                )}
+              >
+                + Add PDF
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  multiple
+                  className="hidden"
+                  disabled={isConversationActive}
+                  onChange={(e) => { handleAddChatbotDocuments(e.target.files); e.target.value = ''; }}
+                />
+              </label>
+            </div>
+            {chatbotDocuments.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {chatbotDocuments.map((doc) => (
+                  <li key={doc.name} className="flex items-center justify-between gap-2 text-[11px] text-slate-600">
+                    <span className="truncate">{doc.name}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="text-slate-400">{doc.chars.toLocaleString()} chars</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveChatbotDocument(doc.name)}
+                        disabled={isConversationActive}
+                        className="text-slate-400 hover:text-red-500 disabled:opacity-40"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {buildDocumentsContext(chatbotDocuments).totalChars > 0 && (
+              <p
+                className={cn(
+                  'mt-2 text-[11px]',
+                  buildDocumentsContext(chatbotDocuments).totalChars > MAX_DOCUMENTS_CHARS
+                    ? 'text-amber-600'
+                    : 'text-slate-400',
+                )}
+              >
+                {buildDocumentsContext(chatbotDocuments).totalChars.toLocaleString()}
+                {' / '}
+                {MAX_DOCUMENTS_CHARS.toLocaleString()} chars
+                {buildDocumentsContext(chatbotDocuments).totalChars > MAX_DOCUMENTS_CHARS ? ' — will be truncated.' : ''}
+              </p>
+            )}
+            {chatbotDocError && (
+              <p className="mt-2 text-[11px] text-red-500">{chatbotDocError}</p>
+            )}
+          </div>
           <p className="border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">
             Applied to the next conversation. Locked while a chat is active.
           </p>
