@@ -170,6 +170,19 @@ export function computeWordCoverage(expectedText, transcript) {
 // too noisy to judge on timing/confidence. Set to 4 so short content words like
 // "very", "fast", "cell", and "rate" are tracked for retry too.
 const MIN_SCRUTINY_LENGTH = 4;
+const NUMERIC_UNITS = new Set([
+  'second', 'seconds',
+  'minute', 'minutes',
+  'hour', 'hours',
+  'day', 'days',
+  'week', 'weeks',
+  'month', 'months',
+  'year', 'years',
+]);
+
+function isNumericKey(key) {
+  return key === 'oneandahalf' || /^\d+$/u.test(key);
+}
 
 /**
  * Detect words that were probably spoken only partway ("half-said then skipped").
@@ -206,9 +219,11 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   // Match against ALL countable expected words (not just long ones): a skipped
   // short word ("or", "is") is exactly what the absolute-duration check must see.
   // Keep the original word (for reporting + length-based scrutiny), match on canon.
-  const expected = tokenize(expectedText)
-    .filter(isCountable)
-    .map((raw) => ({ raw, key: canonicalize(raw) }));
+  const allExpected = tokenize(expectedText)
+    .map((raw) => ({ raw, key: canonicalize(raw), countable: isCountable(raw) }));
+  const expected = allExpected
+    .map((entry, index) => ({ ...entry, index }))
+    .filter((entry) => entry.countable);
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
     return { suspectWords: [], skippedWords: [] };
   }
@@ -223,7 +238,7 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const suspectWords = [];
   const skippedWords = [];
 
-  for (const { raw, key } of expected) {
+  for (const { raw, key, index } of expected) {
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
       if (!consumed[i] && actual[i].token === key) { foundIndex = i; break; }
@@ -253,9 +268,15 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
     const tooQuiet = longEnough && match.probability < minProbability;
     const halfCut = tooShort && tooQuiet;
+    const previous = allExpected[index - 1];
+    const numericUnit = NUMERIC_UNITS.has(key) && previous && isNumericKey(previous.key);
+    const weakNumericUnit = numericUnit && (
+      match.duration < 0.18 ||
+      match.probability < 0.72
+    );
 
-    if (skippedSpan || halfCut) skippedWords.push(raw);
-    if (skippedSpan || tooShort || tooQuiet) suspectWords.push(raw);
+    if (skippedSpan || halfCut || weakNumericUnit) skippedWords.push(raw);
+    if (skippedSpan || tooShort || tooQuiet || weakNumericUnit) suspectWords.push(raw);
   }
 
   return { suspectWords, skippedWords };

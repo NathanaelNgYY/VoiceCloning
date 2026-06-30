@@ -218,3 +218,25 @@ test('four-letter content words are scrutinized for half-cuts', () => {
   assert.ok(cut.skippedWords.includes('very'), JSON.stringify(cut));
   assert.ok(cut.skippedWords.includes('fast'), JSON.stringify(cut));
 });
+
+test('numeric units require a real word span', () => {
+  const weak = findClippedWords('to three hours while bacteria divide every twenty minutes', [
+    word('to', 0.12), word('3', 0.14), word('hours', 0.09, 0.95), word('while', 0.25),
+    word('bacteria', 0.5), word('divide', 0.4), word('every', 0.25), word('20', 0.16), word('minutes', 0.28),
+  ]);
+  assert.ok(weak.skippedWords.includes('hours'), JSON.stringify(weak));
+
+  const clean = findClippedWords('to three hours while bacteria divide every twenty minutes', [
+    word('to', 0.12), word('3', 0.14), word('hours', 0.24, 0.95), word('while', 0.25),
+    word('bacteria', 0.5), word('divide', 0.4), word('every', 0.25), word('20', 0.16), word('minutes', 0.28),
+  ]);
+  assert.ok(!clean.skippedWords.includes('hours'), JSON.stringify(clean));
+});
+
+test('numeric units with low confidence force a re-roll', () => {
+  const cut = findClippedWords('divide every twenty minutes', [
+    word('divide', 0.4), word('every', 0.25), word('20', 0.16), word('minutes', 0.3, 0.5),
+  ]);
+
+  assert.ok(cut.skippedWords.includes('minutes'), JSON.stringify(cut));
+});
