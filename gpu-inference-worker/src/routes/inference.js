@@ -320,7 +320,9 @@ router.post('/inference/cancel', (req, res) => {
   }
 
   const cancelled = cancelSession(sessionId);
-  if (cancelled) {
+  // Always drive state terminal so a stale non-terminal state can be cleared,
+  // even if the session already ended (no active session left to signal).
+  if (['waiting', 'generating'].includes(inferenceState.getState().status)) {
     inferenceState.setError('Generation cancelled by user', 'cancelled');
   }
   res.json({ cancelled });
