@@ -50,9 +50,9 @@ const FULL_QUALITY_OPTIONS = {
   // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
   retryCount: 3,
   allowBestEffortFallback: true,
-  // A tiny gap-aware comma breath over cut0 (default 35ms, tunable via COMMA_PAUSE_MS).
-  // Placed in the silent gap after the word with fades, and skipped on word-count
-  // drift, so it lifts commas without the mid-word glitches that forced cut0-only.
+  // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
+  // in practice (drift lands the cut too close to speech), so the breath is opt-in via
+  // COMMA_PAUSE_MS rather than on by default.
   commaPauseMs: COMMA_PAUSE_MS,
 };
 

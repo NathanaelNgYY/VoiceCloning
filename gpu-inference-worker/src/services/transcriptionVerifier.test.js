@@ -45,6 +45,27 @@ test('dictionary word actually skipped (word count short) is NOT forgiven — st
   }
 });
 
+test('trailing dict word dropped from a long chunk is NOT forgiven (no 10% slack)', async () => {
+  // Real regression: "...divide very fast and unregulated" dropped its last two words.
+  // The old 90% count slack tolerated 2 drops in an 18-word chunk, so "unregulated"
+  // (a dict word) was forgiven and never re-rolled. A net token drop must fail the gate.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'At another end of the spectrum of cell division tumor cells in contrast divide very fast',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'At another end of the spectrum of cell division, tumor cells, in contrast, divide very fast and unregulated.',
+      { dictionaryWords: ['unregulated'] },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.missingWords.includes('unregulated'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('common dictionary words are not forgiven when a phrase is missing', async () => {
   mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
     text: 'At another end of the spectrum of cell division tumor cells in contrast',

@@ -207,9 +207,14 @@ class TranscriptionVerifier {
     if (dictSet.size > 0) {
       const expectedTokens = countWords(expectedText);
       const heardTokens = countWords(text);
-      // Gate 1 (count): a mispronunciation keeps the token count, a skip lowers it —
-      // so the heard count must still cover the expected count.
-      const countConsistent = expectedTokens > 0 && heardTokens >= Math.floor(expectedTokens * 0.9);
+      // Gate 1 (count): a mispronunciation keeps the token count exactly (one word in,
+      // one wrong word out); a skip LOWERS it. So forgiveness requires NO net token
+      // drop — heard >= expected. The old 10% slack (>= 0.9*expected) was a hole: on an
+      // ~18-word chunk it tolerated two dropped words, which let "and unregulated" be
+      // dropped yet dict-forgiven and never re-rolled. A dropped word must always lose
+      // this gate (safe for medical text; at worst a correct take with ASR function-word
+      // merging is re-rolled, which is acceptable).
+      const countConsistent = expectedTokens > 0 && heardTokens >= expectedTokens;
       // Gate 2 (per-word, non-dict): never forgive while a NON-dictionary substantial
       // word is missing. That is a real drop, not an ASR spelling slip, and the global
       // count alone could mask it (a hallucinated token refilling the budget). This

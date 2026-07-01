@@ -196,11 +196,10 @@ test('long sentences avoid comma-ended chunk boundaries', () => {
   );
 });
 
-test('full inference quality enables a tiny gap-aware comma breath by default', () => {
+test('full inference quality keeps comma splicing off by default (opt-in via env)', () => {
   const options = fullInferenceQualityOptions();
-  // A small breath (env-tunable via COMMA_PAUSE_MS, default 35ms) — enough to lift
-  // commas, short enough to stay subtle. Must be a small positive value, not cut5-sized.
-  assert.ok(options.commaPauseMs > 0 && options.commaPauseMs <= 80, `commaPauseMs=${options.commaPauseMs}`);
+  // Timestamp-spliced comma breaths still glitch in practice, so default is cut0-only.
+  assert.equal(options.commaPauseMs, 0);
 });
 
 test('retry takes are voice-faithful: ONLY the seed changes', () => {
