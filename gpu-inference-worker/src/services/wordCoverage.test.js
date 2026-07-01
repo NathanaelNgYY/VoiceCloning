@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, isWordSpokenByTiming } from './wordCoverage.js';
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {
@@ -239,4 +239,23 @@ test('numeric units with low confidence force a re-roll', () => {
   ]);
 
   assert.ok(cut.skippedWords.includes('minutes'), JSON.stringify(cut));
+});
+
+test('isWordSpokenByTiming confirms a word backed by real audio at its position', () => {
+  const text = 'alpha beta gamma delta epsilon centriole eta theta iota kappa';
+  // 10 heard words, all with a substantial span; the centriole position is spoken.
+  const words = 'alpha beta gamma delta epsilon central eta theta iota kappa'
+    .split(' ')
+    .map((wd, i) => ({ w: wd, start: i, end: i + (i === 5 ? 0.3 : 0.25) }));
+  assert.equal(isWordSpokenByTiming(text, 'centriole', words), true);
+});
+
+test('isWordSpokenByTiming rejects a word whose position has only near-zero spans', () => {
+  const text = 'alpha beta gamma delta epsilon centriole eta theta iota kappa';
+  // Around the centriole position every span is near-zero — a skip Whisper filled in
+  // from context. The count may look fine, but timing proves it was not spoken.
+  const words = 'alpha beta gamma delta epsilon central eta theta iota kappa'
+    .split(' ')
+    .map((wd, i) => ({ w: wd, start: i, end: i + (i >= 3 && i <= 7 ? 0.01 : 0.25) }));
+  assert.equal(isWordSpokenByTiming(text, 'centriole', words), false);
 });

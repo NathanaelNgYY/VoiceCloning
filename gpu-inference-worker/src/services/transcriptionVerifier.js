@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, countWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, countWords, isWordSpokenByTiming } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -207,11 +207,28 @@ class TranscriptionVerifier {
     if (dictSet.size > 0) {
       const expectedTokens = countWords(expectedText);
       const heardTokens = countWords(text);
+      // Gate 1 (count): a mispronunciation keeps the token count, a skip lowers it —
+      // so the heard count must still cover the expected count.
       const countConsistent = expectedTokens > 0 && heardTokens >= Math.floor(expectedTokens * 0.9);
-      if (countConsistent) {
-        forgivenDict = missingWords.filter((w) => dictSet.has(w.toLowerCase()));
+      // Gate 2 (per-word, non-dict): never forgive while a NON-dictionary substantial
+      // word is missing. That is a real drop, not an ASR spelling slip, and the global
+      // count alone could mask it (a hallucinated token refilling the budget). This
+      // closes the "skipped common word + mistranscribed dict word" hole.
+      const nonDictSubstantialMissing = substantialMissing.filter((w) => !dictSet.has(w.toLowerCase()));
+      if (countConsistent && nonDictSubstantialMissing.length === 0) {
+        // Gate 3 (per-word, timing): when Whisper word timings are available, only
+        // forgive a dict word we can positively locate in the audio — one that was
+        // actually skipped has no real span under it and stays un-forgiven (safe for
+        // medical text). Degrade safely: with no timing data we can't add this check,
+        // so fall back to the count + non-dict gates rather than never forgiving.
+        const hasTimings = Array.isArray(words) && words.length > 0;
+        forgivenDict = missingWords.filter((w) => (
+          dictSet.has(w.toLowerCase())
+          && (!hasTimings || isWordSpokenByTiming(expectedText, w, words))
+        ));
         if (forgivenDict.length > 0) {
-          substantialMissing = substantialMissing.filter((w) => !dictSet.has(w.toLowerCase()));
+          const forgivenSet = new Set(forgivenDict.map((w) => w.toLowerCase()));
+          substantialMissing = substantialMissing.filter((w) => !forgivenSet.has(w.toLowerCase()));
           adjustedCoverage = expectedCount > 0
             ? (matchedCount + forgivenDict.length) / expectedCount
             : 1;

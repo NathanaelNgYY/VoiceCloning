@@ -739,6 +739,50 @@ export function computeChunkFades(chunkTexts) {
   return chunkTexts.slice(0, -1).map(text => fadeForPunctuation(text));
 }
 
+// Inaudible edge fade applied ONLY to the audio touching an inserted silence, so the
+// audio->silence->audio step never clicks. 3ms is far shorter than any phoneme, so it
+// removes the click without shaving consonants — unlike the 20-60ms punctuation
+// crossfade removed in e3e03a2. This is what fixes the mid-sentence "glitch / word cut
+// off" heard when a chunk was split and rejoined (best-effort passes) mid-sentence.
+const JOIN_EDGE_FADE_MS = 3;
+// The model appends a variable tail of near-silence after a sentence. Left in, it
+// STACKS on top of the inserted join pause, so the same fullstop is much longer at a
+// chunk boundary than mid-chunk ("fullstop too long, only sometimes"). Trim that tail
+// before a join so the inserted pause alone governs the gap. The threshold is low
+// enough that soft trailing consonants (fricatives) stay above it and are preserved,
+// and the cap guarantees we never eat into speech even if detection misfires.
+const JOIN_TRIM_THRESHOLD = 0.006; // ~ -44 dBFS
+const JOIN_TRIM_KEEP_MS = 30;      // leave this much tail after the last loud sample
+const JOIN_TRIM_MAX_MS = 400;      // never trim more than this, ever
+
+// Trim trailing near-silence from a PCM16 chunk, returning a view (never mutates).
+// Only used before an inserted pause; mid-sentence continuous joins are left intact.
+function trimTrailingSilencePCM16(data, parsedWav) {
+  const { numChannels, sampleRate, blockAlign } = parsedWav;
+  const totalFrames = Math.floor(data.length / blockAlign);
+  if (totalFrames < 2) return data;
+
+  const threshold = Math.round(JOIN_TRIM_THRESHOLD * 32768);
+  let lastLoud = totalFrames - 1;
+  for (; lastLoud >= 0; lastLoud -= 1) {
+    let peak = 0;
+    for (let ch = 0; ch < numChannels; ch += 1) {
+      const offset = lastLoud * blockAlign + ch * 2;
+      if (offset + 1 < data.length) peak = Math.max(peak, Math.abs(data.readInt16LE(offset)));
+    }
+    if (peak > threshold) break;
+  }
+  if (lastLoud < 0) return data; // all quiet — leave as-is (e.g. an intentional pause)
+
+  const keepFrames = Math.round((JOIN_TRIM_KEEP_MS / 1000) * sampleRate);
+  const maxTrimFrames = Math.round((JOIN_TRIM_MAX_MS / 1000) * sampleRate);
+  const naiveCut = Math.min(totalFrames, lastLoud + 1 + keepFrames);
+  // Never remove more than the cap, no matter how much trailing silence was found.
+  const cutFrame = Math.max(naiveCut, totalFrames - maxTrimFrames);
+  if (cutFrame >= totalFrames) return data;
+  return data.subarray(0, cutFrame * blockAlign);
+}
+
 export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDurations = null) {
   if (!Array.isArray(buffers) || buffers.length === 0) {
     throw new Error('No audio buffers to concatenate');
@@ -769,19 +813,37 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
     ? computeSharedChunkPeak(parsed.map((wav) => getChunkAbsPeak(wav.dataChunk)))
     : 0;
 
+  const gapFor = (index) => (
+    index >= 0 && index < parsed.length - 1
+      ? (pauses[index] ?? DEFAULTS.chunkJoinPauseMs)
+      : 0
+  );
+
   const joinedChunks = [];
   parsed.forEach((wav, index) => {
-    const chunk = Buffer.from(wav.dataChunk);
+    let chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
       normalizeChunkPeak(chunk, sharedPeak);
     }
-    // Preserve every generated sample. Fading or trimming edges here can shave
-    // soft consonants/word tails and sound like words were cut after synthesis.
-    joinedChunks.push(chunk);
-    if (index < parsed.length - 1) {
-      const gap = pauses[index] ?? DEFAULTS.chunkJoinPauseMs;
-      if (gap > 0) joinedChunks.push(createSilenceBytes(gap, first));
+
+    const prevGap = gapFor(index - 1); // silence inserted before this chunk
+    const nextGap = gapFor(index);     // silence inserted after this chunk
+
+    // Only touch edges that meet an INSERTED silence. A no-gap (mid-sentence) join is
+    // continuous speech and is left byte-for-byte intact — no trim, no fade — so we
+    // never shave a consonant across a seamless boundary.
+    if (isPCM16 && nextGap > 0) {
+      // Drop the model's trailing near-silence so the pause length alone governs the
+      // gap (consistent fullstops), then micro-fade so the cut is click-free.
+      chunk = trimTrailingSilencePCM16(chunk, first);
+      applyFade(chunk, first.sampleRate, first.numChannels, JOIN_EDGE_FADE_MS, 'out');
     }
+    if (isPCM16 && prevGap > 0) {
+      applyFade(chunk, first.sampleRate, first.numChannels, JOIN_EDGE_FADE_MS, 'in');
+    }
+
+    joinedChunks.push(chunk);
+    if (nextGap > 0) joinedChunks.push(createSilenceBytes(nextGap, first));
   });
 
   return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
@@ -1353,8 +1415,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
   try {
     for (let index = 0; index < chunks.length; index++) {
       if (session.cancelled) {
-        sseManager.send(sessionId, 'error', { message: 'Generation cancelled by user' });
-        return;
+        throw new Error('Generation cancelled by user');
       }
 
       const chunkText = chunks[index];

@@ -185,6 +185,45 @@ function isNumericKey(key) {
 }
 
 /**
+ * Positionally confirm a (mis-transcribed) word was actually SPOKEN, using Whisper
+ * word timings. Coverage's dictionary forgiveness leans on a whole-chunk token count,
+ * which a stray ASR hallucination can refill even when a word was dropped. This adds a
+ * per-word check: map the word's position among the expected tokens proportionally
+ * into the heard-word sequence and require a nearby heard token with real audio under
+ * it. A long dictionary term renders as a substantial span, so a genuine skip (near-
+ * zero span) is NOT confirmed and stays un-forgiven. Corroborating only — used to
+ * TIGHTEN forgiveness, never to reject on its own.
+ *
+ * @param {string} expectedText
+ * @param {string} targetWord
+ * @param {Array<{start:number,end:number}>} words - ASR word timing data
+ * @param {object} opts
+ * @returns {boolean}
+ */
+export function isWordSpokenByTiming(expectedText, targetWord, words = [], opts = {}) {
+  const minDuration = Number.isFinite(opts.minDuration) ? opts.minDuration : 0.12;
+  const windowRadius = Number.isFinite(opts.windowRadius) ? opts.windowRadius : 2;
+  const target = canonicalize(String(targetWord || '').toLowerCase());
+  if (!target || !Array.isArray(words) || words.length === 0) return false;
+
+  const expected = tokenize(expectedText).filter(isCountable).map(canonicalize);
+  const expectedCount = expected.length;
+  const idx = expected.indexOf(target);
+  if (idx === -1 || expectedCount === 0) return false;
+
+  const durations = words.map((w) => Math.max(0, Number(w.end) - Number(w.start)));
+  // Proportional position of the word within the heard sequence, then scan a small
+  // window around it (ASR word boundaries drift, so an exact index would be brittle).
+  const center = Math.round((idx / expectedCount) * durations.length);
+  const lo = Math.max(0, center - windowRadius);
+  const hi = Math.min(durations.length - 1, center + windowRadius);
+  for (let i = lo; i <= hi; i += 1) {
+    if (durations[i] >= minDuration) return true;
+  }
+  return false;
+}
+
+/**
  * Detect words that were probably spoken only partway ("half-said then skipped").
  * Whisper transcribes such a word in full from context, so it passes coverage —
  * but the audio it aligned to is short and/or low-confidence. We flag an expected

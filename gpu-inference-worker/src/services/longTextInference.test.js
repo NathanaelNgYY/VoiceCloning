@@ -402,6 +402,28 @@ test('concatWavs preserves generated chunk samples at joins', () => {
   assert.deepEqual(parseWav(joined).dataChunk, expected);
 });
 
+test('concatWavs trims trailing model silence before an inserted pause', () => {
+  // A chunk of speech (noise) followed by the model's 0.3s trailing near-silence.
+  const withTail = concatWavs(
+    [Buffer.from(makeNoiseWav(0.25)), Buffer.from(makeSilentWav(0.3))],
+    0, // pure concat, no trim/fade — just build the tailed chunk
+  );
+  const second = makeNoiseWav(0.25);
+
+  const sampleRate = 32000;
+  const gapMs = 120;
+  const joined = concatWavs([Buffer.from(withTail), Buffer.from(second)], gapMs);
+  const joinedFrames = parseWav(joined).dataChunk.length / 2;
+
+  // If the 0.3s tail were kept it would stack on the 0.12s pause. Trimming drops the
+  // tail (keeping a ~30ms margin), so the join is far shorter than the untrimmed sum.
+  const untrimmedFrames = Math.round((0.25 + 0.3 + gapMs / 1000 + 0.25) * sampleRate);
+  assert.ok(
+    joinedFrames < untrimmedFrames - 0.2 * sampleRate,
+    `expected trim: joinedFrames=${joinedFrames} untrimmed=${untrimmedFrames}`,
+  );
+});
+
 // A genuine inference-server failure (no audio ever produced) must still surface
 // as an error — best-effort fallback only applies when we actually got audio.
 test('long-text synthesis still surfaces a genuine inference-server failure', async () => {
