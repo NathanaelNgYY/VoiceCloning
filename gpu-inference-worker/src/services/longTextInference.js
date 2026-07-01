@@ -1086,7 +1086,7 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   };
 }
 
-function scoreAudioCandidate(analysis, verification = null) {
+export function scoreAudioCandidate(analysis, verification = null) {
   const metrics = analysis?.metrics || {};
   const rms = clampNumber(metrics.rms, 0);
   const zeroishRatio = clampNumber(metrics.zeroishRatio, 1);

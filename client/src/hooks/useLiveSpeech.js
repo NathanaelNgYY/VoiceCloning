@@ -21,7 +21,8 @@ import {
   getMicOffAction,
   isLiveInputPhase,
   normalizeLiveLanguage,
-  splitLiveReplyPhrases,
+  splitLiveReplyChunks,
+  shortenFirstFastPhrase,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
@@ -468,7 +469,11 @@ export function useLiveSpeech({
       return;
     }
 
-    const phrases = splitLiveReplyPhrases(text);
+    // Live Fast now sends whole-sentence chunks (same shape as Live Full) instead of
+    // tiny phrases, so each request has enough context for a clean read and the endpoint
+    // can re-seed/verify per chunk to catch dropped words. The first chunk is shortened
+    // at a clause boundary so the very first audio still starts quickly.
+    const phrases = shortenFirstFastPhrase(splitLiveReplyChunks(text));
     if (phrases.length === 0) return;
 
     currentSynthesisMessageIdRef.current = messageId;

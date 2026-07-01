@@ -26,6 +26,10 @@ test('generateLiveFastQueuedTts emits the first clip while later clips are still
   const generation = generateLiveFastQueuedTts({
     text: 'First sentence. Second sentence.',
     baseParams: { voiceProfileId: 'alex-v1', text_lang: 'en' },
+    // Inject the splitter so this test exercises the queue's progressive emission
+    // regardless of how the default chunker groups sentences (chunking is covered by
+    // splitLiveReplyChunks' own tests).
+    splitText: (value) => value.split('. ').map((part) => part.trim()).filter(Boolean),
     createObjectUrl: (blob) => `blob:${blob.id}`,
     synthesizeSentence: async (params) => {
       calls.push(params.text);
@@ -39,7 +43,7 @@ test('generateLiveFastQueuedTts emits the first clip while later clips are still
   await tick();
 
   assert.deepEqual(events, ['ready:0:blob:first']);
-  assert.deepEqual(calls, ['First sentence.', 'Second sentence.']);
+  assert.deepEqual(calls, ['First sentence', 'Second sentence.']);
 
   second.resolve({ blob: { id: 'second' } });
   const result = await generation;

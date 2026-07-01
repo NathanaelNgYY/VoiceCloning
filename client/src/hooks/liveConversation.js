@@ -247,6 +247,162 @@ export function shortenFirstFastPhrase(phrases, {
   return phrases;
 }
 
+// --- Live Fast chunking -----------------------------------------------------
+// Live Fast used to split the reply on every .!?;: into tiny phrases, which robbed
+// GPT-SoVITS of the context it needs to pronounce cleanly and made cut/skipped words
+// more likely. It now groups whole sentences into ~1-3 sentence chunks — the exact
+// same shape Live Full uses server-side (splitTextIntoChunks in longTextInference.js)
+// — so each request carries enough context for a stable read. The Live Fast endpoint
+// then runs the same re-seed + ASR retry per chunk to catch any dropped words. This is
+// a faithful client-side port of that server chunker (kept in sync intentionally).
+const CHUNK_MAX_LENGTH = 280;
+const CHUNK_MAX_SENTENCES = 50; // length governs grouping; sentence cap is just a guard
+const CHUNK_MIN_LENGTH = 24;
+const CHUNK_NBSP = ' '; // NBSP sentinel to protect multi-word units while splitting
+
+// Common multi-word phrases that should not be split across chunks.
+const CHUNK_SEMANTIC_UNITS = [
+  'of the', 'in the', 'to the', 'for the', 'on the', 'at the', 'by the',
+  'to a', 'of a', 'in a', 'for a', 'on a',
+  'it is', 'that is', 'there is', 'this is', 'it was', 'that was', 'there was',
+  'as well', 'such as', 'due to', 'in order', 'as a',
+  'would be', 'could be', 'should be', 'will be', 'has been', 'have been',
+  'do not', 'does not', 'did not', 'is not', 'was not', 'are not',
+];
+
+function protectChunkSemanticUnits(text) {
+  let result = text;
+  for (const phrase of CHUNK_SEMANTIC_UNITS) {
+    const pattern = new RegExp(phrase, 'gi');
+    result = result.replace(pattern, (match) => match.replace(/ /g, CHUNK_NBSP));
+  }
+  return result;
+}
+
+function restoreChunkSemanticUnits(text) {
+  return text.replace(/ /g, ' ');
+}
+
+function splitIntoChunkSentences(text) {
+  const normalized = cleanLiveText(text);
+  if (!normalized) return [];
+  const sentences = normalized
+    .split(/(?<=[.!?。！？…:：;；])\s+|(?<=—)\s*(?=\S)|\n+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return sentences.length > 0 ? sentences : [normalized];
+}
+
+function splitLongChunkSentence(sentence, maxChunkLength) {
+  if (sentence.length <= maxChunkLength) return [sentence];
+
+  const protectedText = protectChunkSemanticUnits(sentence);
+  const parts = [];
+  let remaining = protectedText.trim();
+  const minCut = Math.floor(maxChunkLength * 0.6);
+  const clauseSeparators = [';', ':', '；', '：'];
+
+  while (remaining.length > maxChunkLength) {
+    const searchWindow = remaining.slice(0, maxChunkLength + 1);
+    let cut = -1;
+    for (const sep of clauseSeparators) {
+      const idx = searchWindow.lastIndexOf(sep);
+      if (idx > cut) cut = idx;
+    }
+    if (cut < minCut) cut = searchWindow.lastIndexOf(' ');
+    if (cut < minCut) cut = maxChunkLength;
+    const slice = remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    parts.push(restoreChunkSemanticUnits(slice));
+    remaining = remaining.slice(cut + (cut === maxChunkLength ? 0 : 1)).trim();
+  }
+  if (remaining) parts.push(restoreChunkSemanticUnits(remaining));
+  return parts.filter(Boolean);
+}
+
+function chunkEndsSentence(text) {
+  const trimmed = String(text || '').trimEnd();
+  if (trimmed.endsWith('...') || trimmed.endsWith('…')) return true;
+  return '.!?。！？'.includes(trimmed.slice(-1));
+}
+
+// Fold any sub-minLength fragment into a neighbour so no chunk is ever short enough
+// to make GPT-SoVITS render a near-silent buffer. Mirrors mergeShortChunks server-side.
+function mergeShortChunks(chunks, minLength) {
+  if (chunks.length <= 1) return chunks;
+
+  const merged = [];
+  for (const chunk of chunks) {
+    const text = chunk.trim();
+    if (!text) continue;
+    const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+    if (prev && text.length < minLength && !chunkEndsSentence(prev)) {
+      merged[merged.length - 1] = `${prev} ${text}`.trim();
+    } else {
+      merged.push(text);
+    }
+  }
+
+  for (let i = 0; i < merged.length - 1;) {
+    if (merged[i].length < minLength) {
+      merged[i + 1] = `${merged[i]} ${merged[i + 1]}`.trim();
+      merged.splice(i, 1);
+    } else {
+      i += 1;
+    }
+  }
+
+  while (merged.length > 1 && merged[merged.length - 1].length < minLength) {
+    merged[merged.length - 2] = `${merged[merged.length - 2]} ${merged[merged.length - 1]}`.trim();
+    merged.pop();
+  }
+  return merged;
+}
+
+// Group whole sentences into ~1-3 sentence chunks (same shape as Live Full). Dotted
+// initialisms ("W.H.O") are protected so their internal periods don't split a chunk.
+export function splitLiveReplyChunks(text, {
+  maxChunkLength = CHUNK_MAX_LENGTH,
+  maxSentencesPerChunk = CHUNK_MAX_SENTENCES,
+} = {}) {
+  const clean = protectDottedInitialisms(cleanLiveText(text));
+  if (!clean) return [];
+
+  const rawSentences = splitIntoChunkSentences(clean)
+    .flatMap((sentence) => splitLongChunkSentence(sentence, maxChunkLength));
+
+  const chunks = [];
+  let current = '';
+  let sentenceCount = 0;
+
+  for (const sentence of rawSentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    const exceedsLength = candidate.length > maxChunkLength;
+    const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
+
+    if (current && (exceedsLength || exceedsSentenceCount)) {
+      chunks.push(current.trim());
+      current = sentence;
+      sentenceCount = 1;
+    } else {
+      current = candidate;
+      sentenceCount += 1;
+    }
+
+    const trimmed = current.trimEnd();
+    const fullEnough = trimmed.length >= Math.floor(maxChunkLength * 0.6);
+    if (trimmed && chunkEndsSentence(trimmed) && fullEnough) {
+      chunks.push(trimmed);
+      current = '';
+      sentenceCount = 0;
+    }
+  }
+
+  if (current.trim()) chunks.push(current.trim());
+  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH)
+    .map((chunk) => restoreDottedInitialisms(chunk))
+    .filter(Boolean);
+}
+
 export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
   return {
     text: cleanLiveTtsText(text, language),

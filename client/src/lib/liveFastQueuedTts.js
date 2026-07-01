@@ -1,4 +1,4 @@
-import { splitLiveReplyPhrases } from '../hooks/liveConversation.js';
+import { splitLiveReplyChunks } from '../hooks/liveConversation.js';
 
 export async function generateLiveFastQueuedTts({
   text,
@@ -7,7 +7,7 @@ export async function generateLiveFastQueuedTts({
   createObjectUrl,
   onClipReady,
   onProgress,
-  splitText = splitLiveReplyPhrases,
+  splitText = splitLiveReplyChunks,
 }) {
   const phrases = splitText(text);
   if (phrases.length === 0) {

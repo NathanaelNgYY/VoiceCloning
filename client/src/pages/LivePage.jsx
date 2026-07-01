@@ -28,7 +28,7 @@ import {
   LIVE_LANGUAGE_OPTIONS,
   getLiveLanguageConfig,
   normalizeLiveLanguage,
-  splitLiveReplyPhrases,
+  splitLiveReplyChunks,
   shortenFirstFastPhrase,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
@@ -1820,7 +1820,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           text,
           baseParams: liveFastParams,
           synthesizeSentence,
-          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyPhrases(value)),
+          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyChunks(value)),
           createObjectUrl: (blob) => URL.createObjectURL(blob),
           onProgress: setTtsFastProgress,
           onClipReady: (clip) => {
@@ -1861,7 +1861,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
       try {
-        const phrases = splitLiveReplyPhrases(text);
+        const phrases = splitLiveReplyChunks(text);
         const clips = [];
         setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
         for (let index = 0; index < phrases.length; index += 1) {

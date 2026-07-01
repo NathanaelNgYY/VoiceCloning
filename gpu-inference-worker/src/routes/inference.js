@@ -9,6 +9,9 @@ import {
   cancelSession,
   applyFullInferenceQualityPreset,
   fullInferenceQualityOptions,
+  analyzeAudioQuality,
+  buildAttemptVariants,
+  scoreAudioCandidate,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -100,9 +103,84 @@ function readInferenceParams(body) {
   };
 }
 
+// Live Fast retries each chunk up to this many times (total takes = value + 1). Kept
+// lower than Live Full (which does 5 + sentence-split escalation) so Live Fast stays
+// fast: the common case early-accepts on the first clean take, and a stubborn chunk
+// spends at most a few extra seeds before shipping best-effort. Live Fast never splits
+// a chunk below itself — it re-seeds the WHOLE chunk, then keeps the best take.
+const LIVE_FAST_RETRY_COUNT = 2;
+
+// Synthesize ONE Live Fast chunk with the same anti-skip logic Live Full uses per
+// chunk (re-seed retries + ASR/quality verification + best-effort fallback), but
+// WITHOUT sentence-splitting. Each take keeps the caller's Live Fast synth params
+// (cut5, sampling, fragment_interval); only the seed varies between takes. Accepts the
+// first take that passes quality analysis AND word-coverage verification; if none pass
+// within the retry budget, ships the highest-scoring take (most complete / least
+// clipped) so a stubborn chunk still speaks every word rather than failing the reply.
+async function synthesizeLiveFastChunk(baseParams, {
+  synthesize,
+  verifyChunk = null,
+  retryCount = LIVE_FAST_RETRY_COUNT,
+} = {}) {
+  const chunkText = String(baseParams.text || '').trim();
+  const maxRetries = Math.max(0, Number.isFinite(retryCount) ? retryCount : LIVE_FAST_RETRY_COUNT);
+  let lastError = null;
+  let best = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const params = buildAttemptVariants({ ...baseParams, text: `${chunkText} ` }, attempt);
+    try {
+      const audioBuffer = await synthesize(params);
+
+      // If the buffer can't be analyzed (e.g. an unexpected/edge format), don't reject
+      // on that basis — treat quality as "no opinion" and let verification decide.
+      let analysis;
+      try {
+        analysis = analyzeAudioQuality(audioBuffer, chunkText);
+      } catch {
+        // Can't analyze this buffer — treat it as acceptable (not silent) so scoring is
+        // driven by word-coverage verification rather than a false "silent audio" penalty.
+        analysis = {
+          ok: true,
+          durationSec: 0,
+          reason: null,
+          metrics: { rms: 0.02, absPeak: 0.02, zeroishRatio: 0, clippedRatio: 0, longestQuietSec: 0, loopScore: 0 },
+        };
+      }
+
+      // Only spend ASR on takes whose audio already looks usable.
+      let verification = null;
+      if (verifyChunk && analysis.ok) {
+        verification = await verifyChunk(audioBuffer, chunkText);
+      }
+
+      const score = scoreAudioCandidate(analysis, verification);
+      if (!best || score > best.score) best = { audioBuffer, score };
+
+      if (!analysis.ok) throw new Error(analysis.reason || 'Audio failed quality analysis');
+      if (verification && !verification.ok) {
+        throw new Error(`Take rejected — covered ${((verification.coverage ?? 0) * 100).toFixed(0)}% of the text`);
+      }
+      return audioBuffer;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  // Best-effort fallback: never fail a Live Fast reply on a stubborn chunk — ship the
+  // most complete / least-clipped take we saw.
+  if (best) {
+    console.warn(`[live-fast] kept best-effort take after ${maxRetries + 1} seeds: ${lastError?.message}; text="${chunkText.slice(0, 80)}"`);
+    return best.audioBuffer;
+  }
+  throw lastError || new Error('Live Fast synthesis produced no audio');
+}
+
 export async function handleLiveTtsRequest(body, {
   resolveParams = resolveRefAudioParams,
   synthesize = (params) => inferenceServer.synthesize(params),
+  verifyChunk,
+  retryCount,
 } = {}) {
   const resolvedParams = await resolveParams(body);
   const dictionaryText = await prepareTextWithRuntimeDictionary(resolvedParams.text);
@@ -116,7 +194,14 @@ export async function handleLiveTtsRequest(body, {
     // Comma/clause pause length (GPT-SoVITS fragment_interval), tunable via COMMA_PAUSE_SECONDS.
     fragment_interval: resolvedParams.fragment_interval ?? COMMA_PAUSE_SECONDS,
   };
-  const audioBuffer = await synthesize(normalizedParams);
+  const activeVerifyChunk = verifyChunk !== undefined
+    ? verifyChunk
+    : (verificationOptions(normalizedParams).verifyChunk || null);
+  const audioBuffer = await synthesizeLiveFastChunk(normalizedParams, {
+    synthesize,
+    verifyChunk: activeVerifyChunk,
+    retryCount,
+  });
   return { audioBuffer, resolvedParams: normalizedParams };
 }
 
