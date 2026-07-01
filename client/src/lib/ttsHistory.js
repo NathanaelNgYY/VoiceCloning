@@ -8,7 +8,9 @@ export function createTtsHistoryItem({
 }) {
   const createdAt = now();
   const timestamp = createdAt instanceof Date ? createdAt.toISOString() : new Date(createdAt).toISOString();
-  const normalizedRoute = route === 'full' ? 'full' : 'fast';
+  // Queue routes ('fastQueued' / 'fullQueued') must land in the same output panel as
+  // their non-queued counterpart, so collapse them to the base engine here.
+  const normalizedRoute = route === 'full' || route === 'fullQueued' ? 'full' : 'fast';
   return {
     id: `${normalizedRoute}-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
     route: normalizedRoute,

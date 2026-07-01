@@ -20,24 +20,40 @@ const DEFAULTS = {
   retryCount: 2,
 };
 
+// Mirror the Live Fast sampling settings: in real GPU tests Live Fast (top_k 5,
+// temperature 0.7) pronounced hard medical words cleanly while this path's hotter
+// sampling (top_k 15) destabilized on the same words. Higher top_k samples from 3×
+// more candidate tokens, which is what let the model wander into "central" /
+// "Tools and Tools" on short isolated chunks. Match Live Fast so Full Inference is
+// at least as stable as the path the user confirmed works.
 const FULL_QUALITY_PRESET = {
-  top_k: 15,
+  top_k: 5,
   top_p: 0.85,
-  temperature: 0.62,
+  temperature: 0.7,
   repetition_penalty: 1.35,
   speed_factor: 1.0,
 };
 
 const FULL_QUALITY_OPTIONS = {
-  maxChunkLength: 220,
-  maxSentencesPerChunk: 1,
-  chunkJoinPauseMs: 145,
-  // Up to 5 voice-faithful takes per chunk (retryCount = takes - 1), early-accept
-  // as soon as ASR confirms a complete read. Each take keeps the natural voice
-  // parameters, so more takes never costs voice fidelity — only GPU time on the
-  // chunks that actually need it (a clean chunk still costs a single take).
-  retryCount: 4,
+  // The "best zone" is 1 full sentence to ~3 connected sentences: enough context for
+  // natural pronunciation, but short enough that the model keeps control and (with
+  // cut0) its natural pacing doesn't drift. Break only at SENTENCE ends (commas stay
+  // inside the chunk and are handled by the model, not turned into chunk-join
+  // silences), grouped up to ~280 chars (≈ 2-3 medical sentences). Going bigger only
+  // hurts retry granularity and risks tail-drop, for little naturalness gain.
+  maxChunkLength: 280,
+  maxSentencesPerChunk: 50, // length governs grouping; sentence cap is just a guard
+  chunkJoinPauseMs: 120,
+  // Voice-faithful takes per chunk (retryCount = takes - 1), early-accept as soon as
+  // ASR confirms a complete read. Lowered from 6 to 3: with sampling now matching
+  // Live Fast, the relaxed advisory-clip gate, and dictionary-word presence checking,
+  // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
+  retryCount: 3,
   allowBestEffortFallback: true,
+  // Keep the default full-inference path on plain cut0 audio. Timestamp-spliced
+  // comma breaths can land inside comma-adjacent words when ASR timings drift,
+  // which sounds like a glitch or a skipped/merged word.
+  commaPauseMs: 0,
 };
 
 // Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a
@@ -99,7 +115,7 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…:：;；,，])\s+|(?<=—)\s*(?=\S)|\n+/u)
+    .split(/(?<=[.!?。！？…:：;；])\s+|(?<=—)\s*(?=\S)|\n+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
@@ -117,9 +133,9 @@ function splitLongSentence(sentence, maxChunkLength) {
   let remaining = protected_.trim();
   const minCut = Math.floor(maxChunkLength * 0.6);
 
-  // Priority tiers for split points
+  // Priority tiers for split points. Do not prefer commas here: a comma-ended
+  // synthesized chunk plus a chunk join can sound like a skipped or merged word.
   const clauseSeparators = [';', ':', '；', '：'];      // clause boundaries (preferred)
-  const commaSeparators = [',', '，'];                   // comma breaks (fallback)
 
   while (remaining.length > maxChunkLength) {
     const searchWindow = remaining.slice(0, maxChunkLength + 1);
@@ -131,20 +147,12 @@ function splitLongSentence(sentence, maxChunkLength) {
       if (idx > cut) cut = idx;
     }
 
-    // Tier 2: fall back to comma if clause separator was too early
-    if (cut < minCut) {
-      for (const sep of commaSeparators) {
-        const idx = searchWindow.lastIndexOf(sep);
-        if (idx > cut) cut = idx;
-      }
-    }
-
-    // Tier 3: break at a normal space (never at NBSP — that's a protected unit)
+    // Tier 2: break at a normal space (never at NBSP — that's a protected unit)
     if (cut < minCut) {
       cut = searchWindow.lastIndexOf(' ');
     }
 
-    // Tier 4: hard cut at max length
+    // Tier 3: hard cut at max length
     if (cut < minCut) {
       cut = maxChunkLength;
     }
@@ -181,16 +189,19 @@ export function splitTextIntoChunks(text, options = {}) {
       sentenceCount += 1;
     }
 
-    // Force a chunk boundary after any pause-worthy punctuation so silence is inserted between chunks
+    // Break a chunk only at a SENTENCE end (never at a comma -- commas stay inside
+    // the chunk and are handled by the model's natural prosody under cut0, instead
+    // of a chunk-join silence), and only once the chunk is reasonably full. This lets
+    // several short sentences group into one context-rich, naturally-flowing read
+    // while still breaking at clean sentence boundaries near the length cap.
     const trimmed = current.trimEnd();
     const lastChar = trimmed.slice(-1);
-    const endsWithEllipsis = trimmed.endsWith('...') || trimmed.endsWith('\u2026');
-    if (trimmed && (endsWithEllipsis || '.!?。！？:：;；,，—'.includes(lastChar))) {
-      if (trimmed.length >= MIN_CHUNK_LENGTH) {
-        chunks.push(trimmed);
-        current = '';
-        sentenceCount = 0;
-      }
+    const endsSentence = trimmed.endsWith('...') || trimmed.endsWith('…') || '.!?。！？'.includes(lastChar);
+    const fullEnough = trimmed.length >= Math.floor(maxChunkLength * 0.6);
+    if (trimmed && endsSentence && fullEnough) {
+      chunks.push(trimmed);
+      current = '';
+      sentenceCount = 0;
     }
   }
 
@@ -204,22 +215,49 @@ export function splitTextIntoChunks(text, options = {}) {
 // that one of them defeats every retry (and aborts the whole job) climb with
 // length. Fold any sub-minLength fragment into a neighbour so no chunk is ever
 // short enough to trigger that failure mode.
+function endsSentence(text) {
+  const trimmed = String(text || '').trimEnd();
+  if (trimmed.endsWith('...') || trimmed.endsWith('…')) return true;
+  return '.!?。！？'.includes(trimmed.slice(-1));
+}
+
 function mergeShortChunks(chunks, minLength) {
   if (chunks.length <= 1) return chunks;
+
+  // Pass 1: fold a short fragment backward into the previous chunk — but NOT when
+  // that previous chunk already ends a sentence. Gluing e.g. "Structurally," onto
+  // "…microtubules." makes a chunk that straddles a full stop and trails a dangling
+  // lead-in, which the model reliably mangles. Such a fragment is a lead-in to what
+  // FOLLOWS, so leave it standalone here and let pass 2 fold it forward.
   const merged = [];
   for (const chunk of chunks) {
     const text = chunk.trim();
     if (!text) continue;
-    if (merged.length > 0 && text.length < minLength) {
-      merged[merged.length - 1] = `${merged[merged.length - 1]} ${text}`.trim();
+    const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+    if (prev && text.length < minLength && !endsSentence(prev)) {
+      merged[merged.length - 1] = `${prev} ${text}`.trim();
     } else {
       merged.push(text);
     }
   }
-  // A short *leading* fragment has no previous chunk to attach to — fold it forward.
-  while (merged.length > 1 && merged[0].length < minLength) {
-    merged[1] = `${merged[0]} ${merged[1]}`.trim();
-    merged.shift();
+
+  // Pass 2: fold any remaining short chunk forward into its following neighbour.
+  // Covers a short leading fragment ("Typically,") and a lead-in deferred from a
+  // completed sentence ("Structurally,") — both belong with the clause after them.
+  for (let i = 0; i < merged.length - 1;) {
+    if (merged[i].length < minLength) {
+      merged[i + 1] = `${merged[i]} ${merged[i + 1]}`.trim();
+      merged.splice(i, 1);
+    } else {
+      i += 1;
+    }
+  }
+
+  // Pass 3: a short *trailing* chunk has no forward neighbour left — fold it
+  // backward as a last resort so no chunk is ever short enough to render silent.
+  while (merged.length > 1 && merged[merged.length - 1].length < minLength) {
+    merged[merged.length - 2] = `${merged[merged.length - 2]} ${merged[merged.length - 1]}`.trim();
+    merged.pop();
   }
   return merged;
 }
@@ -291,6 +329,140 @@ function buildWav(fmtChunk, dataChunk) {
   dataChunk.copy(output, dataHeaderOffset + 8);
 
   return output;
+}
+
+// Index (among spoken words, in order) of every expected word that is immediately
+// followed by a comma / clause break — i.e. where we want a small breath. Counts a
+// "word" the same way ASR lists them (one per whitespace-separated token containing a
+// letter/digit) so the index lines up with the Whisper `words` array.
+function commaBreakWordIndices(text) {
+  const set = new Set();
+  const tokens = String(text || '').trim().split(/\s+/u);
+  let wordIndex = -1;
+  for (const tok of tokens) {
+    if (!/[\p{L}\p{N}]/u.test(tok)) continue; // punctuation-only token: not a word
+    wordIndex += 1;
+    // strip trailing closing quotes/brackets, then check for a clause-break mark.
+    const tail = tok.replace(/['")\]]+$/u, '');
+    if (/[,;:，；：]$/u.test(tail)) set.add(wordIndex);
+  }
+  return set;
+}
+
+/**
+ * Splice a small silence into finished (cut0) audio at each comma/clause break, using
+ * the Whisper word timestamps for placement. Keeps cut0's smooth, natural prosody but
+ * adds the gentle comma breath cut0 lacks — without cut5's per-fragment choppiness.
+ *
+ * Degrades safely: if the audio isn't PCM16, there are no breaks, the timestamps are
+ * missing, or the heard word count doesn't line up with the expected words (so
+ * placement would be unreliable), it returns the audio unchanged (plain cut0).
+ *
+ * @param {Buffer} audioBuffer  finished chunk WAV (PCM16)
+ * @param {string} expectedText the chunk text (source of comma positions)
+ * @param {Array<{w:string,start:number,end:number}>} words Whisper word timings
+ * @param {number} pauseMs      silence to insert per break
+ */
+// Linearly ramp the first (`in`) or last (`out`) `frames` of a PCM16 buffer so the
+// boundary touching an inserted silence fades smoothly instead of jumping (which
+// clicks/pops). Mutates the buffer in place.
+function fadeEdge(buf, channels, frames, direction) {
+  const bytesPerFrame = channels * 2;
+  const total = Math.floor(buf.length / bytesPerFrame);
+  const n = Math.min(frames, total);
+  for (let k = 0; k < n; k += 1) {
+    const frame = direction === 'in' ? k : total - 1 - k;
+    const gain = (k + 1) / (n + 1); // ramps 0→1 from the silent edge inward
+    for (let c = 0; c < channels; c += 1) {
+      const pos = frame * bytesPerFrame + c * 2;
+      buf.writeInt16LE(Math.round(buf.readInt16LE(pos) * gain), pos);
+    }
+  }
+}
+
+// Returns { audioBuffer, inserted, reason }. `reason` is set only when nothing was
+// inserted, so callers can log WHY the breath was skipped.
+function computeCommaPauses(audioBuffer, expectedText, words, pauseMs) {
+  if (!(pauseMs > 0)) return { audioBuffer, inserted: 0, reason: 'disabled' };
+  if (!Array.isArray(words) || words.length === 0) return { audioBuffer, inserted: 0, reason: 'no-timings' };
+  const breakIndices = commaBreakWordIndices(expectedText);
+  if (breakIndices.size === 0) return { audioBuffer, inserted: 0, reason: 'no-comma' };
+
+  let wav;
+  try { wav = parseWav(audioBuffer); } catch { return { audioBuffer, inserted: 0, reason: 'unparseable-wav' }; }
+  if (wav.bitsPerSample !== 16 || wav.sampleRate <= 0) return { audioBuffer, inserted: 0, reason: 'not-pcm16' };
+
+  // Alignment guard: only place breaths when the heard word count is close to the
+  // expected count, otherwise the index→timestamp mapping would drift and drop a
+  // breath in the wrong place. (A real skip would already have been re-rolled.)
+  const expectedWordCount = String(expectedText || '').trim().split(/\s+/u)
+    .filter((t) => /[\p{L}\p{N}]/u.test(t)).length;
+  if (expectedWordCount === 0 || Math.abs(words.length - expectedWordCount) > 2) {
+    return { audioBuffer, inserted: 0, reason: `word-count-drift(expected ${expectedWordCount}, heard ${words.length})` };
+  }
+
+  const bytesPerFrame = wav.numChannels * 2;
+  const silence = Buffer.alloc(Math.round((pauseMs / 1000) * wav.sampleRate) * bytesPerFrame);
+  if (silence.length === 0) return { audioBuffer, inserted: 0, reason: 'zero-silence' };
+
+  const frameToByte = (frame) => Math.max(0, Math.min(wav.dataChunk.length,
+    Math.round(frame) * bytesPerFrame));
+
+  // Place each breath in the natural GAP after the pre-break word, NOT exactly at the
+  // word's end timestamp. Whisper marks word-end slightly early, so splicing at end
+  // clipped the word's tail and sounded like a cut. We nudge into the silent gap
+  // before the next word (capped), landing the pause where the audio is already quiet.
+  const offsets = [];
+  for (const idx of breakIndices) {
+    const word = words[idx];
+    if (!word || !Number.isFinite(word.end)) continue;
+    const next = words[idx + 1];
+    const gap = next && Number.isFinite(next.start) ? Math.max(0, next.start - word.end) : 0;
+    const insertSec = word.end + Math.min(gap * 0.5, 0.05); // up to 50ms into the gap
+    offsets.push(frameToByte(insertSec * wav.sampleRate));
+  }
+  if (offsets.length === 0) return { audioBuffer, inserted: 0, reason: 'no-valid-offsets' };
+  offsets.sort((a, b) => a - b);
+
+  // Build segments, then taper the edge touching each inserted silence so the
+  // transition into/out of silence is smooth (a hard amplitude jump clicks/pops,
+  // which also reads as a glitch). ~5ms ramp.
+  const fadeFrames = Math.max(1, Math.round(0.005 * wav.sampleRate));
+  const audioSegs = [];
+  let prev = 0;
+  for (const off of offsets) {
+    audioSegs.push(Buffer.from(wav.dataChunk.slice(prev, off)));
+    prev = off;
+  }
+  audioSegs.push(Buffer.from(wav.dataChunk.slice(prev)));
+
+  const parts = [];
+  for (let i = 0; i < audioSegs.length; i += 1) {
+    const seg = audioSegs[i];
+    if (i > 0) fadeEdge(seg, wav.numChannels, fadeFrames, 'in');   // follows a silence
+    if (i < audioSegs.length - 1) fadeEdge(seg, wav.numChannels, fadeFrames, 'out'); // precedes a silence
+    parts.push(seg);
+    if (i < audioSegs.length - 1) parts.push(silence);
+  }
+  return { audioBuffer: buildWav(wav.fmtChunk, Buffer.concat(parts)), inserted: offsets.length, reason: null };
+}
+
+/**
+ * Splice a small silence into finished (cut0) audio at each comma/clause break, using
+ * the Whisper word timestamps for placement. Keeps cut0's smooth, natural prosody but
+ * adds the gentle comma breath cut0 lacks — without cut5's per-fragment choppiness.
+ *
+ * Degrades safely: if the audio isn't PCM16, there are no breaks, the timestamps are
+ * missing, or the heard word count doesn't line up with the expected words (so
+ * placement would be unreliable), it returns the audio unchanged (plain cut0).
+ *
+ * @param {Buffer} audioBuffer  finished chunk WAV (PCM16)
+ * @param {string} expectedText the chunk text (source of comma positions)
+ * @param {Array<{w:string,start:number,end:number}>} words Whisper word timings
+ * @param {number} pauseMs      silence to insert per break
+ */
+export function insertCommaPauses(audioBuffer, expectedText, words, pauseMs) {
+  return computeCommaPauses(audioBuffer, expectedText, words, pauseMs).audioBuffer;
 }
 
 /**
@@ -379,6 +551,55 @@ function findZeroCrossing(data, edge, searchRange = 64) {
     if ((s0 >= 0 && s1 < 0) || (s0 < 0 && s1 >= 0)) return i;
   }
   return totalSamples;
+}
+
+/**
+ * Trim leading/trailing near-silence from a PCM16 chunk so the ONLY gap between
+ * chunks is the deterministic join pause we insert ourselves.
+ *
+ * GPT-SoVITS appends a variable amount of trailing silence (and sometimes a
+ * leading lead-in) to every chunk. Because Live Full forces a chunk boundary
+ * after each punctuation mark, a passage spawns many chunks, and that model
+ * silence STACKS on top of our join pause — so the same sentence pauses for very
+ * different lengths run to run, which reads as "the pause is sometimes too long".
+ * Stripping it makes every inter-chunk gap equal to pauseForPunctuation alone.
+ *
+ * A guard margin is preserved at each edge so a real speech onset/offset (a soft
+ * consonant, a trailing breath) is never clipped — we only remove the dead air
+ * past that margin.
+ */
+function trimEdgeSilence(data, parsedWav, { thresholdAbs = 0.0035, guardMs = 30 } = {}) {
+  const blockAlign = parsedWav.blockAlign;
+  const totalFrames = Math.floor(data.length / blockAlign);
+  if (totalFrames < 256) return data; // too short to safely trim
+
+  const threshold = Math.round(thresholdAbs * 32768);
+  const guardFrames = Math.round((guardMs / 1000) * parsedWav.sampleRate);
+
+  const frameAbsPeak = (frame) => {
+    let peak = 0;
+    for (let ch = 0; ch < parsedWav.numChannels; ch++) {
+      const offset = frame * blockAlign + ch * 2;
+      if (offset + 1 < data.length) {
+        const sample = Math.abs(data.readInt16LE(offset));
+        if (sample > peak) peak = sample;
+      }
+    }
+    return peak;
+  };
+
+  let firstAudible = 0;
+  while (firstAudible < totalFrames && frameAbsPeak(firstAudible) <= threshold) firstAudible += 1;
+  if (firstAudible >= totalFrames) return data; // entirely silent — leave for analysis to reject
+
+  let lastAudible = totalFrames - 1;
+  while (lastAudible > firstAudible && frameAbsPeak(lastAudible) <= threshold) lastAudible -= 1;
+
+  const startFrame = Math.max(0, firstAudible - guardFrames);
+  const endFrame = Math.min(totalFrames, lastAudible + 1 + guardFrames);
+  if (startFrame === 0 && endFrame === totalFrames) return data;
+
+  return data.subarray(startFrame * blockAlign, endFrame * blockAlign);
 }
 
 /**
@@ -479,17 +700,17 @@ function pauseForPunctuation(chunkText, basePauseMs) {
   const last = trimmed[trimmed.length - 1] || '';
 
   // Ellipsis — trailing thought, moderate pause
-  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 1.5);
+  if (tail.includes('...') || tail.includes('\u2026')) return Math.round(basePauseMs * 3.6);
   // Em dash / double dash — brief dramatic pause
-  if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 0.8);
+  if (last === '\u2014' || tail.includes('--')) return Math.round(basePauseMs * 1.2);
   // Period, question mark, exclamation
-  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 1.2);
+  if ('.!?\u3002\uff01\uff1f'.includes(last)) return Math.round(basePauseMs * 3.2);
   // Colon
-  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 1.3);
+  if (':\uff1a'.includes(last)) return Math.round(basePauseMs * 2.0);
   // Semicolon
-  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.1);
+  if (';\uff1b'.includes(last)) return Math.round(basePauseMs * 1.6);
   // Comma — should be brief, not a full pause
-  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.7);
+  if (',\uff0c'.includes(last)) return Math.round(basePauseMs * 0.4);
   // No terminal punctuation — gentle transition
   return Math.round(basePauseMs * 0.6);
 }
@@ -538,10 +759,8 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
     }
   }
 
-  const defaultFadeMs = 25;
   const isPCM16 = first.audioFormat === 1 && first.bitsPerSample === 16;
   const pauses = Array.isArray(pauseMs) ? pauseMs : Array(parsed.length - 1).fill(pauseMs);
-  const fades = Array.isArray(fadeDurations) ? fadeDurations : Array(parsed.length - 1).fill(defaultFadeMs);
 
   // Match chunks to a shared, natural loudness (median of their own peaks) so we
   // even out inter-chunk jumps without boosting the overall level above what the
@@ -555,13 +774,10 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
     const chunk = Buffer.from(wav.dataChunk);
     if (isPCM16) {
       normalizeChunkPeak(chunk, sharedPeak);
-      const fadeIn = index > 0 ? (fades[index - 1] ?? defaultFadeMs) : 0;
-      const fadeOut = index < parsed.length - 1 ? (fades[index] ?? defaultFadeMs) : 0;
-      if (fadeIn > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeIn, 'in');
-      if (fadeOut > 0) applyFade(chunk, first.sampleRate, first.numChannels, fadeOut, 'out');
     }
-    const trimmed = isPCM16 ? trimToZeroCrossings(chunk, first.blockAlign) : chunk;
-    joinedChunks.push(trimmed);
+    // Preserve every generated sample. Fading or trimming edges here can shave
+    // soft consonants/word tails and sound like words were cut after synthesis.
+    joinedChunks.push(chunk);
     if (index < parsed.length - 1) {
       const gap = pauses[index] ?? DEFAULTS.chunkJoinPauseMs;
       if (gap > 0) joinedChunks.push(createSilenceBytes(gap, first));
@@ -710,7 +926,10 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
     reason = 'Generated audio appears heavily clipped or corrupted';
   } else if (durationSec > 1.2 && longestQuietSec > 2.0) {
     reason = `Generated audio contains a long internal pause (${longestQuietSec.toFixed(2)}s)`;
-  } else if (loopScore > 0.6) {
+  } else if (loopScore > 0.5) {
+    // Lowered from 0.6: the dragging "aaaa" / laughing drone is a repetition loop,
+    // and 0.6 let milder (but still audible) loops through. 0.5 catches them while
+    // staying above the autocorrelation of normal sustained vowels.
     reason = `Audio appears to contain repetitive looping (score: ${loopScore.toFixed(2)})`;
   }
 
@@ -741,11 +960,12 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     ...synthesisBaseParams,
     aux_ref_audio_paths: baseParams.aux_ref_audio_paths || [],
     seed: baseSeed,
-    // cut5 = "split on every punctuation": GPT-SoVITS breaks on each comma/clause
-    // mark and inserts a deterministic fragment_interval of silence between fragments.
-    // This makes comma pauses consistent instead of leaving them to the model's
-    // stochastic prosody (cut0 fed the whole chunk in, so internal commas were a coin flip).
-    text_split_method: baseParams.text_split_method || 'cut5',
+    // cut0 = "no forced split": feed the whole chunk in and let the model decide its
+    // own pauses, the same as Live Fast (lambda/live sends cut0). cut5 forced a
+    // deterministic pause at EVERY comma, which the user confirmed sounds robotic /
+    // choppy for Live Full; cut0 gives natural prosody. Chunks are kept short (~2-3
+    // sentences) so cut0's pacing stays controlled without forced fragment pauses.
+    text_split_method: baseParams.text_split_method || 'cut0',
     batch_size: 1,
     streaming_mode: false,
     split_bucket: true,
@@ -755,20 +975,12 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
     speed_factor: speed,
   };
 
-  // Best-of-N strategy (voice-faithful): the dominant failure is the model
-  // CLIPPING a word partway. Rather than fix a bad take by changing HOW it speaks
-  // (lower temperature, cut1, splitting) — which drifts away from the cloned voice
-  // — every take keeps the natural quality parameters (temperature, top_k, top_p,
-  // cut5) and varies ONLY the seed. Each take is therefore a full, faithful read;
-  // the caller keeps generating (up to retryCount) until ASR confirms a complete
-  // one, then stops (early-accept).
-  //
-  // The single exception is repetition_penalty: a high value penalizes repeated
-  // tokens, and phonemes repeat, so it *causes* clipping while contributing
-  // nothing to voice character. We relax it gently toward the 1.0 floor across
-  // takes — this reduces clipping without touching the delivery. (Below 1.0 would
-  // invite the stutter/looping the penalty exists to suppress.)
-  const REP_PENALTY_FLOOR = 1.0;
+  // Best-of-N strategy (voice-faithful): every take keeps the natural quality
+  // parameters (temperature, top_k, top_p, cut0, repetition_penalty) — identical to
+  // the Live Fast settings that pronounce correctly — and varies ONLY the seed. Each
+  // take is a full, faithful read; the caller keeps generating (up to retryCount)
+  // until ASR confirms a complete one, then stops (early-accept). Nothing about HOW
+  // the model speaks changes between takes, so the cloned voice never drifts.
 
   if (attemptIndex === 0) {
     return base;
@@ -784,8 +996,11 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   return {
     ...base,
     seed: (baseSeed + seedOffset) >>> 0,
-    // Gently relax the clip-inducing penalty (1.35 → 1.25 → 1.15 → …), floored at 1.0.
-    repetition_penalty: Math.max(REP_PENALTY_FLOOR, safeRepPenalty - 0.1 * attemptIndex),
+    // Keep repetition_penalty pinned at the base (1.35), like Live Fast. Relaxing it
+    // toward 1.0 to "reduce clipping" was what invited the "barrels of barrels" /
+    // "darrels of darrels" repetition; Live Fast never relaxes it and never stutters.
+    // Retries now vary ONLY the seed — a genuinely different read, no degeneration.
+    repetition_penalty: safeRepPenalty,
     // Tiny pause nudge only; does not alter the voice.
     fragment_interval: baseInterval + 0.01 * attemptIndex,
   };
@@ -843,7 +1058,11 @@ function scoreAudioCandidate(analysis, verification = null) {
   const durationSec = clampNumber(analysis?.durationSec, 0);
 
   const absPeak = clampNumber(metrics.absPeak, 0);
-  if ((rms < 0.003 && absPeak < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2) {
+  // A clear repetition loop (the dragging "aaaa" / laughing drone) is as
+  // unacceptable as silence — rank it down in the deeply-negative band so a
+  // best-effort fallback prefers ANY non-looping take and never ships the loop
+  // unless every single take looped.
+  if ((rms < 0.003 && absPeak < 0.003) || zeroishRatio > 0.995 || clippedRatio > 0.2 || loopScore > 0.5) {
     // Unacceptable audio still earns a finite, comparable score (deeply negative,
     // ordered by residual energy) so a last-resort fallback can pick the
     // least-bad take instead of discarding them all and aborting the whole job.
@@ -861,16 +1080,48 @@ function scoreAudioCandidate(analysis, verification = null) {
     ? clampNumber(verification.similarity, 0) * 4
     : 0;
 
+  // A half-cut word PASSES coverage (Whisper fills it in from context), so coverage
+  // alone can't tell a clipped take from a clean one — they tie, and noise decides
+  // which ships. That's why a best-effort fallback was landing on a clipped take
+  // even when a clean one was in the same batch. Penalize the explicit clipped /
+  // missing word lists so the cleanest take wins decisively. Clipped is weighted
+  // heaviest: it's the exact "half-said word" defect we're trying not to ship.
+  const clippedCount = verification?.suspectWords?.length || 0;
+  const missingCount = verification?.missingWords?.length || 0;
+  const clippedWordPenalty = clippedCount * 6;
+  const missingWordPenalty = missingCount * 4;
+
   return (
     coverageBonus
     + similarityBonus
     + durationSec
     + Math.min(rms * 20, 3)
+    - clippedWordPenalty
+    - missingWordPenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)
     - (loopScore * 3)
   );
+}
+
+// Apply the custom comma breath to a finished take, if enabled and we have the
+// Whisper word timings from verification. No-op (returns audio unchanged) otherwise,
+// so the non-verified path just keeps plain cut0.
+function withCommaPauses(audioBuffer, chunkText, verification, options) {
+  const pauseMs = clampNumber(options.commaPauseMs, 0);
+  if (!(pauseMs > 0)) return audioBuffer;
+  const words = verification && Array.isArray(verification.words) ? verification.words : [];
+  const { audioBuffer: out, inserted, reason } = computeCommaPauses(audioBuffer, chunkText, words, pauseMs);
+  const preview = chunkText.slice(0, 50);
+  if (inserted > 0) {
+    console.log(`[comma-pause] inserted ${inserted} breath(s) @${pauseMs}ms into "${preview}"`);
+  } else if (reason && reason !== 'no-comma' && reason !== 'disabled') {
+    // 'no-comma'/'disabled' are normal and silent; log only the informative skips
+    // (esp. word-count-drift / no-timings) so a missing pause is explainable.
+    console.log(`[comma-pause] skipped (${reason}) for "${preview}"`);
+  }
+  return out;
 }
 
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
@@ -917,7 +1168,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
           + (detail ? ` (${detail})` : ''),
         );
       }
-      return { audioBuffer, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
+      const paused = withCommaPauses(audioBuffer, chunkText, verification, options);
+      return { audioBuffer: paused, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
     } catch (error) {
       lastError = error;
     }
@@ -925,7 +1177,7 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
 
   if (allowBestEffortFallback && bestCandidate) {
     return {
-      audioBuffer: bestCandidate.audioBuffer,
+      audioBuffer: withCommaPauses(bestCandidate.audioBuffer, chunkText, bestCandidate.verification, options),
       analysis: bestCandidate.analysis,
       verification: bestCandidate.verification,
       paramsUsed: bestCandidate.paramsUsed,
@@ -952,12 +1204,6 @@ function splitChunkFine(text, maxLen = 64) {
   return mergeShortChunks(pieces, MIN_CHUNK_LENGTH);
 }
 
-function pickBestCandidate(candidates) {
-  return candidates
-    .filter(Boolean)
-    .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))[0] || null;
-}
-
 // Synthesize one chunk with escalating effort and — as a last resort — keep the
 // best audio we produced rather than letting a single stubborn chunk sink an
 // entire long generation. Order: (1) full retry suite on the whole chunk;
@@ -967,7 +1213,6 @@ function pickBestCandidate(candidates) {
 // (no audio ever produced) propagates.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   const escalate = { ...options, allowBestEffortFallback: false };
-  const salvage = [];
   let lastError = null;
 
   // Pass 1: full retry suite on the whole chunk.
@@ -975,11 +1220,12 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     const result = await synthesizeChunkWithRetry(chunkText, { ...baseParams, text: chunkText }, escalate);
     return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
   } catch (err) {
-    if (err?.bestCandidate) salvage.push(err.bestCandidate);
     lastError = err;
   }
 
-  // Pass 2: split the chunk in half and retry each sub-chunk harder.
+  // Pass 2: split the chunk in half and retry each sub-chunk harder. Only return
+  // if EVERY sub-chunk passes clean — a half that passes is not allowed to stand in
+  // for a half that failed (that would drop the failed half's words).
   const subChunks = splitChunkInHalf(chunkText);
   if (subChunks.length >= 2) {
     if (onSplit) onSplit(subChunks);
@@ -994,7 +1240,6 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
       const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
       return { audioBuffer, attempts, split: true };
     } catch (err) {
-      if (err?.bestCandidate) salvage.push(err.bestCandidate);
       lastError = err;
     }
   }
@@ -1016,28 +1261,42 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
       const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
       return { audioBuffer, attempts, split: true };
     } catch (err) {
-      if (err?.bestCandidate) salvage.push(err.bestCandidate);
       lastError = err;
     }
   }
 
-  // Pass 4: keep the best audio we saw — never abort the whole job for one chunk.
-  const best = pickBestCandidate(salvage);
-  if (best) {
-    console.warn(
-      `[inference] chunk kept best-effort audio after exhausting retries: ${lastError?.message}; `
-      + `metrics=${JSON.stringify(best.analysis?.metrics)}; text="${chunkText.slice(0, 80)}"`,
+  // Pass 4 (safety net): no clean read exists. NEVER substitute a partial span for
+  // the whole chunk — that is what dropped "barrels of nine triplet microtubules"
+  // when a passing first half outscored the failing full chunk. Instead, best-effort
+  // EVERY span and concatenate, so the entire chunk text is always spoken even if
+  // some spans stay imperfect (a mispronounced word is acceptable; a dropped one is
+  // not — this is medical text). Finest granularity isolates each problem word.
+  const spanChunks = fineChunks.length >= 2
+    ? fineChunks
+    : (subChunks.length >= 2 ? subChunks : [chunkText]);
+  const buffers = [];
+  let attempts = 0;
+  for (const span of spanChunks) {
+    const spanResult = await synthesizeChunkWithRetry(
+      span,
+      { ...baseParams, text: span },
+      { ...options, allowBestEffortFallback: true },
     );
-    return {
-      audioBuffer: best.audioBuffer,
-      attempts: best.attempts || 1,
-      analysis: best.analysis,
-      fallback: true,
-      fallbackReason: lastError?.message || best.analysis?.reason || 'best-effort chunk',
-    };
+    buffers.push(spanResult.audioBuffer);
+    attempts += spanResult.attempts;
   }
-
-  throw lastError || new Error('Chunk synthesis failed');
+  const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+  console.warn(
+    `[inference] chunk kept best-effort FULL-SPAN audio after exhausting clean retries `
+    + `(${spanChunks.length} span(s)): ${lastError?.message}; text="${chunkText.slice(0, 80)}"`,
+  );
+  return {
+    audioBuffer,
+    attempts,
+    split: spanChunks.length > 1,
+    fallback: true,
+    fallbackReason: lastError?.message || 'best-effort full-span chunk',
+  };
 }
 
 export function cancelSession(sessionId) {

@@ -19,6 +19,7 @@ import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABL
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
+  loadRuntimePronunciationEntries,
 } from '../services/runtimePronunciationDictionary.js';
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
@@ -37,8 +38,18 @@ function verificationOptions(params = {}) {
 
   return {
     verifyChunk: async (audioBuffer, expectedText) => {
+      // Admin pronunciation-dictionary words are rare medical terms Whisper often
+      // mis-transcribes; pass them so the verifier checks their PRESENCE (word count)
+      // rather than demanding correct spelling — kills wasted re-rolls on those words.
+      let dictionaryWords = [];
+      if (useAsr) {
+        try {
+          const entries = await loadRuntimePronunciationEntries();
+          dictionaryWords = entries.map((e) => e.word).filter(Boolean);
+        } catch { /* no dictionary → strict spelling check, as before */ }
+      }
       const [asr, speaker] = await Promise.all([
-        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText) : null,
+        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
       if (!asr && !speaker) return null;
@@ -47,6 +58,8 @@ function verificationOptions(params = {}) {
         coverage: asr?.coverage ?? 1,
         missingWords: asr?.missingWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
+        skippedWords: asr?.skippedWords ?? [],
+        words: asr?.words ?? [],
         transcript: asr?.transcript,
         similarity: speaker?.similarity,
         similarityOk: speaker ? speaker.ok : null,
@@ -134,12 +147,14 @@ router.get('/inference/status', async (_req, res) => {
 router.post('/inference/start', async (_req, res) => {
   try {
     const sync = await syncHotDictionaryOverrides();
-    // engdict-hot.rep is only read by api_v2.py at startup. When the admin
-    // pronunciation dictionary changed, a server that is already running still
-    // holds the previous pronunciations in memory — so newly added words come
-    // out mispronounced even though they're "in the dictionary". Stop the live
-    // process so start() below respawns it and reloads the updated dictionary.
-    if (sync.changed && inferenceServer.isRunning()) {
+    // engdict-hot.rep is only read by api_v2.py when it rebuilds the compiled
+    // dictionary (engdict_cache.pickle). The sync rewrites the hot file AND drops a
+    // stale cache so the rebuild actually happens; either event means a running
+    // process still holds the previous pronunciations in memory. Stop it so start()
+    // below respawns it, regenerates the cache from the hot file, and reloads the
+    // updated dictionary. (cacheInvalidated covers an already-current hot file whose
+    // entries never made it into a pre-existing stale cache.)
+    if ((sync.changed || sync.cacheInvalidated) && inferenceServer.isRunning()) {
       inferenceServer.stop();
     }
     const status = await inferenceServer.start();

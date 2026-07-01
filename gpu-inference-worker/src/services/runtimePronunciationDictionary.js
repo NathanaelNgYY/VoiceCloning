@@ -58,12 +58,42 @@ function hotDictionaryWords(entries = []) {
   return new Set(buildHotDictionaryLines(entries).map((line) => line.split(/\s+/u)[0]));
 }
 
+// GPT-SoVITS' english.py only reads engdict-hot.rep when it has to rebuild the
+// compiled dictionary; if engdict_cache.pickle already exists it loads that and
+// never looks at the hot file. So a hot-file edit is silently ignored (even across
+// restarts) until the cache is invalidated. Deleting the stale pickle forces a
+// rebuild on the next engine start, which is the only path that overlays the hot
+// entries. namedict_cache.pickle is for the name dictionary and is left alone.
+//
+// `force` removes the pickle outright (we just rewrote the hot file). Otherwise it
+// is removed only when it is OLDER than the hot file — which self-heals an already
+// up-to-date hot file whose entries never made it into a pre-existing stale cache.
+function invalidateCompiledDictionaryCache(gptSovitsRoot, { force = false } = {}) {
+  if (!gptSovitsRoot) return false;
+  const textDir = path.join(gptSovitsRoot, 'GPT_SoVITS', 'text');
+  const cachePath = path.join(textDir, 'engdict_cache.pickle');
+  const hotPath = path.join(textDir, 'engdict-hot.rep');
+  try {
+    if (!fs.existsSync(cachePath)) return false;
+    if (!force) {
+      const cacheMtime = fs.statSync(cachePath).mtimeMs;
+      const hotMtime = fs.existsSync(hotPath) ? fs.statSync(hotPath).mtimeMs : 0;
+      if (cacheMtime >= hotMtime) return false; // cache already newer than hot edits
+    }
+    fs.unlinkSync(cachePath);
+    return true;
+  } catch (error) {
+    console.warn(`[pronunciation] could not invalidate engdict cache: ${error.message}`);
+  }
+  return false;
+}
+
 export function writeHotDictionaryOverrides(gptSovitsRoot = GPT_SOVITS_ROOT, entries = []) {
   const lines = buildHotDictionaryLines(entries);
-  if (!gptSovitsRoot) return { written: false, lines: 0, changed: false };
+  if (!gptSovitsRoot) return { written: false, lines: 0, changed: false, cacheInvalidated: false };
 
   const filePath = path.join(gptSovitsRoot, 'GPT_SoVITS', 'text', 'engdict-hot.rep');
-  if (!fs.existsSync(filePath)) return { written: false, lines: 0, changed: false };
+  if (!fs.existsSync(filePath)) return { written: false, lines: 0, changed: false, cacheInvalidated: false };
 
   const current = fs.readFileSync(filePath, 'utf-8');
   const pattern = new RegExp(`\\n?${escapeRegExp(BEGIN_MARKER)}[\\s\\S]*?${escapeRegExp(END_MARKER)}\\n?`, 'u');
@@ -71,7 +101,8 @@ export function writeHotDictionaryOverrides(gptSovitsRoot = GPT_SOVITS_ROOT, ent
     const next = `${current.replace(pattern, '\n').trimEnd()}\n`;
     const changed = next !== current;
     if (changed) fs.writeFileSync(filePath, next, 'utf-8');
-    return { written: true, lines: 0, changed };
+    const cacheInvalidated = invalidateCompiledDictionaryCache(gptSovitsRoot, { force: changed });
+    return { written: true, lines: 0, changed, cacheInvalidated };
   }
 
   const block = `${BEGIN_MARKER}\n${lines.join('\n')}\n${END_MARKER}`;
@@ -88,7 +119,12 @@ export function writeHotDictionaryOverrides(gptSovitsRoot = GPT_SOVITS_ROOT, ent
 
   const changed = next !== current;
   if (changed) fs.writeFileSync(filePath, next, 'utf-8');
-  return { written: true, lines: lines.length, changed };
+  // The hot entries only reach g2p after the compiled cache is rebuilt. Force the
+  // drop when we just rewrote the file; otherwise still drop a cache that predates
+  // the hot file so an already-current hot file self-heals. The engine restart in
+  // /inference/start then does the rebuild.
+  const cacheInvalidated = invalidateCompiledDictionaryCache(gptSovitsRoot, { force: changed });
+  return { written: true, lines: lines.length, changed, cacheInvalidated };
 }
 
 export async function loadRuntimePronunciationEntries({

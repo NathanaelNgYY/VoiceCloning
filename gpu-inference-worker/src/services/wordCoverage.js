@@ -7,6 +7,8 @@
 function tokenize(text) {
   return String(text || '')
     .toLowerCase()
+    .replace(/\b(?:one|1)[\s-]+and[\s-]+a[\s-]+half\b/gu, ' oneandahalf ')
+    .replace(/\b1[.,]5\b/gu, ' oneandahalf ')
     // keep letters, digits and intra-word apostrophes; everything else is a break
     .replace(/[^\p{L}\p{N}']+/gu, ' ')
     .replace(/(^|\s)'+|'+(\s|$)/gu, '$1$2')
@@ -21,10 +23,49 @@ function tokenize(text) {
 //   - anything containing a digit: pure numerals (Whisper spells "19" as
 //     "nineteen") AND alphanumeric codes / IDs like "nct01675856", which Whisper
 //     mangles even when the audio is correct.
+// Total spoken-word token count. A SKIP removes a token; a MISPRONUNCIATION keeps
+// the count (one word in, one (wrong) word out). So comparing expected vs heard
+// token counts is a robust "were all the words actually spoken?" signal that does
+// NOT depend on Whisper spelling a rare medical term correctly. Used to forgive a
+// dictionary word that Whisper mis-transcribed but the model did speak.
+export function countWords(text) {
+  return tokenize(text).length;
+}
+
 function isCountable(token) {
   if (token.length < 2) return false;
   if (/\p{N}/u.test(token)) return false;
   return true;
+}
+
+// Whisper writes spoken numbers as digits ("nine" -> "9") and uses its own locale
+// spelling ("fibers" -> "fibres"). The intended text doesn't, so a perfectly read
+// word looks "missing" and forces a needless re-roll. Canonicalize BOTH the
+// expected word and the transcript to a common form before comparing, so these
+// purely-orthographic differences stop reading as dropped words. Applied
+// symmetrically, so even an imperfect rule still lets identical words match; the
+// only risk is mapping two different words together, kept low with length guards.
+const NUMBER_WORDS = new Map([
+  ['zero', '0'], ['one', '1'], ['two', '2'], ['three', '3'], ['four', '4'],
+  ['five', '5'], ['six', '6'], ['seven', '7'], ['eight', '8'], ['nine', '9'],
+  ['ten', '10'], ['eleven', '11'], ['twelve', '12'], ['thirteen', '13'],
+  ['fourteen', '14'], ['fifteen', '15'], ['sixteen', '16'], ['seventeen', '17'],
+  ['eighteen', '18'], ['nineteen', '19'], ['twenty', '20'], ['thirty', '30'],
+  ['forty', '40'], ['fifty', '50'], ['sixty', '60'], ['seventy', '70'],
+  ['eighty', '80'], ['ninety', '90'], ['hundred', '100'], ['thousand', '1000'],
+  ['million', '1000000'],
+]);
+
+function canonicalize(token) {
+  if (!token) return token;
+  if (NUMBER_WORDS.has(token)) return NUMBER_WORDS.get(token);
+  let t = token;
+  // British -> American spelling normalization (symmetric on both sides).
+  if (t.length >= 6) t = t.replace(/our(s?)$/u, 'or$1');            // colour->color, tumour->tumor
+  t = t.replace(/is(e|ed|es|ing|ation)$/u, (_m, suf) => `iz${suf}`); // organise->organize
+  t = t.replace(/yse(s|d)?$/u, (_m, suf = '') => `yze${suf}`);       // analyse->analyze
+  if (t.length >= 5) t = t.replace(/([bcglmt])re(s?)$/u, '$1er$2');  // centre->center, fibre->fiber
+  return t;
 }
 
 function levenshtein(a, b) {
@@ -65,12 +106,15 @@ function isFuzzyMatch(expected, actual) {
  *   coverage is 1 when there are no countable expected words.
  */
 export function computeWordCoverage(expectedText, transcript) {
-  const expected = tokenize(expectedText).filter(isCountable);
+  // Keep the original word for reporting, match on the canonical form.
+  const expected = tokenize(expectedText)
+    .filter(isCountable)
+    .map((raw) => ({ raw, key: canonicalize(raw) }));
   if (expected.length === 0) {
     return { coverage: 1, missingWords: [], expectedCount: 0, matchedCount: 0 };
   }
 
-  const actual = tokenize(transcript);
+  const actual = tokenize(transcript).map(canonicalize);
   const consumed = new Array(actual.length).fill(false);
   const missingWords = [];
   let matchedCount = 0;
@@ -91,23 +135,23 @@ export function computeWordCoverage(expectedText, transcript) {
     word.length >= 4 && !actualTokenSet.has(word) && joinedActual.includes(word)
   );
 
-  for (const word of expected) {
+  for (const { raw, key } of expected) {
     let foundIndex = -1;
     // Prefer an exact, unconsumed match; fall back to a fuzzy one.
     for (let i = 0; i < actual.length; i++) {
-      if (!consumed[i] && actual[i] === word) { foundIndex = i; break; }
+      if (!consumed[i] && actual[i] === key) { foundIndex = i; break; }
     }
     if (foundIndex === -1) {
       for (let i = 0; i < actual.length; i++) {
-        if (!consumed[i] && isFuzzyMatch(word, actual[i])) { foundIndex = i; break; }
+        if (!consumed[i] && isFuzzyMatch(key, actual[i])) { foundIndex = i; break; }
       }
     }
     if (foundIndex === -1) {
-      if (isAbsorbedFragment(word)) {
+      if (isAbsorbedFragment(key)) {
         matchedCount += 1;
         continue;
       }
-      missingWords.push(word);
+      missingWords.push(raw);
     } else {
       consumed[foundIndex] = true;
       matchedCount += 1;
@@ -122,10 +166,23 @@ export function computeWordCoverage(expectedText, transcript) {
   };
 }
 
-// A long word the model is most likely to clip. Short words are too noisy to
-// judge on timing/confidence, so we only scrutinize substantial ones (medical
-// terms tend to be long, which is exactly the at-risk case).
-const MIN_SCRUTINY_LENGTH = 6;
+// A substantial word the model is most likely to clip. Words shorter than this are
+// too noisy to judge on timing/confidence. Set to 4 so short content words like
+// "very", "fast", "cell", and "rate" are tracked for retry too.
+const MIN_SCRUTINY_LENGTH = 4;
+const NUMERIC_UNITS = new Set([
+  'second', 'seconds',
+  'minute', 'minutes',
+  'hour', 'hours',
+  'day', 'days',
+  'week', 'weeks',
+  'month', 'months',
+  'year', 'years',
+]);
+
+function isNumericKey(key) {
+  return key === 'oneandahalf' || /^\d+$/u.test(key);
+}
 
 /**
  * Detect words that were probably spoken only partway ("half-said then skipped").
@@ -140,43 +197,87 @@ const MIN_SCRUTINY_LENGTH = 6;
  * @returns {{ suspectWords: string[] }}
  */
 export function findClippedWords(expectedText, words = [], opts = {}) {
-  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.35;
+  // Confidence is the RELIABLE clip signal: a half-said or mispronounced word is
+  // low-confidence, while a fast-but-complete word stays high-confidence. We lean
+  // on it (0.45) and treat timing as only a coarse backstop, because per-word
+  // duration false-positives on briskly-spoken common words ("there", "phase",
+  // "protein") — flagging complete sentences as clipped and rejecting good takes.
+  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.45;
   // Seconds of audio per character below which a word was almost certainly cut
-  // short. Natural speech is ~0.06-0.09 s/char; 0.03 is comfortably below that.
+  // short. Natural speech is ~0.06-0.09 s/char, but a quick common word can dip
+  // well below that WITHOUT being clipped — so keep this low (0.03) to catch only
+  // egregiously short spans and let confidence handle the rest.
   const minSecPerChar = Number.isFinite(opts.minSecPerChar) ? opts.minSecPerChar : 0.03;
+  // Absolute floor on a word's spoken duration. This is the signal that catches a
+  // SKIPPED word Whisper hallucinated back from context (coverage passes, so no
+  // other check fires): the hallucinated word has no real audio under it, so
+  // Whisper gives it a near-zero / absurdly tiny span. No genuinely-spoken word —
+  // even "a" or "or" — lasts under ~50 ms, so this almost never false-positives,
+  // and unlike the per-char check it applies to words of ANY length.
+  const minWordDuration = Number.isFinite(opts.minWordDuration) ? opts.minWordDuration : 0.05;
 
-  const expected = tokenize(expectedText).filter((t) => isCountable(t) && t.length >= MIN_SCRUTINY_LENGTH);
+  // Match against ALL countable expected words (not just long ones): a skipped
+  // short word ("or", "is") is exactly what the absolute-duration check must see.
+  // Keep the original word (for reporting + length-based scrutiny), match on canon.
+  const allExpected = tokenize(expectedText)
+    .map((raw) => ({ raw, key: canonicalize(raw), countable: isCountable(raw) }));
+  const expected = allExpected
+    .map((entry, index) => ({ ...entry, index }))
+    .filter((entry) => entry.countable);
   if (expected.length === 0 || !Array.isArray(words) || words.length === 0) {
-    return { suspectWords: [] };
+    return { suspectWords: [], skippedWords: [] };
   }
 
   const actual = words.map((entry) => ({
-    token: tokenize(entry.w)[0] || '',
+    token: canonicalize(tokenize(entry.w)[0] || ''),
     duration: Math.max(0, Number(entry.end) - Number(entry.start)),
     probability: Number.isFinite(entry.p) ? entry.p : 1,
   })).filter((entry) => entry.token);
 
   const consumed = new Array(actual.length).fill(false);
   const suspectWords = [];
+  const skippedWords = [];
 
-  for (const word of expected) {
+  for (const { raw, key, index } of expected) {
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
-      if (!consumed[i] && actual[i].token === word) { foundIndex = i; break; }
+      if (!consumed[i] && actual[i].token === key) { foundIndex = i; break; }
     }
     if (foundIndex === -1) {
       for (let i = 0; i < actual.length; i++) {
-        if (!consumed[i] && isFuzzyMatch(word, actual[i].token)) { foundIndex = i; break; }
+        if (!consumed[i] && isFuzzyMatch(key, actual[i].token)) { foundIndex = i; break; }
       }
     }
     if (foundIndex === -1) continue; // fully missing — that's the coverage check's job
 
     consumed[foundIndex] = true;
     const match = actual[foundIndex];
-    const tooQuiet = match.probability < minProbability;
-    const tooShort = match.duration > 0 && match.duration / word.length < minSecPerChar;
-    if (tooQuiet || tooShort) suspectWords.push(word);
+
+    // skippedSpan = near-zero audio under the word: the model never really spoke it
+    // and Whisper hallucinated it back from context. Reliable hard skip on its own.
+    const skippedSpan = match.duration < minWordDuration;
+
+    // tooShort and tooQuiet are each NOISY alone — a briskly-spoken COMPLETE word
+    // looks "too short" (Whisper's word boundaries are fuzzy), and a rare COMPLETE
+    // word gets low confidence. Using either alone re-rolled fully-correct takes
+    // endlessly. But a genuine HALF-CUT word is BOTH: short audio AND low confidence
+    // (Whisper is unsure precisely because the audio doesn't cover the whole word).
+    // So the half-cut hard signal requires BOTH together, which fires on real cuts
+    // without flagging complete words. Each signal alone stays advisory (scoring).
+    const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
+    const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
+    const tooQuiet = longEnough && match.probability < minProbability;
+    const halfCut = tooShort && tooQuiet;
+    const previous = allExpected[index - 1];
+    const numericUnit = NUMERIC_UNITS.has(key) && previous && isNumericKey(previous.key);
+    const weakNumericUnit = numericUnit && (
+      match.duration < 0.18 ||
+      match.probability < 0.72
+    );
+
+    if (skippedSpan || halfCut || weakNumericUnit) skippedWords.push(raw);
+    if (skippedSpan || tooShort || tooQuiet || weakNumericUnit) suspectWords.push(raw);
   }
 
-  return { suspectWords };
+  return { suspectWords, skippedWords };
 }

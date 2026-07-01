@@ -50,6 +50,14 @@ export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVIT
 // at each comma / clause break. Bump it for longer comma pauses, lower for tighter speech.
 export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUSE_SECONDS'), 0.1));
 
+// Milliseconds of silence the FULL-INFERENCE path splices into the finished cut0
+// audio at each comma/clause break, placed via Whisper word timestamps. DISABLED by
+// default (0) because timestamp-based placement is unreliable across multiple commas
+// (word-index drift from hyphens/numbers/mis-transcriptions lands silences mid-word =
+// glitches). Plain cut0 is smooth; commas are just quick. Set e.g. 120 to re-enable
+// and experiment, but expect occasional artifacts until placement is made gap-aware.
+export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 0));
+
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended
 // words are present lets us re-roll the bad ones. Critical for medical text.
@@ -62,7 +70,7 @@ export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'small';
 // Minimum fraction of a chunk's expected words that must appear in the transcript
 // for the read to be accepted. Below this, the chunk is treated as having dropped
 // words and is retried.
-export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(readEnv('TRANSCRIPTION_MIN_COVERAGE'), 0.8)));
+export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(readEnv('TRANSCRIPTION_MIN_COVERAGE'), 0.85)));
 
 // Speaker-similarity gate: score each take against the reference voice and reject
 // any that drifted, so cranking the take budget for completeness can never ship a
