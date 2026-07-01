@@ -16,7 +16,17 @@ const activeSessions = new Map(); // sessionId -> { cancelled: boolean }
 const DEFAULTS = {
   maxChunkLength: 280,
   maxSentencesPerChunk: 3,
-  chunkJoinPauseMs: 120,
+  // 0 = seamless natural join. Live Fast sounds better than Full not because of
+  // sampling (they match) but because Fast plays its phrase clips back-to-back with
+  // each clip's NATURAL trailing decay intact, inserting no synthetic silence. Full
+  // used to trim that natural tail and splice a fixed synthetic pause at every chunk
+  // seam, which reads as mechanical. With base pause 0, concatWavs skips the
+  // trim+silence+fade branches (all gated on gap>0) and concatenates chunks
+  // byte-for-byte with their natural tails — identical in spirit to Fast's playback.
+  // The model's own sentence-final decay governs the gap. The punctuation-scaled
+  // pause machinery still exists and re-activates for any caller that passes a
+  // non-zero base, so nothing is lost — this only changes the default.
+  chunkJoinPauseMs: 0,
   retryCount: 2,
 };
 
@@ -43,7 +53,9 @@ const FULL_QUALITY_OPTIONS = {
   // hurts retry granularity and risks tail-drop, for little naturalness gain.
   maxChunkLength: 280,
   maxSentencesPerChunk: 50, // length governs grouping; sentence cap is just a guard
-  chunkJoinPauseMs: 120,
+  // Seamless natural join — match Live Fast, which inserts no synthetic silence and
+  // keeps each clip's natural tail. See DEFAULTS.chunkJoinPauseMs for the full why.
+  chunkJoinPauseMs: 0,
   // Voice-faithful takes per chunk (retryCount = takes - 1), early-accept as soon as
   // ASR confirms a complete read. Set to 5: re-seeding the WHOLE chunk is now the
   // primary way we recover a dropped word (we no longer split below a sentence), so a
