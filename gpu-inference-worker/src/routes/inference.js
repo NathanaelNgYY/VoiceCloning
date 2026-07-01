@@ -113,7 +113,7 @@ const LIVE_FAST_RETRY_COUNT = 2;
 // Synthesize ONE Live Fast chunk with the same anti-skip logic Live Full uses per
 // chunk (re-seed retries + ASR/quality verification + best-effort fallback), but
 // WITHOUT sentence-splitting. Each take keeps the caller's Live Fast synth params
-// (cut5, sampling, fragment_interval); only the seed varies between takes. Accepts the
+// (cut0, sampling, fragment_interval); only the seed varies between takes. Accepts the
 // first take that passes quality analysis AND word-coverage verification; if none pass
 // within the retry budget, ships the highest-scoring take (most complete / least
 // clipped) so a stubborn chunk still speaks every word rather than failing the reply.
@@ -188,9 +188,10 @@ export async function handleLiveTtsRequest(body, {
   const normalizedParams = {
     ...resolvedParams,
     text: prepareTextForSynthesis(emphasizedText),
-    // Split on every punctuation so commas get a deterministic pause rather than
-    // the model's coin-flip prosody. Matches the chunked path's cut5 default.
-    text_split_method: resolvedParams.text_split_method || 'cut5',
+    // cut0 = "no forced split": feed the whole chunk in and let the model choose its
+    // own pauses (natural prosody), same as Live Full. The Live Fast lambda always
+    // sends cut0; this fallback only applies if a caller omits it.
+    text_split_method: resolvedParams.text_split_method || 'cut0',
     // Comma/clause pause length (GPT-SoVITS fragment_interval), tunable via COMMA_PAUSE_SECONDS.
     fragment_interval: resolvedParams.fragment_interval ?? COMMA_PAUSE_SECONDS,
   };
