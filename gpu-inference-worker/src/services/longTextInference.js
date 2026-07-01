@@ -676,10 +676,14 @@ function applyFade(data, sampleRate, numChannels, fadeMs, direction) {
   if (fadeFrames <= 0) return;
 
   for (let frame = 0; frame < fadeFrames; frame++) {
+    // `frame` counts outward from the boundary that touches the silence (the first
+    // sample for 'in', the last sample for 'out'). Gain must be 0 AT that boundary and
+    // rise to 1 fadeFrames inward, for BOTH directions — only the end differs. The old
+    // 'out' branch used (1 + cos), which inverted the ramp: it left the final sample at
+    // full amplitude right before the inserted silence, producing a click at every join
+    // (audible "glitch" on fullstops/commas).
     const t = frame / fadeFrames;
-    const appliedGain = direction === 'in'
-      ? 0.5 * (1 - Math.cos(Math.PI * t))
-      : 0.5 * (1 + Math.cos(Math.PI * t));
+    const appliedGain = 0.5 * (1 - Math.cos(Math.PI * t));
     const frameOffset = direction === 'in'
       ? frame * blockAlign
       : (totalFrames - 1 - frame) * blockAlign;

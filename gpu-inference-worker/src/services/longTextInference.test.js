@@ -403,6 +403,39 @@ test('concatWavs preserves generated chunk samples at joins', () => {
   assert.deepEqual(parseWav(joined).dataChunk, expected);
 });
 
+// Constant full-amplitude PCM16 (no trailing silence to trim), so the edge value we
+// read back reflects the fade alone.
+function makeConstantWav(durationSec, amplitude = 8000, sampleRate = 32000) {
+  const blockAlign = 2;
+  const frameCount = Math.round(durationSec * sampleRate);
+  const dataSize = frameCount * blockAlign;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataSize, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * blockAlign, 28); buf.writeUInt16LE(blockAlign, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < frameCount; i++) buf.writeInt16LE(amplitude, 44 + i * blockAlign);
+  return buf;
+}
+
+test('concatWavs fades chunk edges to ~zero at an inserted silence (no click)', () => {
+  const amp = 8000;
+  const a = makeConstantWav(0.25, amp);
+  const b = makeConstantWav(0.25, amp);
+  const joined = parseWav(concatWavs([Buffer.from(a), Buffer.from(b)], 120));
+  const framesA = parseWav(a).dataChunk.length / 2;
+
+  // The sample touching the inserted silence must be faded toward zero, not left at
+  // full amplitude (the old inverted 'out' fade caused a click on every fullstop).
+  const lastOfA = joined.dataChunk.readInt16LE((framesA - 1) * 2);
+  assert.ok(Math.abs(lastOfA) < amp * 0.1, `end of chunk A not faded: ${lastOfA}`);
+  // And a few samples inward should still be near full amplitude (fade is short).
+  const innerA = joined.dataChunk.readInt16LE((framesA - 400) * 2);
+  assert.ok(Math.abs(innerA) > amp * 0.5, `fade too long, inner sample=${innerA}`);
+});
+
 test('concatWavs trims trailing model silence before an inserted pause', () => {
   // A chunk of speech (noise) followed by the model's 0.3s trailing near-silence.
   const withTail = concatWavs(
