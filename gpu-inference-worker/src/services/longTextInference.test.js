@@ -196,9 +196,11 @@ test('long sentences avoid comma-ended chunk boundaries', () => {
   );
 });
 
-test('full inference quality does not enable timestamp comma splicing by default', () => {
+test('full inference quality enables a tiny gap-aware comma breath by default', () => {
   const options = fullInferenceQualityOptions();
-  assert.equal(options.commaPauseMs, 0);
+  // A small breath (env-tunable via COMMA_PAUSE_MS, default 35ms) — enough to lift
+  // commas, short enough to stay subtle. Must be a small positive value, not cut5-sized.
+  assert.ok(options.commaPauseMs > 0 && options.commaPauseMs <= 80, `commaPauseMs=${options.commaPauseMs}`);
 });
 
 test('retry takes are voice-faithful: ONLY the seed changes', () => {

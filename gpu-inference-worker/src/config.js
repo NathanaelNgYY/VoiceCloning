@@ -51,12 +51,13 @@ export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVIT
 export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUSE_SECONDS'), 0.1));
 
 // Milliseconds of silence the FULL-INFERENCE path splices into the finished cut0
-// audio at each comma/clause break, placed via Whisper word timestamps. DISABLED by
-// default (0) because timestamp-based placement is unreliable across multiple commas
-// (word-index drift from hyphens/numbers/mis-transcriptions lands silences mid-word =
-// glitches). Plain cut0 is smooth; commas are just quick. Set e.g. 120 to re-enable
-// and experiment, but expect occasional artifacts until placement is made gap-aware.
-export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 0));
+// audio at each comma/clause break, placed via Whisper word timestamps. A tiny breath
+// (default 35ms) gives commas a little lift over plain cut0 without cut5's choppiness.
+// Placement is gap-aware: the silence lands in the already-quiet gap AFTER the word
+// (not on its early-marked end, which clipped tails) with ~5ms fades, and is skipped
+// entirely when the heard/expected word counts drift (so it never lands mid-word).
+// Set 0 to disable, or raise for a longer breath.
+export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 35));
 
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended

@@ -4,7 +4,7 @@ import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
-import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS } from '../config.js';
+import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
 
@@ -50,10 +50,10 @@ const FULL_QUALITY_OPTIONS = {
   // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
   retryCount: 3,
   allowBestEffortFallback: true,
-  // Keep the default full-inference path on plain cut0 audio. Timestamp-spliced
-  // comma breaths can land inside comma-adjacent words when ASR timings drift,
-  // which sounds like a glitch or a skipped/merged word.
-  commaPauseMs: 0,
+  // A tiny gap-aware comma breath over cut0 (default 35ms, tunable via COMMA_PAUSE_MS).
+  // Placed in the silent gap after the word with fades, and skipped on word-count
+  // drift, so it lifts commas without the mid-word glitches that forced cut0-only.
+  commaPauseMs: COMMA_PAUSE_MS,
 };
 
 // Minimum length (chars) before a pause-worthy boundary is honoured. Prevents a

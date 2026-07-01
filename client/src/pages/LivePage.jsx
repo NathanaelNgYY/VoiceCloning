@@ -158,7 +158,12 @@ function waitForAudioMetadata(url, timeoutMs = 3500) {
   });
 }
 
-async function waitForPlayableAudioSource(url, { attempts = 5, delayMs = 700 } = {}) {
+// The result URL 404s until the server has finished writing/uploading final.wav, and
+// in S3 mode that file can lag the completion signal (assembly + upload + eventual
+// consistency). The <audio> element reports that transient 404 as onerror, so we keep
+// retrying with backoff. Budget is generous (8 attempts, growing delay ≈ 25s) so a
+// slow final upload no longer surfaces as a spurious "audio not ready" error.
+async function waitForPlayableAudioSource(url, { attempts = 8, delayMs = 700 } = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const candidateUrl = withCacheBuster(url);
