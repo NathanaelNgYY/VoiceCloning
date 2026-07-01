@@ -324,6 +324,41 @@ test('best-effort fallback covers the whole chunk, never a partial span', async 
   }
 });
 
+// When the whole chunk fails, recovery splits ONLY at sentence boundaries and retries
+// each whole sentence — it must never synthesize a sub-sentence fragment (those caused
+// mid-clause seams).
+test('resilient synthesis splits only at sentence boundaries, never below a sentence', async () => {
+  const text = 'The first cell divides quickly. The second cell divides slowly.';
+  const seen = [];
+  mock.method(inferenceServer, 'synthesize', async (params) => {
+    seen.push(params.text.trim());
+    return makeNoiseWav(Math.max(2, params.text.length * 0.1));
+  });
+  // Reject any text with more than one sentence terminator (the whole chunk), accept a
+  // single sentence — forces the sentence-boundary split path.
+  const verifyChunk = async (_buf, expectedText) => {
+    const terminators = (expectedText.match(/[.!?]/gu) || []).length;
+    return terminators > 1
+      ? { ok: false, coverage: 0.5, missingWords: [], suspectWords: [] }
+      : { ok: true, coverage: 1, missingWords: [], suspectWords: [] };
+  };
+  try {
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text }),
+      fullInferenceQualityOptions({ retryCount: 1, verifyChunk }),
+    );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
+    // Every synthesized unit is a whole sentence or the full chunk — each ends in
+    // terminal punctuation. A sub-sentence fragment would not.
+    const fragments = seen.filter((t) => !/[.!?]$/u.test(t));
+    assert.deepEqual(fragments, [], `synthesized a sub-sentence fragment: ${JSON.stringify(seen)}`);
+    assert.ok(seen.includes('The first cell divides quickly.'), JSON.stringify(seen));
+    assert.ok(seen.includes('The second cell divides slowly.'), JSON.stringify(seen));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('insertCommaPauses splices exactly one silence per comma using word timings', () => {
   const sampleRate = 32000;
   const audio = makeNoiseWav(2.0, sampleRate); // 2.0s mono PCM16

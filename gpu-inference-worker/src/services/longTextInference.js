@@ -45,10 +45,12 @@ const FULL_QUALITY_OPTIONS = {
   maxSentencesPerChunk: 50, // length governs grouping; sentence cap is just a guard
   chunkJoinPauseMs: 120,
   // Voice-faithful takes per chunk (retryCount = takes - 1), early-accept as soon as
-  // ASR confirms a complete read. Lowered from 6 to 3: with sampling now matching
-  // Live Fast, the relaxed advisory-clip gate, and dictionary-word presence checking,
-  // most chunks pass in 1-2 takes — fewer rolls keeps Live Full (and the queue) fast.
-  retryCount: 3,
+  // ASR confirms a complete read. Set to 5: re-seeding the WHOLE chunk is now the
+  // primary way we recover a dropped word (we no longer split below a sentence), so a
+  // few more seeds here is what keeps a stubborn word from forcing a sentence split.
+  // Early-accept means the common case still stops at 1-2 takes, so latency is unchanged
+  // when chunks pass; only genuinely stubborn chunks spend the extra seeds.
+  retryCount: 5,
   allowBestEffortFallback: true,
   // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
   // in practice (drift lands the cut too close to speech), so the breath is opt-in via
@@ -1072,48 +1074,6 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   };
 }
 
-/**
- * Split a chunk roughly in half at the nearest sentence/clause boundary.
- * Returns [firstHalf, secondHalf]. If no good split point is found,
- * falls back to splitting at the nearest space.
- */
-function splitChunkInHalf(text) {
-  const mid = Math.floor(text.length / 2);
-  const searchRange = Math.floor(text.length * 0.3);
-
-  // Look for clause/sentence boundaries near the midpoint
-  const separators = ['. ', '? ', '! ', '; ', ': ', ', '];
-  let bestIdx = -1;
-  let bestDist = Infinity;
-
-  for (const sep of separators) {
-    let idx = text.indexOf(sep, mid - searchRange);
-    while (idx !== -1 && idx <= mid + searchRange) {
-      const splitAt = idx + sep.length - 1; // keep punctuation with left half
-      const dist = Math.abs(splitAt - mid);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = splitAt;
-      }
-      idx = text.indexOf(sep, idx + 1);
-    }
-  }
-
-  // Fallback: split at nearest space
-  if (bestIdx < 1 || bestIdx >= text.length - 1) {
-    const spaceLeft = text.lastIndexOf(' ', mid);
-    const spaceRight = text.indexOf(' ', mid);
-    if (spaceLeft > 0) bestIdx = spaceLeft;
-    else if (spaceRight > 0) bestIdx = spaceRight;
-    else return [text]; // can't split
-  }
-
-  const left = text.slice(0, bestIdx + 1).trim();
-  const right = text.slice(bestIdx + 1).trim();
-  if (!left || !right) return [text];
-  return [left, right];
-}
-
 function scoreAudioCandidate(analysis, verification = null) {
   const metrics = analysis?.metrics || {};
   const rms = clampNumber(metrics.rms, 0);
@@ -1260,28 +1220,22 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   throw failure;
 }
 
-// Break a stubborn chunk into small pieces (~64 chars) at word boundaries so each
-// problem word ends up in a short, low-drift fragment — the closest we can get to
-// the "say the word on its own" case the model handles cleanly — without globally
-// shrinking every chunk. Tiny fragments are merged so none is short enough to
-// trigger GPT-SoVITS' near-silent-buffer failure.
-function splitChunkFine(text, maxLen = 64) {
-  const pieces = splitLongSentence(text, maxLen);
-  return mergeShortChunks(pieces, MIN_CHUNK_LENGTH);
-}
-
-// Synthesize one chunk with escalating effort and — as a last resort — keep the
-// best audio we produced rather than letting a single stubborn chunk sink an
-// entire long generation. Order: (1) full retry suite on the whole chunk;
-// (2) split the chunk in half and retry each sub-chunk harder; (3) fine-split into
-// small fragments to isolate the offending word; (4) if everything still fails,
-// return the least-bad candidate seen. Only a genuine inference-server error
-// (no audio ever produced) propagates.
+// Synthesize one chunk (1-3 sentences) reliably WITHOUT ever splitting below a
+// sentence. Sub-sentence fragmenting was removed: independently generated fragments
+// differ in pitch/energy so joining them mid-clause produced audible seams, and the
+// lost context degraded pronunciation. Order:
+//   (1) whole chunk, re-seed until a clean read (best context — usually passes fast);
+//   (2) on failure, split at SENTENCE boundaries only and re-seed each whole sentence,
+//       returning only if EVERY sentence passes clean (joins land on natural pauses);
+//   (3) terminal: best-effort each whole sentence (highest-coverage take) so every word
+//       is still spoken — an imperfect word is acceptable for medical text, a dropped
+//       one is not, and the same skip/half-cut/dict verifier still runs on each unit.
+// Only a genuine inference-server error (no audio ever produced) propagates.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   const escalate = { ...options, allowBestEffortFallback: false };
   let lastError = null;
 
-  // Pass 1: full retry suite on the whole chunk.
+  // Pass 1: whole chunk, re-seed suite (early-accept on the first clean take).
   try {
     const result = await synthesizeChunkWithRetry(chunkText, { ...baseParams, text: chunkText }, escalate);
     return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
@@ -1289,79 +1243,59 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     lastError = err;
   }
 
-  // Pass 2: split the chunk in half and retry each sub-chunk harder. Only return
-  // if EVERY sub-chunk passes clean — a half that passes is not allowed to stand in
-  // for a half that failed (that would drop the failed half's words).
-  const subChunks = splitChunkInHalf(chunkText);
-  if (subChunks.length >= 2) {
-    if (onSplit) onSplit(subChunks);
+  const sentences = splitIntoSentences(chunkText);
+
+  // Pass 2: sentence-boundary split. Retry each WHOLE sentence; only return if every
+  // one passes clean (a passing sentence must not stand in for a failing one — that
+  // would drop the failing sentence's words). Joins fall on sentence ends = natural
+  // pauses, so there is no mid-clause seam.
+  if (sentences.length >= 2) {
+    if (onSplit) onSplit(sentences);
     try {
       const buffers = [];
       let attempts = 0;
-      for (const sub of subChunks) {
-        const subResult = await synthesizeChunkWithRetry(sub, { ...baseParams, text: sub }, escalate);
-        buffers.push(subResult.audioBuffer);
-        attempts += subResult.attempts;
+      for (const sentence of sentences) {
+        const r = await synthesizeChunkWithRetry(sentence, { ...baseParams, text: sentence }, escalate);
+        buffers.push(r.audioBuffer);
+        attempts += r.attempts;
       }
-      const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+      const audioBuffer = concatWavs(buffers, computeChunkPauses(sentences), computeChunkFades(sentences));
       return { audioBuffer, attempts, split: true };
     } catch (err) {
       lastError = err;
     }
   }
 
-  // Pass 3: fine split into small fragments and retry each. This isolates the
-  // offending word in a short, low-drift context (near the "word on its own"
-  // case), which is what finally fixes a word that clips even after re-seeding.
-  const fineChunks = splitChunkFine(chunkText);
-  if (fineChunks.length > subChunks.length) {
-    if (onSplit) onSplit(fineChunks);
-    try {
-      const buffers = [];
-      let attempts = 0;
-      for (const fine of fineChunks) {
-        const fineResult = await synthesizeChunkWithRetry(fine, { ...baseParams, text: fine }, escalate);
-        buffers.push(fineResult.audioBuffer);
-        attempts += fineResult.attempts;
-      }
-      const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
-      return { audioBuffer, attempts, split: true };
-    } catch (err) {
-      lastError = err;
-    }
-  }
-
-  // Pass 4 (safety net): no clean read exists. NEVER substitute a partial span for
-  // the whole chunk — that is what dropped "barrels of nine triplet microtubules"
-  // when a passing first half outscored the failing full chunk. Instead, best-effort
-  // EVERY span and concatenate, so the entire chunk text is always spoken even if
-  // some spans stay imperfect (a mispronounced word is acceptable; a dropped one is
-  // not — this is medical text). Finest granularity isolates each problem word.
-  const spanChunks = fineChunks.length >= 2
-    ? fineChunks
-    : (subChunks.length >= 2 ? subChunks : [chunkText]);
+  // Terminal (safety net): no clean read exists. Best-effort each WHOLE sentence (never
+  // below a sentence) and concatenate, so the entire chunk text is always spoken. A
+  // single-sentence chunk is best-efforted whole. The same verifier still scores each
+  // take, so we keep the most-complete one; a dropped/half-cut word is only tolerated
+  // here as the absolute last resort (fix recurring ones via the pronunciation dict).
+  const units = sentences.length >= 2 ? sentences : [chunkText];
   const buffers = [];
   let attempts = 0;
-  for (const span of spanChunks) {
-    const spanResult = await synthesizeChunkWithRetry(
-      span,
-      { ...baseParams, text: span },
+  for (const unit of units) {
+    const r = await synthesizeChunkWithRetry(
+      unit,
+      { ...baseParams, text: unit },
       { ...options, allowBestEffortFallback: true },
     );
-    buffers.push(spanResult.audioBuffer);
-    attempts += spanResult.attempts;
+    buffers.push(r.audioBuffer);
+    attempts += r.attempts;
   }
-  const audioBuffer = concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
+  const audioBuffer = units.length >= 2
+    ? concatWavs(buffers, computeChunkPauses(units), computeChunkFades(units))
+    : concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
   console.warn(
-    `[inference] chunk kept best-effort FULL-SPAN audio after exhausting clean retries `
-    + `(${spanChunks.length} span(s)): ${lastError?.message}; text="${chunkText.slice(0, 80)}"`,
+    `[inference] chunk kept best-effort audio after exhausting clean retries `
+    + `(${units.length} sentence(s)): ${lastError?.message}; text="${chunkText.slice(0, 80)}"`,
   );
   return {
     audioBuffer,
     attempts,
-    split: spanChunks.length > 1,
+    split: units.length > 1,
     fallback: true,
-    fallbackReason: lastError?.message || 'best-effort full-span chunk',
+    fallbackReason: lastError?.message || 'best-effort sentence audio',
   };
 }
 
