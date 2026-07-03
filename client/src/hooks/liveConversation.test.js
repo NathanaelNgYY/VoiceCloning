@@ -13,7 +13,32 @@ import {
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
+  nextAudioErrorAction,
 } from './liveConversation.js';
+
+test('nextAudioErrorAction ignores errors with no source (teardown)', () => {
+  const state = { src: '', retried: false };
+  const result = nextAudioErrorAction(state, '');
+  assert.equal(result.action, 'ignore');
+});
+
+test('nextAudioErrorAction retries a clip the first time it fails', () => {
+  const result = nextAudioErrorAction({ src: '', retried: false }, 'blob:clip-1');
+  assert.equal(result.action, 'retry');
+  assert.deepEqual(result.retryState, { src: 'blob:clip-1', retried: true });
+});
+
+test('nextAudioErrorAction skips a clip that already failed its retry', () => {
+  const result = nextAudioErrorAction({ src: 'blob:clip-1', retried: true }, 'blob:clip-1');
+  assert.equal(result.action, 'skip');
+});
+
+test('nextAudioErrorAction gives each new clip its own retry budget', () => {
+  // Previous clip exhausted its retry, but a new clip should still get one retry.
+  const result = nextAudioErrorAction({ src: 'blob:clip-1', retried: true }, 'blob:clip-2');
+  assert.equal(result.action, 'retry');
+  assert.deepEqual(result.retryState, { src: 'blob:clip-2', retried: true });
+});
 
 test('createLiveSynthesisSnapshot freezes Live Full engine and config for a queued reply', () => {
   const fastRefParams = { ref_audio_path: 'fast-ref.wav' };

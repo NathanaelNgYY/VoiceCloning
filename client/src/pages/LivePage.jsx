@@ -30,6 +30,7 @@ import {
   normalizeLiveLanguage,
   splitLiveReplyPhrases,
   shortenFirstFastPhrase,
+  nextAudioErrorAction,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -2973,6 +2974,27 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     audio.play().catch(() => {});
   }, [liveSpeech.audioSrc, liveSpeech.selectedReplyId, playbackReady]);
 
+  // The reply plays as a chain of audio clips that only advances on the `ended`
+  // event. If one clip fails to load/decode (a transient hiccup), `ended` never
+  // fires and the whole reply would stall — the voice "cuts off" and only a
+  // manual replay recovers. Retry the failed clip once, then skip it so the rest
+  // of the reply keeps playing.
+  const audioErrorStateRef = useRef({ src: '', retried: false });
+  function handleLiveAudioError() {
+    const audio = audioRef.current;
+    // Ignore errors that aren't from an active reply clip (e.g. clearing the src
+    // during interruption/teardown fires an error on an empty element).
+    if (!audio || liveSpeech.phase !== 'speaking') return;
+    const { action, retryState } = nextAudioErrorAction(audioErrorStateRef.current, liveSpeech.audioSrc);
+    audioErrorStateRef.current = retryState;
+    if (action === 'retry') {
+      try { audio.load(); audio.play().catch(() => { liveSpeech.onAudioEnded(); }); }
+      catch { liveSpeech.onAudioEnded(); }
+    } else if (action === 'skip') {
+      liveSpeech.onAudioEnded();
+    }
+  }
+
   const selectedModelLoaded = Boolean(
     serverReady && selectedGPT && selectedSoVITS &&
     selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
@@ -4634,7 +4656,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       </Collapsible>
       )}
 
-      <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} />
+      <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} onError={handleLiveAudioError} />
     </div>
   );
 }

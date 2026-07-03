@@ -333,6 +333,22 @@ export function findNextPhrasePlayback(messages, selectedId) {
   return null;
 }
 
+// Decide what to do when the reply <audio> element fails on a clip. The player
+// only advances on the `ended` event, so without this a failed clip would stall
+// the whole reply forever. Retry the same clip once (transient decode/network
+// hiccups usually recover on a reload), then skip it so the rest of the reply
+// still plays. `retryState` is caller-held ({ src, retried }); a new src always
+// gets a fresh retry.
+export function nextAudioErrorAction(retryState, src) {
+  if (!src) {
+    return { action: 'ignore', retryState };
+  }
+  if (retryState.src === src && retryState.retried) {
+    return { action: 'skip', retryState };
+  }
+  return { action: 'retry', retryState: { src, retried: true } };
+}
+
 export function findFirstReplayablePart(message) {
   return (message?.audioParts || []).find((part) => part.audioUrl) || null;
 }
