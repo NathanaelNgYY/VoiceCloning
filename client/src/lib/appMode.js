@@ -33,7 +33,7 @@ export function getAppModeConfig(value) {
   return {
     mode,
     kiosk,
-    defaultLiveEngine: kiosk ? 'full' : 'fast',
+    defaultLiveEngine: 'fast',
     showTraining,
     showLiveFast,
     showTextToSpeech,
