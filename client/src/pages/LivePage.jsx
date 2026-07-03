@@ -3084,8 +3084,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
         {[
           { value: 'fast', label: 'Live Fast' },
-          { value: 'full', label: 'Live Full' },
-        ].map((option) => (
+          // Live Full is kept wired up but hidden from the UI for now — flip
+          // hidden to false to expose it again.
+          { value: 'full', label: 'Live Full', hidden: true },
+        ].filter((option) => !option.hidden).map((option) => (
           <button
             key={option.value}
             type="button"

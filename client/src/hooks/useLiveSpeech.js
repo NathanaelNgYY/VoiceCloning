@@ -20,6 +20,7 @@ import {
   findSelectedPlayback,
   getMicOffAction,
   isLiveInputPhase,
+  isBenignRealtimeError,
   normalizeLiveLanguage,
   splitLiveReplyPhrases,
   shouldTriggerLiveBargeIn,
@@ -1039,12 +1040,18 @@ export function useLiveSpeech({
         break;
       }
 
-      case 'error':
-        setError(event.message || 'AI conversation failed.');
+      case 'error': {
+        const message = event.message || 'AI conversation failed.';
+        // Benign Realtime races (e.g. an active response already in progress)
+        // resolve on their own and only confuse the user — don't surface them.
+        if (!isBenignRealtimeError(message)) {
+          setError(message);
+        }
         if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }
         break;
+      }
 
       case 'session.closed':
         if (phaseRef.current !== 'idle') {

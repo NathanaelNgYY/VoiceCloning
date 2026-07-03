@@ -14,7 +14,23 @@ import {
   shouldSendLiveMicAudio,
   updateMessage,
   nextAudioErrorAction,
+  isBenignRealtimeError,
 } from './liveConversation.js';
+
+test('isBenignRealtimeError swallows the active-response race', () => {
+  assert.equal(
+    isBenignRealtimeError('Conversation already has an active response in progress: resp_123. Wait until the response is finished before creating a new one.'),
+    true,
+  );
+  assert.equal(isBenignRealtimeError('conversation_already_has_active_response'), true);
+});
+
+test('isBenignRealtimeError keeps real errors visible', () => {
+  assert.equal(isBenignRealtimeError('OpenAI Realtime is not configured. Set OPENAI_API_KEY.'), false);
+  assert.equal(isBenignRealtimeError('Live chat connection failed.'), false);
+  assert.equal(isBenignRealtimeError(''), false);
+  assert.equal(isBenignRealtimeError(undefined), false);
+});
 
 test('nextAudioErrorAction ignores errors with no source (teardown)', () => {
   const state = { src: '', retried: false };

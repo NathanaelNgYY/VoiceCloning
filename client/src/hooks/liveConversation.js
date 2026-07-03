@@ -349,6 +349,19 @@ export function nextAudioErrorAction(retryState, src) {
   return { action: 'retry', retryState: { src, retried: true } };
 }
 
+// Some OpenAI Realtime "error" events are benign races that resolve on their own
+// (most often a new response requested while one is still in progress, which
+// happens with rapid barge-in). Surfacing them just confuses the user, so we
+// swallow these specific ones instead of showing the red error banner.
+export function isBenignRealtimeError(message) {
+  const text = String(message || '').toLowerCase();
+  return (
+    text.includes('active response in progress')
+    || text.includes('already has an active response')
+    || text.includes('conversation_already_has_active_response')
+  );
+}
+
 export function findFirstReplayablePart(message) {
   return (message?.audioParts || []).find((part) => part.audioUrl) || null;
 }
