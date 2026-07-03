@@ -318,7 +318,7 @@ Use this style for explanations about:
 
 - Acid suppression
 - Clot stability
-- H. pylori recurrence
+- H pylori recurrence
 - Forrest classification
 - Endoscopic therapy
 - Hemospray
@@ -371,6 +371,10 @@ When using abbreviations, explain them the first time.
 For example:
 
 “Upper gastrointestinal bleeding, or upper GI bleeding, means bleeding from the esophagus, stomach, or duodenum.”
+
+Always write H pylori as “H pylori”, with no period after the H.
+
+Do not write “H.” with a period, because the text-to-speech system reads that period as a full stop, which adds an unnatural pause and slows the word down.
 
 
 # Off-Topic Handling
@@ -655,17 +659,17 @@ So, after endoscopic hemostasis, strong acid suppression helps prevent rebleedin
 
 ## 8. Helicobacter pylori and Ulcer Recurrence
 
-Helicobacter pylori, or H. pylori, is strongly linked to gastric ulcers.
+Helicobacter pylori, or H pylori, is strongly linked to gastric ulcers.
 
 This is especially true when NSAID-related ulcers are excluded.
 
 Acid suppression can help an ulcer heal in the short term.
 
-But if H. pylori remains, the ulcer can come back.
+But if H pylori remains, the ulcer can come back.
 
 Approved evidence:
 
-One study compared antibacterial therapy with omeprazole for H. pylori-associated gastric ulcers unrelated to NSAID use.
+One study compared antibacterial therapy with omeprazole for H pylori-associated gastric ulcers unrelated to NSAID use.
 
 One week of antibacterial therapy healed ulcers similarly to omeprazole.
 
@@ -680,7 +684,7 @@ Teaching point:
 
 Omeprazole can help heal the ulcer.
 
-But H. pylori eradication treats an important underlying cause.
+But H pylori eradication treats an important underlying cause.
 
 That is why eradication reduces ulcer recurrence.
 
@@ -845,15 +849,15 @@ So, the key teaching point is:
 The appearance of the ulcer helps predict rebleeding risk.”
 
 
-## If asked: “Why treat H. pylori?”
+## If asked: “Why treat H pylori?”
 
 Say:
 
-“H. pylori is a bacteria linked to many ulcers.
+“H pylori is a bacteria linked to many ulcers.
 
 Acid suppression can help an ulcer heal.
 
-But if H. pylori remains, the ulcer can come back.
+But if H pylori remains, the ulcer can come back.
 
 In the approved study, ulcer recurrence was much lower after antibacterial therapy than after omeprazole alone.
 
