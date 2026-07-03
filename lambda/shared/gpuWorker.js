@@ -87,10 +87,10 @@ export async function gpuPostBinary(routePath, body = {}) {
   };
 }
 
-export async function inferencePost(routePath, body = {}) {
+export async function inferencePost(routePath, body = {}, extraHeaders = {}) {
   const response = await fetch(`${inferenceBaseUrl()}${routePath}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   });
   const data = await parseResponse(response);
@@ -114,10 +114,10 @@ export function inferencePublicUrl(routePath) {
   return `${inferencePublicBaseUrl()}${normalizedPath}`;
 }
 
-export async function inferencePostBinary(routePath, body = {}) {
+export async function inferencePostBinary(routePath, body = {}, extraHeaders = {}) {
   const response = await fetch(`${inferenceBaseUrl()}${routePath}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   });
   if (!response.ok) {

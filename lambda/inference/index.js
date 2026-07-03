@@ -3,6 +3,7 @@ import { inferencePost, inferenceGet, inferencePostBinary, inferenceGetBinary, i
 import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { corsHeaders, ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
+import { demoHeaders } from '../shared/demoOrigin.js';
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
@@ -53,6 +54,9 @@ export function createHandler({
 
     const method = event.requestContext?.http?.method;
     const routePath = event.rawPath || '';
+    // Non-empty only for requests from the demo CloudFront (DEMO_CLOUDFRONT_HOST); tells
+    // the worker to preempt any in-flight Live Full generation for this request.
+    const demoHdr = demoHeaders(event);
     let body = {};
     if (method === 'POST') {
       try {
@@ -67,7 +71,7 @@ export function createHandler({
         if (!body.text) return err(400, 'text is required');
         const resolvedBody = await resolveSynthesisBody(body);
         if (!resolvedBody.ref_audio_path) return err(400, 'ref_audio_path is required');
-        const { buffer, contentType } = await postBinary('/inference', resolvedBody);
+        const { buffer, contentType } = await postBinary('/inference', resolvedBody, demoHdr);
         return binaryWav(buffer, contentType);
       }
 
@@ -75,7 +79,7 @@ export function createHandler({
         if (!body.text) return err(400, 'text is required');
         const resolvedBody = await resolveSynthesisBody(body);
         if (!resolvedBody.ref_audio_path) return err(400, 'ref_audio_path is required');
-        return ok(await postJson('/inference/generate', resolvedBody));
+        return ok(await postJson('/inference/generate', resolvedBody, demoHdr));
       }
 
       if (method === 'GET' && routePath.includes('/inference/result/')) {

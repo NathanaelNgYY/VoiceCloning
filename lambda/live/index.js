@@ -1,6 +1,7 @@
 import { corsHeaders, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
+import { demoHeaders } from '../shared/demoOrigin.js';
 
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
@@ -37,7 +38,7 @@ export function createHandler({
         split_bucket: true,
         parallel_infer: false,
         fragment_interval: 0.1,
-      });
+      }, demoHeaders(event));
 
       return {
         statusCode: 200,

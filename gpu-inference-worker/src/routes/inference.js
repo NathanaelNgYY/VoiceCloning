@@ -26,6 +26,7 @@ import {
 } from '../services/runtimePronunciationDictionary.js';
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
+import { isDemoRequest, preemptActiveGeneration } from '../services/demoPreempt.js';
 
 const router = Router();
 
@@ -310,6 +311,12 @@ router.post('/inference/weights/sovits', async (req, res) => {
 router.post('/inference/tts', async (req, res) => {
   try {
     activityState.mark();
+    // Demo Live Fast requests take GPU priority: cancel any in-flight Live Full session
+    // so this phrase runs next. (No-op if nothing is running. The in-flight Live Fast
+    // phrase, if any, is not tracked/cancellable and simply finishes — see demoPreempt.)
+    if (isDemoRequest(req)) {
+      preemptActiveGeneration();
+    }
     const { audioBuffer } = await handleLiveTtsRequest(req.body);
     activityState.mark();
 
@@ -374,7 +381,13 @@ router.post('/inference/generate', async (req, res) => {
       return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
     }
     if (['waiting', 'generating'].includes(inferenceState.getState().status)) {
-      return res.status(409).json({ error: 'Another generation is already running on this instance' });
+      // Demo requests (X-Demo-Request from the demo CloudFront) jump the queue: cancel
+      // the in-flight generation and take over. All other traffic keeps the 409.
+      if (isDemoRequest(req)) {
+        preemptActiveGeneration();
+      } else {
+        return res.status(409).json({ error: 'Another generation is already running on this instance' });
+      }
     }
 
     const resolvedParams = await resolveRefAudioParams(params);
