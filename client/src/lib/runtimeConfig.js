@@ -57,3 +57,17 @@ export async function getStorageMode() {
 export function isS3Mode() {
   return storageMode === 's3';
 }
+
+// Live-demo lockout — polled fresh (not cached) so it can flip mid-session.
+// When true, this frontend blocks all inference/training so the temporary
+// full-chatbot demo owns the shared backend/GPU.
+export async function fetchLiveDemoLockout() {
+  try {
+    const res = await fetch(resolveApiPath('/api/config'), { cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.liveDemoLockout === true;
+  } catch {
+    return false;
+  }
+}

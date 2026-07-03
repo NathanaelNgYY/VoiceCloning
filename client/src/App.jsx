@@ -18,6 +18,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { getInstanceStatus, startInstance } from './services/api.js';
+import { fetchLiveDemoLockout } from '@/lib/runtimeConfig';
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
 
@@ -156,8 +157,57 @@ function GpuInstanceControl() {
   );
 }
 
+function useLiveDemoLockout() {
+  const [locked, setLocked] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function check() {
+      const value = await fetchLiveDemoLockout();
+      if (active) setLocked(value);
+    }
+    check();
+    const id = window.setInterval(check, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  return locked;
+}
+
+function LiveDemoLockoutScreen() {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-md px-6">
+      <div className="max-w-md rounded-2xl border border-white/10 bg-white/95 p-8 text-center shadow-2xl">
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
+          <Power size={26} className="text-amber-600" />
+        </div>
+        <h1 className="text-lg font-semibold text-slate-900">Dean demo currently live</h1>
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">
+          Inference and training are paused here while the live demo is running on the
+          shared GPU. This page will resume automatically once the demo ends.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const appConfig = APP_MODE_CONFIG;
+  const locked = useLiveDemoLockout();
+
+  if (locked) {
+    return (
+      <TooltipProvider>
+        <div className="min-h-screen">
+          <AnimatedBackground />
+          <LiveDemoLockoutScreen />
+        </div>
+      </TooltipProvider>
+    );
+  }
 
   return (
     <TooltipProvider>
