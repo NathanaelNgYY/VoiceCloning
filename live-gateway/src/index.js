@@ -2,13 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { CORS_ORIGIN, PORT } from './config.js';
+import { parseCorsOrigin } from './corsOrigin.js';
 import { attachLiveChatSocket } from './routes/liveChat.js';
 import { createSystemPromptRouter } from './routes/systemPrompt.js';
 import { loadSystemPrompt } from './services/systemPromptStore.js';
 
 const app = express();
 
-app.use(cors({ origin: CORS_ORIGIN }));
+app.use(cors({ origin: parseCorsOrigin(CORS_ORIGIN) }));
 app.use(express.json());
 
 app.get('/healthz', (_req, res) => {
