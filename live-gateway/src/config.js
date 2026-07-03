@@ -46,3 +46,5 @@ export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 export const GEMINI_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.0-flash';
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 export const PORT = Number.parseInt(process.env.PORT || '3002', 10);
+export const SYSTEM_PROMPT_STORE_PATH = process.env.SYSTEM_PROMPT_STORE_PATH
+  || './data/system-prompt.json';
