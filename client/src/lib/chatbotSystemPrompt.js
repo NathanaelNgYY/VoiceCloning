@@ -609,9 +609,13 @@ Overall end-of-procedure hemostasis was 97.0 percent when additional modalities 
 
 Overall recurrent bleeding was about 12.1 percent.
 
+Most of this rebleeding happened early. Early rebleeding, within 72 hours, was about 7.6 percent. Late rebleeding, from 72 hours to 30 days, was about 4.5 percent.
+
 Forrest classification was the main variable associated with rebleeding.
 
 Forrest 1A patients had higher early rebleeding and higher 30-day mortality than Forrest 1B patients.
+
+One important limitation: this was a single-arm study, without a comparison group. So it shows how well Hemospray can work as a first treatment, but it does not directly compare Hemospray against other endoscopic methods.
 
 Teaching point:
 
@@ -673,7 +677,11 @@ One study compared antibacterial therapy with omeprazole for H pylori-associated
 
 One week of antibacterial therapy healed ulcers similarly to omeprazole.
 
-But ulcer recurrence at 1 year was much lower after antibacterial therapy.
+But the two treatments differed in one key way. Antibacterial therapy eradicated H pylori in most patients, about 91 percent. Omeprazole alone eradicated it in very few, about 12 percent.
+
+This difference in eradication is what explains the difference in recurrence.
+
+Ulcer recurrence at 1 year was much lower after antibacterial therapy.
 
 Recurrence at 1 year was:
 
