@@ -28,7 +28,7 @@ import {
   LIVE_LANGUAGE_OPTIONS,
   getLiveLanguageConfig,
   normalizeLiveLanguage,
-  splitLiveReplyPhrases,
+  splitLiveReplyChunks,
   shortenFirstFastPhrase,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
@@ -158,7 +158,12 @@ function waitForAudioMetadata(url, timeoutMs = 3500) {
   });
 }
 
-async function waitForPlayableAudioSource(url, { attempts = 5, delayMs = 700 } = {}) {
+// The result URL 404s until the server has finished writing/uploading final.wav, and
+// in S3 mode that file can lag the completion signal (assembly + upload + eventual
+// consistency). The <audio> element reports that transient 404 as onerror, so we keep
+// retrying with backoff. Budget is generous (8 attempts, growing delay ≈ 25s) so a
+// slow final upload no longer surfaces as a spurious "audio not ready" error.
+async function waitForPlayableAudioSource(url, { attempts = 8, delayMs = 700 } = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const candidateUrl = withCacheBuster(url);
@@ -1815,7 +1820,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           text,
           baseParams: liveFastParams,
           synthesizeSentence,
-          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyPhrases(value)),
+          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyChunks(value)),
           createObjectUrl: (blob) => URL.createObjectURL(blob),
           onProgress: setTtsFastProgress,
           onClipReady: (clip) => {
@@ -1856,7 +1861,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
       try {
-        const phrases = splitLiveReplyPhrases(text);
+        const phrases = splitLiveReplyChunks(text);
         const clips = [];
         setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
         for (let index = 0; index < phrases.length; index += 1) {

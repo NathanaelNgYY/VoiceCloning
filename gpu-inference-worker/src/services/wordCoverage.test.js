@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, isWordSpokenByTiming } from './wordCoverage.js';
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {
@@ -132,4 +132,130 @@ test('repeated expected word needs two occurrences in transcript', () => {
 
   const full = computeWordCoverage('very very mild', 'very very mild');
   assert.equal(full.coverage, 1);
+});
+
+test('number words and digits are treated as the same word (nine vs 9)', () => {
+  const r = computeWordCoverage(
+    'arranged themselves repeatedly nine times',
+    'arranged themselves repeatedly 9 times',
+  );
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  assert.deepEqual(r.missingWords, []);
+});
+
+test('one and a half matches Whisper decimal form 1.5', () => {
+  const r = computeWordCoverage(
+    'they double every one and a half to three hours while bacteria divide every twenty minutes',
+    'they double every 1.5 to 3 hours while bacteria divide every 20 minutes',
+  );
+
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  assert.deepEqual(r.missingWords, []);
+});
+
+test('US/UK spelling variants are treated as the same word (fibers vs fibres)', () => {
+  const r = computeWordCoverage(
+    'held at their position by interconnecting fibers',
+    'held at their position by interconnecting fibres',
+  );
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  const r2 = computeWordCoverage('the organizing center', 'the organising centre');
+  assert.equal(r2.coverage, 1, JSON.stringify(r2));
+});
+
+test('a genuinely dropped medical word is still caught after normalization', () => {
+  const r = computeWordCoverage(
+    'two centrioles are known',
+    'two centrals are known', // model really said the wrong word
+  );
+  assert.ok(r.coverage < 1, JSON.stringify(r));
+  assert.ok(r.missingWords.includes('centrioles'), JSON.stringify(r));
+});
+
+test('low-confidence and short-span words are ADVISORY only (no hard re-roll)', () => {
+  // Whisper word-boundary timing is imprecise, so a complete-but-brisk or low-
+  // confidence word must NOT force a re-roll — only feed scoring. (Real drops are
+  // caught by near-zero span and by the coverage / substantial-missing check.)
+  const lowConf = findClippedWords('the mother centriole', [
+    word('the', 0.2), word('mother', 0.5), word('centriole', 0.5, 0.1), // real audio, low conf
+  ]);
+  assert.ok(!lowConf.skippedWords.includes('centriole'), 'low-confidence word is not a hard skip');
+  assert.ok(lowConf.suspectWords.includes('centriole'), 'but still scored (advisory)');
+
+  const shortSpan = findClippedWords('the nerve cells fire', [
+    word('the', 0.2), word('nerve', 0.4), word('cells', 0.08), word('fire', 0.3), // brisk, real audio
+  ]);
+  assert.ok(!shortSpan.skippedWords.includes('cells'), 'short-but-present word is not a hard skip');
+});
+
+test('only a near-zero audio span is a hard skip', () => {
+  const { skippedWords } = findClippedWords('the nerve cells fire', [
+    word('the', 0.2), word('nerve', 0.4), word('cells', 0.01), word('fire', 0.3), // 10ms = no real audio
+  ]);
+  assert.ok(skippedWords.includes('cells'), JSON.stringify(skippedWords));
+});
+
+test('a HALF-CUT word (short audio AND low confidence together) is a hard skip', () => {
+  // "microtubules" given 0.2s (too short for 12 chars) AND low confidence (0.1) =
+  // the model said part of it then cut, and Whisper is unsure. Must re-roll.
+  const cut = findClippedWords('barrels of nine triplet microtubules', [
+    word('barrels', 0.5), word('of', 0.2), word('nine', 0.3), word('triplet', 0.5), word('microtubules', 0.2, 0.1),
+  ]);
+  assert.ok(cut.skippedWords.includes('microtubules'), JSON.stringify(cut));
+
+  // Same short span but CONFIDENT (brisk complete word) -> NOT a hard skip.
+  const brisk = findClippedWords('barrels of nine triplet microtubules', [
+    word('barrels', 0.5), word('of', 0.2), word('nine', 0.3), word('triplet', 0.5), word('microtubules', 0.2, 0.97),
+  ]);
+  assert.ok(!brisk.skippedWords.includes('microtubules'), JSON.stringify(brisk));
+});
+
+test('four-letter content words are scrutinized for half-cuts', () => {
+  const cut = findClippedWords('divide very fast and unregulated', [
+    word('divide', 0.4), word('very', 0.08, 0.1), word('fast', 0.08, 0.1), word('and', 0.2), word('unregulated', 0.7),
+  ]);
+
+  assert.ok(cut.skippedWords.includes('very'), JSON.stringify(cut));
+  assert.ok(cut.skippedWords.includes('fast'), JSON.stringify(cut));
+});
+
+test('numeric units require a real word span', () => {
+  const weak = findClippedWords('to three hours while bacteria divide every twenty minutes', [
+    word('to', 0.12), word('3', 0.14), word('hours', 0.09, 0.95), word('while', 0.25),
+    word('bacteria', 0.5), word('divide', 0.4), word('every', 0.25), word('20', 0.16), word('minutes', 0.28),
+  ]);
+  assert.ok(weak.skippedWords.includes('hours'), JSON.stringify(weak));
+
+  const clean = findClippedWords('to three hours while bacteria divide every twenty minutes', [
+    word('to', 0.12), word('3', 0.14), word('hours', 0.24, 0.95), word('while', 0.25),
+    word('bacteria', 0.5), word('divide', 0.4), word('every', 0.25), word('20', 0.16), word('minutes', 0.28),
+  ]);
+  assert.ok(!clean.skippedWords.includes('hours'), JSON.stringify(clean));
+});
+
+test('numeric units with low confidence force a re-roll', () => {
+  const cut = findClippedWords('divide every twenty minutes', [
+    word('divide', 0.4), word('every', 0.25), word('20', 0.16), word('minutes', 0.3, 0.5),
+  ]);
+
+  assert.ok(cut.skippedWords.includes('minutes'), JSON.stringify(cut));
+});
+
+test('isWordSpokenByTiming confirms a word backed by real audio at its position', () => {
+  const text = 'alpha beta gamma delta epsilon centriole eta theta iota kappa';
+  // 10 heard words, all with a substantial span; the centriole position is spoken.
+  const words = 'alpha beta gamma delta epsilon central eta theta iota kappa'
+    .split(' ')
+    .map((wd, i) => ({ w: wd, start: i, end: i + (i === 5 ? 0.3 : 0.25) }));
+  assert.equal(isWordSpokenByTiming(text, 'centriole', words), true);
+});
+
+test('isWordSpokenByTiming rejects a word whose position has only near-zero spans', () => {
+  const text = 'alpha beta gamma delta epsilon centriole eta theta iota kappa';
+  // Around the centriole position every span is near-zero — a skip Whisper filled in
+  // from context. The count may look fine, but timing proves it was not spoken.
+  const words = 'alpha beta gamma delta epsilon central eta theta iota kappa'
+    .split(' ')
+    .map((wd, i) => ({ w: wd, start: i, end: i + (i >= 3 && i <= 7 ? 0.01 : 0.25) }));
+  assert.equal(isWordSpokenByTiming(text, 'centriole', words), false);
 });

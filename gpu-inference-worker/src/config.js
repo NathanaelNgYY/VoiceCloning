@@ -50,6 +50,14 @@ export const LOCAL_TEMP_ROOT = readEnv('LOCAL_TEMP_ROOT') || path.join(GPT_SOVIT
 // at each comma / clause break. Bump it for longer comma pauses, lower for tighter speech.
 export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUSE_SECONDS'), 0.1));
 
+// Milliseconds of silence the FULL-INFERENCE path splices into the finished cut0
+// audio at each comma/clause break, placed via Whisper word timestamps. DISABLED by
+// default (0): even with gap-aware placement + fades, splicing silence at Whisper
+// timestamps still produced audible glitches in practice (timing drift lands the cut
+// too close to speech). Plain cut0 is smooth; commas are just quick. Set e.g. 40 to
+// re-enable and experiment, but expect artifacts.
+export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 0));
+
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended
 // words are present lets us re-roll the bad ones. Critical for medical text.

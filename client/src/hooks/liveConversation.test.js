@@ -9,6 +9,7 @@ import {
   getMicOffAction,
   createLiveSynthesisSnapshot,
   splitLiveReplyPhrases,
+  splitLiveReplyChunks,
   shortenFirstFastPhrase,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
@@ -156,6 +157,34 @@ test('chat messages keep stable ids and can be patched immutably', () => {
   assert.notEqual(next[0], message);
   assert.equal(next[0].text, 'Done');
   assert.equal(next[0].status, 'ready');
+});
+
+test('splitLiveReplyChunks groups short sentences into one context-rich chunk', () => {
+  assert.deepEqual(
+    splitLiveReplyChunks('Yes. That helps. Thanks a lot.'),
+    ['Yes. That helps. Thanks a lot.'],
+  );
+});
+
+test('splitLiveReplyChunks breaks a long passage at sentence boundaries into multiple chunks', () => {
+  const long = 'The mitochondrion is the powerhouse of the cell and supplies most of the chemical energy needed to drive many biochemical reactions throughout the body. '
+    + 'Ribosomes are the molecular machines that read messenger RNA and assemble the corresponding chain of amino acids into a functioning protein for the organism.';
+  const chunks = splitLiveReplyChunks(long);
+  assert.ok(chunks.length >= 2, `expected multiple chunks, got ${chunks.length}`);
+  // Every boundary lands on a sentence end (no mid-clause splits).
+  for (const chunk of chunks.slice(0, -1)) {
+    assert.match(chunk.trimEnd().slice(-1), /[.!?]/u);
+  }
+  // No words are lost across the split.
+  assert.equal(chunks.join(' ').replace(/\s+/gu, ' ').trim(), long.replace(/\s+/gu, ' ').trim());
+});
+
+test('splitLiveReplyChunks keeps dotted initialisms intact and returns [] for empty text', () => {
+  assert.deepEqual(splitLiveReplyChunks(''), []);
+  assert.deepEqual(
+    splitLiveReplyChunks('Order an E.C.G. now please.'),
+    ['Order an E.C.G. now please.'],
+  );
 });
 
 test('splitLiveReplyPhrases splits punctuation for immediate voice playback', () => {

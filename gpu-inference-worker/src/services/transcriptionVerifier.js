@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, countWords, isWordSpokenByTiming } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -21,7 +21,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // independent of the overall coverage fraction. Short function words ("the", "of")
 // are noisy in ASR and left to the coverage percentage. Matches the scrutiny
 // length used by findClippedWords so the missing-word and clipped-word gates agree.
-const SUBSTANTIAL_WORD_LENGTH = 6;
+// Set to 4 so missing short-but-meaningful content words ("very", "fast",
+// "cell") force a re-roll instead of being hidden by high overall coverage.
+const SUBSTANTIAL_WORD_LENGTH = 4;
+const DICTIONARY_FORGIVEN_MIN_LENGTH = 7;
 
 /**
  * Manages a persistent faster-whisper sidecar (python/transcription_server.py).
@@ -165,7 +168,7 @@ class TranscriptionVerifier {
    *
    * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
    */
-  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE } = {}) {
+  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [] } = {}) {
     let result;
     try {
       result = await this.transcribeBuffer(audioBuffer);
@@ -174,32 +177,83 @@ class TranscriptionVerifier {
       return null;
     }
     const { text, words } = result;
-    const { coverage, missingWords } = computeWordCoverage(expectedText, text);
-    // A word can pass coverage (Whisper fills it in) yet have been clipped — catch
-    // those via per-word confidence/timing so the chunk still gets re-rolled.
-    const { suspectWords } = findClippedWords(expectedText, words);
+    const { coverage, missingWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
+    // skippedWords = words whose audio span is too short for their length: a genuine
+    // skip (near-zero audio) OR a half-cut word (said partway then stopped). Both are
+    // reliable, duration-based, and force a re-roll. suspectWords additionally
+    // includes low-confidence words, which are ADVISORY only (best-of-N scoring) — a
+    // confident-but-quiet real word ("daughter") must not trigger a re-roll.
+    const { suspectWords, skippedWords } = findClippedWords(expectedText, words);
 
-    // Coverage is a FRACTION, so on a long chunk a single dropped or mispronounced
-    // word (~3% of 30 words) clears the threshold even though it would fail a short
-    // chunk. That asymmetry is why long chunks ship half-said / mispronounced words
-    // while short ones don't. Gate on the ABSOLUTE count of substantial content
-    // words (the at-risk medical/technical terms) so a 30-word chunk is as strict
-    // per-word as a 5-word one: any substantial word missing → re-roll, regardless
-    // of the overall percentage.
-    const substantialMissing = missingWords.filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
+    // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
+    // strict per-word as a short one.
+    let substantialMissing = missingWords.filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
 
-    const ok = coverage >= minCoverage
-      && suspectWords.length === 0
+    // Dictionary (admin ARPAbet) words are rare medical terms Whisper-medium often
+    // mis-transcribes even when the model said them correctly ("centriole"→"central"),
+    // which used to force endless wasted re-rolls. For these words we trust the
+    // ARPAbet and verify PRESENCE, not spelling: a mispronunciation keeps the spoken
+    // word count, a skip lowers it. So if the only substantial misses are dictionary
+    // words AND the heard word count matches the expected count (nothing dropped),
+    // treat them as spoken-but-mistranscribed instead of missing. A real skip lowers
+    // the count → not forgiven → still re-rolled (safe for medical text).
+    const dictSet = new Set(
+      dictionaryWords
+        .map((w) => String(w || '').toLowerCase())
+        .filter((w) => w.length >= DICTIONARY_FORGIVEN_MIN_LENGTH),
+    );
+    let forgivenDict = [];
+    let adjustedCoverage = coverage;
+    if (dictSet.size > 0) {
+      const expectedTokens = countWords(expectedText);
+      const heardTokens = countWords(text);
+      // Gate 1 (count): a mispronunciation keeps the token count exactly (one word in,
+      // one wrong word out); a skip LOWERS it. So forgiveness requires NO net token
+      // drop — heard >= expected. The old 10% slack (>= 0.9*expected) was a hole: on an
+      // ~18-word chunk it tolerated two dropped words, which let "and unregulated" be
+      // dropped yet dict-forgiven and never re-rolled. A dropped word must always lose
+      // this gate (safe for medical text; at worst a correct take with ASR function-word
+      // merging is re-rolled, which is acceptable).
+      const countConsistent = expectedTokens > 0 && heardTokens >= expectedTokens;
+      // Gate 2 (per-word, non-dict): never forgive while a NON-dictionary substantial
+      // word is missing. That is a real drop, not an ASR spelling slip, and the global
+      // count alone could mask it (a hallucinated token refilling the budget). This
+      // closes the "skipped common word + mistranscribed dict word" hole.
+      const nonDictSubstantialMissing = substantialMissing.filter((w) => !dictSet.has(w.toLowerCase()));
+      if (countConsistent && nonDictSubstantialMissing.length === 0) {
+        // Gate 3 (per-word, timing): when Whisper word timings are available, only
+        // forgive a dict word we can positively locate in the audio — one that was
+        // actually skipped has no real span under it and stays un-forgiven (safe for
+        // medical text). Degrade safely: with no timing data we can't add this check,
+        // so fall back to the count + non-dict gates rather than never forgiving.
+        const hasTimings = Array.isArray(words) && words.length > 0;
+        forgivenDict = missingWords.filter((w) => (
+          dictSet.has(w.toLowerCase())
+          && (!hasTimings || isWordSpokenByTiming(expectedText, w, words))
+        ));
+        if (forgivenDict.length > 0) {
+          const forgivenSet = new Set(forgivenDict.map((w) => w.toLowerCase()));
+          substantialMissing = substantialMissing.filter((w) => !forgivenSet.has(w.toLowerCase()));
+          adjustedCoverage = expectedCount > 0
+            ? (matchedCount + forgivenDict.length) / expectedCount
+            : 1;
+        }
+      }
+    }
+
+    const ok = adjustedCoverage >= minCoverage
+      && skippedWords.length === 0
       && substantialMissing.length === 0;
     if (!ok) {
       console.log(
-        `[transcription] chunk REJECTED coverage=${(coverage * 100).toFixed(0)}% `
-        + `missing=[${missingWords.join(', ')}] clipped=[${suspectWords.join(', ')}] `
-        + `substantialMissing=[${substantialMissing.join(', ')}] `
+        `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
+        + `missing=[${missingWords.join(', ')}] skipped/cut=[${skippedWords.join(', ')}] `
+        + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
+        + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage, missingWords, suspectWords, transcript: text };
+    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, transcript: text, words };
   }
 
   /** Is the ASR sidecar usable right now? */
