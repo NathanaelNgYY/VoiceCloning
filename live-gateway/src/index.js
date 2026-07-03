@@ -3,6 +3,8 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { CORS_ORIGIN, PORT } from './config.js';
 import { attachLiveChatSocket } from './routes/liveChat.js';
+import { createSystemPromptRouter } from './routes/systemPrompt.js';
+import { loadSystemPrompt } from './services/systemPromptStore.js';
 
 const app = express();
 
@@ -16,6 +18,9 @@ app.get('/healthz', (_req, res) => {
     timestamp: Date.now(),
   });
 });
+
+loadSystemPrompt();
+app.use(createSystemPromptRouter());
 
 const server = createServer(app);
 const liveChatSocket = attachLiveChatSocket(server);
