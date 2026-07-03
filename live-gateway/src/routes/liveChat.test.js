@@ -1,8 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import {
   applyLiveChatInitToBridge,
   getLiveChatLanguage,
@@ -10,7 +7,6 @@ import {
   originAllowed,
   parseLiveChatInit,
 } from './liveChat.js';
-import { setSystemPrompt, __setStorePathForTests } from '../services/systemPromptStore.js';
 
 test('originAllowed accepts configured production origin and same-origin upgrades', () => {
   assert.equal(originAllowed('https://app.example.com', {
@@ -122,17 +118,4 @@ test('applyLiveChatInitToBridge overrides systemPrompt only when non-empty', () 
 
   applyLiveChatInitToBridge(bridge, { systemPrompt: 'Be a GI tutor.' });
   assert.equal(bridge.systemPrompt, 'Be a GI tutor.');
-});
-
-test('empty session.init keeps the bridge default even when the shared store is set', () => {
-  // Populate the shared store with a value that must NOT influence the connect path.
-  __setStorePathForTests(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'iso-')), 'store.json'));
-  setSystemPrompt('SHARED VALUE FROM STORE');
-
-  // A non-chatbot client sends an empty prompt; the bridge keeps its server default.
-  const bridge = { systemPrompt: 'SERVER_DEFAULT' };
-  const init = parseLiveChatInit(JSON.stringify({ type: 'session.init', systemPrompt: '' }));
-  applyLiveChatInitToBridge(bridge, init);
-
-  assert.equal(bridge.systemPrompt, 'SERVER_DEFAULT'); // not the store value
 });

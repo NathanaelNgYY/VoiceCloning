@@ -32,14 +32,6 @@ export function resolveWsPath(pathname) {
   return url.toString();
 }
 
-export function resolveLiveGatewayHttpPath(pathname) {
-  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
-  const base = liveGatewayOrigin
-    || apiOrigin
-    || (typeof window !== 'undefined' ? window.location.origin : '');
-  return new URL(normalizedPath, base || 'http://localhost').toString();
-}
-
 export const API_BASE_URL = resolveApiPath('/api');
 export const APP_BASENAME = import.meta.env.VITE_APP_BASENAME || '/';
 
