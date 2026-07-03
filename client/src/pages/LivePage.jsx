@@ -67,7 +67,7 @@ import {
   shouldLoadSelectedProfile,
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
-import { getStorageMode } from '@/lib/runtimeConfig';
+import { getStorageMode, resolveLiveGatewayHttpPath } from '@/lib/runtimeConfig';
 import {
   addTtsHistoryItem,
   createTtsHistoryItem,
@@ -83,10 +83,10 @@ import {
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
 import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
 import {
-  resolveChatbotSystemPrompt,
+  CHATBOT_SYSTEM_PROMPT_PATH,
   getDefaultChatbotSystemPrompt,
-  persistChatbotSystemPrompt,
-  clearChatbotSystemPrompt,
+  fetchSharedChatbotSystemPrompt,
+  saveSharedChatbotSystemPrompt,
 } from '@/lib/chatbotSystemPrompt';
 import {
   MAX_DOCUMENTS_CHARS,
@@ -292,7 +292,12 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const kiosk = APP_MODE_CONFIG.kiosk;
-  const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
+  const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? getDefaultChatbotSystemPrompt() : ''));
+  const [chatbotPromptStatus, setChatbotPromptStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const chatbotSystemPromptEndpoint = useMemo(
+    () => resolveLiveGatewayHttpPath(CHATBOT_SYSTEM_PROMPT_PATH),
+    [],
+  );
   const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
   const [chatbotDocError, setChatbotDocError] = useState('');
   const chatbotCombinedSystemPrompt = useMemo(
@@ -302,6 +307,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     ),
     [chatbotSystemPrompt, chatbotDocuments],
   );
+
+  useEffect(() => {
+    if (!kiosk) return undefined;
+    let cancelled = false;
+    fetchSharedChatbotSystemPrompt(chatbotSystemPromptEndpoint).then((value) => {
+      if (!cancelled) setChatbotSystemPrompt(value);
+    });
+    return () => { cancelled = true; };
+  }, [kiosk, chatbotSystemPromptEndpoint]);
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -3013,13 +3027,28 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   function handleChatbotSystemPromptChange(value) {
     setChatbotSystemPrompt(value);
-    persistChatbotSystemPrompt(value);
+    setChatbotPromptStatus('idle');
+  }
+
+  async function saveChatbotSystemPrompt(value) {
+    setChatbotPromptStatus('saving');
+    try {
+      const saved = await saveSharedChatbotSystemPrompt(chatbotSystemPromptEndpoint, value);
+      setChatbotSystemPrompt(saved);
+      setChatbotPromptStatus('saved');
+    } catch {
+      setChatbotPromptStatus('error');
+    }
+  }
+
+  function handleChatbotSystemPromptBlur() {
+    saveChatbotSystemPrompt(chatbotSystemPrompt);
   }
 
   function handleResetChatbotSystemPrompt() {
     const next = getDefaultChatbotSystemPrompt();
-    clearChatbotSystemPrompt();
     setChatbotSystemPrompt(next);
+    saveChatbotSystemPrompt(next);
   }
 
   async function handleAddChatbotDocuments(fileList) {
@@ -3848,6 +3877,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               Assistant instructions
             </span>
             <div className="flex items-center gap-3">
+              {chatbotPromptStatus === 'saving' && (
+                <span className="text-[11px] text-slate-400">Saving…</span>
+              )}
+              {chatbotPromptStatus === 'saved' && (
+                <span className="text-[11px] text-emerald-500">Saved</span>
+              )}
+              {chatbotPromptStatus === 'error' && (
+                <span className="text-[11px] text-red-500">Save failed</span>
+              )}
               <button
                 type="button"
                 onClick={handleResetChatbotSystemPrompt}
@@ -3869,6 +3907,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           <Textarea
             value={chatbotSystemPrompt}
             onChange={(e) => handleChatbotSystemPromptChange(e.target.value)}
+            onBlur={handleChatbotSystemPromptBlur}
             disabled={isConversationActive}
             spellCheck={false}
             className="min-h-0 flex-1 resize-none rounded-none border-0 bg-white px-4 py-3 text-xs leading-5 text-slate-700 shadow-none focus-visible:ring-0"
