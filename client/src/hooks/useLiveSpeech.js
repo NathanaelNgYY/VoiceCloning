@@ -21,6 +21,7 @@ import {
   getMicOffAction,
   isLiveInputPhase,
   isBenignRealtimeError,
+  fixSpeechPronunciation,
   normalizeLiveLanguage,
   splitLiveReplyPhrases,
   shouldTriggerLiveBargeIn,
@@ -1026,14 +1027,18 @@ export function useLiveSpeech({
       }
 
       case 'assistant.text.done': {
-        const text = cleanLiveText(event.text || assistantTextRef.current || '');
+        // Display the clean model text (the streamed raw, e.g. "GI bleeding",
+        // "6.7 percent"); speak the gateway-preprocessed text with dragged
+        // initialisms rejoined for smooth pronunciation ("G I" -> "gee eye").
+        const displayText = cleanLiveText(assistantTextRef.current || event.text || '');
+        const speechText = fixSpeechPronunciation(cleanLiveText(event.text || assistantTextRef.current || ''));
         assistantTextRef.current = '';
         setInterimTranscript('');
-        if (text) {
+        if (speechText) {
           const id = ensureAssistantMessage();
           activeAssistantMessageIdRef.current = '';
-          patchMessage(id, { text, status: 'generating_voice' });
-          synthesizeAssistantReply(id, text, runId);
+          patchMessage(id, { text: displayText || speechText, status: 'generating_voice' });
+          synthesizeAssistantReply(id, speechText, runId);
         } else if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }

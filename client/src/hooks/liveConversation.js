@@ -362,6 +362,23 @@ export function isBenignRealtimeError(message) {
   );
 }
 
+// The gateway letter-spaces initialisms for TTS (e.g. "GI" -> "G I"), which
+// GPT-SoVITS reads with a long drag between the lone letters ("G……I"). For the
+// SPOKEN text only, rejoin known initialisms into smooth phonetic spellings so
+// they read naturally. The on-screen chat keeps the clean original ("GI").
+// Add more entries here as other dragged terms turn up.
+const SPEECH_PRONUNCIATION_FIXES = [
+  [/\bG\s+I\b/g, 'gee eye'],
+];
+
+export function fixSpeechPronunciation(text) {
+  let out = String(text || '');
+  for (const [pattern, replacement] of SPEECH_PRONUNCIATION_FIXES) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 export function findFirstReplayablePart(message) {
   return (message?.audioParts || []).find((part) => part.audioUrl) || null;
 }

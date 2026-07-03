@@ -15,7 +15,18 @@ import {
   updateMessage,
   nextAudioErrorAction,
   isBenignRealtimeError,
+  fixSpeechPronunciation,
 } from './liveConversation.js';
+
+test('fixSpeechPronunciation rejoins the dragged GI initialism for speech', () => {
+  assert.equal(fixSpeechPronunciation('G I bleeding means bleeding.'), 'gee eye bleeding means bleeding.');
+  assert.equal(fixSpeechPronunciation('bleeding from the upper G I tract'), 'bleeding from the upper gee eye tract');
+});
+
+test('fixSpeechPronunciation leaves ordinary text unchanged', () => {
+  assert.equal(fixSpeechPronunciation('The patient had melena and hematemesis.'), 'The patient had melena and hematemesis.');
+  assert.equal(fixSpeechPronunciation(''), '');
+});
 
 test('isBenignRealtimeError swallows the active-response race', () => {
   assert.equal(
