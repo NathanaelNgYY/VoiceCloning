@@ -11,6 +11,18 @@ const api = axios.create({
 
 const METHODS_REQUIRING_PAYLOAD_HASH = new Set(['post', 'put', 'patch', 'delete']);
 
+// Shown instead of raw nginx "503 Service Temporarily Unavailable" HTML when the
+// GPU inference worker is offline.
+export const GPU_OFFLINE_MESSAGE = 'GPU not started — press Start GPU to begin.';
+
+// A GPU-down request typically comes back as a 502/503/504 from the reverse
+// proxy (often with an HTML body), so detect both the status and the tell-tale
+// HTML text.
+export function isGpuOfflineResponse(status, body = '') {
+  if ([502, 503, 504].includes(Number(status))) return true;
+  return /50[234]|Service (Temporarily )?Unavailable|Bad Gateway|Gateway Time-?out/i.test(String(body));
+}
+
 function isSpecialBody(data) {
   return (
     (typeof FormData !== 'undefined' && data instanceof FormData)
@@ -347,6 +359,9 @@ export async function synthesize(params) {
 
   if (res.status !== 200) {
     const text = await res.data.text();
+    if (isGpuOfflineResponse(res.status, text)) {
+      throw new Error(GPU_OFFLINE_MESSAGE);
+    }
     let message;
     try {
       message = JSON.parse(text).error;
@@ -369,6 +384,9 @@ export async function synthesizeSentence(params) {
 
   if (res.status !== 200) {
     const text = await res.data.text();
+    if (isGpuOfflineResponse(res.status, text)) {
+      throw new Error(GPU_OFFLINE_MESSAGE);
+    }
     let message;
     try {
       message = JSON.parse(text).error;
@@ -383,8 +401,15 @@ export async function synthesizeSentence(params) {
   };
 }
 
-export function startGeneration(params) {
-  return api.post('/inference/generate', params);
+export async function startGeneration(params) {
+  try {
+    return await api.post('/inference/generate', params);
+  } catch (err) {
+    if (isGpuOfflineResponse(err?.response?.status, err?.response?.data)) {
+      throw new Error(GPU_OFFLINE_MESSAGE);
+    }
+    throw err;
+  }
 }
 
 export function getCurrentInference() {
@@ -433,6 +458,7 @@ export async function getGenerationResultSource(sessionId) {
     validateStatus: () => true,
   });
   if (res.status !== 200) {
+    if (isGpuOfflineResponse(res.status)) throw new Error(GPU_OFFLINE_MESSAGE);
     throw new Error(`Generated audio is not ready yet (${res.status})`);
   }
   const contentType = String(res.headers?.['content-type'] || '');
@@ -458,6 +484,7 @@ export async function getGenerationResult(sessionId) {
     validateStatus: () => true,
   });
   if (res.status !== 200) {
+    if (isGpuOfflineResponse(res.status)) throw new Error(GPU_OFFLINE_MESSAGE);
     throw new Error(`Generated audio is not ready yet (${res.status})`);
   }
   const contentType = String(res.headers?.['content-type'] || '');
@@ -489,6 +516,7 @@ export async function getInferenceChunk(sessionId, index) {
     validateStatus: () => true,
   });
   if (res.status !== 200) {
+    if (isGpuOfflineResponse(res.status)) throw new Error(GPU_OFFLINE_MESSAGE);
     throw new Error(`Chunk not available (${res.status})`);
   }
   return new Blob([res.data], { type: 'audio/wav' });

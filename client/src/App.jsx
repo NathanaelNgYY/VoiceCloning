@@ -165,7 +165,7 @@ export default function App() {
         <AnimatedBackground />
         {/* Minimal header */}
         <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md">
-          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-8">
+          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-8">
             <nav className="flex items-center gap-1">
               {appConfig.navItems.map((item) => (
                 <NavLink
@@ -192,7 +192,7 @@ export default function App() {
         </header>
 
         {/* Main content */}
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-8 py-8">
+        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-4 sm:px-8 sm:py-8">
           <Routes>
             <Route
               path="/"
@@ -227,7 +227,7 @@ export default function App() {
         </main>
 
         {/* Footer */}
-        <footer className="mx-auto w-full max-w-6xl border-t border-slate-100 px-8">
+        <footer className="mx-auto w-full max-w-6xl border-t border-slate-100 px-4 sm:px-8">
           <div className="flex items-center py-5">
             <span className="text-xs text-slate-400">Voice Cloning Studio</span>
           </div>

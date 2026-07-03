@@ -193,20 +193,6 @@ async function waitForPlayableAudioSource(url, { attempts = 5, delayMs = 700 } =
   throw lastError || new Error('Generated audio is not playable yet.');
 }
 
-function messageStatusText(message) {
-  if (message.role === 'user') {
-    return { listening: 'Listening', transcribing: 'Transcribing', done: 'Sent' }[message.status] || 'Sent';
-  }
-  return {
-    thinking: 'Writing',
-    generating_voice: 'Generating voice',
-    ready: 'Voice ready',
-    played: 'Played',
-    interrupted: 'Interrupted',
-    error: 'Failed',
-  }[message.status] || 'Reply';
-}
-
 function fallbackName(filePath) {
   return (filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
 }
@@ -217,6 +203,11 @@ function normalizeReferenceLanguage(lang) {
 }
 
 const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 'names', 'acronyms', 'math'];
+
+// Advanced settings are still fully wired up (state + auto-applied defaults);
+// this just hides the collapsible UI so it doesn't confuse end users. Flip to
+// true to expose the panel again.
+const SHOW_ADVANCED_SETTINGS = false;
 
 function buildConfigId(seed = '') {
   const slug = String(seed || 'config')
@@ -252,11 +243,6 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
           ? 'rounded-br-md bg-slate-900 text-white'
           : 'rounded-bl-md border border-slate-100 bg-slate-50 text-slate-900'
       )}>
-        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide opacity-60">
-          {isBusy && <Loader2 size={10} className="animate-spin" />}
-          {messageStatusText(message)}
-        </div>
-
         <p className={cn('whitespace-pre-wrap text-sm leading-6', isBusy && !message.text && 'italic opacity-60')}>
           {message.text || (isUser ? 'Listening...' : 'Thinking...')}
         </p>
@@ -265,22 +251,6 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
           <p className="mt-2 flex items-center gap-1 text-xs text-red-500">
             <CircleAlert size={12} />{message.error}
           </p>
-        )}
-
-        {!isUser && message.audioParts?.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {message.audioParts.map((part) => (
-              <span key={part.id} className={cn(
-                'rounded-full border px-2 py-0.5 text-[10px] capitalize',
-                part.status === 'ready' || part.status === 'played' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : part.status === 'generating' ? 'border-blue-200 bg-blue-50 text-blue-700'
-                  : part.status === 'error' ? 'border-red-200 bg-red-50 text-red-600'
-                  : 'border-slate-200 bg-white text-slate-400'
-              )}>
-                {part.index}: {part.status}
-              </span>
-            ))}
-          </div>
         )}
 
         {hasVoice && (
@@ -374,6 +344,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [referenceAudioUrls, setReferenceAudioUrls] = useState({});
   const [loadingPreviewPath, setLoadingPreviewPath] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  // Mobile-only: the kiosk "Assistant instructions" panel is a slide-over drawer on
+  // small screens (it stays an in-flow sidebar at lg+). This tracks the drawer state.
+  const [showInstructions, setShowInstructions] = useState(false);
 
   const [speed, setSpeed] = useState(DEFAULT_LIVE_FAST_SETTINGS.speed);
   const [topK, setTopK] = useState(DEFAULT_LIVE_FAST_SETTINGS.topK);
@@ -3118,7 +3091,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
       {/* ── Top bar: title + compact controls ── */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <h1 className="text-2xl font-bold tracking-tight">
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">
           <span className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary/80 bg-clip-text text-transparent">
             {isTtsMode ? 'Text to Speech' : 'Live Voice Chat'}
           </span>
@@ -3128,6 +3101,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         {kiosk && !isTtsMode && (
           <div className="flex flex-1 flex-wrap items-center gap-3">
             {engineToggle}
+            {/* Mobile: open the Assistant-instructions drawer (in-flow sidebar at lg+). */}
+            <button
+              type="button"
+              onClick={() => setShowInstructions(true)}
+              className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 lg:hidden"
+            >
+              <Pencil size={13} />
+              Instructions
+            </button>
           </div>
         )}
 
@@ -3841,19 +3823,48 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         </div>
       </div>
       {kiosk && (
-        <aside className="flex min-h-0 w-[380px] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
+        <>
+        {/* Mobile-only backdrop for the instructions drawer. */}
+        {showInstructions && (
+          <div
+            className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden"
+            onClick={() => setShowInstructions(false)}
+            aria-hidden="true"
+          />
+        )}
+        <aside
+          className={cn(
+            'min-h-0 flex-col overflow-hidden border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]',
+            // lg+: normal in-flow sidebar
+            'lg:static lg:z-auto lg:flex lg:w-[380px] lg:shrink-0 lg:rounded-2xl',
+            // mobile: right-anchored slide-over overlay
+            'fixed inset-y-0 right-0 z-50 w-[86%] max-w-[380px] rounded-l-2xl',
+            // display toggle (no off-screen transform → no horizontal-scroll risk)
+            showInstructions ? 'flex' : 'hidden',
+          )}
+        >
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
               Assistant instructions
             </span>
-            <button
-              type="button"
-              onClick={handleResetChatbotSystemPrompt}
-              disabled={isConversationActive}
-              className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-700 disabled:opacity-40"
-            >
-              Reset to default
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleResetChatbotSystemPrompt}
+                disabled={isConversationActive}
+                className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-700 disabled:opacity-40"
+              >
+                Reset to default
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowInstructions(false)}
+                className="text-slate-400 transition-colors hover:text-slate-700 lg:hidden"
+                aria-label="Close instructions"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
           <Textarea
             value={chatbotSystemPrompt}
@@ -3927,11 +3938,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             Applied to the next conversation. Locked while a chat is active.
           </p>
         </aside>
+        </>
       )}
       </div>
       )}
 
-      {/* ── Advanced settings collapsible ── */}
+      {/* ── Advanced settings collapsible (hidden from end users; settings still applied) ── */}
+      {SHOW_ADVANCED_SETTINGS && (
       <Collapsible open={showSettings} onOpenChange={setShowSettings}>
         <CollapsibleTrigger asChild>
           <button
@@ -4619,6 +4632,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
         </CollapsibleContent>
       </Collapsible>
+      )}
 
       <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} />
     </div>
