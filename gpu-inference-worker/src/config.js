@@ -80,6 +80,14 @@ export const TRANSCRIPTION_MIN_COVERAGE = Math.min(1, Math.max(0, parseFloatEnv(
 export const SPEAKER_VERIFY_ENABLED = parseBooleanEnv(readEnv('SPEAKER_VERIFY_ENABLED'), true);
 export const SPEAKER_MIN_SIMILARITY = Math.min(1, Math.max(0, parseFloatEnv(readEnv('SPEAKER_MIN_SIMILARITY'), 0.62)));
 
+// Boot-time GPU pre-warm. After a bare service restart the python inference server
+// respawns COLD (CUDA kernels + reference features unbuilt), so the first real clip
+// is slow even though no model reload happened. When enabled, the worker replays the
+// last successful /ref-audio/warm payload at boot (persisted OUTSIDE the wiped caches)
+// so that first request is hot. OFF by default — opt in after validating on the box,
+// since it force-starts the python server at boot (allocates GPU immediately).
+export const WARM_ON_BOOT = parseBooleanEnv(readEnv('WARM_ON_BOOT'), false);
+
 const runtimeDir = path.join(GPT_SOVITS_ROOT, 'runtime');
 const pythonCandidates = [
   process.env.PYTHON_EXEC || '',

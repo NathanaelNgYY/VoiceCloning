@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
-import { WORKER_PORT, WORKER_HOST } from './config.js';
-import inferenceRoutes from './routes/inference.js';
+import { WORKER_PORT, WORKER_HOST, WARM_ON_BOOT } from './config.js';
+import inferenceRoutes, { handleLiveTtsRequest } from './routes/inference.js';
 import modelsRoutes from './routes/models.js';
 import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
@@ -13,10 +13,14 @@ import { buildCorsOriginOption } from './services/corsOrigin.js';
 import {
   clearStartupModelCache,
   clearStartupRefAudioCache,
+  clearStartupWorkerTemp,
 } from './services/startupCleanup.js';
+import { warmOnBoot } from './services/bootWarm.js';
+import { warmReferenceAudioPaths } from './services/refAudioCache.js';
 
 clearStartupRefAudioCache({ log: console.log });
 clearStartupModelCache({ log: console.log });
+clearStartupWorkerTemp({ log: console.log });
 
 const app = express();
 
@@ -50,6 +54,16 @@ const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
     });
   } else {
     console.log('[speaker] similarity gate DISABLED via SPEAKER_VERIFY_ENABLED');
+  }
+  // Optional boot-time GPU pre-warm so the first request after a bare restart (no
+  // model reload) is hot. OFF unless WARM_ON_BOOT is set — it force-starts python.
+  if (WARM_ON_BOOT) {
+    warmOnBoot({
+      startServer: () => inferenceServer.start(),
+      warmReferences: (payload) => warmReferenceAudioPaths(payload),
+      runSynth: handleLiveTtsRequest,
+      log: console.log,
+    }).catch((err) => console.warn(`[boot-warm] unexpected: ${err.message}`));
   }
 });
 

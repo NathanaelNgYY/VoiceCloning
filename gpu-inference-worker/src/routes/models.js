@@ -9,6 +9,7 @@ import {
   warmReferenceAudioPaths,
 } from '../services/refAudioCache.js';
 import { inferenceServer } from '../services/inferenceServer.js';
+import { recordWarmPayload } from '../services/bootWarm.js';
 import { handleLiveTtsRequest } from './inference.js';
 
 const router = Router();
@@ -119,6 +120,9 @@ router.post('/ref-audio/warm', async (req, res) => {
           text_lang: req.body.text_lang || 'en',
         });
         synthWarmed = true;
+        // Persist this payload so a bare service restart can replay the warm at boot
+        // (see WARM_ON_BOOT). Only record once we know it produced a real synth.
+        recordWarmPayload(req.body);
       }
     } catch (warmErr) {
       console.warn(`[ref-audio/warm] generation pre-warm failed: ${warmErr.message}`);
