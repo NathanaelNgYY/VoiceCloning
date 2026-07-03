@@ -1,4 +1,4 @@
-export const CHATBOT_SYSTEM_PROMPT_STORAGE_KEY = 'chatbot.systemPrompt';
+export const CHATBOT_SYSTEM_PROMPT_PATH = '/api/live/chat/system-prompt';
 
 export const DEFAULT_CHATBOT_SYSTEM_PROMPT = `# Role & Objective
 You are a GI bleeding student-education assistant.
@@ -53,30 +53,32 @@ export function getDefaultChatbotSystemPrompt() {
   return envValue || DEFAULT_CHATBOT_SYSTEM_PROMPT;
 }
 
-export function resolveChatbotSystemPrompt() {
+export async function fetchSharedChatbotSystemPrompt(endpoint) {
   try {
-    const stored = globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
-    if (typeof stored === 'string' && stored.length > 0) {
-      return stored;
+    const res = await fetch(endpoint);
+    if (!res.ok) {
+      return getDefaultChatbotSystemPrompt();
     }
+    const data = await res.json();
+    const value = data?.systemPrompt;
+    return typeof value === 'string' && value.length > 0
+      ? value
+      : getDefaultChatbotSystemPrompt();
   } catch {
-    // localStorage unavailable (private mode, etc.) — fall back to default.
-  }
-  return getDefaultChatbotSystemPrompt();
-}
-
-export function persistChatbotSystemPrompt(value) {
-  try {
-    globalThis.localStorage.setItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, String(value ?? ''));
-  } catch {
-    // Best-effort; ignore persistence failures.
+    // Gateway unreachable / bad JSON → use the baked-in default (session-only).
+    return getDefaultChatbotSystemPrompt();
   }
 }
 
-export function clearChatbotSystemPrompt() {
-  try {
-    globalThis.localStorage.removeItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
-  } catch {
-    // Best-effort; ignore removal failures.
+export async function saveSharedChatbotSystemPrompt(endpoint, value) {
+  const res = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ systemPrompt: String(value ?? '') }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to save system prompt (${res.status})`);
   }
+  const data = await res.json();
+  return typeof data?.systemPrompt === 'string' ? data.systemPrompt : String(value ?? '');
 }
