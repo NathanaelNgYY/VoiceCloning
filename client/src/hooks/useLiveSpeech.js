@@ -31,6 +31,12 @@ const LIVE_TARGET_SAMPLE_RATE = 24000;
 const MANUAL_COMMIT_SILENCE_MS = 360;
 const BARGE_IN_MIN_FRAMES = 2;
 const BARGE_IN_COOLDOWN_MS = 900;
+// While a long reply plays, the mic is muted so nothing flows over the WebSocket.
+// An idle WebSocket behind CloudFront/proxies gets closed at the idle timeout
+// (~60s), which would end the conversation mid-reply. Send a lightweight
+// keepalive well under that window to keep the connection warm. The gateway
+// ignores unknown message types.
+const KEEPALIVE_INTERVAL_MS = 15000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -125,6 +131,7 @@ export function useLiveSpeech({
 
   const phaseRef = useRef('idle');
   const socketRef = useRef(null);
+  const keepAliveTimerRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
@@ -670,7 +677,23 @@ export function useLiveSpeech({
     synthesizeFullAssistantReply(messageId, text, runId);
   }
 
+  function stopKeepAlive() {
+    if (keepAliveTimerRef.current) {
+      window.clearInterval(keepAliveTimerRef.current);
+      keepAliveTimerRef.current = null;
+    }
+  }
+
+  function startKeepAlive() {
+    stopKeepAlive();
+    keepAliveTimerRef.current = window.setInterval(() => {
+      // send() is a no-op when the socket isn't OPEN, so this is safe.
+      socketRef.current?.send({ type: 'keepalive' });
+    }, KEEPALIVE_INTERVAL_MS);
+  }
+
   function closeSocket() {
+    stopKeepAlive();
     if (socketRef.current) {
       socketRef.current.close();
       socketRef.current = null;
@@ -703,8 +726,15 @@ export function useLiveSpeech({
 
   function endConversationFromSocket() {
     socketRef.current = null;
+    stopKeepAlive();
     stopMicCapture();
     setInterimTranscript('');
+    // If a reply is still playing when the socket drops, don't cut the voice off
+    // mid-sentence. Keep playing; onAudioEnded will fall through to idle (socket
+    // is now null) once the last clip finishes.
+    if (phaseRef.current === 'speaking') {
+      return;
+    }
     setPhase('idle');
   }
 
@@ -1088,6 +1118,7 @@ export function useLiveSpeech({
       },
     });
     socketRef.current = socket;
+    startKeepAlive();
   }
 
   function stop() {
