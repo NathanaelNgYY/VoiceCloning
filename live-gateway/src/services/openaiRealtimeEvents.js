@@ -32,6 +32,20 @@ function cleanText(value) {
   return String(value || '').trim();
 }
 
+// CJK ideographs + Japanese kana + Korean Hangul. English speech should never
+// produce these, but gpt-4o transcribe models occasionally auto-detect a clear
+// English utterance as another language and emit it in that script (e.g. showing
+// Chinese or Korean in the user's own speech bubble). The input transcript is
+// display-only — the model still hears the real audio and replies in English —
+// so in English mode we drop any transcript written in a non-Latin script rather
+// than surface a wrong-language bubble.
+const NON_LATIN_SCRIPT_RE =
+  /[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]/;
+
+function isNonLatinScript(text) {
+  return NON_LATIN_SCRIPT_RE.test(text);
+}
+
 export function normalizeRealtimeLanguage(language) {
   return language === REALTIME_LANGUAGES.zh.code
     ? REALTIME_LANGUAGES.zh.code
@@ -214,20 +228,32 @@ export class RealtimeEventMapper {
 
   mapUserTextDelta(event) {
     const text = String(event.delta || '');
-    return text ? [{
+    if (!text || this.shouldDropUserTranscript(text)) {
+      return [];
+    }
+    return [{
       type: 'user.text.delta',
       itemId: event.item_id || '',
       text,
-    }] : [];
+    }];
   }
 
   mapUserTextDone(event) {
     const text = cleanText(event.transcript || event.text || '');
-    return text ? [{
+    if (!text || this.shouldDropUserTranscript(text)) {
+      return [];
+    }
+    return [{
       type: 'user.text.done',
       itemId: event.item_id || '',
       text,
-    }] : [];
+    }];
+  }
+
+  // In English mode, suppress transcripts the transcription model mis-detected
+  // into a non-Latin script so the user never sees a wrong-language bubble.
+  shouldDropUserTranscript(text) {
+    return this.language === REALTIME_LANGUAGES.en.code && isNonLatinScript(text);
   }
 
   mapTextDone(event) {

@@ -21,6 +21,48 @@ test('buildRealtimeSessionUpdate biases transcription to English with a prompt',
   assert.match(update.session.audio.input.transcription.prompt, /in English/i);
 });
 
+test('RealtimeEventMapper drops a mis-detected non-English user transcript in English mode', () => {
+  const mapper = new RealtimeEventMapper({ language: 'en' });
+
+  const done = mapper.map({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: 'item-1',
+    transcript: '教咪我',
+  });
+  assert.deepEqual(done, []);
+
+  const delta = mapper.map({
+    type: 'conversation.item.input_audio_transcription.delta',
+    item_id: 'item-1',
+    delta: '카이모어',
+  });
+  assert.deepEqual(delta, []);
+});
+
+test('RealtimeEventMapper keeps an English user transcript in English mode', () => {
+  const mapper = new RealtimeEventMapper({ language: 'en' });
+  const events = mapper.map({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: 'item-1',
+    transcript: 'teach me',
+  });
+
+  assert.equal(events[0].type, 'user.text.done');
+  assert.equal(events[0].text, 'teach me');
+});
+
+test('RealtimeEventMapper keeps a Chinese user transcript in Chinese mode', () => {
+  const mapper = new RealtimeEventMapper({ language: 'zh' });
+  const events = mapper.map({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: 'item-1',
+    transcript: '教咪我',
+  });
+
+  assert.equal(events[0].type, 'user.text.done');
+  assert.equal(events[0].text, '教咪我');
+});
+
 test('RealtimeEventMapper leaves Chinese-mode assistant numbers as digits', () => {
   const mapper = new RealtimeEventMapper({ language: 'zh' });
   const events = mapper.map({
