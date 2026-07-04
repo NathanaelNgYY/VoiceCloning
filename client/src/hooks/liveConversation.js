@@ -158,9 +158,12 @@ export function shouldTriggerLiveBargeIn({
   return phase === 'speaking' && Boolean(micInputEnabled) && Number(rms) >= threshold;
 }
 
-export function getMicOffAction({ phase, hasPendingAudio }) {
+export function getMicOffAction({ phase, hasPendingAudio, hasVoiceEvidence = true }) {
   if (phase === 'listening' && hasPendingAudio) {
-    return 'commit';
+    // A pending turn with no real voice behind it was opened by noise (OpenAI's
+    // VAD firing on breath/clicks in the open mic). Muting should drop it, not
+    // "send what you said".
+    return hasVoiceEvidence ? 'commit' : 'discard';
   }
 
   if (phase === 'listening' || phase === 'speaking') {
@@ -168,6 +171,47 @@ export function getMicOffAction({ phase, hasPendingAudio }) {
   }
 
   return 'wait';
+}
+
+// Client-side noise gate for the outbound mic stream. OpenAI's server VAD hears
+// whatever we send; streaming every frame lets it flag breaths, clicks, and room
+// noise as speech (phantom turns, phantom barge-ins). Frames are ~85ms
+// (ScriptProcessor 4096 samples @48k). The gate opens only after `openFrames`
+// consecutive voiced frames, stays open through pauses up to `hangoverFrames`
+// so mid-sentence lulls don't chop the turn, and callers replay `prerollFrames`
+// of buffered audio on opening so soft speech onsets aren't clipped.
+export const VOICE_GATE = {
+  threshold: 0.02,
+  openFrames: 2,
+  hangoverFrames: 18,
+  prerollFrames: 4,
+};
+
+// Minimum voiced (above-threshold) frames in a turn (~340ms) for a manual mute
+// to treat it as real speech worth committing.
+export const MIN_COMMIT_VOICE_FRAMES = 4;
+
+export function createVoiceGateState() {
+  return { open: false, justOpened: false, loudStreak: 0, quietStreak: 0 };
+}
+
+export function nextVoiceGateState(state, rms, config = VOICE_GATE) {
+  const current = state || createVoiceGateState();
+  const voiced = Number(rms) >= config.threshold;
+
+  if (!current.open) {
+    const loudStreak = voiced ? current.loudStreak + 1 : 0;
+    if (loudStreak >= config.openFrames) {
+      return { open: true, justOpened: true, loudStreak, quietStreak: 0 };
+    }
+    return { open: false, justOpened: false, loudStreak, quietStreak: 0 };
+  }
+
+  const quietStreak = voiced ? 0 : current.quietStreak + 1;
+  if (quietStreak >= config.hangoverFrames) {
+    return createVoiceGateState();
+  }
+  return { open: true, justOpened: false, loudStreak: current.loudStreak, quietStreak };
 }
 
 function ensurePhraseEnding(text) {

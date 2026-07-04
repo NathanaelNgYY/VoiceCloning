@@ -21,6 +21,9 @@ import {
   canReuseActiveUserMessage,
   resolvePendingTranscriptPatch,
   USER_TRANSCRIPT_TIMEOUT_MS,
+  VOICE_GATE,
+  createVoiceGateState,
+  nextVoiceGateState,
 } from './liveConversation.js';
 
 test('fixSpeechPronunciation rejoins the dragged GI initialism for speech', () => {
@@ -479,4 +482,62 @@ test('user transcript timeout is long enough for slow transcripts but finite', (
   assert.equal(typeof USER_TRANSCRIPT_TIMEOUT_MS, 'number');
   assert.ok(USER_TRANSCRIPT_TIMEOUT_MS >= 5000);
   assert.ok(USER_TRANSCRIPT_TIMEOUT_MS <= 30000);
+});
+
+test('voice gate stays closed for sub-threshold noise', () => {
+  let state = createVoiceGateState();
+  for (let i = 0; i < 20; i += 1) {
+    state = nextVoiceGateState(state, VOICE_GATE.threshold * 0.5);
+    assert.equal(state.open, false);
+  }
+});
+
+test('voice gate opens after sustained voice and flags the opening frame once', () => {
+  let state = createVoiceGateState();
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  assert.equal(state.open, false);
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  assert.equal(state.open, true);
+  assert.equal(state.justOpened, true);
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  assert.equal(state.open, true);
+  assert.equal(state.justOpened, false);
+});
+
+test('voice gate rides through short pauses but closes after the hangover', () => {
+  let state = createVoiceGateState();
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  assert.equal(state.open, true);
+
+  for (let i = 0; i < VOICE_GATE.hangoverFrames - 1; i += 1) {
+    state = nextVoiceGateState(state, 0);
+    assert.equal(state.open, true);
+  }
+  state = nextVoiceGateState(state, 0);
+  assert.equal(state.open, false);
+});
+
+test('voice gate resets its opening streak on a quiet frame', () => {
+  let state = createVoiceGateState();
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  state = nextVoiceGateState(state, 0);
+  state = nextVoiceGateState(state, VOICE_GATE.threshold * 2);
+  assert.equal(state.open, false);
+});
+
+test('getMicOffAction discards a pending turn with no voice evidence', () => {
+  assert.equal(
+    getMicOffAction({ phase: 'listening', hasPendingAudio: true, hasVoiceEvidence: false }),
+    'discard',
+  );
+  assert.equal(
+    getMicOffAction({ phase: 'listening', hasPendingAudio: true, hasVoiceEvidence: true }),
+    'commit',
+  );
+  // Callers that don't track voice evidence keep the old commit behavior.
+  assert.equal(
+    getMicOffAction({ phase: 'listening', hasPendingAudio: true }),
+    'commit',
+  );
 });

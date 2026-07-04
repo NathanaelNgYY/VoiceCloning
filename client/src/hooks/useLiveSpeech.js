@@ -10,13 +10,17 @@ import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import { connectInferenceSSE } from '../services/sse.js';
 import {
   LIVE_REPLY_MODES,
+  MIN_COMMIT_VOICE_FRAMES,
   USER_TRANSCRIPT_TIMEOUT_MS,
+  VOICE_GATE,
   buildLiveSentenceParams,
   buildLiveReplyParams,
   canReuseActiveUserMessage,
   cleanLiveText,
   createChatMessage,
   createLiveSynthesisSnapshot,
+  createVoiceGateState,
+  nextVoiceGateState,
   findFirstReplayablePart,
   findNextPhrasePlayback,
   findNextReplyPlayback,
@@ -155,6 +159,9 @@ export function useLiveSpeech({
   const cancelledReplyIdsRef = useRef(new Set());
   const userTextBuffersRef = useRef(new Map());
   const userTranscriptTimersRef = useRef(new Map());
+  const voiceGateRef = useRef(createVoiceGateState());
+  const gatePrerollRef = useRef([]);
+  const turnVoicedFramesRef = useRef(0);
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
@@ -798,6 +805,9 @@ export function useLiveSpeech({
     setAudioLevel(0);
     setMicInputEnabled(false);
     setBargeInArmed(false);
+    voiceGateRef.current = createVoiceGateState();
+    gatePrerollRef.current = [];
+    turnVoicedFramesRef.current = 0;
 
     if (processorRef.current) {
       processorRef.current.onaudioprocess = null;
@@ -917,6 +927,9 @@ export function useLiveSpeech({
     processorRef.current = processor;
     setSpeechApiAvailable(true);
     setMicInputEnabled(true);
+    voiceGateRef.current = createVoiceGateState();
+    gatePrerollRef.current = [];
+    turnVoicedFramesRef.current = 0;
 
     let smoothedLevel = 0;
     processor.onaudioprocess = (event) => {
@@ -951,6 +964,7 @@ export function useLiveSpeech({
         sentForBargeIn = sendAudioChunk(input, audioCtx.sampleRate);
         if (sentForBargeIn && rms > 0.006) {
           pendingInputAudioRef.current = true;
+          turnVoicedFramesRef.current += 1;
         }
       }
 
@@ -958,9 +972,29 @@ export function useLiveSpeech({
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current,
       }) && !sentForBargeIn) {
-        const sent = sendAudioChunk(input, audioCtx.sampleRate);
-        if (sent && rms > 0.006) {
-          pendingInputAudioRef.current = true;
+        // Noise-gate what OpenAI hears: sub-threshold frames are buffered, not
+        // sent, so its server VAD can't flag breaths/clicks as new speech. On
+        // opening, replay the pre-roll so soft speech onsets aren't clipped.
+        const gate = nextVoiceGateState(voiceGateRef.current, rms);
+        voiceGateRef.current = gate;
+        if (gate.open) {
+          if (gate.justOpened) {
+            for (const buffered of gatePrerollRef.current) {
+              sendAudioChunk(buffered, audioCtx.sampleRate);
+            }
+            gatePrerollRef.current = [];
+          }
+          const sent = sendAudioChunk(input, audioCtx.sampleRate);
+          if (sent && rms >= VOICE_GATE.threshold) {
+            pendingInputAudioRef.current = true;
+            turnVoicedFramesRef.current += 1;
+          }
+        } else {
+          // The processor reuses `input`; the pre-roll needs its own copy.
+          gatePrerollRef.current.push(new Float32Array(input));
+          if (gatePrerollRef.current.length > VOICE_GATE.prerollFrames) {
+            gatePrerollRef.current.shift();
+          }
         }
       }
     };
@@ -1006,6 +1040,7 @@ export function useLiveSpeech({
     const action = getMicOffAction({
       phase: phaseAtToggle,
       hasPendingAudio: pendingInputAudioRef.current,
+      hasVoiceEvidence: turnVoicedFramesRef.current >= MIN_COMMIT_VOICE_FRAMES,
     });
 
     if (action === 'commit') {
@@ -1016,10 +1051,32 @@ export function useLiveSpeech({
       setInterimTranscript('Thinking...');
       sendManualCommitTail();
       commitOpenAiInput();
+      turnVoicedFramesRef.current = 0;
       // Mute means silent: send what was already said, then fully stop capture so
       // no background noise can barge in over the reply. Tap the mic again to talk.
       stopMicCapture();
       showNotice('Mic off. Sending what you said.');
+      return;
+    }
+
+    if (action === 'discard') {
+      // The pending turn was opened by noise, not speech — drop the phantom
+      // bubble and send nothing.
+      const id = activeUserMessageIdRef.current;
+      if (id) {
+        const phantom = messagesRef.current.find((message) => message.id === id);
+        if (phantom && (phantom.status === 'listening' || phantom.status === 'transcribing')) {
+          clearUserTranscriptTimer(id);
+          userTextBuffersRef.current.delete(phantom.itemId || id);
+          removeMessage(id);
+        }
+        activeUserMessageIdRef.current = '';
+      }
+      pendingInputAudioRef.current = false;
+      stopMicCapture();
+      pauseOpenAiInput();
+      setInterimTranscript('');
+      showNotice('Mic off. Nothing heard to send.');
       return;
     }
 
@@ -1073,6 +1130,9 @@ export function useLiveSpeech({
       case 'user.speech.stopped': {
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = false;
+          // The server closed this turn; voiced frames from it must not count
+          // as evidence for the next one.
+          turnVoicedFramesRef.current = 0;
           const id = ensureUserMessage(event.itemId || '');
           patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
           armUserTranscriptTimer(id);
