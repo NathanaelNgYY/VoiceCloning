@@ -233,13 +233,13 @@ export class RealtimeEventMapper {
 
   mapUserTextDone(event) {
     const text = cleanText(event.transcript || event.text || '');
-    if (!text || this.shouldDropUserTranscript(text)) {
-      return [];
-    }
     return [{
       type: 'user.text.done',
       itemId: event.item_id || '',
-      text,
+      // Strip suppressed transcripts but still emit the event: the client's
+      // "Transcribing..." bubble only resolves when a terminal user.text event
+      // arrives, and it falls back to a generic label on empty text.
+      text: this.shouldDropUserTranscript(text) ? '' : text,
     }];
   }
 
@@ -288,6 +288,26 @@ export class RealtimeEventMapper {
       }
     }
 
+    // A cancelled response was interrupted mid-generation (semantic VAD heard the
+    // user speak over it). Any partial text is display-only context — the client
+    // must never treat it as a finished reply or read it aloud.
+    if (response?.status === 'cancelled') {
+      const partial = cleanText(
+        textParts.map((part) => part.text).join(' ')
+        || this.collectResponseBuffers(response?.id)
+        || this.buffers.get(key)
+        || ''
+      );
+      this.completed.add(key);
+      for (const part of textParts) {
+        this.completed.add(part.key);
+        this.buffers.delete(part.key);
+      }
+      this.buffers.delete(key);
+      this.deleteResponseBuffers(response?.id);
+      return [{ type: 'assistant.text.cancelled', text: partial }];
+    }
+
     const text = cleanText(textParts.map((part) => part.text).join(' ') || this.buffers.get(key) || '');
     this.completed.add(key);
     for (const part of textParts) {
@@ -297,6 +317,29 @@ export class RealtimeEventMapper {
     this.buffers.delete(key);
 
     return text ? [{ type: 'assistant.text.done', text: this.preprocessAssistantText(text) }] : [];
+  }
+
+  // Streamed deltas are keyed by response:item:content_index (see textPartKey),
+  // so a cancelled response's partial text lives under composite keys, not the
+  // bare response id. Gather every buffer belonging to this response.
+  collectResponseBuffers(responseId) {
+    if (!responseId) return '';
+    const parts = [];
+    for (const [bufferKey, value] of this.buffers) {
+      if (bufferKey === responseId || bufferKey.startsWith(`${responseId}:`)) {
+        parts.push(value);
+      }
+    }
+    return parts.join(' ').trim();
+  }
+
+  deleteResponseBuffers(responseId) {
+    if (!responseId) return;
+    for (const bufferKey of [...this.buffers.keys()]) {
+      if (bufferKey === responseId || bufferKey.startsWith(`${responseId}:`)) {
+        this.buffers.delete(bufferKey);
+      }
+    }
   }
 
   mapErrorEvent(event) {
