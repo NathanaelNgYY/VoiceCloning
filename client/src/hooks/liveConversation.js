@@ -292,6 +292,39 @@ export function createChatMessage({
   };
 }
 
+// How long a user bubble may sit in 'transcribing' before the client closes the
+// turn itself. Realtime transcripts normally land within a couple of seconds of
+// speech stopping; if the terminal user.text event is lost (gateway bug, WS drop,
+// OpenAI never emitting transcription.completed), waiting forever leaves the
+// bubble stuck and the next turn overwriting it.
+export const USER_TRANSCRIPT_TIMEOUT_MS = 10000;
+
+// The active-user-message ref may only be reused while the bubble is still
+// collecting the current turn. A 'done' bubble is history — overwriting it
+// destroys a previous message (a stale ref once turned a finished transcript
+// into the next turn's "Transcribing...").
+export function canReuseActiveUserMessage(message) {
+  return Boolean(message)
+    && message.role === 'user'
+    && (message.status === 'listening' || message.status === 'transcribing');
+}
+
+// Terminal patch for a user bubble whose transcript never arrived: keep any
+// words that already streamed in, otherwise fall back to the same generic label
+// the gateway's suppressed-transcript path uses. Returns null when the bubble
+// is not actually stuck.
+export function resolvePendingTranscriptPatch(message) {
+  if (!message || message.role !== 'user' || message.status !== 'transcribing') {
+    return null;
+  }
+  const text = cleanLiveText(message.text);
+  const hasPartialWords = text && text !== 'Transcribing...' && text !== 'Listening...';
+  return {
+    text: hasPartialWords ? text : 'Voice message sent.',
+    status: 'done',
+  };
+}
+
 export function updateMessage(messages, id, patch) {
   return messages.map((message) =>
     message.id === id ? { ...message, ...patch } : message

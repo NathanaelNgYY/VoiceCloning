@@ -10,8 +10,10 @@ import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import { connectInferenceSSE } from '../services/sse.js';
 import {
   LIVE_REPLY_MODES,
+  USER_TRANSCRIPT_TIMEOUT_MS,
   buildLiveSentenceParams,
   buildLiveReplyParams,
+  canReuseActiveUserMessage,
   cleanLiveText,
   createChatMessage,
   createLiveSynthesisSnapshot,
@@ -25,6 +27,7 @@ import {
   isBenignRealtimeError,
   fixSpeechPronunciation,
   normalizeLiveLanguage,
+  resolvePendingTranscriptPatch,
   splitLiveReplyPhrases,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
@@ -151,6 +154,7 @@ export function useLiveSpeech({
   const currentSynthesisMessageIdRef = useRef('');
   const cancelledReplyIdsRef = useRef(new Set());
   const userTextBuffersRef = useRef(new Map());
+  const userTranscriptTimersRef = useRef(new Map());
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
@@ -307,6 +311,50 @@ export function useLiveSpeech({
     lastBargeInAtRef.current = 0;
     cancelledReplyIdsRef.current = new Set();
     userTextBuffersRef.current = new Map();
+    clearAllUserTranscriptTimers();
+  }
+
+  function clearUserTranscriptTimer(id) {
+    const timer = userTranscriptTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      userTranscriptTimersRef.current.delete(id);
+    }
+  }
+
+  function clearAllUserTranscriptTimers() {
+    for (const timer of userTranscriptTimersRef.current.values()) {
+      window.clearTimeout(timer);
+    }
+    userTranscriptTimersRef.current = new Map();
+  }
+
+  // Close a user bubble whose transcript never arrived and release the active
+  // ref so the next turn gets its own bubble. No-ops unless the bubble is
+  // actually stuck in 'transcribing'.
+  function finalizePendingUserMessage(id) {
+    const message = messagesRef.current.find((entry) => entry.id === id);
+    const patch = resolvePendingTranscriptPatch(message);
+    if (!patch) return;
+    clearUserTranscriptTimer(id);
+    userTextBuffersRef.current.delete(message.itemId || id);
+    patchMessage(id, patch);
+    if (activeUserMessageIdRef.current === id) {
+      activeUserMessageIdRef.current = '';
+    }
+  }
+
+  // The gateway normally closes every turn with user.text.done/failed. This
+  // timer is the client's own guarantee: if that terminal event is lost (WS
+  // drop, gateway bug, OpenAI never emitting transcription.completed), the
+  // bubble still resolves instead of hanging on "Transcribing..." and being
+  // overwritten by the next turn.
+  function armUserTranscriptTimer(id) {
+    clearUserTranscriptTimer(id);
+    userTranscriptTimersRef.current.set(id, window.setTimeout(() => {
+      userTranscriptTimersRef.current.delete(id);
+      finalizePendingUserMessage(id);
+    }, USER_TRANSCRIPT_TIMEOUT_MS));
   }
 
   function findUserMessageId(itemId) {
@@ -316,7 +364,22 @@ export function useLiveSpeech({
       );
       if (existing) return existing.id;
     }
-    return activeUserMessageIdRef.current;
+
+    const activeId = activeUserMessageIdRef.current;
+    if (!activeId) return '';
+    const active = messagesRef.current.find((message) => message.id === activeId);
+    // A finished bubble is history, and a bubble keyed to a different turn
+    // belongs to that turn. Reusing either would overwrite a previous message
+    // (a stale ref once turned a finished transcript into the next turn's
+    // "Transcribing..."), so drop the ref and let the caller create a fresh one.
+    if (
+      !canReuseActiveUserMessage(active)
+      || (itemId && active.itemId && active.itemId !== itemId)
+    ) {
+      activeUserMessageIdRef.current = '';
+      return '';
+    }
+    return activeId;
   }
 
   function ensureUserMessage(itemId = '') {
@@ -948,6 +1011,7 @@ export function useLiveSpeech({
     if (action === 'commit') {
       const id = ensureUserMessage();
       patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+      armUserTranscriptTimer(id);
       setPhase('thinking');
       setInterimTranscript('Thinking...');
       sendManualCommitTail();
@@ -991,7 +1055,15 @@ export function useLiveSpeech({
       case 'user.speech.started': {
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = true;
-          ensureUserMessage();
+          // A new turn starting proves the previous turn is over: if its bubble
+          // is still waiting on a transcript that never came, close it now so
+          // this turn gets its own bubble instead of overwriting it.
+          const activeId = activeUserMessageIdRef.current;
+          const active = messagesRef.current.find((message) => message.id === activeId);
+          if (active && (active.itemId || '') !== (event.itemId || '')) {
+            finalizePendingUserMessage(activeId);
+          }
+          ensureUserMessage(event.itemId || '');
           setPhase('listening');
           setInterimTranscript('Listening...');
         }
@@ -1001,8 +1073,9 @@ export function useLiveSpeech({
       case 'user.speech.stopped': {
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = false;
-          const id = ensureUserMessage();
+          const id = ensureUserMessage(event.itemId || '');
           patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+          armUserTranscriptTimer(id);
           setPhase('thinking');
           setInterimTranscript('Thinking...');
         }
@@ -1015,12 +1088,15 @@ export function useLiveSpeech({
         const nextText = `${userTextBuffersRef.current.get(key) || ''}${event.text || ''}`;
         userTextBuffersRef.current.set(key, nextText);
         patchMessage(id, { itemId: event.itemId || '', text: nextText, status: 'transcribing' });
+        // The transcript is streaming, just slowly — push the deadline back.
+        armUserTranscriptTimer(id);
         break;
       }
 
       case 'user.text.done': {
         const id = ensureUserMessage(event.itemId);
         const key = event.itemId || id;
+        clearUserTranscriptTimer(id);
         userTextBuffersRef.current.delete(key);
         pendingInputAudioRef.current = false;
         patchMessage(id, {
@@ -1036,6 +1112,7 @@ export function useLiveSpeech({
 
       case 'user.text.failed': {
         const id = ensureUserMessage(event.itemId);
+        clearUserTranscriptTimer(id);
         pendingInputAudioRef.current = false;
         patchMessage(id, {
           text: 'Voice message sent.',

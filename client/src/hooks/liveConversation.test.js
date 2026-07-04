@@ -18,6 +18,9 @@ import {
   nextAudioErrorAction,
   isBenignRealtimeError,
   fixSpeechPronunciation,
+  canReuseActiveUserMessage,
+  resolvePendingTranscriptPatch,
+  USER_TRANSCRIPT_TIMEOUT_MS,
 } from './liveConversation.js';
 
 test('fixSpeechPronunciation rejoins the dragged GI initialism for speech', () => {
@@ -426,4 +429,54 @@ test('shouldTriggerLiveBargeIn only reacts to deliberate speech during cloned pl
     micInputEnabled: false,
     rms: 0.06,
   }), false);
+});
+
+test('canReuseActiveUserMessage allows bubbles still collecting a turn', () => {
+  assert.equal(canReuseActiveUserMessage(createChatMessage({
+    id: 'u1', role: 'user', text: 'Listening...', status: 'listening',
+  })), true);
+  assert.equal(canReuseActiveUserMessage(createChatMessage({
+    id: 'u1', role: 'user', text: 'Transcribing...', status: 'transcribing',
+  })), true);
+});
+
+test('canReuseActiveUserMessage refuses finished or missing bubbles', () => {
+  assert.equal(canReuseActiveUserMessage(createChatMessage({
+    id: 'u1', role: 'user', text: 'What is melena?', status: 'done',
+  })), false);
+  assert.equal(canReuseActiveUserMessage(null), false);
+  assert.equal(canReuseActiveUserMessage(undefined), false);
+});
+
+test('resolvePendingTranscriptPatch closes a stuck Transcribing bubble with the fallback label', () => {
+  const patch = resolvePendingTranscriptPatch(createChatMessage({
+    id: 'u1', role: 'user', text: 'Transcribing...', status: 'transcribing',
+  }));
+  assert.deepEqual(patch, { text: 'Voice message sent.', status: 'done' });
+});
+
+test('resolvePendingTranscriptPatch keeps partial words already streamed', () => {
+  const patch = resolvePendingTranscriptPatch(createChatMessage({
+    id: 'u1', role: 'user', text: 'What is mel', status: 'transcribing',
+  }));
+  assert.deepEqual(patch, { text: 'What is mel', status: 'done' });
+});
+
+test('resolvePendingTranscriptPatch leaves other bubbles alone', () => {
+  assert.equal(resolvePendingTranscriptPatch(createChatMessage({
+    id: 'u1', role: 'user', text: 'Listening...', status: 'listening',
+  })), null);
+  assert.equal(resolvePendingTranscriptPatch(createChatMessage({
+    id: 'u1', role: 'user', text: 'What is melena?', status: 'done',
+  })), null);
+  assert.equal(resolvePendingTranscriptPatch(createChatMessage({
+    id: 'a1', role: 'assistant', text: 'Transcribing...', status: 'transcribing',
+  })), null);
+  assert.equal(resolvePendingTranscriptPatch(null), null);
+});
+
+test('user transcript timeout is long enough for slow transcripts but finite', () => {
+  assert.equal(typeof USER_TRANSCRIPT_TIMEOUT_MS, 'number');
+  assert.ok(USER_TRANSCRIPT_TIMEOUT_MS >= 5000);
+  assert.ok(USER_TRANSCRIPT_TIMEOUT_MS <= 30000);
 });
