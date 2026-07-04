@@ -236,10 +236,6 @@ export function useLiveSpeech({
     setMessagesSync((prev) => [...prev, message]);
   }
 
-  function removeMessage(id) {
-    setMessagesSync((prev) => prev.filter((message) => message.id !== id));
-  }
-
   function showNotice(message) {
     setNotice(message);
     if (noticeTimeoutRef.current) {
@@ -997,26 +993,6 @@ export function useLiveSpeech({
         assistantTextRef.current += event.text || '';
         patchMessage(id, { text: assistantTextRef.current, status: 'thinking' });
         setInterimTranscript(assistantTextRef.current);
-        break;
-      }
-
-      case 'assistant.text.cancelled': {
-        // OpenAI cancelled this reply mid-generation (the user spoke over it and
-        // a fresh reply is coming). Keep any partial text as a quiet
-        // "interrupted" bubble for context — never send it to TTS — and drop the
-        // bubble entirely if nothing had streamed yet.
-        const partialText = cleanLiveText(assistantTextRef.current || event.text || '');
-        const id = activeAssistantMessageIdRef.current;
-        assistantTextRef.current = '';
-        activeAssistantMessageIdRef.current = '';
-        setInterimTranscript('');
-        if (id) {
-          if (partialText) {
-            patchMessage(id, { text: partialText, status: 'interrupted' });
-          } else {
-            removeMessage(id);
-          }
-        }
         break;
       }
 
