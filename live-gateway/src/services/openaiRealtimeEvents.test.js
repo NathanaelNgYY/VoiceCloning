@@ -189,3 +189,11 @@ test('RealtimeEventMapper forwards the item id on speech start/stop so the clien
     [{ type: 'user.speech.started', itemId: '' }],
   );
 });
+
+test('buildRealtimeSessionUpdate transcribes user speech with the full-size model', () => {
+  const update = buildRealtimeSessionUpdate({ language: 'en' });
+  // Display transcripts come from a side-channel model, not gpt-realtime itself.
+  // The mini transcriber kept mangling short utterances ("GIB" -> "GPT") and
+  // mis-detecting English as CJK; the full-size model is markedly more accurate.
+  assert.equal(update.session.audio.input.transcription.model, 'gpt-4o-transcribe');
+});
