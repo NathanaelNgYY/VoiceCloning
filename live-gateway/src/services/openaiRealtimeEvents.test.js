@@ -14,6 +14,13 @@ test('buildRealtimeSessionUpdate uses selected Chinese for replies and transcrip
   assert.doesNotMatch(update.session.instructions, /only in English/i);
 });
 
+test('buildRealtimeSessionUpdate biases transcription to English with a prompt', () => {
+  const update = buildRealtimeSessionUpdate({ language: 'en' });
+
+  assert.equal(update.session.audio.input.transcription.language, 'en');
+  assert.match(update.session.audio.input.transcription.prompt, /in English/i);
+});
+
 test('RealtimeEventMapper leaves Chinese-mode assistant numbers as digits', () => {
   const mapper = new RealtimeEventMapper({ language: 'zh' });
   const events = mapper.map({

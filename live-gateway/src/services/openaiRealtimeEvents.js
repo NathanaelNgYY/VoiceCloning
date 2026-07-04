@@ -1,8 +1,19 @@
 import { preprocessText } from './textPreprocessor.js';
 
 const REALTIME_LANGUAGES = {
-  en: { code: 'en', name: 'English' },
-  zh: { code: 'zh', name: 'Chinese' },
+  en: {
+    code: 'en',
+    name: 'English',
+    // Biases gpt-4o-mini-transcribe to stay in English. The `language` code alone
+    // is only a hint; short or unclear audio still gets auto-detected (and even
+    // hallucinated) into another script. This prompt keeps the transcript English.
+    transcriptionPrompt: 'The audio is a spoken conversation in English. Transcribe it in English only.',
+  },
+  zh: {
+    code: 'zh',
+    name: 'Chinese',
+    transcriptionPrompt: '音频是一段中文（普通话）对话。只用简体中文转写。',
+  },
 };
 const LANGUAGE_INSTRUCTION_RE =
   /\b(?:always\s+)?respond\s+only\s+in\s+(?:english|chinese)\.?\s*/gi;
@@ -114,6 +125,7 @@ export function buildRealtimeSessionUpdate({
           transcription: {
             model: 'gpt-4o-mini-transcribe',
             language: languageCode,
+            prompt: REALTIME_LANGUAGES[languageCode].transcriptionPrompt,
           },
           noise_reduction: {
             type: 'near_field',
