@@ -3196,13 +3196,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <div className="flex items-center gap-3">
               <span className={cn(
                 'flex items-center gap-1.5 text-xs',
-                selectedModelLoaded ? 'text-emerald-600' : loadingModel ? 'text-blue-500' : 'text-slate-400'
+                selectedModelLoaded ? 'text-emerald-600' : loadingModel || selectedProfile || !modelsFetched ? 'text-blue-500' : 'text-slate-400'
               )}>
-                {loadingModel
+                {/* A selected-but-not-loaded profile is about to auto-load, so show
+                    it as loading rather than the confusing "No model". */}
+                {loadingModel || (!selectedModelLoaded && (selectedProfile || !modelsFetched))
                   ? <Loader2 size={11} className="animate-spin" />
                   : <span className={cn('h-2 w-2 rounded-full', selectedModelLoaded ? 'bg-emerald-500' : 'bg-slate-300')} />
                 }
-                {selectedModelLoaded ? 'Ready' : loadingModel ? 'Loading...' : 'No model'}
+                {selectedModelLoaded ? 'Ready' : loadingModel || selectedProfile || !modelsFetched ? 'Loading...' : 'No model'}
               </span>
               <Button
                 type="button"
@@ -3247,12 +3249,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       )}
 
       {!isReady && !modelError && (
-        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
-          {availableProfiles.length === 0
-            ? 'No trained models found. Train a voice first, then return here.'
-            : !selectedModelLoaded
-              ? 'Select a trained model — it will load automatically.'
-              : 'Reference clips loading — the best clip will be selected automatically.'}
+        <div className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+          {/* The whole startup sequence (fetch models -> auto-select -> auto-load ->
+              pick references) runs by itself, so just say "loading" instead of
+              surfacing each internal step as if the user had to act on it. */}
+          {modelsFetched && availableProfiles.length === 0 ? (
+            'No trained models found. Train a voice first, then return here.'
+          ) : (
+            <>
+              <Loader2 size={14} className="shrink-0 animate-spin" />
+              {!selectedModelLoaded
+                ? 'Loading the voice — this may take a moment.'
+                : 'Almost ready — preparing the voice references.'}
+            </>
+          )}
         </div>
       )}
 

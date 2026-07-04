@@ -17,7 +17,9 @@ import {
   createLiveSynthesisSnapshot,
   findFirstReplayablePart,
   findNextPhrasePlayback,
+  findNextReplyPlayback,
   findSelectedPlayback,
+  hasPendingReplyWork,
   getMicOffAction,
   isLiveInputPhase,
   isBenignRealtimeError,
@@ -423,10 +425,25 @@ export function useLiveSpeech({
     );
   }
 
+  // Starting to synthesize a new reply must not cut off a clip that is still
+  // reading an earlier reply aloud (a Realtime interruption splits one reply
+  // across messages). Keep an actively playing selection — when its clip ends,
+  // onAudioEnded chains into this message's parts. Only reset the selection
+  // when nothing is actually playing.
+  function clearReplySelectionUnlessPlaying() {
+    const active = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
+    if (!active || phaseRef.current !== 'speaking') {
+      setSelectedReplyId('');
+    }
+  }
+
   async function synthesizeFullAssistantReply(messageId, text, runId) {
     const synthesis = getActiveSynthesisSnapshot();
     const activeRefParams = synthesis.refParams;
-    if (!activeRefParams) return;
+    if (!activeRefParams) {
+      patchMessage(messageId, { status: 'error', error: 'No reference audio configured.' });
+      return;
+    }
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
@@ -473,7 +490,12 @@ export function useLiveSpeech({
   async function synthesizePhraseAssistantReply(messageId, text, runId) {
     const synthesis = getActiveSynthesisSnapshot();
     const activeRefParams = synthesis.refParams;
-    if (!activeRefParams) return;
+    // The message was already marked generating_voice — settle its status on
+    // early exits so it can't pin the conversation in the 'speaking' phase.
+    if (!activeRefParams) {
+      patchMessage(messageId, { status: 'error', error: 'No reference audio configured.' });
+      return;
+    }
 
     if (synthesis.engine === 'full') {
       await synthesizeFullQueuedAssistantReply(messageId, text, runId, synthesis, activeRefParams);
@@ -481,12 +503,15 @@ export function useLiveSpeech({
     }
 
     const phrases = splitLiveReplyPhrases(text);
-    if (phrases.length === 0) return;
+    if (phrases.length === 0) {
+      patchMessage(messageId, { status: 'ready' });
+      return;
+    }
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
     pauseOpenAiInput();
-    setSelectedReplyId('');
+    clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, {
       status: 'generating_voice',
@@ -536,7 +561,7 @@ export function useLiveSpeech({
       if (!cancelledReplyIdsRef.current.has(messageId)) {
         patchMessage(messageId, { status: 'ready' });
         const message = messagesRef.current.find((item) => item.id === messageId);
-        if (!selectedReplyIdRef.current) {
+        if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
           const nextPart = firstReadyPart(message);
           if (nextPart) {
             setSelectedReplyId(nextPart.id);
@@ -566,7 +591,7 @@ export function useLiveSpeech({
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
     pauseOpenAiInput();
-    setSelectedReplyId('');
+    clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, { status: 'generating_voice', error: null, audioParts: [] });
 
@@ -634,7 +659,7 @@ export function useLiveSpeech({
               }
               patchMessage(messageId, { status: 'ready' });
               const message = messagesRef.current.find((item) => item.id === messageId);
-              if (!selectedReplyIdRef.current) {
+              if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
                 const nextPart = firstReadyPart(message);
                 if (nextPart) setSelectedReplyId(nextPart.id);
               }
@@ -749,6 +774,14 @@ export function useLiveSpeech({
     if (currentReplyId) {
       cancelledReplyIdsRef.current.add(currentReplyId);
       patchMessage(currentReplyId, { status: 'interrupted' });
+    }
+    // A split reply can have a second message still synthesizing while the
+    // first one plays — an interruption must silence that one too, or its
+    // clips would start reading out later, after the user has moved on.
+    const synthesizingId = currentSynthesisMessageIdRef.current;
+    if (synthesizingId && synthesizingId !== currentReplyId) {
+      cancelledReplyIdsRef.current.add(synthesizingId);
+      patchMessage(synthesizingId, { status: 'interrupted' });
     }
     if (playback?.part) {
       patchAudioPart(playback.message.id, playback.part.id, { status: 'interrupted' });
@@ -1171,10 +1204,19 @@ export function useLiveSpeech({
         return;
       }
 
+      // A Realtime interruption can split one spoken reply across two assistant
+      // messages — keep reading straight into the next message's unplayed clips.
+      const nextReply = findNextReplyPlayback(messagesRef.current, playback.message.id);
+      if (nextReply?.part) {
+        setSelectedReplyId(nextReply.part.id);
+        return;
+      }
+
       setSelectedReplyId('');
       if (
-        currentSynthesisMessageIdRef.current === playback.message.id ||
-        hasPendingParts(playback.message)
+        currentSynthesisMessageIdRef.current ||
+        hasPendingParts(playback.message) ||
+        hasPendingReplyWork(messagesRef.current)
       ) {
         setPhase('speaking');
         return;
@@ -1194,6 +1236,11 @@ export function useLiveSpeech({
 
     setSelectedReplyId('');
     if (phaseRef.current === 'speaking') {
+      // Another reply is still generating voice (e.g. a split reply's second
+      // message) — stay in 'speaking' so its first clip auto-plays when ready.
+      if (currentSynthesisMessageIdRef.current || hasPendingReplyWork(messagesRef.current)) {
+        return;
+      }
       const nextPhase = socketRef.current ? 'listening' : 'idle';
       setPhase(nextPhase);
       syncOpenAiInputWithMic(nextPhase);

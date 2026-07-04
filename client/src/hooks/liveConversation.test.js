@@ -6,6 +6,8 @@ import {
   findFirstReplayablePart,
   findSelectedPlayback,
   findNextPhrasePlayback,
+  findNextReplyPlayback,
+  hasPendingReplyWork,
   getMicOffAction,
   createLiveSynthesisSnapshot,
   splitLiveReplyPhrases,
@@ -293,6 +295,87 @@ test('findNextPhrasePlayback can replay phrase clips that were already played', 
 
   const second = findNextPhrasePlayback([message], 'reply-replay-part-1');
   assert.equal(second.part.id, 'reply-replay-part-2');
+});
+
+test('findNextReplyPlayback chains a split reply into the next message\'s unplayed clip', () => {
+  const first = createChatMessage({
+    id: 'reply-a',
+    role: 'assistant',
+    status: 'ready',
+    audioParts: [
+      { id: 'reply-a-part-1', index: 1, status: 'played', audioUrl: 'blob:a1' },
+    ],
+  });
+  const second = createChatMessage({
+    id: 'reply-b',
+    role: 'assistant',
+    status: 'generating_voice',
+    audioParts: [
+      { id: 'reply-b-part-1', index: 1, status: 'ready', audioUrl: 'blob:b1' },
+      { id: 'reply-b-part-2', index: 2, status: 'generating', audioUrl: null },
+    ],
+  });
+
+  const next = findNextReplyPlayback([first, second], 'reply-a');
+  assert.equal(next.message.id, 'reply-b');
+  assert.equal(next.part.id, 'reply-b-part-1');
+  assert.equal(next.audioUrl, 'blob:b1');
+});
+
+test('findNextReplyPlayback does not cascade a replay into already-read messages', () => {
+  const first = createChatMessage({
+    id: 'reply-a',
+    role: 'assistant',
+    status: 'ready',
+    audioParts: [
+      { id: 'reply-a-part-1', index: 1, status: 'played', audioUrl: 'blob:a1' },
+    ],
+  });
+  const second = createChatMessage({
+    id: 'reply-b',
+    role: 'assistant',
+    status: 'ready',
+    audioParts: [
+      { id: 'reply-b-part-1', index: 1, status: 'played', audioUrl: 'blob:b1' },
+    ],
+  });
+
+  assert.equal(findNextReplyPlayback([first, second], 'reply-a'), null);
+});
+
+test('findNextReplyPlayback only looks at assistant messages after the finished one', () => {
+  const earlier = createChatMessage({
+    id: 'reply-early',
+    role: 'assistant',
+    status: 'ready',
+    audioParts: [
+      { id: 'reply-early-part-1', index: 1, status: 'ready', audioUrl: 'blob:early' },
+    ],
+  });
+  const user = createChatMessage({ id: 'user-1', role: 'user', text: 'Hi.' });
+  const finished = createChatMessage({
+    id: 'reply-a',
+    role: 'assistant',
+    status: 'ready',
+    audioParts: [
+      { id: 'reply-a-part-1', index: 1, status: 'played', audioUrl: 'blob:a1' },
+    ],
+  });
+
+  assert.equal(findNextReplyPlayback([earlier, user, finished], 'reply-a'), null);
+  assert.equal(findNextReplyPlayback([earlier, user, finished], 'missing-id'), null);
+});
+
+test('hasPendingReplyWork reflects replies still generating voice', () => {
+  const generating = createChatMessage({ id: 'reply-b', role: 'assistant', status: 'generating_voice' });
+  const done = createChatMessage({ id: 'reply-a', role: 'assistant', status: 'ready' });
+  const errored = createChatMessage({ id: 'reply-c', role: 'assistant', status: 'error' });
+  const interrupted = createChatMessage({ id: 'reply-d', role: 'assistant', status: 'interrupted' });
+  const userThinking = createChatMessage({ id: 'user-2', role: 'user', status: 'generating_voice' });
+
+  assert.equal(hasPendingReplyWork([done, generating]), true);
+  assert.equal(hasPendingReplyWork([done, errored, interrupted, userThinking]), false);
+  assert.equal(hasPendingReplyWork([]), false);
 });
 
 test('shouldSendLiveMicAudio only allows enabled mic input during listening phases', () => {

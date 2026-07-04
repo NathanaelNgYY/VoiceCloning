@@ -333,6 +333,40 @@ export function findNextPhrasePlayback(messages, selectedId) {
   return null;
 }
 
+// One spoken reply can arrive split across several assistant messages: OpenAI
+// Realtime interrupts an in-progress response when it hears more user speech,
+// then continues the answer in a new response. After the last clip of one
+// message finishes, chain into the first still-unplayed ready clip of a LATER
+// assistant message so the whole reply keeps reading aloud. Only 'ready'
+// (never-played) parts count — replaying an old message must not cascade into
+// messages that were already read out.
+export function findNextReplyPlayback(messages, afterMessageId) {
+  const startIndex = messages.findIndex((message) => message.id === afterMessageId);
+  if (startIndex === -1) return null;
+
+  for (const message of messages.slice(startIndex + 1)) {
+    if (message.role !== 'assistant') continue;
+    const part = (message.audioParts || []).find(
+      (item) => item.audioUrl && item.status === 'ready'
+    );
+    if (part) return { message, part, audioUrl: part.audioUrl };
+  }
+
+  return null;
+}
+
+// True while any assistant reply is still producing voice clips. Playback
+// end-detection uses this to stay in the 'speaking' phase when the clip that
+// just finished belongs to an earlier message than the one being synthesized
+// (a reply split across messages) — otherwise the phase would drop to
+// 'listening' and the pending reply's audio would never auto-play. Errored and
+// interrupted replies don't count: their synthesis loop has already stopped.
+export function hasPendingReplyWork(messages) {
+  return messages.some(
+    (message) => message.role === 'assistant' && message.status === 'generating_voice'
+  );
+}
+
 // Decide what to do when the reply <audio> element fails on a clip. The player
 // only advances on the `ended` event, so without this a failed clip would stall
 // the whole reply forever. Retry the same clip once (transient decode/network
