@@ -23,15 +23,8 @@ test('buildRealtimeSessionUpdate pins transcription language without a leaky pro
   assert.equal(update.session.audio.input.transcription.prompt, undefined);
 });
 
-test('RealtimeEventMapper drops a mis-detected non-English user transcript in English mode', () => {
+test('RealtimeEventMapper blanks a mis-detected non-English user transcript but still completes the turn', () => {
   const mapper = new RealtimeEventMapper({ language: 'en' });
-
-  const done = mapper.map({
-    type: 'conversation.item.input_audio_transcription.completed',
-    item_id: 'item-1',
-    transcript: '教咪我',
-  });
-  assert.deepEqual(done, []);
 
   const delta = mapper.map({
     type: 'conversation.item.input_audio_transcription.delta',
@@ -39,6 +32,59 @@ test('RealtimeEventMapper drops a mis-detected non-English user transcript in En
     delta: '카이모어',
   });
   assert.deepEqual(delta, []);
+
+  // The completed event must always reach the client (with the wrong-script
+  // text stripped), otherwise the user's bubble stays stuck on "Transcribing...".
+  const done = mapper.map({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: 'item-1',
+    transcript: '教咪我',
+  });
+  assert.deepEqual(done, [{ type: 'user.text.done', itemId: 'item-1', text: '' }]);
+});
+
+test('RealtimeEventMapper completes the turn on an empty user transcript', () => {
+  const mapper = new RealtimeEventMapper({ language: 'en' });
+  const done = mapper.map({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: 'item-1',
+    transcript: '  ',
+  });
+  assert.deepEqual(done, [{ type: 'user.text.done', itemId: 'item-1', text: '' }]);
+});
+
+test('RealtimeEventMapper flags an interrupted response as cancelled instead of done', () => {
+  const mapper = new RealtimeEventMapper({ language: 'en' });
+
+  mapper.map({
+    type: 'response.output_text.delta',
+    response_id: 'resp-1',
+    item_id: 'item-1',
+    content_index: 0,
+    delta: 'These ulcers can bleed, especially if',
+  });
+
+  // Semantic VAD interrupted the response (the user spoke over it): the client
+  // must learn the reply was cut off so it never reads the fragment aloud.
+  const events = mapper.map({
+    type: 'response.done',
+    response: { id: 'resp-1', status: 'cancelled', output: [] },
+  });
+
+  assert.deepEqual(events, [{
+    type: 'assistant.text.cancelled',
+    text: 'These ulcers can bleed, especially if',
+  }]);
+});
+
+test('RealtimeEventMapper emits cancelled even when no text streamed yet', () => {
+  const mapper = new RealtimeEventMapper({ language: 'en' });
+  const events = mapper.map({
+    type: 'response.done',
+    response: { id: 'resp-1', status: 'cancelled', output: [] },
+  });
+
+  assert.deepEqual(events, [{ type: 'assistant.text.cancelled', text: '' }]);
 });
 
 test('RealtimeEventMapper keeps an English user transcript in English mode', () => {
