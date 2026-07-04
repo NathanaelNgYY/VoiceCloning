@@ -1,3 +1,29 @@
+// In S3 mode the client identifies models by S3 key while the worker reports the
+// local file it downloaded the key to (model_cache/<basename of the key>), so the
+// same loaded weights carry two different paths. The download preserves the key's
+// basename, making filename equality the reliable identity across both modes.
+export function sameLoadedWeights(selectedPath, loadedPath) {
+  const selected = String(selectedPath || '').trim();
+  const loaded = String(loadedPath || '').trim();
+  if (!selected || !loaded) return false;
+  if (selected === loaded) return true;
+  return selected.split(/[\\/]/).pop() === loaded.split(/[\\/]/).pop();
+}
+
+export function isSelectedModelLoaded({
+  serverReady,
+  selectedGPT,
+  selectedSoVITS,
+  loadedGPTPath,
+  loadedSoVITSPath,
+}) {
+  return Boolean(
+    serverReady
+      && sameLoadedWeights(selectedGPT, loadedGPTPath)
+      && sameLoadedWeights(selectedSoVITS, loadedSoVITSPath)
+  );
+}
+
 export function shouldLoadSelectedProfile({
   selectedProfile,
   loadedGPTPath,
@@ -14,7 +40,7 @@ export function shouldLoadSelectedProfile({
       && sovitsPath
       && !isConversationActive
       && !loadingModel
-      && (loadedGPTPath !== gptPath || loadedSoVITSPath !== sovitsPath)
+      && (!sameLoadedWeights(gptPath, loadedGPTPath) || !sameLoadedWeights(sovitsPath, loadedSoVITSPath))
   );
 }
 

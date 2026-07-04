@@ -64,7 +64,9 @@ import {
 import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
+  isSelectedModelLoaded,
   resolveInferenceStatusState,
+  sameLoadedWeights,
   shouldLoadSelectedProfile,
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
@@ -439,7 +441,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     ? buildSavedVoiceProfileRestoreKey(activeVoiceProfile)
     : '';
   const loadedProfile = availableProfiles.find((p) =>
-    p.gptModel?.path === loadedGPTPath && p.sovitsModel?.path === loadedSoVITSPath
+    sameLoadedWeights(p.gptModel?.path, loadedGPTPath) && sameLoadedWeights(p.sovitsModel?.path, loadedSoVITSPath)
   ) || null;
 
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
@@ -578,10 +580,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
-  const liveSelectedModelLoaded = Boolean(
-    serverReady && selectedGPT && selectedSoVITS &&
-    selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
-  );
+  const liveSelectedModelLoaded = isSelectedModelLoaded({
+    serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
+  });
   const autoSyncRequestFingerprint = getAutoSyncRequestFingerprint({
     pendingFingerprint: pendingAutoSyncFingerprintRef.current,
     currentFingerprint: currentAutoSyncFingerprint,
@@ -2962,6 +2963,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     return () => window.removeEventListener('voice-cloning-gpu-ready', handleGpuReady);
   }, []);
 
+  // A failed or not-ready /inference/status response (cold Lambda, network blip,
+  // api_v2 busy with a warm synth) flips serverReady off while the loaded paths
+  // stay matching — so the auto-load effect never re-fires and, without this,
+  // nothing else re-checks status: the page would sit on "Loading the voice"
+  // until a manual refresh. Re-poll until the server reports ready again.
+  useEffect(() => {
+    if (serverReady || !modelsFetched) return undefined;
+    const id = window.setInterval(() => { checkStatus(); }, 8000);
+    return () => window.clearInterval(id);
+  }, [serverReady, modelsFetched]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [liveSpeech.messages.length, liveSpeech.phase]);
@@ -2995,10 +3007,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
-  const selectedModelLoaded = Boolean(
-    serverReady && selectedGPT && selectedSoVITS &&
-    selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
-  );
+  const selectedModelLoaded = isSelectedModelLoaded({
+    serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
+  });
   const isReady = selectedModelLoaded && Boolean(liveRefParams);
   const isTtsMode = mode === 'tts';
 

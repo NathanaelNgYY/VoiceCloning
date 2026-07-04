@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
+  isSelectedModelLoaded,
   resolveInferenceStatusState,
   shouldLoadSelectedProfile,
 } from './modelLoading.js';
@@ -63,6 +64,78 @@ test('shouldLoadSelectedProfile waits while conversation or loading is active', 
     loadedSoVITSPath: '/models/sovits/old.pth',
     isConversationActive: false,
     loadingModel: true,
+  }), false);
+});
+
+test('shouldLoadSelectedProfile does not reload when the worker reports the same weights at their downloaded location', () => {
+  assert.equal(shouldLoadSelectedProfile({
+    serverReady: true,
+    selectedProfile: {
+      complete: true,
+      gptModel: { path: 'models/user-models/gpt/new.ckpt' },
+      sovitsModel: { path: 'models/user-models/sovits/new.pth' },
+    },
+    loadedGPTPath: '/tmp/voice-cloning/model_cache/new.ckpt',
+    loadedSoVITSPath: '/tmp/voice-cloning/model_cache/new.pth',
+    isConversationActive: false,
+    loadingModel: false,
+  }), false);
+});
+
+test('isSelectedModelLoaded matches exact loaded paths (local mode)', () => {
+  assert.equal(isSelectedModelLoaded({
+    serverReady: true,
+    selectedGPT: '/models/gpt/new.ckpt',
+    selectedSoVITS: '/models/sovits/new.pth',
+    loadedGPTPath: '/models/gpt/new.ckpt',
+    loadedSoVITSPath: '/models/sovits/new.pth',
+  }), true);
+});
+
+test('isSelectedModelLoaded treats the worker-local download of the selected S3 keys as loaded', () => {
+  // S3 mode: the client selects S3 keys, but the worker reports the local file it
+  // downloaded them to (model_cache/<basename of the key>). Same weights, different
+  // location — the page must not fall back to "Loading the voice" over this.
+  assert.equal(isSelectedModelLoaded({
+    serverReady: true,
+    selectedGPT: 'models/user-models/gpt/lecturer-e15.ckpt',
+    selectedSoVITS: 'models/user-models/sovits/lecturer-e8.pth',
+    loadedGPTPath: '/tmp/voice-cloning/model_cache/lecturer-e15.ckpt',
+    loadedSoVITSPath: 'C:\\voice-cloning\\model_cache\\lecturer-e8.pth',
+  }), true);
+});
+
+test('isSelectedModelLoaded is false when the server is not ready, paths are missing, or weights differ', () => {
+  assert.equal(isSelectedModelLoaded({
+    serverReady: false,
+    selectedGPT: '/models/gpt/new.ckpt',
+    selectedSoVITS: '/models/sovits/new.pth',
+    loadedGPTPath: '/models/gpt/new.ckpt',
+    loadedSoVITSPath: '/models/sovits/new.pth',
+  }), false);
+
+  assert.equal(isSelectedModelLoaded({
+    serverReady: true,
+    selectedGPT: '',
+    selectedSoVITS: '',
+    loadedGPTPath: '',
+    loadedSoVITSPath: '',
+  }), false);
+
+  assert.equal(isSelectedModelLoaded({
+    serverReady: true,
+    selectedGPT: 'models/user-models/gpt/lecturer-e15.ckpt',
+    selectedSoVITS: 'models/user-models/sovits/lecturer-e8.pth',
+    loadedGPTPath: '/tmp/model_cache/other-voice-e15.ckpt',
+    loadedSoVITSPath: '/tmp/model_cache/other-voice-e8.pth',
+  }), false);
+
+  assert.equal(isSelectedModelLoaded({
+    serverReady: true,
+    selectedGPT: 'models/user-models/gpt/lecturer-e15.ckpt',
+    selectedSoVITS: 'models/user-models/sovits/lecturer-e8.pth',
+    loadedGPTPath: '',
+    loadedSoVITSPath: '',
   }), false);
 });
 
