@@ -171,3 +171,21 @@ test('buildRealtimeSessionUpdate appends prosody guidance for the Chinese prompt
     /End every sentence with a period, question mark, or exclamation mark\./,
   );
 });
+
+test('RealtimeEventMapper forwards the item id on speech start/stop so the client can key turn bubbles', () => {
+  const mapper = new RealtimeEventMapper({ language: 'en' });
+
+  assert.deepEqual(
+    mapper.map({ type: 'input_audio_buffer.speech_started', item_id: 'item_A' }),
+    [{ type: 'user.speech.started', itemId: 'item_A' }],
+  );
+  assert.deepEqual(
+    mapper.map({ type: 'input_audio_buffer.speech_stopped', item_id: 'item_A' }),
+    [{ type: 'user.speech.stopped', itemId: 'item_A' }],
+  );
+  // Missing item_id degrades to an empty key, never undefined.
+  assert.deepEqual(
+    mapper.map({ type: 'input_audio_buffer.speech_started' }),
+    [{ type: 'user.speech.started', itemId: '' }],
+  );
+});

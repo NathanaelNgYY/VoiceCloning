@@ -166,11 +166,13 @@ export class RealtimeEventMapper {
       case 'session.updated':
         return [{ type: 'session.ready' }];
 
+      // Forward the item id so the client can key each turn's bubble from the
+      // start — transcript deltas/done for the same turn carry the same id.
       case 'input_audio_buffer.speech_started':
-        return [{ type: 'user.speech.started' }];
+        return [{ type: 'user.speech.started', itemId: event.item_id || '' }];
 
       case 'input_audio_buffer.speech_stopped':
-        return [{ type: 'user.speech.stopped' }];
+        return [{ type: 'user.speech.stopped', itemId: event.item_id || '' }];
 
       case 'conversation.item.input_audio_transcription.delta':
         return this.mapUserTextDelta(event);
