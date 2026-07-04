@@ -4,8 +4,8 @@ const REALTIME_LANGUAGES = {
   en: { code: 'en', name: 'English' },
   zh: { code: 'zh', name: 'Chinese' },
 };
-// NB: we deliberately do NOT pass a transcription `prompt`. gpt-4o-mini-transcribe
-// echoes the prompt back as the transcript on silence/unclear audio (it once
+// NB: we deliberately do NOT pass a transcription `prompt`. The gpt-4o transcribe
+// models echo the prompt back as the transcript on silence/unclear audio (it once
 // surfaced "Transcribe it in English only." in the user's own bubble), and it does
 // not reliably lock the language anyway. Language is steered by the `language`
 // code plus the non-Latin-script guard in RealtimeEventMapper below.
@@ -131,7 +131,11 @@ export function buildRealtimeSessionUpdate({
             rate: 24000,
           },
           transcription: {
-            model: 'gpt-4o-mini-transcribe',
+            // Full-size transcriber: the mini variant kept mangling short
+            // utterances ("GIB" -> "GPT") and mis-detecting English as CJK,
+            // which fed the non-Latin suppression. Applies only to the user's
+            // speech bubble — gpt-realtime hears the raw audio either way.
+            model: 'gpt-4o-transcribe',
             language: languageCode,
           },
           noise_reduction: {
