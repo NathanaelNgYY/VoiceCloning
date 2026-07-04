@@ -14,11 +14,13 @@ test('buildRealtimeSessionUpdate uses selected Chinese for replies and transcrip
   assert.doesNotMatch(update.session.instructions, /only in English/i);
 });
 
-test('buildRealtimeSessionUpdate biases transcription to English with a prompt', () => {
+test('buildRealtimeSessionUpdate pins transcription language without a leaky prompt', () => {
   const update = buildRealtimeSessionUpdate({ language: 'en' });
 
   assert.equal(update.session.audio.input.transcription.language, 'en');
-  assert.match(update.session.audio.input.transcription.prompt, /in English/i);
+  // No `prompt`: gpt-4o-mini-transcribe echoes it back as the transcript on
+  // silence, which surfaced the prompt text in the user's own speech bubble.
+  assert.equal(update.session.audio.input.transcription.prompt, undefined);
 });
 
 test('RealtimeEventMapper drops a mis-detected non-English user transcript in English mode', () => {
