@@ -1,5 +1,9 @@
 # Dev + Staging Environments Implementation Plan
 
+> **Superseded/extended by `docs/dev-environment-duplication-guide.md`** (adds the 3rd chatbot
+> frontend, private-IP + NAT networking, idle-stop EventBridge duplication, and on-host
+> v2ProPlus specifics).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up a fully separate dev environment (new GPU EC2 + `-dev` Lambda, ALB, CloudFront ×2, S3 prefix) so programmers work on dev while users keep using the existing stack, relabeled staging.

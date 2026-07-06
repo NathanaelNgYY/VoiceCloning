@@ -1,5 +1,9 @@
 # Dev + Staging Environments — Design
 
+> **Superseded/extended by `docs/dev-environment-duplication-guide.md`** (adds the 3rd chatbot
+> frontend, private-IP + NAT networking, idle-stop EventBridge duplication, and on-host
+> v2ProPlus specifics).
+
 **Date:** 2026-07-06
 **Status:** Approved (design review with Nathanael, 2026-07-06)
 
