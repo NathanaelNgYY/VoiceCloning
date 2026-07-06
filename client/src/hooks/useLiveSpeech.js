@@ -1383,9 +1383,12 @@ export function useLiveSpeech({
     }
   }
 
-  // Shared tail for "speaking, but nothing selected": start the earliest
-  // unplayed ready clip, keep waiting while clips are generating, or settle
-  // out of the speaking phase when the reply is truly finished.
+  // "Speaking, but nothing selected": start the earliest unplayed ready clip,
+  // keep waiting while clips are generating, or settle out of the speaking
+  // phase when the reply is truly finished. Only ever called from the
+  // reconciler effect below so the decision always reads fresh rendered state
+  // — never from event handlers, whose messagesRef view can lag and re-select
+  // a clip that already played.
   function applySpeakingContinuation(messages) {
     if (phaseRef.current !== 'speaking' || selectedReplyIdRef.current) return;
     const decision = resolveSpeakingContinuation(messages, {
@@ -1418,11 +1421,13 @@ export function useLiveSpeech({
       }
     }
 
-    // messagesRef can lag React's render cycle here (an ended event can land
-    // before queued patches flush), so this decision may be wrong — the
-    // speaking-continuation effect re-runs it with fresh state and self-heals.
+    // Only clear the selection here — the speaking-continuation effect makes
+    // the play/wait/settle decision on the NEXT render, from fresh state.
+    // Deciding synchronously from messagesRef re-selected the clip that just
+    // ended (its 'played' patch hadn't flushed yet), and since the selection
+    // ended the React batch unchanged, the <audio> effect never re-fired: the
+    // reply froze silently on a spent clip right after the short first phrase.
     setSelectedReplyId('');
-    applySpeakingContinuation(messagesRef.current);
   }
 
   // Self-healing playback reconciler. The ended handler and the synthesis
