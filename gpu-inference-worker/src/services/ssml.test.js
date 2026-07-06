@@ -10,7 +10,37 @@ import {
 } from './ssml.js';
 import { applyEmphasisAndSpelling } from './emphasisAndSpelling.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
-import { splitTextIntoChunks, computeChunkPauses } from './longTextInference.js';
+import { splitTextIntoChunks, computeChunkPauses, concatWavs, parseWav } from './longTextInference.js';
+
+// Build a PCM16 mono WAV: leadMs of silence, toneMs of 220Hz tone, trailMs of silence.
+function makeWav({ toneMs, leadMs = 0, trailMs = 0, sr = 32000 }) {
+  const ms2n = (ms) => Math.round((sr * ms) / 1000);
+  const lead = ms2n(leadMs); const tone = ms2n(toneMs); const trail = ms2n(trailMs);
+  const n = lead + tone + trail;
+  const data = Buffer.alloc(n * 2);
+  for (let i = 0; i < tone; i += 1) {
+    data.writeInt16LE(Math.round(4000 * Math.sin((2 * Math.PI * 220 * i) / sr)), (lead + i) * 2);
+  }
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0); h.writeUInt32LE(36 + data.length, 4); h.write('WAVE', 8);
+  h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(sr, 24); h.writeUInt32LE(sr * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write('data', 36); h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+
+function durationMs(wav, sr = 32000) {
+  return Math.round((parseWav(wav).dataChunk.length / 2 / sr) * 1000);
+}
+
+test('a break gap ~= requested duration, not stacked on the model silence', () => {
+  // Two 300ms tones each padded with 800ms of model silence at the joined edges.
+  const a = makeWav({ toneMs: 300, trailMs: 800 });
+  const b = makeWav({ toneMs: 300, leadMs: 800 });
+  const total = durationMs(concatWavs([a, b], [700]));
+  // Ideal = 300 + 700 + 300 = 1300; allow ~2x30ms keep margins + rounding.
+  assert.ok(total >= 1250 && total <= 1450, `gap not tight: ${total}ms`);
+});
 
 test('<sub> is NOT interpreted — the real word is spoken (dictionary handles it)', () => {
   // The alias would fight ASR verification, so <sub> falls back to the real word.
@@ -60,8 +90,10 @@ test('<break time> parses ms and seconds; bare/strength map to defaults', () => 
   assert.equal(splitOnBreaks(expandSsml('a <break strength="strong"/> b'))[0].breakMsAfter, 700);
 });
 
-test('break duration is clamped so a typo cannot stall a passage', () => {
-  assert.equal(splitOnBreaks(expandSsml('a <break time="500s"/> b'))[0].breakMsAfter, 3000);
+test('long breaks are honored up to the cap; a wild typo is clamped', () => {
+  assert.equal(splitOnBreaks(expandSsml('a <break time="7000ms"/> b'))[0].breakMsAfter, 7000);
+  assert.equal(splitOnBreaks(expandSsml('a <break time="7s"/> b'))[0].breakMsAfter, 7000);
+  assert.equal(splitOnBreaks(expandSsml('a <break time="500s"/> b'))[0].breakMsAfter, 10000);
 });
 
 test('the break sentinel survives the downstream normalization chain', () => {
