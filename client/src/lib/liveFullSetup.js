@@ -1,10 +1,12 @@
 export const LIVE_FULL_PIPELINE = 'liveFull';
 
+// Defaults intentionally match DEFAULT_LIVE_FAST_SETTINGS — Live Full inherits
+// Live Fast's known-good defaults. User-saved/tweaked configs still take priority.
 export const DEFAULT_LIVE_FULL_SETTINGS = {
   speed: 1.0,
-  topK: 15,
+  topK: 5,
   topP: 0.85,
-  temperature: 0.62,
+  temperature: 0.7,
   repPenalty: 1.35,
 };
 
