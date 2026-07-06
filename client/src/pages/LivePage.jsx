@@ -1169,14 +1169,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           : 'Voice model loaded.',
       );
     } catch (err) {
-      // Model loading can 404/503 briefly (long cold loads, worker still binding
-      // the weights). Retry a few times before surfacing anything, and never show
-      // the raw gateway HTML.
-      if (isTransientBackendError(err) && attempt < 4) {
+      // Model loading can 404/503 for a while (Python inference server still
+      // spawning / binding the weights). Retry patiently before surfacing anything,
+      // and never show the raw gateway HTML.
+      if (isTransientBackendError(err) && attempt < 8) {
         window.setTimeout(() => loadSelectedModel(attempt + 1), 3000);
         return;
       }
-      setModelError(sanitizeBackendError(err.response?.data?.error || err.message || 'Could not load this voice model.'));
+      // Give up quietly on a transient failure but clear the attempt guard so the
+      // auto-load effect can try again once the inference server settles.
+      if (isTransientBackendError(err)) {
+        autoLoadAttemptKeyRef.current = '';
+      } else {
+        setModelError(sanitizeBackendError(err.response?.data?.error || err.message || 'Could not load this voice model.'));
+      }
       setLoadingModel(false);
       return;
     }
@@ -2608,6 +2614,31 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const id = window.setInterval(() => { checkStatus(); }, 12000);
     return () => window.clearInterval(id);
   }, [backendQueryable, isConversationActive]);
+
+  // The GPU node worker can report ready while the Python inference server — the
+  // process that actually serves /models/select — hasn't been spawned yet. That's
+  // the root of the 500s on model-select and "it never auto-loads": serverReady
+  // (from /inference/status) stays false, so the auto-load below never fires.
+  // Boot the inference server and keep nudging (start() is idempotent) until it
+  // reports ready; then the normal smart auto-select/auto-load runs unchanged.
+  useEffect(() => {
+    if (!backendQueryable) return undefined;
+    if (serverReady) return undefined;
+    if (isConversationActive) return undefined;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        await startInferenceServer();
+      } catch {
+        // Still warming (proxy 503 / cold Python start) — the next tick retries.
+      }
+      if (!cancelled) await checkStatus();
+    };
+    tick();
+    const id = window.setInterval(tick, 6000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [backendQueryable, serverReady, isConversationActive]);
 
   // Shared-GPU awareness (live-fast only): the box holds a single loaded model, so
   // another session loading a different voice will change the loaded weights out
