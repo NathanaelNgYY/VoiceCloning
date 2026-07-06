@@ -134,6 +134,40 @@ test('repeated expected word needs two occurrences in transcript', () => {
   assert.equal(full.coverage, 1);
 });
 
+test('a doubled content word is reported as an extra word', () => {
+  // The exact Live Fast defect: the model re-reads a phrase, so an intended word is
+  // heard more times than the text contains it. Coverage still reads 100% (every
+  // expected word is present), so extraWords is the only signal that catches it.
+  const r = computeWordCoverage(
+    'the patient was given antibiotics',
+    'the patient the patient was given antibiotics', // "the patient" spoken twice
+  );
+  assert.equal(r.coverage, 1, JSON.stringify(r));
+  assert.ok(r.extraWords.includes('patient'), JSON.stringify(r));
+});
+
+test('a legitimately repeated word is NOT reported as extra', () => {
+  // "very very mild" genuinely says "very" twice; a transcript that also says it
+  // twice must not be flagged as a double-read.
+  const r = computeWordCoverage('very very mild', 'very very mild');
+  assert.deepEqual(r.extraWords, [], JSON.stringify(r));
+});
+
+test('a clean read reports no extra words', () => {
+  const r = computeWordCoverage(
+    'The patient was given antibiotics twice daily.',
+    'the patient was given antibiotics twice daily',
+  );
+  assert.deepEqual(r.extraWords, [], JSON.stringify(r));
+});
+
+test('a novel hallucinated word (not in the text) is NOT reported as extra', () => {
+  // Only a SURPLUS of an intended word signals a double-read; a stray ASR token that
+  // was never in the text is not our defect and must not trigger a false re-roll.
+  const r = computeWordCoverage('the cell divides', 'the cell divides quickly');
+  assert.deepEqual(r.extraWords, [], JSON.stringify(r));
+});
+
 test('number words and digits are treated as the same word (nine vs 9)', () => {
   const r = computeWordCoverage(
     'arranged themselves repeatedly nine times',

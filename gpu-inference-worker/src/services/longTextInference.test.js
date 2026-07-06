@@ -10,6 +10,7 @@ import {
   concatWavs,
   insertCommaPauses,
   parseWav,
+  scoreAudioCandidate,
 } from './longTextInference.js';
 import { inferenceServer } from './inferenceServer.js';
 
@@ -164,6 +165,34 @@ test('audio far too short for its text is flagged as likely dropped words', () =
 test('audio of natural length for its text is not flagged short', () => {
   const result = analyzeAudioQuality(makeNoiseWav(6.0), SKIP_TEXT); // ~82 chars in 6s = normal pace
   assert.doesNotMatch(result.reason || '', /too short/i, `should not be flagged short: ${result.reason}`);
+});
+
+test('audio far too long for its text is flagged as likely repeated words', () => {
+  // A double-read produces ~2x the natural duration. SKIP_TEXT (~82 chars) is ~5.5s
+  // at a natural pace; 14s is a clear repeat and must be flagged so it re-rolls.
+  const result = analyzeAudioQuality(makeNoiseWav(14.0), SKIP_TEXT);
+  assert.equal(result.ok, false, `should be flagged (${result.durationSec?.toFixed(2)}s): ${result.reason}`);
+  assert.match(result.reason || '', /too long|repeat/i);
+});
+
+test('audio of natural length for its text is not flagged too long', () => {
+  const result = analyzeAudioQuality(makeNoiseWav(6.0), SKIP_TEXT);
+  assert.doesNotMatch(result.reason || '', /too long|repeat/i, `should not be flagged long: ${result.reason}`);
+});
+
+test('a short chunk at a slow natural pace is not falsely flagged too long', () => {
+  // Guards against a short chunk (min ~24 chars) tripping the over-duration net on
+  // ordinary slow delivery — the absolute-duration floor protects it.
+  const result = analyzeAudioQuality(makeNoiseWav(2.4), 'the patient rested well');
+  assert.doesNotMatch(result.reason || '', /too long|repeat/i, `slow short chunk: ${result.reason}`);
+});
+
+test('a doubled-word take scores lower than a clean take, all else equal', () => {
+  const analysis = analyzeAudioQuality(makeNoiseWav(4.0), 'the patient was given antibiotics');
+  const base = { coverage: 1, missingWords: [], suspectWords: [], skippedWords: [] };
+  const clean = scoreAudioCandidate(analysis, { ...base, extraWords: [] });
+  const doubled = scoreAudioCandidate(analysis, { ...base, extraWords: ['patient'] });
+  assert.ok(doubled < clean, `doubled (${doubled}) should score below clean (${clean})`);
 });
 
 test('quiet recoverable audio with a real waveform is not rejected as silent', () => {

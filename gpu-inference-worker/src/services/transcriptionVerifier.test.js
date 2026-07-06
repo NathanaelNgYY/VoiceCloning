@@ -184,6 +184,45 @@ test('a half-cut word (short audio AND low confidence) forces a re-roll', async 
   }
 });
 
+test('a doubled substantial word rejects the take (Live Fast repeat defect)', async () => {
+  // The model re-read "the patient" — coverage is still 100% (every word present),
+  // but a substantial word is heard twice. This must reject so the chunk re-seeds.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the patient the patient was given antibiotics',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the patient was given antibiotics',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.extraWords.includes('patient'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('a doubled SHORT function word alone does not force a re-roll', async () => {
+  // Only "the" is surplus (3 letters) — too noisy to gate on, mirroring the missing-
+  // word length rule. A clean read with a stray short duplicate should still pass.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the the cell divides quickly',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the cell divides quickly',
+      {},
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a genuinely skipped word (near-zero audio span) still forces a re-roll', async () => {
   // Whisper hallucinated "centriole" back from context but gave it a 10ms span — no
   // audio under it = real skip. This must still reject even at high coverage.
