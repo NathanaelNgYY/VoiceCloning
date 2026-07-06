@@ -241,6 +241,21 @@ async function startInstance() {
   const ec2 = createEc2Client();
   const state = await describeInstance(ec2, id);
 
+  // In schedule mode the window is the sole authority. Ignore activity-triggered
+  // starts outside the window so a person on the page can't wake the GPU off-hours.
+  const schedule = scheduleConfig();
+  if (schedule.enabled
+    && state === 'stopped'
+    && !withinWindow(localHour(schedule.timeZone), schedule.startHour, schedule.endHour)) {
+    return {
+      body: {
+        ...statusPayload({ id, state, workerReady: false }),
+        scheduleBlocked: true,
+        message: 'GPU start is disabled outside the scheduled window.',
+      },
+    };
+  }
+
   if (state === 'running') {
     return {
       body: statusPayload({
@@ -277,11 +292,11 @@ async function startInstance() {
   };
 }
 
-// Inside the schedule window we force the GPU on and never idle-stop it: start it
-// if stopped, otherwise leave it running. Outside the window we return null so the
-// caller falls through to the normal activity/idle logic — a person on the page can
-// still spin it up, it runs for GPU_IDLE_STOP_MINUTES, then stops again.
-async function keepRunningForSchedule(config) {
+// Strict time-window control: activity is ignored entirely. Inside the window the
+// GPU is forced on (started if stopped, left running otherwise); outside it is forced
+// off (stopped if running). Manual/activity starts outside the window are undone on
+// the next check.
+async function enforceSchedule(config) {
   const id = instanceId();
   if (!id) {
     return {
@@ -294,10 +309,7 @@ async function keepRunningForSchedule(config) {
   }
 
   const hour = localHour(config.timeZone);
-  if (!withinWindow(hour, config.startHour, config.endHour)) {
-    return null;
-  }
-
+  const shouldRun = withinWindow(hour, config.startHour, config.endHour);
   const ec2 = createEc2Client();
   const state = await describeInstance(ec2, id);
   const base = {
@@ -307,23 +319,28 @@ async function keepRunningForSchedule(config) {
     localHour: hour,
     timeZone: config.timeZone,
     window: { startHour: config.startHour, endHour: config.endHour },
-    shouldRun: true,
+    shouldRun,
   };
 
-  if (state === 'stopped') {
-    await ec2.send(new StartInstancesCommand({ InstanceIds: [id] }));
-    return { ...base, changed: true, reason: 'schedule-start', state: 'pending', previousState: state };
+  if (shouldRun) {
+    if (state === 'stopped') {
+      await ec2.send(new StartInstancesCommand({ InstanceIds: [id] }));
+      return { ...base, changed: true, reason: 'schedule-start', state: 'pending', previousState: state };
+    }
+    return { ...base, changed: false, reason: `in-window-${state}`, state };
   }
-  return { ...base, changed: false, reason: `in-window-${state}`, state };
+
+  if (state === 'running') {
+    await ec2.send(new StopInstancesCommand({ InstanceIds: [id] }));
+    return { ...base, changed: true, reason: 'schedule-stop', state: 'stopping', previousState: state };
+  }
+  return { ...base, changed: false, reason: `out-of-window-${state}`, state };
 }
 
 async function stopInstanceIfIdle() {
   const schedule = scheduleConfig();
   if (schedule.enabled) {
-    const scheduled = await keepRunningForSchedule(schedule);
-    // Inside the window keepRunningForSchedule owns the decision; outside it returns
-    // null and we fall through to the activity/idle logic below.
-    if (scheduled) return scheduled;
+    return enforceSchedule(schedule);
   }
 
   const thresholdMinutes = idleStopMinutes();

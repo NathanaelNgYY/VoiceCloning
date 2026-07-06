@@ -409,15 +409,17 @@ test('schedule mode starts a stopped GPU inside the window and ignores activity'
   }
 });
 
-test('schedule mode outside the window falls back to activity/idle stopping', async () => {
+test('schedule mode stops a running GPU outside the window, ignoring activity', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
+  // Even a busy worker must be stopped outside the window — activity is ignored.
   globalThis.fetch = async (url) => {
     if (String(url).endsWith('/activity/status')) {
       return new Response(JSON.stringify({
-        busy: false,
-        idleMs: 11 * 60 * 1000,
-        lastActivityAt: Date.now() - (11 * 60 * 1000),
+        busy: true,
+        idleMs: 1 * 60 * 1000,
+        lastActivityAt: Date.now(),
+        inferenceStatus: 'generating',
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     return new Response(JSON.stringify({ ok: true }), {
@@ -458,12 +460,12 @@ test('schedule mode outside the window falls back to activity/idle stopping', as
       });
 
       assert.equal(response.statusCode, 200);
-      // Falls through to the idle path: stops because it has been idle > 10 min.
+      // No activity fetch at all; stops purely on the schedule.
       assert.deepEqual(calls, ['DescribeInstancesCommand', 'StopInstancesCommand']);
       const body = JSON.parse(response.body);
-      assert.equal(body.mode, undefined);
-      assert.equal(body.stopped, true);
-      assert.equal(body.reason, 'idle-timeout');
+      assert.equal(body.mode, 'schedule');
+      assert.equal(body.changed, true);
+      assert.equal(body.reason, 'schedule-stop');
     });
   } finally {
     globalThis.fetch = previousFetch;
@@ -471,36 +473,20 @@ test('schedule mode outside the window falls back to activity/idle stopping', as
   }
 });
 
-test('schedule mode outside the window keeps a recently active GPU running', async () => {
+test('schedule mode blocks an activity-triggered start outside the window', async () => {
   const calls = [];
-  const previousFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    if (String(url).endsWith('/activity/status')) {
-      return new Response(JSON.stringify({
-        busy: true,
-        idleMs: 1 * 60 * 1000,
-        lastActivityAt: Date.now() - (1 * 60 * 1000),
-        inferenceStatus: 'generating',
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-
   globalThis.__voiceCloningEc2Client = {
     async send(command) {
       calls.push(command.constructor.name);
       return {
         Reservations: [{
-          Instances: [{ InstanceId: 'i-sched', State: { Name: 'running' } }],
+          Instances: [{ InstanceId: 'i-sched', State: { Name: 'stopped' } }],
         }],
       };
     },
   };
 
-  const { handler } = await import(`./index.js?schedActive=${Date.now()}`);
+  const { handler } = await import(`./index.js?schedBlock=${Date.now()}`);
 
   try {
     await withEnv({
@@ -509,22 +495,20 @@ test('schedule mode outside the window keeps a recently active GPU running', asy
       GPU_SCHEDULE_ENABLED: 'true',
       GPU_SCHEDULE_START_HOUR: '9',
       GPU_SCHEDULE_END_HOUR: '9',
-      GPU_IDLE_STOP_MINUTES: '10',
     }, async () => {
       const response = await handler({
         requestContext: { http: { method: 'POST' } },
-        rawPath: '/api/instance/idle-check',
+        rawPath: '/api/instance/start',
       });
 
       assert.equal(response.statusCode, 200);
-      // Activity within idle window: no stop, just the describe.
+      // Describe only — no StartInstancesCommand.
       assert.deepEqual(calls, ['DescribeInstancesCommand']);
       const body = JSON.parse(response.body);
-      assert.equal(body.stopped, false);
-      assert.equal(body.reason, 'worker-busy');
+      assert.equal(body.scheduleBlocked, true);
+      assert.equal(body.started, false);
     });
   } finally {
-    globalThis.fetch = previousFetch;
     delete globalThis.__voiceCloningEc2Client;
   }
 });
