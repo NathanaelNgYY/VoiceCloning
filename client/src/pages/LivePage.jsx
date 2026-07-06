@@ -68,6 +68,10 @@ import {
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
+import { useGpuStatus } from '@/lib/gpuStatus.jsx';
+import { isTransientBackendError, sanitizeBackendError } from '@/lib/backendErrors';
+import { APP_MODE_CONFIG } from '@/lib/appMode';
+import FloatingNotice from '@/components/FloatingNotice';
 import {
   addTtsHistoryItem,
   createTtsHistoryItem,
@@ -312,6 +316,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
   const [modelError, setModelError] = useState('');
+  const [gpuNotice, setGpuNotice] = useState(null);
+  // Shared GPU lifecycle: don't hit model/status endpoints until the worker is
+  // ready (otherwise a cold GPU answers with 503/404 pages). When no instance is
+  // configured (local dev) the backend is always considered queryable.
+  const { workerReady: gpuWorkerReady, configured: gpuConfigured } = useGpuStatus();
+  const backendQueryable = !gpuConfigured || gpuWorkerReady;
+  // Only the live-fast build (doovx…) surfaces "someone else switched the shared
+  // model". Explicitly the 'live-fast' mode — NOT the Dean demo (chatbot mode),
+  // which also has showLiveFast but should stay quiet.
+  const isLiveFastBuild = APP_MODE_CONFIG.mode === 'live-fast';
+  const initialBackendLoadRef = useRef(false);
+  const observedLoadedSigRef = useRef(null);
   const [selectedPersonKey, setSelectedPersonKey] = useState('');
   const [loadedGPTPath, setLoadedGPTPath] = useState('');
   const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
@@ -595,16 +611,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     voiceConfigsRef.current = voiceConfigs;
   }, [voiceConfigs]);
 
-  async function fetchModels() {
-    setModelsFetched(false);
+  async function fetchModels(attempt = 0) {
+    if (attempt === 0) setModelsFetched(false);
     try {
       const res = await getModels();
       setGptModels(res.data.gpt || []);
       setSovitsModels(res.data.sovits || []);
       setModelError('');
+      setModelsFetched(true);
     } catch (err) {
-      setModelError(err.response?.data?.error || err.message || 'Failed to load models.');
-    } finally {
+      // The model list 404s/503s for a while as the worker warms up. Retry quietly
+      // instead of flashing a raw gateway error at the user.
+      if (isTransientBackendError(err) && attempt < 6) {
+        window.setTimeout(() => fetchModels(attempt + 1), 2500);
+        return;
+      }
+      setModelError(sanitizeBackendError(err.response?.data?.error || err.message || 'Failed to load models.'));
       setModelsFetched(true);
     }
   }
@@ -632,14 +654,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         fallbackLoadedSoVITSPath: loadedModelStateRef.current.sovitsPath,
       }));
     } catch {
-      if (statusRequestVersionRef.current !== requestVersion) {
-        return;
-      }
-      applyInferenceStatusState(resolveInferenceStatusState({
-        status: { ready: false },
-        fallbackLoadedGPTPath: loadedModelStateRef.current.gptPath,
-        fallbackLoadedSoVITSPath: loadedModelStateRef.current.sovitsPath,
-      }));
+      // A transient network/gateway failure is NOT proof the model unloaded. Keep
+      // the last known-good state so the UI doesn't flap to "not loaded" (which
+      // previously forced a manual page refresh). A genuine "not ready" arrives as
+      // a successful response with ready:false, handled above.
     }
   }
 
@@ -1118,7 +1136,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     };
   }
 
-  async function loadSelectedModel() {
+  async function loadSelectedModel(attempt = 0) {
     if (!selectedProfile || isConversationActive) return;
     setLoadingModel(true); setModelError('');
     try {
@@ -1151,10 +1169,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           : 'Voice model loaded.',
       );
     } catch (err) {
-      setModelError(err.response?.data?.error || err.message || 'Could not load this voice model.');
-    } finally {
+      // Model loading can 404/503 briefly (long cold loads, worker still binding
+      // the weights). Retry a few times before surfacing anything, and never show
+      // the raw gateway HTML.
+      if (isTransientBackendError(err) && attempt < 4) {
+        window.setTimeout(() => loadSelectedModel(attempt + 1), 3000);
+        return;
+      }
+      setModelError(sanitizeBackendError(err.response?.data?.error || err.message || 'Could not load this voice model.'));
       setLoadingModel(false);
+      return;
     }
+    setLoadingModel(false);
   }
 
   async function persistSelectedVoiceProfile() {
@@ -2561,8 +2587,48 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const params = new URLSearchParams(window.location.search);
     const voiceParam = params.get('voice');
     if (voiceParam) urlVoiceKeyRef.current = voiceParam.toLowerCase().replace(/[\s_-]+/g, '');
-    fetchModels(); checkStatus(); loadActiveVoiceProfile();
   }, []);
+
+  // Kick off the first model/status/profile load only once the GPU worker is
+  // ready — this is what keeps the "loading" UI from running before the GPU has
+  // started (and what avoids the cold-start 503/404 banners).
+  useEffect(() => {
+    if (!backendQueryable) return;
+    if (initialBackendLoadRef.current) return;
+    initialBackendLoadRef.current = true;
+    fetchModels(); checkStatus(); loadActiveVoiceProfile();
+  }, [backendQueryable]);
+
+  // Self-heal: while the GPU is up and we're not mid-conversation, re-sync the
+  // inference status periodically. If the loaded-model state ever goes stale it
+  // recovers on its own instead of needing a manual page refresh.
+  useEffect(() => {
+    if (!backendQueryable) return undefined;
+    if (isConversationActive) return undefined;
+    const id = window.setInterval(() => { checkStatus(); }, 12000);
+    return () => window.clearInterval(id);
+  }, [backendQueryable, isConversationActive]);
+
+  // Shared-GPU awareness (live-fast only): the box holds a single loaded model, so
+  // another session loading a different voice will change the loaded weights out
+  // from under us. Detect that transition and tell the user, rather than silently
+  // showing "not loaded".
+  useEffect(() => {
+    if (!isLiveFastBuild) return;
+    const sig = `${loadedGPTPath}::${loadedSoVITSPath}`;
+    const prev = observedLoadedSigRef.current;
+    observedLoadedSigRef.current = sig;
+    if (prev === null) return;            // first observation — establish a baseline
+    if (sig === prev) return;
+    if (!loadedGPTPath && !loadedSoVITSPath) return; // full unload (e.g. GPU restart)
+    if (loadingModel) return;             // our own in-flight load
+    if (loadedGPTPath === selectedGPT && loadedSoVITSPath === selectedSoVITS) return; // our load landed
+    setGpuNotice({
+      tone: 'info',
+      title: 'Shared voice model changed',
+      message: 'Another session loaded a different voice on the shared GPU. Only one model can be active at a time — reload yours to continue.',
+    });
+  }, [isLiveFastBuild, loadedGPTPath, loadedSoVITSPath, loadingModel, selectedGPT, selectedSoVITS]);
 
   useEffect(() => {
     if (!modelsFetched || availableProfiles.length === 0) return;
@@ -2977,6 +3043,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
   );
   const isReady = selectedModelLoaded && Boolean(liveRefParams);
+  // Last line of defence against a raw CloudFront/nginx 503/404 page ever rendering
+  // as an error banner — strip HTML and swallow bare gateway errors.
+  const displayModelError = useMemo(() => sanitizeBackendError(modelError), [modelError]);
   const isTtsMode = mode === 'tts';
 
   // Generation pre-warm now lives on the inference worker: every model load fires a
@@ -3152,11 +3221,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         </div>
       </div>
 
-      {modelError && (
-        <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-600">{modelError}</p>
+      <FloatingNotice notice={gpuNotice} onClose={() => setGpuNotice(null)} />
+
+      {displayModelError && (
+        <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-600">{displayModelError}</p>
       )}
 
-      {!isReady && !modelError && (
+      {!isReady && !displayModelError && (
         <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
           {availableProfiles.length === 0
             ? 'No trained models found. Train a voice first, then return here.'
