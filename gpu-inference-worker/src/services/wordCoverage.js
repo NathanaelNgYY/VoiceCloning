@@ -277,6 +277,15 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const suspectWords = [];
   const skippedWords = [];
 
+  // The FINAL expected word gets extra scrutiny: GPT-SoVITS's AR decoder sometimes
+  // emits end-of-sequence a beat early, half-saying the word right before the full
+  // stop. Mid-chunk the both-signals (short AND low-confidence) rule is right, but at
+  // the chunk tail a clipped word can keep moderate confidence (Whisper completes it
+  // from context), so require less to force a re-roll there. Thresholds stay well
+  // below a briskly-but-fully spoken word so complete takes aren't re-rolled.
+  const finalExpectedIndex = expected[expected.length - 1].index;
+  const minFinalWordDuration = Number.isFinite(opts.minFinalWordDuration) ? opts.minFinalWordDuration : 0.12;
+
   for (const { raw, key, index } of expected) {
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
@@ -314,8 +323,17 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
       match.probability < 0.72
     );
 
-    if (skippedSpan || halfCut || weakNumericUnit) skippedWords.push(raw);
-    if (skippedSpan || tooShort || tooQuiet || weakNumericUnit) suspectWords.push(raw);
+    // Final-word tail-cut: hard signal at the chunk tail only. Either an absolute
+    // duration floor (no full ≥4-char word fits in <120ms) or a relaxed short+unsure
+    // pair (per-char span low AND confidence merely middling, vs. the strict pair
+    // above). Both stay conservative enough that a complete final word passes.
+    const finalWordCut = index === finalExpectedIndex && longEnough && (
+      match.duration < minFinalWordDuration
+      || (match.duration / raw.length < 0.04 && match.probability < 0.6)
+    );
+
+    if (skippedSpan || halfCut || weakNumericUnit || finalWordCut) skippedWords.push(raw);
+    if (skippedSpan || tooShort || tooQuiet || weakNumericUnit || finalWordCut) suspectWords.push(raw);
   }
 
   return { suspectWords, skippedWords };

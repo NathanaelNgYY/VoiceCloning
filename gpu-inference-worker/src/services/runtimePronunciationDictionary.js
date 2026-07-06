@@ -145,6 +145,7 @@ export async function loadRuntimePronunciationEntries({
     }
     cachedEntries = entries;
     cacheLoadedAt = now;
+    console.log(`[pronunciation] loaded ${entries.length} admin dictionary entries from S3 (${DICTIONARY_PREFIX})`);
     return cachedEntries;
   } catch (error) {
     console.warn(`[pronunciation] Could not load admin dictionary: ${error.message}`);
@@ -160,5 +161,17 @@ export async function prepareTextWithRuntimeDictionary(text, options = {}) {
 
 export async function syncHotDictionaryOverrides(options = {}) {
   const entries = await loadRuntimePronunciationEntries({ ...options, force: true });
-  return writeHotDictionaryOverrides(options.gptSovitsRoot || GPT_SOVITS_ROOT, entries);
+  const result = writeHotDictionaryOverrides(options.gptSovitsRoot || GPT_SOVITS_ROOT, entries);
+  if (result.written) {
+    console.log(
+      `[pronunciation] hot dictionary sync: ${result.lines} ARPAbet line(s) from ${entries.length} admin entr(ies); `
+      + `hotFileChanged=${result.changed} compiledCacheInvalidated=${result.cacheInvalidated}`,
+    );
+  } else {
+    console.warn(
+      '[pronunciation] hot dictionary sync SKIPPED — engdict-hot.rep not found under '
+      + `${options.gptSovitsRoot || GPT_SOVITS_ROOT || '(unset GPT_SOVITS_ROOT)'} — admin ARPAbet entries are NOT applied`,
+    );
+  }
+  return { ...result, entryCount: entries.length };
 }

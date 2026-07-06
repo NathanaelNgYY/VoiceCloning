@@ -8,6 +8,7 @@ import {
 } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import { connectInferenceSSE } from '../services/sse.js';
+import { sanitizeBackendError } from '../lib/backendErrors.js';
 import {
   LIVE_REPLY_MODES,
   buildLiveSentenceParams,
@@ -27,6 +28,15 @@ import {
   shouldSendLiveMicAudio,
   updateMessage,
 } from './liveConversation.js';
+
+// While the shared GPU is stopping/restarting, in-flight synth and live-gateway
+// calls come back as CloudFront/gateway errors (504 "gateway closed", 503, etc.).
+// Turn those into a calm, human message instead of leaking the raw gateway text.
+function friendlyLiveError(rawMessage, { prefix = '', fallback = 'The GPU is restarting — please try again in a moment.' } = {}) {
+  const clean = sanitizeBackendError(rawMessage);
+  if (!clean) return fallback;
+  return prefix ? `${prefix}${clean}` : clean;
+}
 
 const LIVE_TARGET_SAMPLE_RATE = 24000;
 const MANUAL_COMMIT_SILENCE_MS = 360;
@@ -448,7 +458,7 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(`Voice reply failed: ${err.message}`);
+      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
       const nextPhase = socketRef.current ? 'listening' : 'idle';
       setPhase(nextPhase);
       syncOpenAiInputWithMic(nextPhase);
@@ -543,7 +553,7 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(`Voice reply failed: ${err.message}`);
+      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
       setSelectedReplyId('');
       const nextPhase = socketRef.current ? 'listening' : 'idle';
       setPhase(nextPhase);
@@ -646,7 +656,7 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(`Voice reply failed: ${err.message}`);
+      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
       setSelectedReplyId('');
       const nextPhase = socketRef.current ? 'listening' : 'idle';
       setPhase(nextPhase);
@@ -749,7 +759,7 @@ export function useLiveSpeech({
       });
       return Boolean(sent);
     } catch (err) {
-      setError(`Live audio failed: ${err.message}`);
+      setError(friendlyLiveError(err.message, { prefix: 'Live audio failed: ' }));
       return false;
     }
   }
@@ -1078,7 +1088,7 @@ export function useLiveSpeech({
       onMessage: (event) => handleSocketEvent(event, runId),
       onError: (err) => {
         if (runId !== runIdRef.current) return;
-        setError(err.message || 'Live chat connection failed.');
+        setError(friendlyLiveError(err.message, { fallback: 'The GPU is restarting — reconnecting shortly.' }));
         endConversationFromSocket();
       },
       onClose: () => {
