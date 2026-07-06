@@ -27,6 +27,46 @@ function idleStopMinutes() {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function isTruthy(value) {
+  return /^(1|true|yes|on)$/iu.test(String(value || '').trim());
+}
+
+function scheduleConfig() {
+  const enabled = isTruthy(process.env.GPU_SCHEDULE_ENABLED);
+  const startHour = Number.parseInt(process.env.GPU_SCHEDULE_START_HOUR || '7', 10);
+  const endHour = Number.parseInt(process.env.GPU_SCHEDULE_END_HOUR || '19', 10);
+  const timeZone = (process.env.GPU_SCHEDULE_TIMEZONE || 'Asia/Seoul').trim();
+  return {
+    enabled,
+    startHour: Number.isFinite(startHour) ? startHour : 7,
+    endHour: Number.isFinite(endHour) ? endHour : 19,
+    timeZone,
+  };
+}
+
+// Current hour (0-23) in the schedule's timezone. Lambda runs in UTC, so we
+// resolve the local hour via Intl rather than the runtime clock.
+function localHour(timeZone, now = new Date()) {
+  try {
+    const hour = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: '2-digit',
+      hour12: false,
+    }).format(now);
+    // '24' is emitted by some engines for midnight; normalize to 0.
+    return Number.parseInt(hour, 10) % 24;
+  } catch {
+    return now.getUTCHours();
+  }
+}
+
+// Window is [startHour, endHour); handles overnight windows where end <= start.
+function withinWindow(hour, startHour, endHour) {
+  if (startHour === endHour) return false;
+  if (startHour < endHour) return hour >= startHour && hour < endHour;
+  return hour >= startHour || hour < endHour;
+}
+
 function createEc2Client() {
   return globalThis.__voiceCloningEc2Client || new EC2Client({ region: instanceRegion() });
 }
@@ -237,7 +277,55 @@ async function startInstance() {
   };
 }
 
+// Inside the schedule window we force the GPU on and never idle-stop it: start it
+// if stopped, otherwise leave it running. Outside the window we return null so the
+// caller falls through to the normal activity/idle logic — a person on the page can
+// still spin it up, it runs for GPU_IDLE_STOP_MINUTES, then stops again.
+async function keepRunningForSchedule(config) {
+  const id = instanceId();
+  if (!id) {
+    return {
+      checked: false,
+      changed: false,
+      mode: 'schedule',
+      reason: 'unconfigured',
+      ...unconfiguredStatus(),
+    };
+  }
+
+  const hour = localHour(config.timeZone);
+  if (!withinWindow(hour, config.startHour, config.endHour)) {
+    return null;
+  }
+
+  const ec2 = createEc2Client();
+  const state = await describeInstance(ec2, id);
+  const base = {
+    checked: true,
+    mode: 'schedule',
+    instanceId: id,
+    localHour: hour,
+    timeZone: config.timeZone,
+    window: { startHour: config.startHour, endHour: config.endHour },
+    shouldRun: true,
+  };
+
+  if (state === 'stopped') {
+    await ec2.send(new StartInstancesCommand({ InstanceIds: [id] }));
+    return { ...base, changed: true, reason: 'schedule-start', state: 'pending', previousState: state };
+  }
+  return { ...base, changed: false, reason: `in-window-${state}`, state };
+}
+
 async function stopInstanceIfIdle() {
+  const schedule = scheduleConfig();
+  if (schedule.enabled) {
+    const scheduled = await keepRunningForSchedule(schedule);
+    // Inside the window keepRunningForSchedule owns the decision; outside it returns
+    // null and we fall through to the activity/idle logic below.
+    if (scheduled) return scheduled;
+  }
+
   const thresholdMinutes = idleStopMinutes();
   if (thresholdMinutes <= 0) {
     return {

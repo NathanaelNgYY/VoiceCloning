@@ -366,6 +366,169 @@ test('idle check keeps the GPU running when the inference worker was recently ac
   }
 });
 
+test('schedule mode starts a stopped GPU inside the window and ignores activity', async () => {
+  const calls = [];
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      if (command.constructor.name === 'DescribeInstancesCommand') {
+        return {
+          Reservations: [{
+            Instances: [{ InstanceId: 'i-sched', State: { Name: 'stopped' } }],
+          }],
+        };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?schedStart=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-sched',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_SCHEDULE_ENABLED: 'true',
+      GPU_SCHEDULE_START_HOUR: '0',
+      GPU_SCHEDULE_END_HOUR: '24',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(calls, ['DescribeInstancesCommand', 'StartInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.mode, 'schedule');
+      assert.equal(body.changed, true);
+      assert.equal(body.reason, 'schedule-start');
+    });
+  } finally {
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
+test('schedule mode outside the window falls back to activity/idle stopping', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/activity/status')) {
+      return new Response(JSON.stringify({
+        busy: false,
+        idleMs: 11 * 60 * 1000,
+        lastActivityAt: Date.now() - (11 * 60 * 1000),
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      if (command.constructor.name === 'DescribeInstancesCommand') {
+        return {
+          Reservations: [{
+            Instances: [{ InstanceId: 'i-sched', State: { Name: 'running' } }],
+          }],
+        };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?schedStop=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-sched',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_SCHEDULE_ENABLED: 'true',
+      // Empty window (start === end) is never "in window", so we're always outside it.
+      GPU_SCHEDULE_START_HOUR: '9',
+      GPU_SCHEDULE_END_HOUR: '9',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      // Falls through to the idle path: stops because it has been idle > 10 min.
+      assert.deepEqual(calls, ['DescribeInstancesCommand', 'StopInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.mode, undefined);
+      assert.equal(body.stopped, true);
+      assert.equal(body.reason, 'idle-timeout');
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
+test('schedule mode outside the window keeps a recently active GPU running', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/activity/status')) {
+      return new Response(JSON.stringify({
+        busy: true,
+        idleMs: 1 * 60 * 1000,
+        lastActivityAt: Date.now() - (1 * 60 * 1000),
+        inferenceStatus: 'generating',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      calls.push(command.constructor.name);
+      return {
+        Reservations: [{
+          Instances: [{ InstanceId: 'i-sched', State: { Name: 'running' } }],
+        }],
+      };
+    },
+  };
+
+  const { handler } = await import(`./index.js?schedActive=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-sched',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_SCHEDULE_ENABLED: 'true',
+      GPU_SCHEDULE_START_HOUR: '9',
+      GPU_SCHEDULE_END_HOUR: '9',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+
+      assert.equal(response.statusCode, 200);
+      // Activity within idle window: no stop, just the describe.
+      assert.deepEqual(calls, ['DescribeInstancesCommand']);
+      const body = JSON.parse(response.body);
+      assert.equal(body.stopped, false);
+      assert.equal(body.reason, 'worker-busy');
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
 test('idle check stops a stale busy GPU after configured idle minutes', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
