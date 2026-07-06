@@ -58,6 +58,13 @@ function hotDictionaryWords(entries = []) {
   return new Set(buildHotDictionaryLines(entries).map((line) => line.split(/\s+/u)[0]));
 }
 
+// Uppercased set of every word that has an ARPAbet override (the entries that get
+// compiled into GPT-SoVITS g2p). Used to let an ARPAbet entry win over an SSML
+// <sub>/<say-as> rewrite for the same word — the dictionary is the precise path.
+export function collectArpabetWords(entries = []) {
+  return hotDictionaryWords(entries);
+}
+
 // GPT-SoVITS' english.py only reads engdict-hot.rep when it has to rebuild the
 // compiled dictionary; if engdict_cache.pickle already exists it loads that and
 // never looks at the hot file. So a hot-file edit is silently ignored (even across

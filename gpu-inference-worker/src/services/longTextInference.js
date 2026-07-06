@@ -7,6 +7,12 @@ import { inferenceState } from './inferenceState.js';
 import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
+import {
+  splitOnBreaks,
+  appendBreakSentinel,
+  extractBreakMs,
+  stripBreakSentinels,
+} from './ssml.js';
 
 const TEMP_DIR = LOCAL_TEMP_ROOT;
 
@@ -180,7 +186,33 @@ function splitLongSentence(sentence, maxChunkLength) {
   return parts.filter(Boolean);
 }
 
+// Break-aware wrapper: force a chunk boundary at every SSML <break> so the sentinel
+// always lands on a chunk tail (where computeChunkPauses reads it into the inter-chunk
+// silence). Text with no breaks goes straight through chunkSegment unchanged.
 export function splitTextIntoChunks(text, options = {}) {
+  const segments = splitOnBreaks(text);
+  if (segments.length <= 1) return chunkSegment(text, options);
+
+  const out = [];
+  for (const { text: segText, breakMsAfter } of segments) {
+    const segChunks = chunkSegment(segText, options);
+    if (segChunks.length === 0) {
+      // Empty segment (e.g. back-to-back breaks): fold the pause onto the last chunk.
+      if (breakMsAfter != null && out.length > 0) {
+        out[out.length - 1] = appendBreakSentinel(stripBreakSentinels(out[out.length - 1]), breakMsAfter);
+      }
+      continue;
+    }
+    if (breakMsAfter != null) {
+      const last = segChunks.length - 1;
+      segChunks[last] = appendBreakSentinel(segChunks[last], breakMsAfter);
+    }
+    out.push(...segChunks);
+  }
+  return out;
+}
+
+function chunkSegment(text, options = {}) {
   const maxChunkLength = Math.max(80, clampNumber(options.maxChunkLength, DEFAULTS.maxChunkLength));
   const maxSentencesPerChunk = Math.max(1, clampNumber(options.maxSentencesPerChunk, DEFAULTS.maxSentencesPerChunk));
 
@@ -751,6 +783,11 @@ function applyFade(data, sampleRate, numChannels, fadeMs, direction) {
 
 // Determine pause duration (ms) based on trailing punctuation of a chunk
 function pauseForPunctuation(chunkText, basePauseMs) {
+  // An explicit SSML <break> at this chunk's tail sets the gap directly (absolute ms),
+  // overriding the punctuation-scaled default — the user asked for exactly this pause.
+  const breakMs = extractBreakMs(chunkText);
+  if (breakMs != null) return breakMs;
+
   const trimmed = chunkText.trimEnd();
   const tail = trimmed.slice(-3); // check last few chars for multi-char punctuation
   const last = trimmed[trimmed.length - 1] || '';
@@ -1300,18 +1337,21 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
 //       one is not, and the same skip/half-cut/dict verifier still runs on each unit.
 // Only a genuine inference-server error (no audio ever produced) propagates.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
+  // A trailing SSML break sentinel is a routing hint for the pause stage, not text to
+  // speak — strip it before anything reaches the model, ASR, or the sentence splitter.
+  const cleanText = stripBreakSentinels(chunkText);
   const escalate = { ...options, allowBestEffortFallback: false };
   let lastError = null;
 
   // Pass 1: whole chunk, re-seed suite (early-accept on the first clean take).
   try {
-    const result = await synthesizeChunkWithRetry(chunkText, { ...baseParams, text: chunkText }, escalate);
+    const result = await synthesizeChunkWithRetry(cleanText, { ...baseParams, text: cleanText }, escalate);
     return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
   } catch (err) {
     lastError = err;
   }
 
-  const sentences = splitIntoSentences(chunkText);
+  const sentences = splitIntoSentences(cleanText);
 
   // Pass 2: sentence-boundary split. Retry each WHOLE sentence; only return if every
   // one passes clean (a passing sentence must not stand in for a failing one — that
@@ -1339,7 +1379,7 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
   // single-sentence chunk is best-efforted whole. The same verifier still scores each
   // take, so we keep the most-complete one; a dropped/half-cut word is only tolerated
   // here as the absolute last resort (fix recurring ones via the pronunciation dict).
-  const units = sentences.length >= 2 ? sentences : [chunkText];
+  const units = sentences.length >= 2 ? sentences : [cleanText];
   const buffers = [];
   let attempts = 0;
   for (const unit of units) {
@@ -1356,7 +1396,7 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     : concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
   console.warn(
     `[inference] chunk kept best-effort audio after exhausting clean retries `
-    + `(${units.length} sentence(s)): ${lastError?.message}; text="${chunkText.slice(0, 80)}"`,
+    + `(${units.length} sentence(s)): ${lastError?.message}; text="${cleanText.slice(0, 80)}"`,
   );
   return {
     audioBuffer,
@@ -1412,7 +1452,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   sseManager.send(sessionId, 'inference-start', {
     totalChunks: chunks.length,
-    chunks: chunks.map((text, index) => ({ index, text })),
+    chunks: chunks.map((text, index) => ({ index, text: stripBreakSentinels(text) })),
   });
   inferenceState.setGenerating({ totalChunks: chunks.length });
 
@@ -1425,14 +1465,15 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       }
 
       const chunkText = chunks[index];
+      const displayText = stripBreakSentinels(chunkText);
       sseManager.send(sessionId, 'chunk-start', {
         index,
-        text: chunkText,
+        text: displayText,
         totalChunks: chunks.length,
       });
       inferenceState.setChunkStart({
         index,
-        text: chunkText,
+        text: displayText,
         totalChunks: chunks.length,
       });
 
@@ -1441,7 +1482,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
         chunkText,
         { ...params, text: chunkText },
         options,
-        { onSplit: (subChunks) => sseManager.send(sessionId, 'chunk-split', { index, originalText: chunkText, subChunks }) },
+        { onSplit: (subChunks) => sseManager.send(sessionId, 'chunk-split', { index, originalText: displayText, subChunks }) },
       );
       const chunkBuffer = result.audioBuffer;
       const totalAttempts = result.attempts;
@@ -1512,7 +1553,7 @@ export async function synthesizeLongText(params, options = {}) {
     buffers.push(result.audioBuffer);
     metadata.push({
       index,
-      text: chunk,
+      text: stripBreakSentinels(chunk),
       attempts: result.attempts,
       durationSec: result.analysis?.durationSec ?? 0,
       metrics: result.analysis?.metrics ?? {},

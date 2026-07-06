@@ -18,11 +18,13 @@ import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
+import { expandSsml } from '../services/ssml.js';
 import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
   loadRuntimePronunciationEntries,
+  collectArpabetWords,
 } from '../services/runtimePronunciationDictionary.js';
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
@@ -39,6 +41,17 @@ async function chunkingDictionaryWords() {
     return entries.map((e) => e.word).filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+// Uppercased set of words that have an ARPAbet override, so expandSsml can let the
+// dictionary win over an SSML <sub>/<say-as> for the same word. Degrades to an empty
+// set (SSML tags simply apply as written) if the dictionary can't be loaded.
+async function arpabetProtectedWords() {
+  try {
+    return collectArpabetWords(await loadRuntimePronunciationEntries());
+  } catch {
+    return new Set();
   }
 }
 
@@ -362,7 +375,9 @@ router.post('/inference', async (req, res) => {
 
     activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
-    resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
+    resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
+      expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
+    ));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
     const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions({
       ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
@@ -408,7 +423,9 @@ router.post('/inference/generate', async (req, res) => {
     }
 
     const resolvedParams = await resolveRefAudioParams(params);
-    resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
+    resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
+      expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
+    ));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
     const sessionId = crypto.randomUUID();
     inferenceState.resetForNewSession({ sessionId, params: qualityParams });
