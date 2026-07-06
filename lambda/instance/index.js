@@ -27,6 +27,46 @@ function idleStopMinutes() {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function isTruthy(value) {
+  return /^(1|true|yes|on)$/iu.test(String(value || '').trim());
+}
+
+function scheduleConfig() {
+  const enabled = isTruthy(process.env.GPU_SCHEDULE_ENABLED);
+  const startHour = Number.parseInt(process.env.GPU_SCHEDULE_START_HOUR || '7', 10);
+  const endHour = Number.parseInt(process.env.GPU_SCHEDULE_END_HOUR || '19', 10);
+  const timeZone = (process.env.GPU_SCHEDULE_TIMEZONE || 'Asia/Seoul').trim();
+  return {
+    enabled,
+    startHour: Number.isFinite(startHour) ? startHour : 7,
+    endHour: Number.isFinite(endHour) ? endHour : 19,
+    timeZone,
+  };
+}
+
+// Current hour (0-23) in the schedule's timezone. Lambda runs in UTC, so we
+// resolve the local hour via Intl rather than the runtime clock.
+function localHour(timeZone, now = new Date()) {
+  try {
+    const hour = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: '2-digit',
+      hour12: false,
+    }).format(now);
+    // '24' is emitted by some engines for midnight; normalize to 0.
+    return Number.parseInt(hour, 10) % 24;
+  } catch {
+    return now.getUTCHours();
+  }
+}
+
+// Window is [startHour, endHour); handles overnight windows where end <= start.
+function withinWindow(hour, startHour, endHour) {
+  if (startHour === endHour) return false;
+  if (startHour < endHour) return hour >= startHour && hour < endHour;
+  return hour >= startHour || hour < endHour;
+}
+
 function createEc2Client() {
   return globalThis.__voiceCloningEc2Client || new EC2Client({ region: instanceRegion() });
 }
@@ -201,6 +241,21 @@ async function startInstance() {
   const ec2 = createEc2Client();
   const state = await describeInstance(ec2, id);
 
+  // In schedule mode the window is the sole authority. Ignore activity-triggered
+  // starts outside the window so a person on the page can't wake the GPU off-hours.
+  const schedule = scheduleConfig();
+  if (schedule.enabled
+    && state === 'stopped'
+    && !withinWindow(localHour(schedule.timeZone), schedule.startHour, schedule.endHour)) {
+    return {
+      body: {
+        ...statusPayload({ id, state, workerReady: false }),
+        scheduleBlocked: true,
+        message: 'GPU start is disabled outside the scheduled window.',
+      },
+    };
+  }
+
   if (state === 'running') {
     return {
       body: statusPayload({
@@ -237,7 +292,57 @@ async function startInstance() {
   };
 }
 
+// Strict time-window control: activity is ignored entirely. Inside the window the
+// GPU is forced on (started if stopped, left running otherwise); outside it is forced
+// off (stopped if running). Manual/activity starts outside the window are undone on
+// the next check.
+async function enforceSchedule(config) {
+  const id = instanceId();
+  if (!id) {
+    return {
+      checked: false,
+      changed: false,
+      mode: 'schedule',
+      reason: 'unconfigured',
+      ...unconfiguredStatus(),
+    };
+  }
+
+  const hour = localHour(config.timeZone);
+  const shouldRun = withinWindow(hour, config.startHour, config.endHour);
+  const ec2 = createEc2Client();
+  const state = await describeInstance(ec2, id);
+  const base = {
+    checked: true,
+    mode: 'schedule',
+    instanceId: id,
+    localHour: hour,
+    timeZone: config.timeZone,
+    window: { startHour: config.startHour, endHour: config.endHour },
+    shouldRun,
+  };
+
+  if (shouldRun) {
+    if (state === 'stopped') {
+      await ec2.send(new StartInstancesCommand({ InstanceIds: [id] }));
+      return { ...base, changed: true, reason: 'schedule-start', state: 'pending', previousState: state };
+    }
+    return { ...base, changed: false, reason: `in-window-${state}`, state };
+  }
+
+  if (state === 'running') {
+    await ec2.send(new StopInstancesCommand({ InstanceIds: [id] }));
+    return { ...base, changed: true, reason: 'schedule-stop', state: 'stopping', previousState: state };
+  }
+  return { ...base, changed: false, reason: `out-of-window-${state}`, state };
+}
+
 async function stopInstanceIfIdle() {
+  const schedule = scheduleConfig();
+  if (schedule.enabled) {
+    return enforceSchedule(schedule);
+  }
+
   const thresholdMinutes = idleStopMinutes();
   if (thresholdMinutes <= 0) {
     return {
