@@ -46,7 +46,7 @@ async function chunkingDictionaryWords() {
 // only when ASR confirms it spoke all the words (no skipped/clipped words) AND it
 // still sounds like the reference voice. Either check degrades to "no opinion" if
 // its sidecar is unavailable, so synthesis is never blocked by a verification fault.
-function verificationOptions(params = {}) {
+function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
   const useAsr = TRANSCRIPTION_VERIFY_ENABLED;
   const refAudioPath = params.ref_audio_path || '';
   const useSpeaker = SPEAKER_VERIFY_ENABLED && Boolean(refAudioPath);
@@ -65,7 +65,7 @@ function verificationOptions(params = {}) {
         } catch { /* no dictionary → strict spelling check, as before */ }
       }
       const [asr, speaker] = await Promise.all([
-        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords }) : null,
+        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords, finalWordTailCheck }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
       if (!asr && !speaker) return null;
@@ -364,7 +364,7 @@ router.post('/inference', async (req, res) => {
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
     const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions({
-      ...verificationOptions(qualityParams),
+      ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
     }));
     activityState.mark();
@@ -415,7 +415,7 @@ router.post('/inference/generate', async (req, res) => {
     res.json({ sessionId });
 
     synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions({
-      ...verificationOptions(qualityParams),
+      ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
     })).catch((err) => {
       console.error(`[inference/generate] failed for ${sessionId}:`, err.message);

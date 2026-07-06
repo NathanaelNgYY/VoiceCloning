@@ -283,6 +283,13 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   // the chunk tail a clipped word can keep moderate confidence (Whisper completes it
   // from context), so require less to force a re-roll there. Thresholds stay well
   // below a briskly-but-fully spoken word so complete takes aren't re-rolled.
+  //
+  // Opt-in via finalWordTailCheck: this is meaningful only where a chunk ends on a
+  // sentence boundary — the Live Full / Live Full Queue paths, which split into
+  // sentence-ended chunks. Live Fast's "chunk" is a whole client-side phrase, so its
+  // final word is just the reply's last word (not a per-sentence tail) and the extra
+  // scrutiny would only add needless re-rolls; it leaves the flag off.
+  const finalWordTailCheck = Boolean(opts.finalWordTailCheck);
   const finalExpectedIndex = expected[expected.length - 1].index;
   const minFinalWordDuration = Number.isFinite(opts.minFinalWordDuration) ? opts.minFinalWordDuration : 0.12;
 
@@ -327,7 +334,7 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     // duration floor (no full ≥4-char word fits in <120ms) or a relaxed short+unsure
     // pair (per-char span low AND confidence merely middling, vs. the strict pair
     // above). Both stay conservative enough that a complete final word passes.
-    const finalWordCut = index === finalExpectedIndex && longEnough && (
+    const finalWordCut = finalWordTailCheck && index === finalExpectedIndex && longEnough && (
       match.duration < minFinalWordDuration
       || (match.duration / raw.length < 0.04 && match.probability < 0.6)
     );
