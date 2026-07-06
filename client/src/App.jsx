@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, Routes, Route, NavLink, useLocation } from 'react-router-dom';
-import { Power } from 'lucide-react';
+import { Loader2, Power } from 'lucide-react';
 
 function AnimatedBackground() {
   return (
@@ -17,7 +17,11 @@ function AnimatedBackground() {
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
-import { getInstanceStatus, startInstance } from './services/api.js';
+import { GpuStatusProvider, useGpuStatus } from '@/lib/gpuStatus.jsx';
+
+// Live-fast (doovx…) and the Dean demo have no training UI — those are the builds
+// that should auto-start the GPU and show the "starting" overlay on entry.
+const GPU_AUTO_START = !APP_MODE_CONFIG.showTraining;
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
 
@@ -28,65 +32,7 @@ function LiveFastEntry() {
 }
 
 function GpuInstanceControl() {
-  const [status, setStatus] = useState(null);
-  const [checking, setChecking] = useState(true);
-  const [starting, setStarting] = useState(false);
-
-  async function refreshStatus() {
-    setChecking(true);
-    try {
-      const res = await getInstanceStatus();
-      setStatus(res.data);
-    } catch (err) {
-      setStatus({
-        configured: true,
-        state: 'unavailable',
-        workerReady: false,
-        startable: false,
-        message: err.response?.data?.error || err.message || 'Could not check GPU instance status.',
-      });
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  useEffect(() => {
-    refreshStatus();
-  }, []);
-
-  useEffect(() => {
-    if (!status?.configured) return undefined;
-    if (status.workerReady) return undefined;
-
-    const id = window.setInterval(refreshStatus, 8000);
-    return () => window.clearInterval(id);
-  }, [status?.configured, status?.workerReady, status?.state]);
-
-  useEffect(() => {
-    if (status?.workerReady) {
-      window.dispatchEvent(new Event('voice-cloning-gpu-ready'));
-    }
-  }, [status?.workerReady]);
-
-  async function handleStart() {
-    setStarting(true);
-    try {
-      const res = await startInstance();
-      setStatus(res.data);
-      window.setTimeout(refreshStatus, 5000);
-    } catch (err) {
-      setStatus((current) => ({
-        ...(current || {}),
-        configured: true,
-        state: current?.state || 'unknown',
-        workerReady: false,
-        startable: false,
-        message: err.response?.data?.error || err.message || 'Could not start GPU instance.',
-      }));
-    } finally {
-      setStarting(false);
-    }
-  }
+  const { status, checking, starting, start: handleStart } = useGpuStatus();
 
   if (checking && !status) {
     return (
@@ -156,13 +102,73 @@ function GpuInstanceControl() {
   );
 }
 
+function GpuStartingOverlay() {
+  const { status, checking, starting, workerReady, start } = useGpuStatus();
+
+  // Only block the page for the auto-start builds, and only until the worker is
+  // actually ready. Local dev (no instance configured) is never blocked.
+  const configured = status?.configured;
+  if (workerReady) return null;
+  if (!checking && !configured) return null;
+
+  const state = status?.state;
+  const unavailable = state === 'unavailable' || state === 'unknown';
+  const heading = unavailable
+    ? 'Waiting for the GPU'
+    : state === 'running'
+      ? 'Warming up the GPU'
+      : 'Starting the GPU';
+  const detail = unavailable
+    ? (status?.message || 'Trying to reach the GPU instance…')
+    : state === 'running'
+      ? 'The instance is up — loading the voice engine. This takes a few seconds.'
+      : starting || state === 'pending'
+        ? 'Powering on the shared GPU instance. This can take up to a minute on a cold start.'
+        : 'Getting the GPU ready…';
+
+  const canManualStart = status?.startable && !starting;
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/70 px-6 backdrop-blur-md">
+      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-white/95 p-8 text-center shadow-2xl">
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+          {unavailable
+            ? <Power size={26} className="text-primary" />
+            : <Loader2 size={26} className="animate-spin text-primary" />}
+        </div>
+        <h1 className="text-lg font-semibold text-slate-900">{heading}</h1>
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">{detail}</p>
+        {unavailable && canManualStart && (
+          <button
+            type="button"
+            onClick={start}
+            className="mt-5 inline-flex h-9 items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-4 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
+          >
+            <Power size={14} />
+            Retry starting GPU
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  return (
+    <GpuStatusProvider autoStart={GPU_AUTO_START}>
+      <AppShell />
+    </GpuStatusProvider>
+  );
+}
+
+function AppShell() {
   const appConfig = APP_MODE_CONFIG;
 
   return (
     <TooltipProvider>
       <div className="flex min-h-screen flex-col">
         <AnimatedBackground />
+        {GPU_AUTO_START && <GpuStartingOverlay />}
         {/* Minimal header */}
         <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md">
           <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-8">
