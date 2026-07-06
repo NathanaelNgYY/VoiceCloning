@@ -1,7 +1,20 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getInstanceStatus, startInstance } from '../services/api.js';
 
 const GpuStatusContext = createContext(null);
+
+// Only the fields the UI actually reacts to. Background polls that come back
+// identical must NOT replace state (which would re-render every consumer, incl.
+// the big LivePage, mid-conversation and cause audible hitches).
+function sameStatus(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.configured === b.configured
+    && a.state === b.state
+    && a.workerReady === b.workerReady
+    && a.startable === b.startable
+    && (a.message || '') === (b.message || '');
+}
 
 // Single source of truth for the shared GPU instance lifecycle. Both the header
 // button and the full-screen "starting" overlay read from here, and pages gate
@@ -14,21 +27,25 @@ export function GpuStatusProvider({ children, autoStart = false }) {
   const autoStartedRef = useRef(false);
   const prevWorkerReadyRef = useRef(false);
 
-  const refreshStatus = useCallback(async () => {
-    setChecking(true);
+  // `background: true` for interval polls — they don't touch `checking` and only
+  // update state when something actually changed, so a steady "running/ready" GPU
+  // produces zero re-renders while a conversation is live.
+  const refreshStatus = useCallback(async ({ background = false } = {}) => {
+    if (!background) setChecking(true);
     try {
       const res = await getInstanceStatus();
-      setStatus(res.data);
+      setStatus((prev) => (sameStatus(prev, res.data) ? prev : res.data));
     } catch (err) {
-      setStatus({
+      const next = {
         configured: true,
         state: 'unavailable',
         workerReady: false,
         startable: false,
         message: err.response?.data?.error || err.message || 'Could not check GPU instance status.',
-      });
+      };
+      setStatus((prev) => (sameStatus(prev, next) ? prev : next));
     } finally {
-      setChecking(false);
+      if (!background) setChecking(false);
     }
   }, []);
 
@@ -62,7 +79,7 @@ export function GpuStatusProvider({ children, autoStart = false }) {
   useEffect(() => {
     if (!status?.configured) return undefined;
     const cadence = status.workerReady ? 20000 : 8000;
-    const id = window.setInterval(refreshStatus, cadence);
+    const id = window.setInterval(() => refreshStatus({ background: true }), cadence);
     return () => window.clearInterval(id);
   }, [status?.configured, status?.workerReady, status?.state, refreshStatus]);
 
@@ -92,7 +109,9 @@ export function GpuStatusProvider({ children, autoStart = false }) {
     prevWorkerReadyRef.current = ready;
   }, [status?.workerReady]);
 
-  const value = {
+  // Memoized so the provider only pushes a new context value when something the UI
+  // cares about changed — a no-op background poll won't re-render consumers.
+  const value = useMemo(() => ({
     status,
     checking,
     starting,
@@ -100,7 +119,7 @@ export function GpuStatusProvider({ children, autoStart = false }) {
     configured: Boolean(status?.configured),
     refreshStatus,
     start,
-  };
+  }), [status, checking, starting, refreshStatus, start]);
 
   return <GpuStatusContext.Provider value={value}>{children}</GpuStatusContext.Provider>;
 }
