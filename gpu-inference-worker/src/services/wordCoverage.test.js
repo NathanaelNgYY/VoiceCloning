@@ -241,26 +241,36 @@ test('numeric units with low confidence force a re-roll', () => {
   assert.ok(cut.skippedWords.includes('minutes'), JSON.stringify(cut));
 });
 
-test('the final word before a full stop is re-rolled when clipped even at moderate confidence', () => {
-  // Chunk-final word cut early by the AR decoder: short absolute span (<120ms) is a
-  // hard skip at the tail even when Whisper completes it confidently from context.
+test('the final word before a full stop is re-rolled when clipped even at moderate confidence (Live Full)', () => {
+  // finalWordTailCheck is the Live Full / Live Full Queue opt-in. Chunk-final word cut
+  // early by the AR decoder: short absolute span (<120ms) is a hard skip at the tail
+  // even when Whisper completes it confidently from context.
   const cut = findClippedWords('the tumour was benign', [
     word('the', 0.15), word('tumour', 0.4), word('was', 0.2), word('benign', 0.1, 0.9),
-  ]);
+  ], { finalWordTailCheck: true });
   assert.ok(cut.skippedWords.includes('benign'), JSON.stringify(cut));
 
   // Relaxed short+unsure pair: per-char span tiny AND confidence merely middling.
   const cut2 = findClippedWords('confirm the diagnosis', [
     word('confirm', 0.5), word('the', 0.15), word('diagnosis', 0.32, 0.55),
-  ]);
+  ], { finalWordTailCheck: true });
   assert.ok(cut2.skippedWords.includes('diagnosis'), JSON.stringify(cut2));
 });
 
 test('a complete final word is NOT re-rolled by the tail check', () => {
   const clean = findClippedWords('the tumour was benign', [
     word('the', 0.15), word('tumour', 0.4), word('was', 0.2), word('benign', 0.42, 0.95),
-  ]);
+  ], { finalWordTailCheck: true });
   assert.ok(!clean.skippedWords.includes('benign'), JSON.stringify(clean));
+});
+
+test('the tail check is OFF by default, so Live Fast does not re-roll its last word', () => {
+  // Without the flag (Live Fast path), a moderately-confident short final word is not
+  // a hard skip — it stays advisory only, exactly as before this feature.
+  const cut = findClippedWords('the tumour was benign', [
+    word('the', 0.15), word('tumour', 0.4), word('was', 0.2), word('benign', 0.1, 0.9),
+  ]);
+  assert.ok(!cut.skippedWords.includes('benign'), JSON.stringify(cut));
 });
 
 test('isWordSpokenByTiming confirms a word backed by real audio at its position', () => {

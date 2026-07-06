@@ -168,7 +168,7 @@ class TranscriptionVerifier {
    *
    * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
    */
-  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [] } = {}) {
+  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [], finalWordTailCheck = false } = {}) {
     let result;
     try {
       result = await this.transcribeBuffer(audioBuffer);
@@ -183,7 +183,7 @@ class TranscriptionVerifier {
     // reliable, duration-based, and force a re-roll. suspectWords additionally
     // includes low-confidence words, which are ADVISORY only (best-of-N scoring) — a
     // confident-but-quiet real word ("daughter") must not trigger a re-roll.
-    const { suspectWords, skippedWords } = findClippedWords(expectedText, words);
+    const { suspectWords, skippedWords } = findClippedWords(expectedText, words, { finalWordTailCheck });
 
     // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
     // strict per-word as a short one.
