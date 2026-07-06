@@ -56,15 +56,20 @@ export function GpuStatusProvider({ children, autoStart = false }) {
     refreshStatus();
   }, [refreshStatus]);
 
-  // Poll until the worker is ready; once ready we stop hammering the endpoint.
+  // Poll the instance state continuously. Fast while we're waiting for it to come
+  // up; slower once ready — but we keep polling so an idle auto-stop is detected
+  // (which then re-shows the overlay and re-triggers auto-start).
   useEffect(() => {
     if (!status?.configured) return undefined;
-    if (status.workerReady) return undefined;
-    const id = window.setInterval(refreshStatus, 8000);
+    const cadence = status.workerReady ? 20000 : 8000;
+    const id = window.setInterval(refreshStatus, cadence);
     return () => window.clearInterval(id);
   }, [status?.configured, status?.workerReady, status?.state, refreshStatus]);
 
-  // Auto-start the GPU the first time we see it stopped (live-fast / demo only).
+  // Auto-start the GPU whenever we see it stopped — both the first entry and, if
+  // the user is still on the page after an idle auto-stop, a restart. The guard is
+  // reset once the worker becomes ready (below), so each fresh "stopped" episode
+  // triggers exactly one start() instead of hammering it.
   useEffect(() => {
     if (!autoStart) return;
     if (autoStartedRef.current) return;
@@ -76,10 +81,12 @@ export function GpuStatusProvider({ children, autoStart = false }) {
     }
   }, [autoStart, status?.configured, status?.workerReady, status?.startable, status?.state, starting, start]);
 
-  // Notify pages the moment the worker flips ready so they can (re)load models.
+  // Notify pages the moment the worker flips ready so they can (re)load models, and
+  // re-arm auto-start so a subsequent idle stop is picked up.
   useEffect(() => {
     const ready = Boolean(status?.workerReady);
     if (ready && !prevWorkerReadyRef.current) {
+      autoStartedRef.current = false;
       window.dispatchEvent(new Event('voice-cloning-gpu-ready'));
     }
     prevWorkerReadyRef.current = ready;

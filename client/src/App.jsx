@@ -113,20 +113,27 @@ function GpuStartingOverlay() {
 
   const state = status?.state;
   const unavailable = state === 'unavailable' || state === 'unknown';
+  const stopping = state === 'stopping' || state === 'shutting-down';
   const heading = unavailable
     ? 'Waiting for the GPU'
-    : state === 'running'
-      ? 'Warming up the GPU'
-      : 'Starting the GPU';
+    : stopping
+      ? 'Stopping the GPU'
+      : state === 'running'
+        ? 'Warming up the GPU'
+        : 'Starting the GPU';
   const detail = unavailable
     ? (status?.message || 'Trying to reach the GPU instance…')
-    : state === 'running'
-      ? 'The instance is up — loading the voice engine. This takes a few seconds.'
-      : starting || state === 'pending'
-        ? 'Powering on the shared GPU instance. This can take up to a minute on a cold start.'
-        : 'Getting the GPU ready…';
+    : stopping
+      ? 'The shared GPU is shutting down after being idle. It will restart automatically — hang tight.'
+      : state === 'running'
+        ? 'The instance is up — loading the voice engine. This takes a few seconds.'
+        : starting || state === 'pending'
+          ? 'Powering on the shared GPU instance. This can take up to a minute on a cold start.'
+          : 'Getting the GPU ready…';
 
-  const canManualStart = status?.startable && !starting;
+  // Don't offer a manual retry while it's mid-stop (it isn't startable until fully
+  // stopped, and auto-start will pick it up then).
+  const canManualStart = status?.startable && !starting && !stopping;
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/70 px-6 backdrop-blur-md">
