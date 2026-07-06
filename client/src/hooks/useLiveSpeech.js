@@ -33,6 +33,7 @@ import {
   fixSpeechPronunciation,
   normalizeLiveLanguage,
   resolvePendingTranscriptPatch,
+  resolveSpeakingContinuation,
   splitLiveReplyPhrases,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
@@ -495,18 +496,8 @@ export function useLiveSpeech({
     throw lastError;
   }
 
-  function firstReadyPart(message, afterPartId = '') {
-    const parts = message?.audioParts || [];
-    const start = afterPartId
-      ? Math.max(0, parts.findIndex((part) => part.id === afterPartId) + 1)
-      : 0;
-    return parts.slice(start).find((part) => part.status === 'ready' && part.audioUrl) || null;
-  }
-
-  function hasPendingParts(message) {
-    return (message?.audioParts || []).some((part) =>
-      ['queued', 'generating'].includes(part.status)
-    );
+  function isVoiceStoppedMessage(messageId) {
+    return Boolean(messagesRef.current.find((item) => item.id === messageId)?.voiceStopped);
   }
 
   // Starting to synthesize a new reply must not cut off a clip that is still
@@ -551,8 +542,12 @@ export function useLiveSpeech({
 
       const url = URL.createObjectURL(blob);
       patchMessage(messageId, { status: 'ready', audioUrl: url, error: null });
-      setSelectedReplyId(messageId);
-      setPhase('speaking');
+      // A voice-stopped reply finishes generating silently; the user replays
+      // it with the Play voice button.
+      if (!isVoiceStoppedMessage(messageId)) {
+        setSelectedReplyId(messageId);
+        setPhase('speaking');
+      }
     } catch (err) {
       if (isCancelledRef.current || runId !== runIdRef.current) return;
 
@@ -560,10 +555,12 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
+      if (!isVoiceStoppedMessage(messageId)) {
+        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+      }
     } finally {
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
@@ -636,21 +633,15 @@ export function useLiveSpeech({
         }
 
         const url = URL.createObjectURL(blob);
+        // No inline clip selection here: the speaking-continuation effect picks
+        // the earliest unplayed ready clip from fresh render state. Selecting
+        // partId directly raced the ended handler's ref reads and could jump
+        // past a clip that was ready but not yet visible in messagesRef.
         patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
-        if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
-          setSelectedReplyId(partId);
-        }
       }
 
       if (!cancelledReplyIdsRef.current.has(messageId)) {
         patchMessage(messageId, { status: 'ready' });
-        const message = messagesRef.current.find((item) => item.id === messageId);
-        if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
-          const nextPart = firstReadyPart(message);
-          if (nextPart) {
-            setSelectedReplyId(nextPart.id);
-          }
-        }
       }
     } catch (err) {
       if (isCancelledRef.current || runId !== runIdRef.current) return;
@@ -659,11 +650,15 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
-      setSelectedReplyId('');
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
+      // A voice-stopped reply fails quietly in the background — tearing down
+      // the phase/selection here would cut off a newer reply mid-playback.
+      if (!isVoiceStoppedMessage(messageId)) {
+        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSelectedReplyId('');
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+      }
     } finally {
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
@@ -727,10 +722,8 @@ export function useLiveSpeech({
               const blob = await getInferenceChunk(sessionId, index);
               if (isStale()) return;
               const url = URL.createObjectURL(blob);
+              // Selection is handled by the speaking-continuation effect.
               patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
-              if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
-                setSelectedReplyId(partId);
-              }
             })();
             pendingChunkFetches.add(fetchChunk);
             fetchChunk.catch(reject).finally(() => pendingChunkFetches.delete(fetchChunk));
@@ -742,11 +735,6 @@ export function useLiveSpeech({
                 return;
               }
               patchMessage(messageId, { status: 'ready' });
-              const message = messagesRef.current.find((item) => item.id === messageId);
-              if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
-                const nextPart = firstReadyPart(message);
-                if (nextPart) setSelectedReplyId(nextPart.id);
-              }
               resolve();
             });
           },
@@ -762,11 +750,13 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
-      setSelectedReplyId('');
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
+      if (!isVoiceStoppedMessage(messageId)) {
+        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSelectedReplyId('');
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+      }
     } finally {
       if (inferenceEventSourceRef.current) {
         inferenceEventSourceRef.current.close();
@@ -852,26 +842,36 @@ export function useLiveSpeech({
     setPhase('idle');
   }
 
-  function interruptPlayback() {
+  // Silence the reply that is currently reading aloud. Two flavors:
+  // - Barge-in (default): the user is talking over the bot, so the reply is
+  //   dead — cancel its synthesis loop too (cancelledReplyIds aborts it).
+  // - Stop voice button (cancelPendingSynthesis: false): only playback stops.
+  //   Remaining clips keep generating in the background, marked voiceStopped
+  //   so nothing auto-plays them until the user presses Play voice.
+  function interruptPlayback({ cancelPendingSynthesis = true } = {}) {
     if (phaseRef.current !== 'speaking') return;
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
     const currentReplyId = playback?.message.id || currentSynthesisMessageIdRef.current;
     if (!playback && !currentReplyId) return;
 
-    if (currentReplyId) {
-      cancelledReplyIdsRef.current.add(currentReplyId);
-      patchMessage(currentReplyId, { status: 'interrupted' });
-    }
     // A split reply can have a second message still synthesizing while the
     // first one plays — an interruption must silence that one too, or its
     // clips would start reading out later, after the user has moved on.
     const synthesizingId = currentSynthesisMessageIdRef.current;
-    if (synthesizingId && synthesizingId !== currentReplyId) {
-      cancelledReplyIdsRef.current.add(synthesizingId);
-      patchMessage(synthesizingId, { status: 'interrupted' });
+    for (const messageId of new Set([currentReplyId, synthesizingId].filter(Boolean))) {
+      if (cancelPendingSynthesis) {
+        cancelledReplyIdsRef.current.add(messageId);
+        patchMessage(messageId, { status: 'interrupted' });
+      } else {
+        patchMessage(messageId, { voiceStopped: true });
+      }
     }
     if (playback?.part) {
-      patchAudioPart(playback.message.id, playback.part.id, { status: 'interrupted' });
+      // For a plain stop, the cut clip stays replayable ('played' keeps it in
+      // the Play voice chain); a barge-in marks it interrupted as before.
+      patchAudioPart(playback.message.id, playback.part.id, {
+        status: cancelPendingSynthesis ? 'interrupted' : 'played',
+      });
     }
 
     setSelectedReplyId('');
@@ -881,11 +881,20 @@ export function useLiveSpeech({
     showNotice(micInputEnabledRef.current ? 'Voice stopped. Listening...' : 'Voice stopped. Mic is off.');
   }
 
+  function stopVoicePlayback() {
+    interruptPlayback({ cancelPendingSynthesis: false });
+  }
+
   function playReply(messageId) {
     const message = messagesRef.current.find((item) => item.id === messageId);
     if (!message || message.role !== 'assistant') return;
     const playbackId = isPhraseMode ? findFirstReplayablePart(message)?.id : message.id;
     if (!playbackId) return;
+    if (message.voiceStopped) {
+      // Pressing Play voice on a stopped reply un-stops it, so clips still
+      // being generated in the background chain on after the replay.
+      patchMessage(messageId, { voiceStopped: false });
+    }
     pauseOpenAiInput();
     setSelectedReplyId(playbackId);
     setPhase('speaking');
@@ -1364,6 +1373,31 @@ export function useLiveSpeech({
     enableMicInput();
   }
 
+  function settleAfterPlayback() {
+    const nextPhase = socketRef.current ? 'listening' : 'idle';
+    setPhase(nextPhase);
+    syncOpenAiInputWithMic(nextPhase);
+    setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
+    if (!micInputEnabledRef.current && bargeInArmedRef.current) {
+      stopMicCapture();
+    }
+  }
+
+  // Shared tail for "speaking, but nothing selected": start the earliest
+  // unplayed ready clip, keep waiting while clips are generating, or settle
+  // out of the speaking phase when the reply is truly finished.
+  function applySpeakingContinuation(messages) {
+    if (phaseRef.current !== 'speaking' || selectedReplyIdRef.current) return;
+    const decision = resolveSpeakingContinuation(messages, {
+      synthesisMessageId: currentSynthesisMessageIdRef.current,
+    });
+    if (decision.action === 'play') {
+      setSelectedReplyId(decision.part.id);
+    } else if (decision.action === 'settle') {
+      settleAfterPlayback();
+    }
+  }
+
   function onAudioEnded() {
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
 
@@ -1382,45 +1416,24 @@ export function useLiveSpeech({
         setSelectedReplyId(nextReply.part.id);
         return;
       }
-
-      setSelectedReplyId('');
-      if (
-        currentSynthesisMessageIdRef.current ||
-        hasPendingParts(playback.message) ||
-        hasPendingReplyWork(messagesRef.current)
-      ) {
-        setPhase('speaking');
-        return;
-      }
-
-      if (phaseRef.current === 'speaking') {
-        const nextPhase = socketRef.current ? 'listening' : 'idle';
-        setPhase(nextPhase);
-        syncOpenAiInputWithMic(nextPhase);
-        setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
-        if (!micInputEnabledRef.current && bargeInArmedRef.current) {
-          stopMicCapture();
-        }
-      }
-      return;
     }
 
+    // messagesRef can lag React's render cycle here (an ended event can land
+    // before queued patches flush), so this decision may be wrong — the
+    // speaking-continuation effect re-runs it with fresh state and self-heals.
     setSelectedReplyId('');
-    if (phaseRef.current === 'speaking') {
-      // Another reply is still generating voice (e.g. a split reply's second
-      // message) — stay in 'speaking' so its first clip auto-plays when ready.
-      if (currentSynthesisMessageIdRef.current || hasPendingReplyWork(messagesRef.current)) {
-        return;
-      }
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
-      setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
-      if (!micInputEnabledRef.current && bargeInArmedRef.current) {
-        stopMicCapture();
-      }
-    }
+    applySpeakingContinuation(messagesRef.current);
   }
+
+  // Self-healing playback reconciler. The ended handler and the synthesis
+  // loop coordinate through refs that can lag rendered state, so either side
+  // can drop the handoff (observed live: replies stopping mid-text at a
+  // sentence boundary, or skipping a clip). Re-deciding from fresh state after
+  // every render makes those races self-correcting.
+  useEffect(() => {
+    if (phase !== 'speaking' || selectedReplyId) return;
+    applySpeakingContinuation(messages);
+  }, [messages, selectedReplyId, phase]);
 
   useEffect(() => {
     return () => {
@@ -1468,6 +1481,7 @@ export function useLiveSpeech({
     enableMicInput,
     disableMicInput,
     interruptPlayback,
+    stopVoicePlayback,
     playReply,
     onAudioEnded,
   };

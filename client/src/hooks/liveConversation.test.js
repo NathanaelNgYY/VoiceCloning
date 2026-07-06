@@ -24,6 +24,7 @@ import {
   VOICE_GATE,
   createVoiceGateState,
   nextVoiceGateState,
+  resolveSpeakingContinuation,
 } from './liveConversation.js';
 
 test('fixSpeechPronunciation rejoins the dragged GI initialism for speech', () => {
@@ -540,4 +541,127 @@ test('getMicOffAction discards a pending turn with no voice evidence', () => {
     getMicOffAction({ phase: 'listening', hasPendingAudio: true }),
     'commit',
   );
+});
+
+// ── resolveSpeakingContinuation ──────────────────────────────────────────────
+// Regression suite for the live-fast handoff races: clips ending while React
+// state is mid-flight used to strand ready clips (skipped sentences) or park
+// the conversation in a silent 'speaking' phase (reply cut off mid-text).
+
+function makeReply(id, { status = 'generating_voice', voiceStopped = false, parts = [] } = {}) {
+  return createChatMessage({
+    id,
+    role: 'assistant',
+    status,
+    voiceStopped,
+    audioParts: parts.map((part, index) => ({
+      id: `${id}-part-${index + 1}`,
+      index: index + 1,
+      audioUrl: part.status === 'queued' || part.status === 'generating' ? null : `blob:${id}-${index + 1}`,
+      ...part,
+    })),
+  });
+}
+
+test('resolveSpeakingContinuation plays the earliest unplayed ready clip, not a later one', () => {
+  // Skip regression: part 2 became ready during a stale-ref window; part 3
+  // finished afterwards. The earliest unplayed clip must win or part 2 is
+  // silently skipped.
+  const messages = [
+    makeReply('reply-1', {
+      parts: [
+        { status: 'played' },
+        { status: 'ready' },
+        { status: 'ready' },
+        { status: 'generating' },
+      ],
+    }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: 'reply-1' });
+  assert.equal(decision.action, 'play');
+  assert.equal(decision.part.id, 'reply-1-part-2');
+});
+
+test('resolveSpeakingContinuation plays a stranded final clip after synthesis already finished', () => {
+  // Stall regression: the loop finished (no synthesis id) but the last clip
+  // was never selected because the ended event raced the state flush.
+  const messages = [
+    makeReply('reply-1', {
+      status: 'ready',
+      parts: [{ status: 'played' }, { status: 'played' }, { status: 'ready' }],
+    }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: '' });
+  assert.equal(decision.action, 'play');
+  assert.equal(decision.part.id, 'reply-1-part-3');
+});
+
+test('resolveSpeakingContinuation waits while clips are still being generated', () => {
+  const messages = [
+    makeReply('reply-1', {
+      parts: [{ status: 'played' }, { status: 'generating' }],
+    }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: 'reply-1' });
+  assert.equal(decision.action, 'wait');
+});
+
+test('resolveSpeakingContinuation settles when nothing is ready or pending', () => {
+  const messages = [
+    makeReply('reply-1', {
+      status: 'ready',
+      parts: [{ status: 'played' }, { status: 'played' }],
+    }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: '' });
+  assert.equal(decision.action, 'settle');
+});
+
+test('resolveSpeakingContinuation never auto-plays a voice-stopped reply', () => {
+  // Stop voice keeps generating clips in the background; they must stay
+  // silent until the user presses Play voice.
+  const messages = [
+    makeReply('reply-1', {
+      voiceStopped: true,
+      parts: [{ status: 'played' }, { status: 'ready' }, { status: 'generating' }],
+    }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: 'reply-1' });
+  assert.equal(decision.action, 'settle');
+});
+
+test('resolveSpeakingContinuation skips interrupted and errored replies', () => {
+  const messages = [
+    makeReply('reply-1', {
+      status: 'interrupted',
+      parts: [{ status: 'ready' }],
+    }),
+    makeReply('reply-2', {
+      status: 'error',
+      parts: [{ status: 'ready' }],
+    }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: '' });
+  assert.equal(decision.action, 'settle');
+});
+
+test('resolveSpeakingContinuation waits on a split reply still synthesizing in a later message', () => {
+  const messages = [
+    makeReply('reply-1', {
+      status: 'ready',
+      parts: [{ status: 'played' }],
+    }),
+    makeReply('reply-2', { parts: [{ status: 'generating' }] }),
+  ];
+  const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: 'reply-2' });
+  assert.equal(decision.action, 'wait');
+});
+
+test('hasPendingReplyWork ignores voice-stopped background generation', () => {
+  const messages = [
+    makeReply('reply-1', { voiceStopped: true, parts: [{ status: 'generating' }] }),
+  ];
+  assert.equal(hasPendingReplyWork(messages), false);
+  const foreground = [makeReply('reply-2', { parts: [{ status: 'generating' }] })];
+  assert.equal(hasPendingReplyWork(foreground), true);
 });

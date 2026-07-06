@@ -322,6 +322,7 @@ export function createChatMessage({
   audioParts = [],
   error = null,
   createdAt = Date.now(),
+  voiceStopped = false,
 }) {
   return {
     id,
@@ -333,6 +334,7 @@ export function createChatMessage({
     audioParts,
     error,
     createdAt,
+    voiceStopped,
   };
 }
 
@@ -440,8 +442,47 @@ export function findNextReplyPlayback(messages, afterMessageId) {
 // interrupted replies don't count: their synthesis loop has already stopped.
 export function hasPendingReplyWork(messages) {
   return messages.some(
-    (message) => message.role === 'assistant' && message.status === 'generating_voice'
+    (message) =>
+      message.role === 'assistant'
+      && message.status === 'generating_voice'
+      && !message.voiceStopped
   );
+}
+
+// Decide how to continue when the app is in the 'speaking' phase with no clip
+// selected. The ended-event handler and the synthesis loop hand playback to
+// each other through refs that lag React's render cycle, so either side can
+// miss the baton: a ready clip gets stranded (a sentence is skipped, or the
+// reply cuts off mid-text in a silent 'speaking' phase). This runs from a
+// render-driven effect with FRESH state and self-heals those races:
+//   play   — start the earliest never-played ready clip
+//   wait   — clips are still generating; stay in 'speaking'
+//   settle — nothing left to play or generate; leave 'speaking'
+// Voice-stopped replies generate in the background but must stay silent until
+// the user presses Play voice, so they are never auto-played and never hold
+// the phase. Interrupted/errored replies are dead: their loops have stopped.
+export function resolveSpeakingContinuation(messages, { synthesisMessageId = '' } = {}) {
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    if (message.voiceStopped) continue;
+    if (['interrupted', 'error'].includes(message.status)) continue;
+    const part = (message.audioParts || []).find(
+      (item) => item.audioUrl && item.status === 'ready'
+    );
+    if (part) return { action: 'play', part, message };
+  }
+
+  if (synthesisMessageId) {
+    const synthesizing = messages.find((message) => message.id === synthesisMessageId);
+    if (synthesizing && !synthesizing.voiceStopped) {
+      return { action: 'wait' };
+    }
+  }
+  if (hasPendingReplyWork(messages)) {
+    return { action: 'wait' };
+  }
+
+  return { action: 'settle' };
 }
 
 // Decide what to do when the reply <audio> element fails on a clip. The player

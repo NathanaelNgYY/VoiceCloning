@@ -3905,7 +3905,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               {playbackReady && (
                 <button
                   type="button"
-                  onClick={liveSpeech.interruptPlayback}
+                  onClick={liveSpeech.stopVoicePlayback}
                   title="Stop voice"
                   className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800"
                 >
