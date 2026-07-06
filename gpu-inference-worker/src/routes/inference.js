@@ -30,6 +30,18 @@ import { isDemoRequest, preemptActiveGeneration } from '../services/demoPreempt.
 
 const router = Router();
 
+// Pronunciation-dictionary words for the chunker, so a medical dictionary term is
+// kept away from the risky chunk-final position. Never blocks synthesis: with no
+// dictionary (or an S3 fault) chunking simply proceeds without the rule.
+async function chunkingDictionaryWords() {
+  try {
+    const entries = await loadRuntimePronunciationEntries();
+    return entries.map((e) => e.word).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 // Per-chunk acceptance check for the chunked full-quality path. A take is accepted
 // only when ASR confirms it spoke all the words (no skipped/clipped words) AND it
 // still sounds like the reference voice. Either check degrades to "no opinion" if
@@ -242,6 +254,7 @@ router.post('/inference/start', async (_req, res) => {
     // updated dictionary. (cacheInvalidated covers an already-current hot file whose
     // entries never made it into a pre-existing stale cache.)
     if ((sync.changed || sync.cacheInvalidated) && inferenceServer.isRunning()) {
+      console.log('[pronunciation] restarting inference server so the rebuilt dictionary cache is loaded');
       inferenceServer.stop();
     }
     const status = await inferenceServer.start();
@@ -350,7 +363,10 @@ router.post('/inference', async (req, res) => {
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(resolvedParams.text));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
-    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions(verificationOptions(qualityParams)));
+    const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions({
+      ...verificationOptions(qualityParams),
+      avoidChunkFinalWords: await chunkingDictionaryWords(),
+    }));
     activityState.mark();
 
     res.set({
@@ -398,7 +414,10 @@ router.post('/inference/generate', async (req, res) => {
     sseManager.prepareSession(sessionId);
     res.json({ sessionId });
 
-    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions(verificationOptions(qualityParams))).catch((err) => {
+    synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions({
+      ...verificationOptions(qualityParams),
+      avoidChunkFinalWords: await chunkingDictionaryWords(),
+    })).catch((err) => {
       console.error(`[inference/generate] failed for ${sessionId}:`, err.message);
       inferenceState.setError(err.message);
       sseManager.send(sessionId, 'error', { message: err.message });

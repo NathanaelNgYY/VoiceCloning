@@ -220,7 +220,45 @@ export function splitTextIntoChunks(text, options = {}) {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  return mergeShortChunks(chunks, MIN_CHUNK_LENGTH);
+  const merged = mergeShortChunks(chunks, MIN_CHUNK_LENGTH);
+  return keepDictionaryWordsOffChunkTails(merged, options.avoidChunkFinalWords, maxChunkLength);
+}
+
+// Last spoken word of a chunk, lowercased and stripped of punctuation.
+function chunkFinalWord(text) {
+  const tokens = String(text || '').toLowerCase().match(/[\p{L}\p{N}']+/gu);
+  return tokens && tokens.length > 0 ? tokens[tokens.length - 1] : '';
+}
+
+// The chunk-final position is where the AR decoder is most likely to clip or rush a
+// word (it is about to emit end-of-sequence), and pronunciation-dictionary terms are
+// exactly the words that must NOT be degraded. When a dictionary term would land as
+// the last word of a chunk, move that sentence to the FRONT of the next chunk instead,
+// so the term is followed by more speech and sits away from the risky edge. Purely a
+// re-grouping: chunk boundaries stay on sentence ends, no text is altered, and the
+// move is skipped whenever it would violate the existing length invariants.
+function keepDictionaryWordsOffChunkTails(chunks, avoidWords, maxChunkLength) {
+  const words = new Set(
+    (Array.isArray(avoidWords) ? avoidWords : [])
+      .map((w) => chunkFinalWord(w))
+      .filter(Boolean),
+  );
+  if (words.size === 0 || chunks.length < 2) return chunks;
+
+  const out = chunks.slice();
+  for (let i = 0; i < out.length - 1; i += 1) {
+    if (!words.has(chunkFinalWord(out[i]))) continue;
+    const sentences = splitIntoSentences(out[i]);
+    if (sentences.length < 2) continue; // single sentence: nowhere safe to re-group
+    const lastSentence = sentences[sentences.length - 1];
+    const remainder = sentences.slice(0, -1).join(' ').trim();
+    const movedNext = `${lastSentence} ${out[i + 1]}`.trim();
+    // Respect the existing invariants: never create an over-long or under-short chunk.
+    if (movedNext.length > maxChunkLength || remainder.length < MIN_CHUNK_LENGTH) continue;
+    out[i] = remainder;
+    out[i + 1] = movedNext;
+  }
+  return out;
 }
 
 // GPT-SoVITS frequently renders a very short fragment (a lone "Yes." or a

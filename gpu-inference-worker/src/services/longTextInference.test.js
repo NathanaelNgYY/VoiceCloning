@@ -126,6 +126,31 @@ test('a short lead-in clause is merged forward, not left as a rushed micro-chunk
   );
 });
 
+// A pronunciation-dictionary medical term must not land as the last word of a chunk
+// when it can be avoided — the chunk-final position is where the AR decoder most often
+// clips or rushes. The chunker re-groups by moving the sentence forward so the term is
+// followed by more speech, without ever changing text or crossing a non-sentence break.
+test('a dictionary term is kept off the chunk-final position when re-grouping is possible', () => {
+  const text = 'The cells continued to divide rapidly. The lesion showed metastasis. It spread widely today for sure.';
+  const plain = splitTextIntoChunks(text, { maxChunkLength: 55 });
+  // Sanity: without the rule a multi-sentence chunk ends on "metastasis".
+  assert.ok(plain.some(c => /metastasis\.$/i.test(c)), JSON.stringify(plain));
+
+  const guarded = splitTextIntoChunks(text, { maxChunkLength: 55, avoidChunkFinalWords: ['metastasis'] });
+  assert.ok(
+    !guarded.some(c => /metastasis[.!?]?$/i.test(c)),
+    `"metastasis" should not be a chunk-final word: ${JSON.stringify(guarded)}`,
+  );
+  // No text is lost or altered by the re-grouping.
+  assert.equal(guarded.join(' ').replace(/\s+/g, ' '), plain.join(' ').replace(/\s+/g, ' '));
+});
+
+test('the dictionary-tail rule is a no-op when it would break length invariants', () => {
+  // Single-sentence chunk ending on the term: nowhere safe to re-group, leave as-is.
+  const chunks = splitTextIntoChunks('The biopsy confirmed carcinoma.', { avoidChunkFinalWords: ['carcinoma'] });
+  assert.deepEqual(chunks, ['The biopsy confirmed carcinoma.']);
+});
+
 // Skip detector: a chunk whose audio is far too short for its text almost
 // certainly dropped words and must be flagged so it gets re-rolled.
 const SKIP_TEXT = 'large fuel molecules are broken down into smaller biomolecules and energy currency';
