@@ -1,0 +1,32 @@
+{
+  "dev": {
+    "lambdaFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-dev",
+    "region": "ap-northeast-2",
+    "s3Region": "ap-southeast-1",
+    "instanceId": "FILL-AFTER-LAUNCH",
+    "branch": "develop",
+    "chatbotBranch": "develop-chatbot",
+    "workerAccess": "ssm",
+    "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO" },
+    "clientTargets": {
+      "training": "s3://interns2026-small-projects-bucket-shared/echolect-dev/dist-training",
+      "live-fast": "s3://interns2026-small-projects-bucket-shared/echolect-dev/dist-live-fast",
+      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect-dev/dist-chatbot"
+    }
+  },
+  "staging": {
+    "lambdaFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project",
+    "region": "ap-northeast-2",
+    "s3Region": "ap-southeast-1",
+    "instanceId": "i-03f258d470a2fa73f",
+    "branch": "separate-containers-new",
+    "chatbotBranch": "chatbot-live-full",
+    "workerAccess": "ssh",
+    "distributions": { "training": "E2KTGN0G56FW71", "live-fast": "E36CNBL620DMGM", "chatbot": "EYZ4NLNGITY7T" },
+    "clientTargets": {
+      "training": "s3://interns2026-small-projects-bucket-shared/echolect/dist-training",
+      "live-fast": "s3://interns2026-small-projects-bucket-shared/echolect/dist-live-fast",
+      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect/dist-chatbot"
+    }
+  }
+}
