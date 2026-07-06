@@ -35,7 +35,9 @@ const BREAK_CLOSE = '\uE101';
 export const BREAK_SENTINEL_RE = new RegExp(`${BREAK_OPEN}(\\d+)${BREAK_CLOSE}`, 'u');
 const BREAK_SENTINEL_RE_G = new RegExp(`${BREAK_OPEN}(\\d+)${BREAK_CLOSE}`, 'gu');
 
-const MAX_BREAK_MS = 3000; // clamp so a typo like time="500s" can't stall a passage
+// Clamp so a typo like time="500s" (= 500000ms) can't stall a passage, but high
+// enough to allow deliberately long narration pauses (up to 10s).
+const MAX_BREAK_MS = 10000;
 
 // SSML <break strength="..."> keyword -> milliseconds (W3C-ish defaults).
 const STRENGTH_MS = {

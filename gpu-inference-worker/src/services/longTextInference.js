@@ -846,7 +846,12 @@ const JOIN_EDGE_FADE_MS = 3;
 // and the cap guarantees we never eat into speech even if detection misfires.
 const JOIN_TRIM_THRESHOLD = 0.006; // ~ -44 dBFS
 const JOIN_TRIM_KEEP_MS = 30;      // leave this much tail after the last loud sample
-const JOIN_TRIM_MAX_MS = 400;      // never trim more than this, ever
+// Cap on how much edge silence a single join may remove. Raised from 400ms so an
+// inserted pause (an SSML <break>, the only source of inserted gaps on the Full paths)
+// fully replaces the model's own trailing/leading silence instead of STACKING on top of
+// it — otherwise a "700ms" break plays as several seconds. 2s covers the model's
+// longest sentence-edge silence while still guarding against a misfire eating speech.
+const JOIN_TRIM_MAX_MS = 2000;
 
 // Trim trailing near-silence from a PCM16 chunk, returning a view (never mutates).
 // Only used before an inserted pause; mid-sentence continuous joins are left intact.
@@ -874,6 +879,36 @@ function trimTrailingSilencePCM16(data, parsedWav) {
   const cutFrame = Math.max(naiveCut, totalFrames - maxTrimFrames);
   if (cutFrame >= totalFrames) return data;
   return data.subarray(0, cutFrame * blockAlign);
+}
+
+// Trim LEADING near-silence from a PCM16 chunk (mirror of the trailing trim). Applied
+// to the chunk that FOLLOWS an inserted pause so the model's own lead-in silence does
+// not stack after the inserted <break> — the audible gap then equals the requested
+// break duration. Same threshold/keep/cap guarantees as the trailing side.
+function trimLeadingSilencePCM16(data, parsedWav) {
+  const { numChannels, sampleRate, blockAlign } = parsedWav;
+  const totalFrames = Math.floor(data.length / blockAlign);
+  if (totalFrames < 2) return data;
+
+  const threshold = Math.round(JOIN_TRIM_THRESHOLD * 32768);
+  let firstLoud = 0;
+  for (; firstLoud < totalFrames; firstLoud += 1) {
+    let peak = 0;
+    for (let ch = 0; ch < numChannels; ch += 1) {
+      const offset = firstLoud * blockAlign + ch * 2;
+      if (offset + 1 < data.length) peak = Math.max(peak, Math.abs(data.readInt16LE(offset)));
+    }
+    if (peak > threshold) break;
+  }
+  if (firstLoud >= totalFrames) return data; // all quiet — leave as-is
+
+  const keepFrames = Math.round((JOIN_TRIM_KEEP_MS / 1000) * sampleRate);
+  const maxTrimFrames = Math.round((JOIN_TRIM_MAX_MS / 1000) * sampleRate);
+  const naiveStart = Math.max(0, firstLoud - keepFrames);
+  // Never remove more than the cap from the front, even if more silence was found.
+  const startFrame = Math.min(naiveStart, maxTrimFrames);
+  if (startFrame <= 0) return data;
+  return data.subarray(startFrame * blockAlign);
 }
 
 export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDurations = null) {
@@ -932,6 +967,9 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
       applyFade(chunk, first.sampleRate, first.numChannels, JOIN_EDGE_FADE_MS, 'out');
     }
     if (isPCM16 && prevGap > 0) {
+      // Drop the model's lead-in near-silence so it doesn't stack after the inserted
+      // pause, then micro-fade the new leading edge click-free.
+      chunk = trimLeadingSilencePCM16(chunk, first);
       applyFade(chunk, first.sampleRate, first.numChannels, JOIN_EDGE_FADE_MS, 'in');
     }
 
