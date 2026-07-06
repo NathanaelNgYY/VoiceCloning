@@ -118,6 +118,11 @@ router.post('/ref-audio/warm', async (req, res) => {
           aux_ref_audio_paths: warmed.aux_ref_audio_paths,
           text: req.body.warm_text || 'Ready.',
           text_lang: req.body.text_lang || 'en',
+          // handleLiveTtsRequest bypasses readInferenceParams, which is what
+          // normally defaults these. Without them the python /tts rejects the warm
+          // synth with 400 "prompt_lang is required" and the model never warms.
+          prompt_lang: req.body.prompt_lang || 'en',
+          prompt_text: req.body.prompt_text || '',
         });
         synthWarmed = true;
         // Persist this payload so a bare service restart can replay the warm at boot

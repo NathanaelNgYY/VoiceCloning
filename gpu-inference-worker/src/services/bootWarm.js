@@ -69,6 +69,10 @@ export async function warmOnBoot({
       aux_ref_audio_paths: warmed.aux_ref_audio_paths,
       text: payload.warm_text || 'Ready.',
       text_lang: payload.text_lang || 'en',
+      // Same defaults readInferenceParams would apply; handleLiveTtsRequest skips
+      // it, so without these the python /tts rejects the warm with 400.
+      prompt_lang: payload.prompt_lang || 'en',
+      prompt_text: payload.prompt_text || '',
     });
     log('[boot-warm] GPU path pre-warmed from persisted payload');
     return true;
