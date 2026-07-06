@@ -234,6 +234,9 @@ test('resolveInferenceStatusState preserves the last known loaded weights when s
     loadedSoVITSPath: 'models/sovits/current.pth',
   });
 
+  // Blank reported paths must preserve the last known-good model, not wipe it —
+  // the server reports blanks for benign reasons and clearing caused false
+  // "No model" flaps.
   assert.deepEqual(resolveInferenceStatusState({
     status: {
       ready: true,
@@ -243,7 +246,39 @@ test('resolveInferenceStatusState preserves the last known loaded weights when s
     fallbackLoadedSoVITSPath: 'models/sovits/current.pth',
   }), {
     serverReady: true,
-    loadedGPTPath: '',
-    loadedSoVITSPath: '',
+    loadedGPTPath: 'models/gpt/current.ckpt',
+    loadedSoVITSPath: 'models/sovits/current.pth',
+  });
+
+  // Same model reported in a different path format (absolute vs S3 key) keeps the
+  // canonical selection so "is my model loaded?" stays true.
+  assert.deepEqual(resolveInferenceStatusState({
+    status: {
+      ready: true,
+      loaded: {
+        gptPath: '/opt/gpt-sovits/models/current.ckpt',
+        sovitsPath: '/opt/gpt-sovits/models/current.pth',
+      },
+    },
+    fallbackLoadedGPTPath: 'models/gpt/current.ckpt',
+    fallbackLoadedSoVITSPath: 'models/sovits/current.pth',
+  }), {
+    serverReady: true,
+    loadedGPTPath: 'models/gpt/current.ckpt',
+    loadedSoVITSPath: 'models/sovits/current.pth',
+  });
+
+  // A genuine switch by another session (different, non-empty model) still takes effect.
+  assert.deepEqual(resolveInferenceStatusState({
+    status: {
+      ready: true,
+      loaded: { gptPath: 'models/gpt/other.ckpt', sovitsPath: 'models/sovits/other.pth' },
+    },
+    fallbackLoadedGPTPath: 'models/gpt/current.ckpt',
+    fallbackLoadedSoVITSPath: 'models/sovits/current.pth',
+  }), {
+    serverReady: true,
+    loadedGPTPath: 'models/gpt/other.ckpt',
+    loadedSoVITSPath: 'models/sovits/other.pth',
   });
 });

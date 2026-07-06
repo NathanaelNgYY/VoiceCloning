@@ -81,20 +81,37 @@ export function extractModelSelectWarmedReferenceSelection(result = {}) {
   };
 }
 
+// Weights filename, lower-cased, ignoring directory/format. The inference server
+// may report an absolute filesystem path ("/opt/gpt-sovits/.../Dean-e10.ckpt")
+// while the client tracks the S3 key ("models/user-models/gpt/Dean-e10.ckpt") for
+// the same model — comparing basenames avoids a spurious "different model".
+function weightsBasename(path) {
+  return String(path || '').trim().split(/[\\/]/).pop().toLowerCase();
+}
+
+function reconcileLoadedPath(reported, fallback) {
+  const reportedTrim = String(reported || '').trim();
+  const fallbackTrim = String(fallback || '').trim();
+  // Blank report → keep what we already know is loaded (benign blank, respawn,
+  // different worker instance). This stopped the false "No model" flaps.
+  if (!reportedTrim) return fallbackTrim;
+  // Same model, different path format → keep the canonical value we selected so
+  // the "is my selection loaded?" check still matches.
+  if (fallbackTrim && weightsBasename(reportedTrim) === weightsBasename(fallbackTrim)) {
+    return fallbackTrim;
+  }
+  // Genuinely different, populated model (e.g. another session switched it).
+  return reportedTrim;
+}
+
 export function resolveInferenceStatusState({
   status = {},
   fallbackLoadedGPTPath = '',
   fallbackLoadedSoVITSPath = '',
 } = {}) {
-  const hasLoadedState = Boolean(status?.loaded && typeof status.loaded === 'object');
-
   return {
     serverReady: Boolean(status?.ready),
-    loadedGPTPath: hasLoadedState
-      ? String(status.loaded?.gptPath || '').trim()
-      : String(fallbackLoadedGPTPath || '').trim(),
-    loadedSoVITSPath: hasLoadedState
-      ? String(status.loaded?.sovitsPath || '').trim()
-      : String(fallbackLoadedSoVITSPath || '').trim(),
+    loadedGPTPath: reconcileLoadedPath(status?.loaded?.gptPath, fallbackLoadedGPTPath),
+    loadedSoVITSPath: reconcileLoadedPath(status?.loaded?.sovitsPath, fallbackLoadedSoVITSPath),
   };
 }
