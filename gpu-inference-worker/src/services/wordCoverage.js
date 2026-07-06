@@ -135,6 +135,8 @@ export function computeWordCoverage(expectedText, transcript) {
     word.length >= 4 && !actualTokenSet.has(word) && joinedActual.includes(word)
   );
 
+  const expectedKeys = new Set(expected.map((e) => e.key));
+
   for (const { raw, key } of expected) {
     let foundIndex = -1;
     // Prefer an exact, unconsumed match; fall back to a fuzzy one.
@@ -158,9 +160,26 @@ export function computeWordCoverage(expectedText, transcript) {
     }
   }
 
+  // Extra words = leftover transcript tokens that are a SURPLUS occurrence of an
+  // intended word (heard more times than the text contains it). This is the
+  // signature of a double-read — GPT-SoVITS re-speaking a word or phrase — which
+  // coverage alone can't see, because every expected word is still present. Only a
+  // surplus of an EXPECTED word counts: a stray ASR token that was never in the text
+  // is left alone (a hallucinated insertion is not the defect we gate on, and gating
+  // on it would cause false re-rolls). Numbers/single letters are excluded via
+  // isCountable, matching the coverage side.
+  const extraWords = [];
+  for (let i = 0; i < actual.length; i++) {
+    if (consumed[i]) continue;
+    const token = actual[i];
+    if (!isCountable(token)) continue;
+    if (expectedKeys.has(token)) extraWords.push(token);
+  }
+
   return {
     coverage: matchedCount / expected.length,
     missingWords,
+    extraWords,
     expectedCount: expected.length,
     matchedCount,
   };

@@ -918,6 +918,12 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   // down to be more permissive. Assumes speed_factor near 1.0 or slower.
   const NATURAL_CHARS_PER_SEC = 15;
   const REQUIRED_DURATION_FRACTION = 0.65;
+  // A double-read runs ~2x its text's natural length. Flag audio well past that so a
+  // repeat gets re-rolled — a backstop for when ASR verification is unavailable (the
+  // extra-word check is the precise signal when it is). Deliberately generous (1.9x)
+  // with an absolute floor so ordinary slow delivery on a short chunk isn't caught.
+  const MAX_DURATION_FRACTION = 1.9;
+  const MAX_DURATION_FLOOR_SEC = 1.5;
   const expectedDurationSec = Math.max(0.3, Math.min(20, expectedText.length / NATURAL_CHARS_PER_SEC));
 
   let sampleCount = 0;
@@ -1036,6 +1042,8 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
   let reason = null;
   if (durationSec < expectedDurationSec * REQUIRED_DURATION_FRACTION) {
     reason = `Audio too short for its text — likely dropped words (${durationSec.toFixed(2)}s vs ~${expectedDurationSec.toFixed(1)}s expected)`;
+  } else if (durationSec > MAX_DURATION_FLOOR_SEC && durationSec > expectedDurationSec * MAX_DURATION_FRACTION) {
+    reason = `Audio too long for its text — likely repeated words (${durationSec.toFixed(2)}s vs ~${expectedDurationSec.toFixed(1)}s expected)`;
   } else if (rms < 0.003 && absPeak < 0.003) {
     reason = 'Generated audio is effectively silent';
   } else if (zeroishRatio > 0.995) {
@@ -1167,6 +1175,13 @@ export function scoreAudioCandidate(analysis, verification = null) {
   const clippedWordPenalty = clippedCount * 6;
   const missingWordPenalty = missingCount * 4;
 
+  // A double-read (a surplus of an intended word) passes coverage — every expected
+  // word is present — so without this a doubled-but-complete take could out-score a
+  // clean one and be shipped as best-effort. Penalize it like a missing word so the
+  // clean take always wins when both exist.
+  const extraCount = verification?.extraWords?.length || 0;
+  const extraWordPenalty = extraCount * 4;
+
   return (
     coverageBonus
     + similarityBonus
@@ -1174,6 +1189,7 @@ export function scoreAudioCandidate(analysis, verification = null) {
     + Math.min(rms * 20, 3)
     - clippedWordPenalty
     - missingWordPenalty
+    - extraWordPenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)
@@ -1231,12 +1247,14 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       if (verification && !verification.ok) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
         const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
+        const doubled = (verification.extraWords || []).slice(0, 6).join(', ');
         const voiceDrift = verification.similarityOk === false
           ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
           : '';
         const detail = [
           missing ? `missing: ${missing}` : '',
           clipped ? `clipped: ${clipped}` : '',
+          doubled ? `doubled: ${doubled}` : '',
           voiceDrift,
         ].filter(Boolean).join('; ');
         throw new Error(

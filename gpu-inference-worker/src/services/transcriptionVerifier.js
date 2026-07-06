@@ -177,7 +177,12 @@ class TranscriptionVerifier {
       return null;
     }
     const { text, words } = result;
-    const { coverage, missingWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
+    const { coverage, missingWords, extraWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
+    // A surplus of a substantial content word = a double-read (the model re-spoke a
+    // word/phrase). Coverage stays 100% so nothing else catches it; gate on it here.
+    // Short function words ("the") are too noisy to gate on, matching the missing-word
+    // length rule. Number/ID tokens are already excluded upstream by isCountable.
+    const substantialExtra = (extraWords || []).filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
     // skippedWords = words whose audio span is too short for their length: a genuine
     // skip (near-zero audio) OR a half-cut word (said partway then stopped). Both are
     // reliable, duration-based, and force a re-roll. suspectWords additionally
@@ -243,17 +248,19 @@ class TranscriptionVerifier {
 
     const ok = adjustedCoverage >= minCoverage
       && skippedWords.length === 0
-      && substantialMissing.length === 0;
+      && substantialMissing.length === 0
+      && substantialExtra.length === 0;
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
         + `missing=[${missingWords.join(', ')}] skipped/cut=[${skippedWords.join(', ')}] `
         + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
+        + `extra/doubled=[${substantialExtra.join(', ')}] `
         + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, transcript: text, words };
+    return { ok, coverage: adjustedCoverage, missingWords, extraWords, suspectWords, skippedWords, transcript: text, words };
   }
 
   /** Is the ASR sidecar usable right now? */

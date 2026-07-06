@@ -73,6 +73,7 @@ function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
         ok: (asr ? asr.ok : true) && (speaker ? speaker.ok : true),
         coverage: asr?.coverage ?? 1,
         missingWords: asr?.missingWords ?? [],
+        extraWords: asr?.extraWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
         skippedWords: asr?.skippedWords ?? [],
         words: asr?.words ?? [],
