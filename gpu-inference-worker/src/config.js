@@ -58,6 +58,14 @@ export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUS
 // re-enable and experiment, but expect artifacts.
 export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 0));
 
+// Max characters per chunk on the Live Full / Live Full Queue path (FULL_QUALITY_OPTIONS
+// only — Live Fast does not chunk). Shorter chunks keep a hard medical word from sitting
+// deep in a long sentence where the AR decoder is likeliest to rush/clip it, and make a
+// failed re-roll cost less text; too short loses the context that steadies pronunciation
+// and adds chunk seams. 240 (~1.5-2 medical sentences) is a touch tighter than the old
+// 280; tune empirically on the GPU box (try 200 / 240 / 280) via FULL_MAX_CHUNK_LENGTH.
+export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 240));
+
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended
 // words are present lets us re-roll the bad ones. Critical for medical text.
@@ -66,7 +74,12 @@ function parseBooleanEnv(value, fallback) {
   return /^(1|true|yes|on)$/iu.test(String(value).trim());
 }
 export const TRANSCRIPTION_VERIFY_ENABLED = parseBooleanEnv(readEnv('TRANSCRIPTION_VERIFY_ENABLED'), true);
-export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'small';
+// Default 'medium': the clip/skip gates (findClippedWords, truncation detection) lean on
+// Whisper's per-word timings + confidence, which 'medium' resolves materially better than
+// 'small' — the difference between catching a "chromatin"->"chroma" cut and shipping it.
+// The sidecar is shared, so Live Fast benefits too; there is no per-path regression, only
+// better detection. Drop back to 'small' via env if VRAM/latency on the box demands it.
+export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'medium';
 // Minimum fraction of a chunk's expected words that must appear in the transcript
 // for the read to be accepted. Below this, the chunk is treated as having dropped
 // words and is retried.

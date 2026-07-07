@@ -223,6 +223,47 @@ test('a doubled SHORT function word alone does not force a re-roll', async () =>
   }
 });
 
+test('a CLIPPED dict word (chromatin->chroma) is NOT forgiven on Live Full/Queue', async () => {
+  // The model cut "chromatin" to "chroma". Token count holds and the head has audio, so
+  // the count/timing gates would wrongly forgive it. finalWordTailCheck (Live Full/Queue)
+  // engages the truncation check: a heard token that is a strict prefix of the dict word
+  // means it was cut short → reject and re-roll.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the chroma condenses during mitosis',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the chromatin condenses during mitosis',
+      { dictionaryWords: ['chromatin'], finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.missingWords.includes('chromatin'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('the same clipped dict word stays forgiven on Live Fast (no tail check)', async () => {
+  // Scoping guard: without finalWordTailCheck (Live Fast) the truncation rejection does
+  // not run, so behavior is unchanged there — the change is Live Full/Queue only.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the chroma condenses during mitosis',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the chromatin condenses during mitosis',
+      { dictionaryWords: ['chromatin'] },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a genuinely skipped word (near-zero audio span) still forces a re-roll', async () => {
   // Whisper hallucinated "centriole" back from context but gave it a 10ms span — no
   // audio under it = real skip. This must still reject even at high coverage.
