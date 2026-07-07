@@ -281,3 +281,68 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
 
   return { suspectWords, skippedWords };
 }
+
+/**
+ * Detect GPT-SoVITS stutters: words the audio SPOKE that the text never asked
+ * for twice. Two shapes, both invisible to computeWordCoverage (every expected
+ * word IS present — the transcript just has extras):
+ *
+ *   1. Echo — an immediate repeat of a word or word pair
+ *      ("timing of treatment and treatment, and proper").
+ *   2. False start — a fragment immediately followed by the full word it
+ *      begins ("gastro gastrointestinal").
+ *
+ * Conservative by design: an echo must contain a content word (>= 4 chars) so
+ * ASR noise on function words ("the the") never re-rolls a good take, a repeat
+ * the expected text itself contains is never flagged, and a false-start
+ * fragment that the expected text contains as a standalone word (pronunciation
+ * dictionary splits like "gastro intestinal") is never flagged.
+ *
+ * @returns {string[]} unique flagged phrases, in transcript order
+ */
+export function findDuplicatedWords(expectedText, transcript) {
+  const heardRaw = tokenize(transcript);
+  const heard = heardRaw.map(canonicalize);
+  const expected = tokenize(expectedText).map(canonicalize);
+  const expectedSet = new Set(expected);
+  const flagged = [];
+
+  const hasContentWord = (tokens) => tokens.some((t) => t.length >= 4 && isCountable(t));
+
+  const expectedHasEcho = (gram) => {
+    const n = gram.length;
+    for (let j = 0; j + 2 * n <= expected.length; j += 1) {
+      let matches = true;
+      for (let k = 0; k < n && matches; k += 1) {
+        matches = expected[j + k] === gram[k] && expected[j + n + k] === gram[k];
+      }
+      if (matches) return true;
+    }
+    return false;
+  };
+
+  // 1. Echoes — check pairs before single words so "treatment and treatment and"
+  // reports the repeated unit ("treatment and"), not its pieces.
+  for (const n of [2, 1]) {
+    for (let i = 0; i + 2 * n <= heard.length; i += 1) {
+      const gram = heard.slice(i, i + n);
+      const echo = heard.slice(i + n, i + 2 * n);
+      if (gram.join(' ') !== echo.join(' ')) continue;
+      if (!hasContentWord(gram)) continue;
+      if (expectedHasEcho(gram)) continue;
+      flagged.push(heardRaw.slice(i, i + n).join(' '));
+    }
+  }
+
+  // 2. False starts.
+  for (let i = 0; i + 1 < heard.length; i += 1) {
+    const fragment = heard[i];
+    const full = heard[i + 1];
+    if (fragment.length < 4) continue;
+    if (full.length <= fragment.length || !full.startsWith(fragment)) continue;
+    if (expectedSet.has(fragment)) continue;
+    flagged.push(heardRaw[i]);
+  }
+
+  return [...new Set(flagged)];
+}

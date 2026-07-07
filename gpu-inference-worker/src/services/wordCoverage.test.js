@@ -1,6 +1,70 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, findDuplicatedWords } from './wordCoverage.js';
+
+// ── findDuplicatedWords ──────────────────────────────────────────────────────
+// GPT-SoVITS stutters: the model re-emits a word (or word pair) it already said,
+// or false-starts a long word ("gastro gastrointestinal"). Coverage can't catch
+// these — every EXPECTED word is present — so they need their own detector.
+
+test('findDuplicatedWords flags a repeated word-pair echo', () => {
+  // Real case: "timing of treatment, and proper" spoken as
+  // "timing of treatment and treatment, and proper".
+  assert.deepEqual(
+    findDuplicatedWords(
+      'timing of treatment, and proper',
+      'timing of treatment and treatment and proper',
+    ),
+    ['treatment and'],
+  );
+});
+
+test('findDuplicatedWords flags an immediate single-word repeat', () => {
+  assert.deepEqual(
+    findDuplicatedWords(
+      'discuss the treatment options',
+      'discuss the treatment treatment options',
+    ),
+    ['treatment'],
+  );
+});
+
+test('findDuplicatedWords flags a false-start prefix', () => {
+  // Real case: "gastrointestinal" spoken as "gastro gastrointestinal".
+  assert.deepEqual(
+    findDuplicatedWords(
+      'the gastrointestinal tract',
+      'the gastro gastrointestinal tract',
+    ),
+    ['gastro'],
+  );
+});
+
+test('findDuplicatedWords allows repeats the text actually asks for', () => {
+  assert.deepEqual(
+    findDuplicatedWords('it was very very fast', 'it was very very fast'),
+    [],
+  );
+});
+
+test('findDuplicatedWords does not flag a fragment the expected text contains as its own word', () => {
+  // The pronunciation dictionary splits hard words ("gastro intestinal"); hearing
+  // the fragment then is correct, not a stutter.
+  assert.deepEqual(
+    findDuplicatedWords(
+      'the gastro intestinal tract',
+      'the gastro gastrointestinal tract',
+    ),
+    [],
+  );
+});
+
+test('findDuplicatedWords ignores clean reads and short-function-word noise', () => {
+  // "the the" is ASR-level noise on a 3-letter word — not worth a re-roll.
+  assert.deepEqual(findDuplicatedWords('go to the store', 'go to the the store'), []);
+  assert.deepEqual(findDuplicatedWords('a clean sentence here', 'a clean sentence here'), []);
+  assert.deepEqual(findDuplicatedWords('', ''), []);
+});
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {

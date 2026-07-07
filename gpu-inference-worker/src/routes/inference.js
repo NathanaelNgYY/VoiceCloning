@@ -15,7 +15,12 @@ import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
-import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
+import {
+  COMMA_PAUSE_SECONDS,
+  TRANSCRIPTION_VERIFY_ENABLED,
+  LIVE_TRANSCRIPTION_VERIFY_ENABLED,
+  SPEAKER_VERIFY_ENABLED,
+} from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
@@ -59,6 +64,7 @@ function verificationOptions(params = {}) {
         missingWords: asr?.missingWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
         skippedWords: asr?.skippedWords ?? [],
+        duplicatedWords: asr?.duplicatedWords ?? [],
         words: asr?.words ?? [],
         transcript: asr?.transcript,
         similarity: speaker?.similarity,
@@ -100,11 +106,30 @@ function readInferenceParams(body) {
   };
 }
 
+// Live-clip acceptance check: transcribe the clip and reject stutters (echoed
+// words, false starts) and dropped words. Returns null ("no opinion") when live
+// verification is disabled or the ASR sidecar is unavailable, so synthesis is
+// never blocked by a verification fault.
+async function defaultLiveVerifyClip(audioBuffer, expectedText) {
+  if (!TRANSCRIPTION_VERIFY_ENABLED || !LIVE_TRANSCRIPTION_VERIFY_ENABLED) return null;
+  let dictionaryWords = [];
+  try {
+    const entries = await loadRuntimePronunciationEntries();
+    dictionaryWords = entries.map((e) => e.word).filter(Boolean);
+  } catch { /* no dictionary → strict spelling check, as before */ }
+  return transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords });
+}
+
 export async function handleLiveTtsRequest(body, {
   resolveParams = resolveRefAudioParams,
   synthesize = (params) => inferenceServer.synthesize(params),
+  verifyClip = defaultLiveVerifyClip,
 } = {}) {
   const resolvedParams = await resolveParams(body);
+  // Client-only flag: the first clip of a reply gates time-to-first-audio, so the
+  // client asks to skip its verification. Never forwarded to the engine.
+  const skipVerify = Boolean(resolvedParams.skip_verify);
+  delete resolvedParams.skip_verify;
   const dictionaryText = await prepareTextWithRuntimeDictionary(resolvedParams.text);
   const emphasizedText = applyEmphasisAndSpelling(dictionaryText);
   const normalizedParams = {
@@ -116,7 +141,21 @@ export async function handleLiveTtsRequest(body, {
     // Comma/clause pause length (GPT-SoVITS fragment_interval), tunable via COMMA_PAUSE_SECONDS.
     fragment_interval: resolvedParams.fragment_interval ?? COMMA_PAUSE_SECONDS,
   };
-  const audioBuffer = await synthesize(normalizedParams);
+  let audioBuffer = await synthesize(normalizedParams);
+
+  if (!skipVerify) {
+    const verdict = await verifyClip(audioBuffer, normalizedParams.text);
+    if (verdict && !verdict.ok) {
+      // One re-roll (fresh random seed), played whatever it sounds like — a
+      // second bad take is still better than stalling a live reply on retries.
+      console.log(
+        `[live-tts] clip re-rolled: duplicated=[${(verdict.duplicatedWords || []).join(', ')}] `
+        + `missing=[${(verdict.missingWords || []).join(', ')}]`,
+      );
+      audioBuffer = await synthesize(normalizedParams);
+    }
+  }
+
   return { audioBuffer, resolvedParams: normalizedParams };
 }
 

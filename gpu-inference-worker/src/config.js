@@ -66,6 +66,12 @@ function parseBooleanEnv(value, fallback) {
   return /^(1|true|yes|on)$/iu.test(String(value).trim());
 }
 export const TRANSCRIPTION_VERIFY_ENABLED = parseBooleanEnv(readEnv('TRANSCRIPTION_VERIFY_ENABLED'), true);
+// ASR verification of LIVE conversation clips (the /inference/tts path): each clip
+// is transcribed and re-rolled once on a stutter (echoed word, false start) or
+// dropped word. Costs one whisper pass (~100-300ms) per clip, hidden behind
+// playback for every clip except the first — which the client marks skip_verify.
+// Requires TRANSCRIPTION_VERIFY_ENABLED; set to 0/false to keep live clips unchecked.
+export const LIVE_TRANSCRIPTION_VERIFY_ENABLED = parseBooleanEnv(readEnv('LIVE_TRANSCRIPTION_VERIFY_ENABLED'), true);
 export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'small';
 // Minimum fraction of a chunk's expected words that must appear in the transcript
 // for the read to be accepted. Below this, the chunk is treated as having dropped

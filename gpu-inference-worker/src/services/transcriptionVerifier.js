@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, countWords } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, findDuplicatedWords, countWords } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -219,19 +219,25 @@ class TranscriptionVerifier {
       }
     }
 
+    // Stutters (echoed words, false starts) leave coverage at 100% — the
+    // transcript has EXTRA words, not missing ones — so they need their own gate.
+    const duplicatedWords = findDuplicatedWords(expectedText, text);
+
     const ok = adjustedCoverage >= minCoverage
       && skippedWords.length === 0
-      && substantialMissing.length === 0;
+      && substantialMissing.length === 0
+      && duplicatedWords.length === 0;
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
         + `missing=[${missingWords.join(', ')}] skipped/cut=[${skippedWords.join(', ')}] `
+        + `duplicated=[${duplicatedWords.join(', ')}] `
         + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
         + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, transcript: text, words };
+    return { ok, coverage: adjustedCoverage, missingWords, suspectWords, skippedWords, duplicatedWords, transcript: text, words };
   }
 
   /** Is the ASR sidecar usable right now? */

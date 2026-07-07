@@ -163,6 +163,44 @@ test('a half-cut word (short audio AND low confidence) forces a re-roll', async 
   }
 });
 
+test('a stuttered word echo forces a re-roll even at full coverage', async () => {
+  // Every expected word is present (coverage 1) but the model said "treatment and"
+  // twice. Coverage alone can't catch extra words — the duplication check must.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'timing of treatment and treatment and proper',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'timing of treatment, and proper',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.duplicatedWords, ['treatment and'], JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('a false-start prefix forces a re-roll', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the gastro gastrointestinal tract',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the gastrointestinal tract',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.duplicatedWords, ['gastro'], JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a genuinely skipped word (near-zero audio span) still forces a re-roll', async () => {
   // Whisper hallucinated "centriole" back from context but gave it a 10ms span — no
   // audio under it = real skip. This must still reject even at high coverage.
