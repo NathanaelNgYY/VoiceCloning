@@ -18,6 +18,8 @@ import {
   nextAudioErrorAction,
   isBenignRealtimeError,
   fixSpeechPronunciation,
+  interClipGapMs,
+  INTER_CLIP_GAP_MS,
   canReuseActiveUserMessage,
   resolvePendingTranscriptPatch,
   USER_TRANSCRIPT_TIMEOUT_MS,
@@ -111,7 +113,9 @@ test('shortenFirstFastPhrase splits a long first phrase at its first clause boun
   ];
   const result = shortenFirstFastPhrase(phrases);
   assert.equal(result.length, 3);
-  assert.equal(result[0], 'After the model finishes loading the weights.');
+  // The head half is mid-sentence, so it ends with a continuation ellipsis —
+  // a period would give it a falling, sentence-final read.
+  assert.equal(result[0], 'After the model finishes loading the weights…');
   assert.equal(result[1], 'it starts generating audio right away.');
   assert.equal(result[2], 'Second phrase here.');
 });
@@ -238,9 +242,35 @@ test('splitLiveReplyPhrases does not split dotted initialisms into tiny clips', 
 });
 
 test('splitLiveReplyPhrases breaks at em dashes so the voice pauses', () => {
+  // The half before the dash ends with an ellipsis, not a period — a period makes
+  // GPT-SoVITS read it with falling end-of-sentence intonation mid-thought, while
+  // an ellipsis keeps a hanging "I'm not done yet" contour.
   assert.deepEqual(
     splitLiveReplyPhrases('a mix of cultures — Chinese, Malay, and more.'),
-    ['a mix of cultures.', 'Chinese, Malay, and more.'],
+    ['a mix of cultures…', 'Chinese, Malay, and more.'],
+  );
+});
+
+test('splitLiveReplyPhrases never turns a dash head into a question', () => {
+  // "What I mean is —" starts with a question word but is mid-sentence; it must
+  // get the continuation ellipsis, not a question mark's rising contour.
+  assert.deepEqual(
+    splitLiveReplyPhrases('What I mean is — listen closely.'),
+    ['What I mean is…', 'listen closely.'],
+  );
+});
+
+test('splitLiveReplyPhrases keeps existing punctuation on dash halves', () => {
+  assert.deepEqual(
+    splitLiveReplyPhrases('Is it fast? — Yes. Very fast.'),
+    ['Is it fast?', 'Yes.', 'Very fast.'],
+  );
+});
+
+test('splitLiveReplyPhrases does not double-punctuate an ellipsis ending', () => {
+  assert.deepEqual(
+    splitLiveReplyPhrases('Well, maybe… — hard to say.'),
+    ['Well, maybe…', 'hard to say.'],
   );
 });
 
@@ -655,6 +685,37 @@ test('resolveSpeakingContinuation waits on a split reply still synthesizing in a
   ];
   const decision = resolveSpeakingContinuation(messages, { synthesisMessageId: 'reply-2' });
   assert.equal(decision.action, 'wait');
+});
+
+// ── interClipGapMs ───────────────────────────────────────────────────────────
+// Punctuation-aware pause between reply clips: a sentence end gets a longer
+// breath than a mid-sentence continuation (dash/ellipsis/clause split). The gap
+// is inserted between an ended clip and the next ready one, so it never delays
+// the first clip of a reply.
+
+test('interClipGapMs gives a full breath after a finished sentence', () => {
+  assert.equal(interClipGapMs('That is the whole story.'), INTER_CLIP_GAP_MS.sentence);
+  assert.equal(interClipGapMs('Really?'), INTER_CLIP_GAP_MS.sentence);
+  assert.equal(interClipGapMs('Amazing!'), INTER_CLIP_GAP_MS.sentence);
+  assert.equal(interClipGapMs('我可以帮你。'), INTER_CLIP_GAP_MS.sentence);
+});
+
+test('interClipGapMs gives a short pause after a mid-sentence continuation', () => {
+  assert.equal(interClipGapMs('a mix of cultures…'), INTER_CLIP_GAP_MS.continuation);
+  assert.equal(interClipGapMs('here is the thing;'), INTER_CLIP_GAP_MS.continuation);
+  assert.equal(interClipGapMs('two options:'), INTER_CLIP_GAP_MS.continuation);
+});
+
+test('interClipGapMs returns no gap for missing clip text', () => {
+  assert.equal(interClipGapMs(''), 0);
+  assert.equal(interClipGapMs(null), 0);
+  assert.equal(interClipGapMs(undefined), 0);
+});
+
+test('inter-clip gaps stay short enough to feel live', () => {
+  assert.ok(INTER_CLIP_GAP_MS.continuation > 0);
+  assert.ok(INTER_CLIP_GAP_MS.continuation < INTER_CLIP_GAP_MS.sentence);
+  assert.ok(INTER_CLIP_GAP_MS.sentence <= 600);
 });
 
 test('hasPendingReplyWork ignores voice-stopped background generation', () => {

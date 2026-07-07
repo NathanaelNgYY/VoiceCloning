@@ -31,6 +31,7 @@ import {
   isLiveInputPhase,
   isBenignRealtimeError,
   fixSpeechPronunciation,
+  interClipGapMs,
   normalizeLiveLanguage,
   resolvePendingTranscriptPatch,
   resolveSpeakingContinuation,
@@ -181,6 +182,7 @@ export function useLiveSpeech({
   const bargeInArmedRef = useRef(false);
   const bargeInFramesRef = useRef(0);
   const lastBargeInAtRef = useRef(0);
+  const clipGapTimerRef = useRef(null);
   // Engine + ref params are read through refs so switching Live Fast <-> Live Full
   // takes effect on the next reply even while a conversation is already open (the
   // socket handler captured the render snapshot when start() ran).
@@ -1401,22 +1403,60 @@ export function useLiveSpeech({
     }
   }
 
+  function clearClipGapTimer() {
+    if (clipGapTimerRef.current) {
+      window.clearTimeout(clipGapTimerRef.current);
+      clipGapTimerRef.current = null;
+    }
+  }
+
+  // Advance to the clip after `playback`, recomputing from fresh state — by the
+  // time a gap timer fires, the spent clip's 'played' patch has flushed, so this
+  // never re-selects the clip that just ended.
+  function advanceFromEndedClip(playback) {
+    const nextPlayback = findNextPhrasePlayback(messagesRef.current, playback.part.id);
+    const nextReady = nextPlayback?.part
+      ? nextPlayback
+      : findNextReplyPlayback(messagesRef.current, playback.message.id);
+    if (nextReady?.part) {
+      setSelectedReplyId(nextReady.part.id);
+    } else {
+      setSelectedReplyId('');
+    }
+  }
+
+  // Punctuation-aware breath between clips. The selection is held on the spent
+  // clip for the gap — the reconciler effect only acts on an EMPTY selection, so
+  // nothing can start playing during the hold — then advances. Guards make a
+  // stale timer harmless: it no-ops after a stop, barge-in, or manual replay.
+  function scheduleNextClip(playback, gapMs) {
+    clearClipGapTimer();
+    if (!(gapMs > 0)) {
+      advanceFromEndedClip(playback);
+      return;
+    }
+    const endedPartId = playback.part.id;
+    clipGapTimerRef.current = window.setTimeout(() => {
+      clipGapTimerRef.current = null;
+      if (phaseRef.current !== 'speaking') return;
+      if (selectedReplyIdRef.current !== endedPartId) return;
+      advanceFromEndedClip(playback);
+    }, gapMs);
+  }
+
   function onAudioEnded() {
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
 
     if (isPhraseMode && playback?.part) {
       patchAudioPart(playback.message.id, playback.part.id, { status: 'played' });
       const nextPlayback = findNextPhrasePlayback(messagesRef.current, playback.part.id);
-      if (nextPlayback?.part) {
-        setSelectedReplyId(nextPlayback.part.id);
-        return;
-      }
-
-      // A Realtime interruption can split one spoken reply across two assistant
-      // messages — keep reading straight into the next message's unplayed clips.
-      const nextReply = findNextReplyPlayback(messagesRef.current, playback.message.id);
-      if (nextReply?.part) {
-        setSelectedReplyId(nextReply.part.id);
+      const nextReady = nextPlayback?.part
+        ? nextPlayback
+        // A Realtime interruption can split one spoken reply across two assistant
+        // messages — keep reading straight into the next message's unplayed clips.
+        : findNextReplyPlayback(messagesRef.current, playback.message.id);
+      if (nextReady?.part) {
+        scheduleNextClip(playback, interClipGapMs(playback.part.text));
         return;
       }
     }
@@ -1447,6 +1487,7 @@ export function useLiveSpeech({
       closeSocket();
       stopMicCapture();
       cleanupConversation();
+      clearClipGapTimer();
       if (noticeTimeoutRef.current) {
         window.clearTimeout(noticeTimeoutRef.current);
       }

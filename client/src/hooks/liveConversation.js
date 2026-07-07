@@ -101,9 +101,32 @@ const ENGLISH_NUMBER_WORD_RE =
 const LATIN_WORD_RE = /\p{Script=Latin}+(?:[-'’]\p{Script=Latin}+)*/gu;
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
-const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
+const PHRASE_END_RE = /[.!?;:…。！？；：]$/u;
 const PHRASE_SPLIT_RE = /[^.!?;:。！？；：]+[.!?;:。！？；：]+|[^.!?;:。！？；：]+$/gu;
 const DOTTED_INITIALISM_DOT = '\uE000';
+
+// Silence inserted between an ended reply clip and the next ready one, keyed by
+// how the ended clip's text stops: a finished sentence gets a full breath, a
+// mid-sentence continuation (dash/ellipsis/clause split) a short one. The gap
+// only runs when the next clip is already synthesized — when it isn't, the
+// synthesis wait is the pause — so it never delays the first clip of a reply.
+export const INTER_CLIP_GAP_MS = {
+  continuation: 180,
+  sentence: 420,
+};
+
+const CONTINUATION_FINAL_RE = /(?:…|\.{3})["')\]]*$/u;
+const SENTENCE_FINAL_RE = /[.!?。！？]["')\]]*$/u;
+
+export function interClipGapMs(previousClipText) {
+  const text = String(previousClipText || '').trim();
+  if (!text) return 0;
+  // '...' ends in '.' character-wise, so test continuation marks first:
+  // '…', '...', ';' and ':' all hang mid-thought.
+  if (CONTINUATION_FINAL_RE.test(text)) return INTER_CLIP_GAP_MS.continuation;
+  if (SENTENCE_FINAL_RE.test(text)) return INTER_CLIP_GAP_MS.sentence;
+  return INTER_CLIP_GAP_MS.continuation;
+}
 
 export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
@@ -214,8 +237,13 @@ export function nextVoiceGateState(state, rms, config = VOICE_GATE) {
   return { open: true, justOpened: false, loudStreak: current.loudStreak, quietStreak };
 }
 
-function ensurePhraseEnding(text) {
+// `continuation: true` marks a fragment that is mid-sentence (the half before an
+// em dash, or a clause split off for latency). It gets an ellipsis — GPT-SoVITS
+// reads '…' with a hanging, unfinished contour, where a '.' produces a falling
+// end-of-sentence read and a '?' a rising one, both wrong mid-thought.
+function ensurePhraseEnding(text, { continuation = false } = {}) {
   if (PHRASE_END_RE.test(text)) return text;
+  if (continuation) return `${text.replace(/[,，]$/u, '')}…`;
   return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;
 }
 
@@ -239,10 +267,19 @@ export function splitLiveReplyPhrases(text) {
   // Em/en dashes mark a pause but aren't sentence-enders, so GPT-SoVITS reads
   // straight through them. Break phrases at dashes first so each side becomes its
   // own synthesized clip with a real pause between (matching full-mode behavior).
+  // The fragment left dangling before a dash is mid-sentence, so it takes the
+  // continuation ellipsis rather than a sentence-final '.' or '?'.
   const segments = clean.split(/\s*[—–]+\s*/u).map((part) => part.trim()).filter(Boolean);
-  const matches = segments.flatMap((segment) => segment.match(PHRASE_SPLIT_RE) || [segment]);
-  return matches
-    .map((part) => restoreDottedInitialisms(ensurePhraseEnding(part.trim())))
+  return segments
+    .flatMap((segment, segmentIndex) => {
+      const matches = (segment.match(PHRASE_SPLIT_RE) || [segment]).map((part) => part.trim());
+      const beforeDash = segmentIndex < segments.length - 1;
+      return matches.map((part, partIndex) =>
+        restoreDottedInitialisms(ensurePhraseEnding(part, {
+          continuation: beforeDash && partIndex === matches.length - 1,
+        }))
+      );
+    })
     .filter(Boolean);
 }
 
@@ -282,7 +319,9 @@ export function shortenFirstFastPhrase(phrases, {
       && countWords(tail) >= minWords
     ) {
       return [
-        ensurePhraseEnding(head),
+        // The head is mid-sentence — a continuation ellipsis keeps its contour
+        // open instead of a falling sentence-final period.
+        ensurePhraseEnding(head, { continuation: true }),
         ensurePhraseEnding(tail),
         ...phrases.slice(1),
       ];
