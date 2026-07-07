@@ -39,3 +39,23 @@ test('prepareTextForSynthesis expands slash abbreviations and removes spoken pun
   assert.match(result, /input or out put/u);
   assert.doesNotMatch(result, /[-–—]/u);
 });
+
+test('prepareTextForSynthesis expands numeric units, percents, and ordinals to words', () => {
+  const result = prepareTextForSynthesis('Give 1 mg then 500 mg, up to 50% over the 1st and 2nd hour at 120 mmHg.');
+
+  assert.match(result, /1 milligram\b/u);   // singular for exactly 1
+  assert.match(result, /500 milligrams/u);  // plural otherwise
+  assert.match(result, /50 percent/u);
+  assert.match(result, /\bfirst\b/u);
+  assert.match(result, /\bsecond\b/u);
+  assert.match(result, /millimeters of mercury/u);
+  assert.doesNotMatch(result, /%/u);
+  assert.doesNotMatch(result, /\bmg\b/u);
+});
+
+test('prepareTextForSynthesis expands Roman numerals only after a classifier word', () => {
+  const result = prepareTextForSynthesis('A stage IV tumor needs IV fluids.');
+
+  assert.match(result, /stage 4/u);       // classified -> expanded
+  assert.match(result, /\bIV fluids\b/u); // bare IV (intravenous) left intact
+});

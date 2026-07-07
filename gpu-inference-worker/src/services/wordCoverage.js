@@ -9,6 +9,12 @@ function tokenize(text) {
     .toLowerCase()
     .replace(/\b(?:one|1)[\s-]+and[\s-]+a[\s-]+half\b/gu, ' oneandahalf ')
     .replace(/\b1[.,]5\b/gu, ' oneandahalf ')
+    // Whisper often re-abbreviates spoken units/symbols ("fifty percent" -> "50%",
+    // "millimeters of mercury" -> "mmHg"). The synthesis text is expanded to words
+    // (textPronunciation), so undo the abbreviation here or every such read would
+    // look like it dropped the word and force a needless re-roll.
+    .replace(/%/gu, ' percent ')
+    .replace(/\bmmhg\b/gu, ' millimeters of mercury ')
     // keep letters, digits and intra-word apostrophes; everything else is a break
     .replace(/[^\p{L}\p{N}']+/gu, ' ')
     .replace(/(^|\s)'+|'+(\s|$)/gu, '$1$2')
@@ -56,9 +62,23 @@ const NUMBER_WORDS = new Map([
   ['million', '1000000'],
 ]);
 
+// Heard-side re-abbreviations mapped back to the words the synthesis text uses
+// (textPronunciation expands "5 mg" -> "5 milligrams", "1st" -> "first"). Symmetric
+// and exact-token only, so an ordinary word can never be mis-mapped.
+const ABBREV_WORDS = new Map([
+  ['mg', 'milligrams'], ['mcg', 'micrograms'], ['µg', 'micrograms'],
+  ['ml', 'milliliters'], ['kg', 'kilograms'], ['km', 'kilometers'],
+  ['cm', 'centimeters'], ['mm', 'millimeters'],
+  ['hr', 'hour'], ['hrs', 'hours'], ['mins', 'minutes'],
+  ['1st', 'first'], ['2nd', 'second'], ['3rd', 'third'], ['4th', 'fourth'],
+  ['5th', 'fifth'], ['6th', 'sixth'], ['7th', 'seventh'], ['8th', 'eighth'],
+  ['9th', 'ninth'], ['10th', 'tenth'], ['11th', 'eleventh'], ['12th', 'twelfth'],
+]);
+
 function canonicalize(token) {
   if (!token) return token;
   if (NUMBER_WORDS.has(token)) return NUMBER_WORDS.get(token);
+  if (ABBREV_WORDS.has(token)) return ABBREV_WORDS.get(token);
   let t = token;
   // British -> American spelling normalization (symmetric on both sides).
   if (t.length >= 6) t = t.replace(/our(s?)$/u, 'or$1');            // colour->color, tumour->tumor
@@ -331,6 +351,11 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   // scrutiny would only add needless re-rolls; it leaves the flag off.
   const finalWordTailCheck = Boolean(opts.finalWordTailCheck);
   const finalExpectedIndex = expected[expected.length - 1].index;
+  // The FIRST expected word gets the same scrutiny: the model's onset can start a
+  // beat late and clip the chunk-opening word's head, and (like the tail case)
+  // Whisper completes it from context with moderate confidence, so the strict
+  // both-signals rule misses it. Same conservative thresholds, same opt-in flag.
+  const firstExpectedIndex = expected[0].index;
   const minFinalWordDuration = Number.isFinite(opts.minFinalWordDuration) ? opts.minFinalWordDuration : 0.12;
 
   for (const { raw, key, index } of expected) {
@@ -374,10 +399,12 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     // duration floor (no full ≥4-char word fits in <120ms) or a relaxed short+unsure
     // pair (per-char span low AND confidence merely middling, vs. the strict pair
     // above). Both stay conservative enough that a complete final word passes.
-    const finalWordCut = finalWordTailCheck && index === finalExpectedIndex && longEnough && (
-      match.duration < minFinalWordDuration
-      || (match.duration / raw.length < 0.04 && match.probability < 0.6)
-    );
+    const finalWordCut = finalWordTailCheck
+      && (index === finalExpectedIndex || index === firstExpectedIndex)
+      && longEnough && (
+        match.duration < minFinalWordDuration
+        || (match.duration / raw.length < 0.04 && match.probability < 0.6)
+      );
 
     if (skippedSpan || halfCut || weakNumericUnit || finalWordCut) skippedWords.push(raw);
     if (skippedSpan || tooShort || tooQuiet || weakNumericUnit || finalWordCut) suspectWords.push(raw);
