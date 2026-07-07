@@ -3,7 +3,7 @@
     "lambdaFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging",
     "region": "ap-northeast-2",
     "s3Region": "ap-southeast-1",
-    "instanceId": "FILL-AFTER-LAUNCH",
+    "instanceId": "i-0f0da8be59367f7a8",
     "branch": "staging",
     "chatbotBranch": "staging-chatbot",
     "workerAccess": "ssm",
