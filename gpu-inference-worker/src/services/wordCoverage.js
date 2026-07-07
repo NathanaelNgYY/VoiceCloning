@@ -185,6 +185,27 @@ export function computeWordCoverage(expectedText, transcript) {
   };
 }
 
+// A dictionary word may only be "forgiven" as a harmless mis-transcription when it
+// was actually SPOKEN in full — not when the model cut it short. When GPT-SoVITS clips
+// "chromatin" to "chroma" or "environment" to "environ", Whisper writes the shorter
+// token, which is a strict PREFIX of the expected word. That is a truncation (the head
+// was said, the tail dropped), not a spelling slip, so it must stay un-forgiven and
+// re-roll. A genuine mis-transcription ("centriole" -> "central") is NOT a prefix of the
+// expected word, so it is still forgiven. This closes the hole where the exact medical
+// terms admins add to the dictionary were the ones whose clips got masked.
+export function isTruncatedDictWord(expectedWord, transcript) {
+  const key = canonicalize(String(expectedWord || '').toLowerCase());
+  if (key.length < 5) return false; // too short to call a truncation reliably
+  for (const token of tokenize(transcript).map(canonicalize)) {
+    if (token.length < 3 || token === key) continue;
+    // Strict prefix AND materially shorter = the word's head was spoken, tail cut off.
+    // 0.85 clears real clips (chroma 6/9≈0.67, environ 7/11≈0.64) without tripping on a
+    // near-complete read.
+    if (key.startsWith(token) && token.length < key.length * 0.85) return true;
+  }
+  return false;
+}
+
 // A substantial word the model is most likely to clip. Words shorter than this are
 // too noisy to judge on timing/confidence. Set to 4 so short content words like
 // "very", "fast", "cell", and "rate" are tracked for retry too.

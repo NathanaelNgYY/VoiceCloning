@@ -4,7 +4,7 @@ import path from 'path';
 import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
-import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS } from '../config.js';
+import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS, FULL_MAX_CHUNK_LENGTH } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
 import {
@@ -56,8 +56,9 @@ const FULL_QUALITY_OPTIONS = {
   // cut0) its natural pacing doesn't drift. Break only at SENTENCE ends (commas stay
   // inside the chunk and are handled by the model, not turned into chunk-join
   // silences), grouped up to ~280 chars (≈ 2-3 medical sentences). Going bigger only
-  // hurts retry granularity and risks tail-drop, for little naturalness gain.
-  maxChunkLength: 280,
+  // hurts retry granularity and risks tail-drop, for little naturalness gain. Tunable
+  // via FULL_MAX_CHUNK_LENGTH (default 240) — see config.js for the tradeoff.
+  maxChunkLength: FULL_MAX_CHUNK_LENGTH,
   maxSentencesPerChunk: 50, // length governs grouping; sentence cap is just a guard
   // Seamless natural join — match Live Fast, which inserts no synthetic silence and
   // keeps each clip's natural tail. See DEFAULTS.chunkJoinPauseMs for the full why.

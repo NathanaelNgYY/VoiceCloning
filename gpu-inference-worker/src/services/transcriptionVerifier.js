@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, countWords, isWordSpokenByTiming } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, countWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -232,8 +232,16 @@ class TranscriptionVerifier {
         // medical text). Degrade safely: with no timing data we can't add this check,
         // so fall back to the count + non-dict gates rather than never forgiving.
         const hasTimings = Array.isArray(words) && words.length > 0;
+        // Gate 4 (Live Full / Queue only): never forgive a dict word the model CLIPPED.
+        // A truncation ("chromatin" -> "chroma") reads as a mere mis-transcription to the
+        // count/timing gates above — the head has real audio and the token count holds —
+        // so it would be wrongly forgiven and shipped half-said. Reject any dict word whose
+        // heard token is a strict prefix of it. Gated on finalWordTailCheck so only the
+        // heavy-safeguard paths pay for the extra scrutiny; Live Fast is unaffected.
+        const rejectTruncated = (w) => finalWordTailCheck && isTruncatedDictWord(w, text);
         forgivenDict = missingWords.filter((w) => (
           dictSet.has(w.toLowerCase())
+          && !rejectTruncated(w)
           && (!hasTimings || isWordSpokenByTiming(expectedText, w, words))
         ));
         if (forgivenDict.length > 0) {

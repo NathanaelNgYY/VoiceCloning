@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords, isWordSpokenByTiming } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {
@@ -324,4 +324,19 @@ test('isWordSpokenByTiming rejects a word whose position has only near-zero span
     .split(' ')
     .map((wd, i) => ({ w: wd, start: i, end: i + (i >= 3 && i <= 7 ? 0.01 : 0.25) }));
   assert.equal(isWordSpokenByTiming(text, 'centriole', words), false);
+});
+
+test('isTruncatedDictWord detects a clipped word (heard prefix, tail cut)', () => {
+  assert.equal(isTruncatedDictWord('chromatin', 'the chroma condenses during mitosis'), true);
+  assert.equal(isTruncatedDictWord('environment', 'in its natural environ the cell'), true);
+});
+
+test('isTruncatedDictWord does not fire on a genuine mis-transcription', () => {
+  // "centriole" heard as "central" is a spelling slip, not a truncation (not a prefix).
+  assert.equal(isTruncatedDictWord('centriole', 'the mother central and daughter'), false);
+});
+
+test('isTruncatedDictWord ignores a complete read and short words', () => {
+  assert.equal(isTruncatedDictWord('chromatin', 'the chromatin condenses'), false);
+  assert.equal(isTruncatedDictWord('cell', 'the ce divides'), false); // too short to judge
 });
