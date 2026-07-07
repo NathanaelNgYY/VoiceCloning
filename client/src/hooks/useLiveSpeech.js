@@ -623,7 +623,10 @@ export function useLiveSpeech({
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
         const { blob } = await synthesizeForEngine(
           synthesis.engine,
-          buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage)
+          buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage, {
+            // First clip gates time-to-first-audio — play it unverified.
+            skipVerify: index === 0,
+          })
         );
 
         if (

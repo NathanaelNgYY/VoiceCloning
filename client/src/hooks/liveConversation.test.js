@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildLiveReplyParams,
+  buildLiveSentenceParams,
   createChatMessage,
   findFirstReplayablePart,
   findSelectedPlayback,
@@ -95,6 +96,16 @@ test('createLiveSynthesisSnapshot freezes Live Full engine and config for a queu
       voiceProfileId: 'alexv1',
     },
   });
+});
+
+test('buildLiveSentenceParams can mark a clip to skip backend stutter verification', () => {
+  // The first clip of a reply gates time-to-first-audio, so the client asks the
+  // worker to skip ASR verification for it; every later clip is verified.
+  const first = buildLiveSentenceParams('Hi.', { ref_audio_path: 'r.wav' }, 'en', { skipVerify: true });
+  assert.equal(first.skip_verify, true);
+
+  const later = buildLiveSentenceParams('Second sentence.', { ref_audio_path: 'r.wav' });
+  assert.equal('skip_verify' in later, false);
 });
 
 test('buildLiveReplyParams preserves full inference voice identity', () => {

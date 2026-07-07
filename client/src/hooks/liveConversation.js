@@ -347,8 +347,15 @@ export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_
   };
 }
 
-export function buildLiveSentenceParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
-  return buildLiveReplyParams(text, refParams, language);
+// `skipVerify` marks the reply's first clip: the worker skips its ASR stutter
+// check so verification never delays time-to-first-audio. Later clips verify
+// behind playback. (The Full-inference route whitelists params, so the flag is
+// harmless if it reaches that path.)
+export function buildLiveSentenceParams(text, refParams = {}, language = LIVE_TEXT_LANG, { skipVerify = false } = {}) {
+  return {
+    ...buildLiveReplyParams(text, refParams, language),
+    ...(skipVerify ? { skip_verify: true } : {}),
+  };
 }
 
 export function createChatMessage({
