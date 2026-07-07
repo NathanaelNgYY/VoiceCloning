@@ -164,6 +164,15 @@ test('buildRealtimeSessionUpdate appends prosody guidance even for a custom prom
   );
 });
 
+test('buildRealtimeSessionUpdate asks for a short opener and spoken-style phrasing', () => {
+  const update = buildRealtimeSessionUpdate({ language: 'en' });
+  // Short first sentence → the first TTS clip is small → voice starts sooner.
+  assert.match(update.session.instructions, /Open every reply with a short sentence/);
+  // Spoken-style delivery: contractions, varied sentence length, no list formatting.
+  assert.match(update.session.instructions, /contractions/);
+  assert.match(update.session.instructions, /Never write lists/);
+});
+
 test('buildRealtimeSessionUpdate appends prosody guidance for the Chinese prompt too', () => {
   const update = buildRealtimeSessionUpdate({ language: 'zh' });
   assert.match(
