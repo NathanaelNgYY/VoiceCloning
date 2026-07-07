@@ -27,4 +27,3 @@ graphify-out/
 
 # Local env files
 client/.env.combined
-docs/
