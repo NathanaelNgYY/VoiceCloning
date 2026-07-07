@@ -5,7 +5,7 @@
 
 > **Keep this file up to date.** Any change to staging infra (console, CLI, or script) must be reflected here in the same PR/commit. Every ID below was read from AWS on the date above — an AI session can diff this file against `aws describe-*` output to detect drift.
 >
-> Related docs: `docs/staging-environment-handoff.md` (how it was built + admin backlog), `docs/dev-environment-duplication-guide.md` (step-by-step build recipe; note its "dev" naming means today's "staging").
+> Related docs: `docs/dev-environment-duplication-guide.md` (step-by-step from-scratch build recipe; note its "dev" naming means today's "staging"). The original deployment handoff (`staging-environment-handoff.md`) was deleted after launch — recoverable from git history if needed.
 
 ## 1. Big picture
 
@@ -160,8 +160,14 @@ Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-
 
 ## 10. Known gaps / pending admin work (as of 2026-07-07)
 
-1. **Idle-stop EventBridge rule `vcs-staging-gpu-idle-stop` does not exist yet** — GPU must be stopped manually (g6.xlarge ≈ $1/hr). Commands in `docs/staging-environment-handoff.md` §BLOCKED-2.
-2. Leftover `voice-gpu-alb-dev` (`…/app/voice-gpu-alb-dev/17b83508f5602cd7`) + `vcs-dev-tg-3001/3002/3003` to delete (~$20/mo, serves nothing — artifact of the early naming flip).
+1. **Idle-stop EventBridge rule `vcs-staging-gpu-idle-stop` does not exist yet** — GPU must be stopped manually (g6.xlarge ≈ $1/hr). Admin commands (`events:*` is denied for our role):
+```powershell
+aws events put-rule --region ap-northeast-2 --name vcs-staging-gpu-idle-stop --schedule-expression "rate(5 minutes)"
+aws lambda add-permission --region ap-northeast-2 --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging --statement-id AllowEventBridgeGpuIdleStop --action lambda:InvokeFunction --principal events.amazonaws.com --source-arn arn:aws:events:ap-northeast-2:329599637774:rule/vcs-staging-gpu-idle-stop
+aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop --targets "Id=1,Arn=arn:aws:lambda:ap-northeast-2:329599637774:function:Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging,Input='{\"rawPath\":\"/api/instance/idle-check\",\"requestContext\":{\"http\":{\"method\":\"POST\"}}}'"
+```
+   Console: EventBridge → Rules → Create rule → Schedule rate(5 minutes) → target the `-staging` Lambda → target input = Constant (JSON) `{"rawPath":"/api/instance/idle-check","requestContext":{"http":{"method":"POST"}}}` (Lambda permission is auto-added via console). Verify: Lambda Monitor tab shows an invocation every 5 min.
+2. Leftover `voice-gpu-alb-dev` (`…/app/voice-gpu-alb-dev/17b83508f5602cd7`) + `vcs-dev-tg-3001/3002/3003` to delete (~$20/mo, serves nothing — artifact of the early naming flip). Admin (`elasticloadbalancing:Delete*` denied): `aws elbv2 delete-load-balancer --region ap-northeast-2 --load-balancer-arn <arn above>`, then delete the 3 TGs. ⚠️ `voice-gpu-alb` (April 2026, no suffix) is dev's REAL ALB — do not delete. Optional extra cleanup our role can do: deregister April AMI `ami-0a0a13fc71687e5cc` + snapshot `snap-04c1cb16d3a338c33` (~$2.5/mo); keep golden image `ami-06338e47a2f1bae6a`.
 3. Both Lambda Function URLs (dev + staging) are public (`NONE`) — harden to AWS_IAM + CloudFront OAC.
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
