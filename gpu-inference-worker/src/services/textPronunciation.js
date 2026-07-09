@@ -149,6 +149,19 @@ const ABBREVIATIONS = {
   'b/c': 'because',
 };
 
+// Spoken names for standalone capital letters. A lone letter (e.g. the "G" left
+// behind after "ΔG" -> "delta G") is otherwise handed to GPT-SoVITS's English
+// normalizer, which guesses the pronunciation and gets it wrong ("G" -> "jay").
+// Rewriting to the letter-NAME word routes it through the CMU/hot dictionary,
+// where engdict-hot.additions.rep pins the exact ARPAbet. "A" and "I" are real
+// words (article / pronoun) and are deliberately left untouched.
+const LETTER_NAMES = {
+  B: 'bee', C: 'cee', D: 'dee', E: 'ee', F: 'eff', G: 'gee', H: 'aitch',
+  J: 'jay', K: 'kay', L: 'el', M: 'em', N: 'en', O: 'oh', P: 'pee', Q: 'cue',
+  R: 'ar', S: 'ess', T: 'tee', U: 'yoo', V: 'vee', W: 'double you', X: 'ex',
+  Y: 'wy', Z: 'zee',
+};
+
 const SYMBOL_MAP = {
   '@': 'at',
   '&': 'and',
@@ -292,5 +305,11 @@ export function prepareTextForSynthesis(text) {
   result = result.replace(/\b([A-Za-z]+)\s*\/\s*([A-Za-z]+)\b/gu, '$1 or $2');
 
   result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
+
+  // Spell out standalone capital letters used as letters ("delta G", "type S").
+  // Runs late so it can't disturb the abbreviation/symbol passes above. A and I
+  // are real words and are excluded via LETTER_NAMES.
+  result = result.replace(/\b([A-Z])\b/gu, (m, letter) => LETTER_NAMES[letter] || m);
+
   return splitCompoundWords(result).trim();
 }

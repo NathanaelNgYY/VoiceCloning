@@ -5,11 +5,17 @@ import { prepareTextForSynthesis } from './textPronunciation.js';
 test('prepareTextForSynthesis normalizes symbols and dashes for any synthesis route', () => {
   const result = prepareTextForSynthesis('The free-energy change ΔG - or ∆G - is real-time.');
 
-  assert.match(result, /delta\s+G/i);
+  assert.match(result, /delta\s+gee/i);
   assert.doesNotMatch(result, /[Δ∆]/u);
   assert.doesNotMatch(result, /\s-\s/u);
   assert.doesNotMatch(result, /[–—]/u);
   assert.match(result, /real time/u);
+});
+
+test('prepareTextForSynthesis spells lone capital letters as letter names, leaving A and I alone', () => {
+  assert.equal(prepareTextForSynthesis('ΔG and ΔH and ΔS'), 'delta gee and delta aitch and delta ess');
+  // "A" (article) and "I" (pronoun) must survive untouched.
+  assert.equal(prepareTextForSynthesis('A patient told I would recover'), 'A patient told I would recover');
 });
 
 test('prepareTextForSynthesis expands known compounds before synthesis', () => {
@@ -27,8 +33,8 @@ test('prepareTextForSynthesis handles bullets, ranges, and math operators', () =
   assert.doesNotMatch(result, /•/u);
   assert.match(result, /5 to 10/u);
   assert.match(result, /for example/u);
-  assert.match(result, /delta G\s+less than or equal to\s+0/u);
-  assert.match(result, /A\+B|A B/u);
+  assert.match(result, /delta gee\s+less than or equal to\s+0/u);
+  assert.match(result, /A\+bee|A B/u);
   assert.doesNotMatch(result, /--/u);
 });
 
