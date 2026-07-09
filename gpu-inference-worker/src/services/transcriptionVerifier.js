@@ -11,7 +11,7 @@ import {
   TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, countWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
+import { computeWordCoverage, findClippedWords, findRepeatedPhrases, countWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -178,11 +178,17 @@ class TranscriptionVerifier {
     }
     const { text, words } = result;
     const { coverage, missingWords, extraWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
-    // A surplus of a substantial content word = a double-read (the model re-spoke a
-    // word/phrase). Coverage stays 100% so nothing else catches it; gate on it here.
-    // Short function words ("the") are too noisy to gate on, matching the missing-word
-    // length rule. Number/ID tokens are already excluded upstream by isCountable.
-    const substantialExtra = (extraWords || []).filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
+    // Live Full / Queue (finalWordTailCheck) gates on EVERY countable missing word, not
+    // just ≥4-char ones — losing "cell" or "one" is as unacceptable as a long term, and
+    // those paths accept the extra re-roll cost. Live Fast keeps the ≥4 threshold so
+    // short ASR-noisy function words don't cause needless re-rolls in live replies.
+    const substantialLength = finalWordTailCheck ? 2 : SUBSTANTIAL_WORD_LENGTH;
+    // Double-read gate: only a CONSECUTIVE repeat beyond what the text itself repeats
+    // ("cell one cell one") re-rolls. The old multiset-surplus gate both false-fired on
+    // stray ASR duplicates elsewhere in the transcript and missed doubled number words
+    // ("one one"), which surplus counting excludes as uncountable. extraWords is still
+    // returned for advisory best-of-N scoring.
+    const repeatedPhrases = findRepeatedPhrases(expectedText, text);
     // skippedWords = words whose audio span is too short for their length: a genuine
     // skip (near-zero audio) OR a half-cut word (said partway then stopped). Both are
     // reliable, duration-based, and force a re-roll. suspectWords additionally
@@ -192,7 +198,7 @@ class TranscriptionVerifier {
 
     // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
     // strict per-word as a short one.
-    let substantialMissing = missingWords.filter((w) => w.length >= SUBSTANTIAL_WORD_LENGTH);
+    let substantialMissing = missingWords.filter((w) => w.length >= substantialLength);
 
     // Dictionary (admin ARPAbet) words are rare medical terms Whisper-medium often
     // mis-transcribes even when the model said them correctly ("centriole"→"central"),
@@ -257,18 +263,18 @@ class TranscriptionVerifier {
     const ok = adjustedCoverage >= minCoverage
       && skippedWords.length === 0
       && substantialMissing.length === 0
-      && substantialExtra.length === 0;
+      && repeatedPhrases.length === 0;
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
         + `missing=[${missingWords.join(', ')}] skipped/cut=[${skippedWords.join(', ')}] `
         + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
-        + `extra/doubled=[${substantialExtra.join(', ')}] `
+        + `doubled=[${repeatedPhrases.join(' | ')}] `
         + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage: adjustedCoverage, missingWords, extraWords, suspectWords, skippedWords, transcript: text, words };
+    return { ok, coverage: adjustedCoverage, missingWords, extraWords, repeatedPhrases, suspectWords, skippedWords, transcript: text, words };
   }
 
   /** Is the ASR sidecar usable right now? */

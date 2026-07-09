@@ -1258,6 +1258,12 @@ export function scoreAudioCandidate(analysis, verification = null) {
   const extraCount = verification?.extraWords?.length || 0;
   const extraWordPenalty = extraCount * 4;
 
+  // A consecutive double-read ("cell one cell one") is the defect the extra-word
+  // surplus can miss entirely (doubled number words are uncountable there). Weight it
+  // like a clipped word so a best-effort fallback never prefers a stuttering take.
+  const repeatedCount = verification?.repeatedPhrases?.length || 0;
+  const repeatedPhrasePenalty = repeatedCount * 6;
+
   return (
     coverageBonus
     + similarityBonus
@@ -1266,6 +1272,7 @@ export function scoreAudioCandidate(analysis, verification = null) {
     - clippedWordPenalty
     - missingWordPenalty
     - extraWordPenalty
+    - repeatedPhrasePenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)
@@ -1323,7 +1330,7 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       if (verification && !verification.ok) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
         const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
-        const doubled = (verification.extraWords || []).slice(0, 6).join(', ');
+        const doubled = (verification.repeatedPhrases || []).slice(0, 6).join(' | ');
         const voiceDrift = verification.similarityOk === false
           ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
           : '';

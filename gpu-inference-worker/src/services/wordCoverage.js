@@ -185,6 +185,64 @@ export function computeWordCoverage(expectedText, transcript) {
   };
 }
 
+/**
+ * Detect a stutter/double-read: a word or short phrase spoken back-to-back MORE
+ * times than the text itself repeats it ("cell one cell one" for a single
+ * "cell one"; "hi hi hi" for "hi hi"). This replaces gating on the multiset
+ * surplus of expected words, which couldn't tell a real double-read apart from a
+ * stray ASR duplicate elsewhere in the transcript — and, inversely, missed doubled
+ * number words ("one one") that the surplus check excludes as uncountable. Only
+ * CONSECUTIVE repetition beyond the text's own consecutive repetition is flagged,
+ * so intentional doubles in the source ("very, very") never re-roll. Digits are
+ * included on purpose: a doubled "one" is exactly the defect this catches.
+ *
+ * @returns {string[]} repeated phrases (canonical form), empty when clean
+ */
+export function findRepeatedPhrases(expectedText, transcript, opts = {}) {
+  const maxNgram = Number.isFinite(opts.maxNgram) ? opts.maxNgram : 3;
+  const actual = tokenize(transcript).map(canonicalize);
+  const expected = tokenize(expectedText).map(canonicalize);
+
+  // Longest back-to-back run of `gram` anywhere in `tokens`.
+  const maxConsecutiveRun = (tokens, gram) => {
+    const n = gram.length;
+    let best = 0;
+    for (let i = 0; i + n <= tokens.length; i += 1) {
+      let run = 0;
+      let j = i;
+      while (j + n <= tokens.length && gram.every((t, k) => tokens[j + k] === t)) {
+        run += 1;
+        j += n;
+      }
+      if (run > best) best = run;
+    }
+    return best;
+  };
+
+  const flagged = [];
+  const seen = new Set();
+  for (let n = 1; n <= maxNgram; n += 1) {
+    for (let i = 0; i + 2 * n <= actual.length; i += 1) {
+      let repeats = true;
+      for (let k = 0; k < n; k += 1) {
+        if (actual[i + n + k] !== actual[i + k]) { repeats = false; break; }
+      }
+      if (!repeats) continue;
+      const gram = actual.slice(i, i + n);
+      const phrase = gram.join(' ');
+      // Single letters repeat legitimately in spelled-out acronyms ("E E G" et al.)
+      // and are too noisy to gate on.
+      if (phrase.replace(/\s/gu, '').length < 2) continue;
+      if (seen.has(phrase)) continue;
+      seen.add(phrase);
+      if (maxConsecutiveRun(actual, gram) > Math.max(1, maxConsecutiveRun(expected, gram))) {
+        flagged.push(phrase);
+      }
+    }
+  }
+  return flagged;
+}
+
 // A dictionary word may only be "forgiven" as a harmless mis-transcription when it
 // was actually SPOKEN in full — not when the model cut it short. When GPT-SoVITS clips
 // "chromatin" to "chroma" or "environment" to "environ", Whisper writes the shorter
@@ -333,6 +391,11 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const finalExpectedIndex = expected[expected.length - 1].index;
   const minFinalWordDuration = Number.isFinite(opts.minFinalWordDuration) ? opts.minFinalWordDuration : 0.12;
 
+  // Live Full / Queue (finalWordTailCheck) scrutinizes EVERY countable word, not just
+  // ≥4-char ones: a clipped "cell" or "rate" is as unacceptable there as a long term,
+  // and those paths accept the extra re-roll cost. Live Fast keeps the ≥4 gate.
+  const scrutinyLength = finalWordTailCheck ? 2 : MIN_SCRUTINY_LENGTH;
+
   for (const { raw, key, index } of expected) {
     let foundIndex = -1;
     for (let i = 0; i < actual.length; i++) {
@@ -359,7 +422,7 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
     // (Whisper is unsure precisely because the audio doesn't cover the whole word).
     // So the half-cut hard signal requires BOTH together, which fires on real cuts
     // without flagging complete words. Each signal alone stays advisory (scoring).
-    const longEnough = raw.length >= MIN_SCRUTINY_LENGTH;
+    const longEnough = raw.length >= scrutinyLength;
     const tooShort = longEnough && match.duration > 0 && match.duration / raw.length < minSecPerChar;
     const tooQuiet = longEnough && match.probability < minProbability;
     const halfCut = tooShort && tooQuiet;

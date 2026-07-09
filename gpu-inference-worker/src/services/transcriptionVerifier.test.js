@@ -204,9 +204,9 @@ test('a doubled substantial word rejects the take (Live Fast repeat defect)', as
   }
 });
 
-test('a doubled SHORT function word alone does not force a re-roll', async () => {
-  // Only "the" is surplus (3 letters) — too noisy to gate on, mirroring the missing-
-  // word length rule. A clean read with a stray short duplicate should still pass.
+test('a consecutively doubled word rejects even when it is short', async () => {
+  // "the the" back-to-back is a real stutter/double-read, not ASR noise — the
+  // consecutive-repeat gate rejects it regardless of word length.
   mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
     text: 'the the cell divides quickly',
     words: [],
@@ -217,7 +217,88 @@ test('a doubled SHORT function word alone does not force a re-roll', async () =>
       'the cell divides quickly',
       {},
     );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.repeatedPhrases.includes('the'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('a NON-consecutive stray duplicate does not force a re-roll', async () => {
+  // Whisper heard an extra "cell" elsewhere in the transcript (hallucinated or
+  // merged); with no back-to-back repeat this is not the double-read defect.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the cell divides quickly into a new cell',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the cell divides quickly into a new one',
+      {},
+    );
     assert.equal(res.ok, true, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('a doubled phrase with a number word rejects (cell one cell one)', async () => {
+  // Number words are uncountable for the surplus check, so only the consecutive-
+  // repeat gate can see this — the signature double-read defect.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'open cell one cell one now',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'open cell one now',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.repeatedPhrases.length > 0, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('an intentional double in the source text does not re-roll (hi hi)', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'hi hi welcome back',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'hi hi welcome back',
+      {},
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full gates on a missing SHORT content word that Live Fast tolerates', async () => {
+  // "cell" dropped: 4 letters already gated everywhere, so use a 3-letter word.
+  // Live Full (finalWordTailCheck) rejects any countable missing word; Live Fast
+  // keeps the ≥4 threshold and lets coverage decide.
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the sample was heated in the laboratory chamber overnight for testing',
+    words: [],
+  }));
+  try {
+    const expected = 'the wet sample was heated in the laboratory chamber overnight for testing';
+    const fast = await transcriptionVerifier.verifyChunk(Buffer.alloc(0), expected, {});
+    assert.equal(fast.ok, true, JSON.stringify(fast));
+    const full = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      expected,
+      { finalWordTailCheck: true },
+    );
+    assert.equal(full.ok, false, JSON.stringify(full));
+    assert.ok(full.missingWords.includes('wet'), JSON.stringify(full));
   } finally {
     mock.restoreAll();
   }
