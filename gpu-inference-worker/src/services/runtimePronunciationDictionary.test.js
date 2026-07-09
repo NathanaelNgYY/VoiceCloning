@@ -34,6 +34,16 @@ test('buildHotDictionaryLines converts admin ARPAbet entries into engdict-hot li
   ]), ['FOOZYME F UW1 Z AY0 M']);
 });
 
+test('buildHotDictionaryLines rejects non-ASCII words instead of hijacking a surviving letter', () => {
+  // "ΔG" would strip to the bare key "G" and register the delta pronunciation on
+  // every standalone "G". The entry must be skipped, not mangled.
+  assert.deepEqual(buildHotDictionaryLines([
+    { word: 'ΔG', arpabet: 'D EH1 L T AH0 G IY1' },
+    { word: 'β-blocker', arpabet: 'B EY1 T AH0 B L AA1 K ER0' },
+    { word: 'Foozyme', arpabet: 'F UW1 Z AY0 M' },
+  ]), ['FOOZYME F UW1 Z AY0 M']);
+});
+
 test('writeHotDictionaryOverrides appends managed admin block idempotently', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pronunciation-dict-'));
   const dictPath = path.join(root, 'GPT_SoVITS', 'text');

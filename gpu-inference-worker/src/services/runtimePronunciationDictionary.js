@@ -45,9 +45,27 @@ export function buildHotDictionaryLines(entries = []) {
   const lines = [];
   const seen = new Set();
   for (const entry of entries) {
-    const word = normalizeWord(entry.word).toUpperCase().replace(/[^A-Z0-9']/gu, '');
+    const rawWord = normalizeWord(entry.word).toUpperCase();
+    // GPT-SoVITS' g2p keys on the ASCII letters/digits only, so we strip everything
+    // else to form the dictionary key. But a word built ENTIRELY (or mostly) of
+    // non-ASCII characters — "ΔG", "β-blocker", "µg" — would collapse onto whatever
+    // few ASCII letters survive ("ΔG" -> "G"), silently registering this
+    // pronunciation under an unrelated common word. That is worse than a no-op: it
+    // hijacks every occurrence of the surviving letters. Greek letters are already
+    // spelled out in text normalization (see textPronunciation.js), so such an entry
+    // is never needed. Reject it loudly instead of corrupting another word.
+    const word = rawWord.replace(/[^A-Z0-9']/gu, '');
     const arpabet = normalizeArpabet(entry.arpabet);
-    if (!word || !arpabet || seen.has(word)) continue;
+    if (!arpabet) continue;
+    if (!word || seen.has(word)) continue;
+    if (/[^\x00-\x7F]/u.test(rawWord)) {
+      console.warn(
+        `[pronunciation] SKIPPED ARPAbet entry for "${entry.word}": non-ASCII characters `
+        + 'cannot be a dictionary key (stripping them would hijack the pronunciation of an '
+        + 'unrelated word). Greek letters are already spelled out during text normalization.',
+      );
+      continue;
+    }
     seen.add(word);
     lines.push(`${word} ${arpabet}`);
   }
