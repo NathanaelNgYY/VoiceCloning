@@ -20,7 +20,7 @@ const DEFAULT_SYSTEM_PROMPT =
 // so the TTS layer always receives punctuated, speakable text. The voice ("Trump")
 // is the cloned GPT-SoVITS model — this only shapes the *text*, never the timbre.
 const PROSODY_GUIDANCE =
-  'Write the way it should be spoken aloud: use short sentences, commas for natural rhythm, and em dashes — like this — for mid-sentence pauses. End every sentence with a period, question mark, or exclamation mark. Spell out numbers and years the way you would say them.';
+  'Write the way it should be spoken aloud: use short sentences, commas for natural rhythm, and em dashes — like this — for mid-sentence pauses. End every sentence with a period, question mark, or exclamation mark. Open every reply with a short sentence of eight words or fewer. Use contractions, and vary sentence length the way natural speech does. Never write lists, bullet points, or numbered points — weave the items into flowing sentences. Spell out numbers and years the way you would say them.';
 
 function cleanText(value) {
   return String(value || '').trim();

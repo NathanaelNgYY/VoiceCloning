@@ -161,6 +161,62 @@ const SYMBOL_MAP = {
   '*': 'times',
 };
 
+// Numeric notation GPT-SoVITS's internal English normalizer handles unpredictably —
+// and which the ASR verifier can't check at all (digit-bearing tokens are excluded
+// from coverage as un-verifiable). Expanding them into words makes the pronunciation
+// deterministic AND turns them into countable words the skip/clip verifier protects.
+
+// Ordinals 1st–12th. Whisper writes these back as words in running speech; the
+// verifier also canonicalizes a re-abbreviated "1st" back to "first" (wordCoverage),
+// so the expansion never reads as a missing word. 13th+ is left alone: compound
+// ordinals ("twenty-first") round-trip through ASR too inconsistently to verify.
+const ORDINAL_WORDS = {
+  '1st': 'first', '2nd': 'second', '3rd': 'third', '4th': 'fourth',
+  '5th': 'fifth', '6th': 'sixth', '7th': 'seventh', '8th': 'eighth',
+  '9th': 'ninth', '10th': 'tenth', '11th': 'eleventh', '12th': 'twelfth',
+};
+
+// Units directly after a number. [abbrev pattern, singular, plural]; "1 mg" says
+// "1 milligram", any other count is plural. mmHg is handled in the same pass.
+const NUMBER_UNITS = [
+  ['mmHg', 'millimeters of mercury', 'millimeters of mercury'],
+  ['mcg|µg|ug', 'microgram', 'micrograms'],
+  ['mg', 'milligram', 'milligrams'],
+  ['ml|mL', 'milliliter', 'milliliters'],
+  ['kg', 'kilogram', 'kilograms'],
+  ['km', 'kilometer', 'kilometers'],
+  ['cm', 'centimeter', 'centimeters'],
+  ['mm', 'millimeter', 'millimeters'],
+  ['bpm', 'beats per minute', 'beats per minute'],
+  ['hrs', 'hours', 'hours'],
+  ['hr', 'hour', 'hours'],
+  ['mins', 'minutes', 'minutes'],
+];
+
+// Roman numerals ONLY after a classifier word ("stage IV", "type II"), where they are
+// unambiguous — a bare "IV" (intravenous) or "I" (pronoun) must not be touched.
+// Digits, not words, so Whisper's own "stage 4" output matches at verification.
+const ROMAN_AFTER_CLASSIFIER = /\b(type|stage|phase|grade|class)\s+(III|II|IV|V|I)\b/g;
+const ROMAN_VALUES = { I: '1', II: '2', III: '3', IV: '4', V: '5' };
+
+function expandNumericNotation(text) {
+  let result = text
+    // "50%" (attached) — the standalone-symbol map below only catches spaced "%".
+    .replace(/(\d)\s*%/g, '$1 percent');
+  for (const [abbrev, singular, plural] of NUMBER_UNITS) {
+    // Word chosen by the full number before the unit: exactly "1" is singular.
+    result = result.replace(
+      new RegExp(`\\b(\\d+(?:\\.\\d+)?)\\s*(?:${abbrev})\\b`, 'g'),
+      (_m, num) => `${num} ${num === '1' ? singular : plural}`,
+    );
+  }
+  result = result.replace(
+    new RegExp(`\\b(${Object.keys(ORDINAL_WORDS).join('|')})\\b`, 'g'),
+    (m) => ORDINAL_WORDS[m],
+  );
+  return result.replace(ROMAN_AFTER_CLASSIFIER, (_m, kw, numeral) => `${kw} ${ROMAN_VALUES[numeral]}`);
+}
+
 const abbrPattern = new RegExp(
   '(?<=^|\\s)(' +
   Object.keys(ABBREVIATIONS)
@@ -183,6 +239,10 @@ function splitCompoundWords(text) {
 
 export function prepareTextForSynthesis(text) {
   let result = String(text || '');
+
+  // Must run BEFORE the Greek-letter pass: "5µg" has to become "5 micrograms"
+  // while µ is still attached to its unit (afterwards it would read "5 mu g").
+  result = expandNumericNotation(result);
 
   result = result
     .replace(/\r\n/g, '\n')
