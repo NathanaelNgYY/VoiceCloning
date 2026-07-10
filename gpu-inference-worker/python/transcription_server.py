@@ -28,10 +28,11 @@ def log(message):
     print(f"[transcription_server] {message}", file=sys.stderr, flush=True)
 
 
-def build_model():
+def build_model(model_size=None):
     from faster_whisper import WhisperModel
 
-    model_size = os.environ.get("TRANSCRIPTION_MODEL", "small")
+    if model_size is None:
+        model_size = os.environ.get("TRANSCRIPTION_MODEL", "small")
     requested_device = os.environ.get("TRANSCRIPTION_DEVICE", "auto")
     compute_type = os.environ.get("TRANSCRIPTION_COMPUTE", "int8")
 
@@ -64,6 +65,26 @@ def main():
     language = os.environ.get("TRANSCRIPTION_LANGUAGE", "en") or None
     print(json.dumps({"ready": True}), flush=True)
 
+    # Optional heavier model for requests tagged tier="accurate" (Live Full / Queue).
+    # Lazy-loaded on first use so startup and the fast paths pay nothing for it; if it
+    # fails to load (VRAM, missing download), requests permanently fall back to the
+    # default model instead of erroring.
+    accurate_size = os.environ.get("TRANSCRIPTION_MODEL_ACCURATE", "")
+    default_size = os.environ.get("TRANSCRIPTION_MODEL", "small")
+    accurate_state = {"model": None, "failed": accurate_size in ("", default_size)}
+
+    def model_for(tier):
+        if tier != "accurate" or accurate_state["failed"]:
+            return model
+        if accurate_state["model"] is None:
+            try:
+                accurate_state["model"] = build_model(accurate_size)
+            except Exception as exc:  # noqa: BLE001
+                log(f"accurate model {accurate_size} unavailable, using default: {exc}")
+                accurate_state["failed"] = True
+                return model
+        return accurate_state["model"]
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -81,7 +102,7 @@ def main():
             continue
 
         try:
-            segments, _info = model.transcribe(
+            segments, _info = model_for(request.get("tier")).transcribe(
                 path,
                 language=language,
                 beam_size=int(os.environ.get("TRANSCRIPTION_BEAM_SIZE", "1")),

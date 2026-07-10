@@ -80,6 +80,12 @@ export const TRANSCRIPTION_VERIFY_ENABLED = parseBooleanEnv(readEnv('TRANSCRIPTI
 // The sidecar is shared, so Live Fast benefits too; there is no per-path regression, only
 // better detection. Drop back to 'small' via env if VRAM/latency on the box demands it.
 export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'medium';
+// Heavier model used ONLY for the Live Full / Queue verification passes
+// (finalWordTailCheck paths). Those paths already accept extra latency for stricter
+// gates, and large-v3's word timings/confidence catch cut words medium still misses.
+// Lazy-loaded in the sidecar on first Live Full request, so Live Fast / chatbot
+// verification latency is untouched. Set equal to TRANSCRIPTION_MODEL to disable.
+export const TRANSCRIPTION_MODEL_ACCURATE = readEnv('TRANSCRIPTION_MODEL_ACCURATE') || 'large-v3';
 // Minimum fraction of a chunk's expected words that must appear in the transcript
 // for the read to be accepted. Below this, the chunk is treated as having dropped
 // words and is retried.

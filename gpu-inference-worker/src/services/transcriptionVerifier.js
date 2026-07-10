@@ -9,6 +9,7 @@ import {
   LOCAL_TEMP_ROOT,
   buildPythonEnv,
   TRANSCRIPTION_MODEL,
+  TRANSCRIPTION_MODEL_ACCURATE,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
 import { computeWordCoverage, findClippedWords, findRepeatedPhrases, countWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
@@ -57,7 +58,7 @@ class TranscriptionVerifier {
       try {
         proc = spawn(PYTHON_EXEC, [SCRIPTS.transcriptionServer], {
           cwd: path.dirname(SCRIPTS.transcriptionServer),
-          env: buildPythonEnv({ TRANSCRIPTION_MODEL }),
+          env: buildPythonEnv({ TRANSCRIPTION_MODEL, TRANSCRIPTION_MODEL_ACCURATE }),
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {
@@ -137,7 +138,7 @@ class TranscriptionVerifier {
     else entry.resolve({ text: String(message.text || ''), words: Array.isArray(message.words) ? message.words : [] });
   }
 
-  async transcribeBuffer(audioBuffer) {
+  async transcribeBuffer(audioBuffer, { tier } = {}) {
     const started = await this.ensureStarted();
     if (!started || !this.process) throw new Error('Transcription sidecar unavailable');
 
@@ -154,7 +155,7 @@ class TranscriptionVerifier {
           reject(new Error('Transcription timed out'));
         }, REQUEST_TIMEOUT_MS);
         this.pending.set(id, { resolve, reject, timer });
-        this.process.stdin.write(`${JSON.stringify({ id, path: filePath })}\n`);
+        this.process.stdin.write(`${JSON.stringify({ id, path: filePath, tier })}\n`);
       });
     } finally {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
@@ -171,7 +172,10 @@ class TranscriptionVerifier {
   async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [], finalWordTailCheck = false } = {}) {
     let result;
     try {
-      result = await this.transcribeBuffer(audioBuffer);
+      // Live Full / Queue (finalWordTailCheck) transcribe with the heavier accurate
+      // model: those paths trade latency for catching cut words, and better word
+      // timings/confidence are exactly what the clip/skip gates feed on.
+      result = await this.transcribeBuffer(audioBuffer, { tier: finalWordTailCheck ? 'accurate' : undefined });
     } catch (err) {
       console.warn(`[transcription] verification skipped: ${err.message}`);
       return null;
