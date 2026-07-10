@@ -17,6 +17,7 @@ import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
+import { scanOovWords } from '../services/oovScan.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
 import { expandSsml } from '../services/ssml.js';
 import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
@@ -384,6 +385,21 @@ router.post('/inference/tts', async (req, res) => {
     res.send(audioBuffer);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Scan the input text for words the running engine would pronounce by NEURAL GUESS
+// (not from the dictionary) — the deterministically-mispronounced set an admin should
+// add an ARPAbet override for. Read-only and cheap; safe to call on every keystroke-lull.
+router.post('/inference/scan-oov', (req, res) => {
+  try {
+    const text = String(req.body?.text || '');
+    if (!text.trim()) {
+      return res.json({ flagged: [], totalWords: 0, coveredWords: 0, dictionaryLoaded: true });
+    }
+    return res.json(scanOovWords(text));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

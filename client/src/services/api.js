@@ -481,6 +481,13 @@ export function deletePronunciationEntry(entry) {
   return api.post('/pronunciation-dictionary', { ...entry, action: 'delete' });
 }
 
+// Scan input text for words the engine would pronounce by neural guess (not from the
+// dictionary) — i.e. words that likely need an ARPAbet override. Returns
+// { flagged: string[], totalWords, coveredWords, dictionaryLoaded }.
+export function scanOovWords(text) {
+  return api.post('/inference/scan-oov', { text });
+}
+
 export async function getInferenceChunk(sessionId, index) {
   const res = await axios.get(resolveApiPath(
     `/api/inference/chunk/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`,

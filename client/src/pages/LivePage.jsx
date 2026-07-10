@@ -17,6 +17,7 @@ import {
   getInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
+  scanOovWords,
   savePronunciationEntry,
   deletePronunciationEntry,
   startInferenceServer,
@@ -112,6 +113,7 @@ import {
   Pencil,
   PlayCircle,
   RefreshCw,
+  ScanSearch,
   Sparkles,
   Square,
   Trash2,
@@ -405,6 +407,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationGenerating, setPronunciationGenerating] = useState(false);
   const [pronunciationTestingWord, setPronunciationTestingWord] = useState('');
   const [pronunciationReloadPending, setPronunciationReloadPending] = useState(false);
+  const [oovScan, setOovScan] = useState(null); // { flagged, totalWords, coveredWords, dictionaryLoaded } | null
+  const [oovScanning, setOovScanning] = useState(false);
+  const [oovScanError, setOovScanError] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -2136,6 +2141,32 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationMessage(`Editing ${entry.word}.`);
   }
 
+  async function handleScanOovWords() {
+    const text = ttsText.trim();
+    if (!text) return;
+    setOovScanning(true);
+    setOovScanError('');
+    try {
+      const result = await scanOovWords(text);
+      setOovScan(result);
+    } catch (err) {
+      setOovScanError(err?.response?.data?.error || err.message || 'Scan failed.');
+      setOovScan(null);
+    } finally {
+      setOovScanning(false);
+    }
+  }
+
+  // Click a flagged word to start a dictionary override for it: prefills the Word field
+  // (and its Generate/Save flow below) so the admin only supplies the ARPAbet.
+  function startOverrideForWord(word) {
+    setEditingPronunciationWord('');
+    setPronunciationWord(word);
+    setPronunciationReadable('');
+    setPronunciationArpabet('');
+    setPronunciationMessage(`Add an override for "${word}", then Generate or type the ARPAbet and Save entry.`);
+  }
+
   function clearPronunciationForm() {
     setEditingPronunciationWord('');
     setPronunciationWord('');
@@ -3379,6 +3410,62 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 {streamingRoute === 'fullQueued' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference Queue
               </Button>
+            </div>
+
+            {/* Pronunciation pre-check: flags words the engine would pronounce by neural
+                guess (not the dictionary), so an admin can add ARPAbet overrides before
+                a demo instead of discovering them by ear. */}
+            <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Pronunciation check</p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Scan the script for words missing from the dictionary (likely mispronounced).
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleScanOovWords}
+                  disabled={!ttsText.trim() || oovScanning}
+                  className="h-9 shrink-0 rounded-lg border-slate-200 bg-white shadow-none"
+                >
+                  {oovScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanSearch size={14} />}
+                  Scan text
+                </Button>
+              </div>
+              {oovScanError && (
+                <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{oovScanError}</p>
+              )}
+              {oovScan && !oovScanError && (
+                oovScan.flagged.length === 0 ? (
+                  <p className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                    All {oovScan.totalWords} words resolve from the dictionary — nothing to add.
+                  </p>
+                ) : (
+                  <div className="mt-2">
+                    <p className="text-xs text-slate-500">
+                      {oovScan.flagged.length} word{oovScan.flagged.length === 1 ? '' : 's'} not in the dictionary.
+                      Click one to start an override below.
+                      {!oovScan.dictionaryLoaded && ' (Warning: dictionary not loaded on the server — results may be unreliable.)'}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {oovScan.flagged.map((word) => (
+                        <button
+                          key={word}
+                          type="button"
+                          onClick={() => startOverrideForWord(word)}
+                          title="Add a pronunciation override for this word"
+                          className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 transition hover:border-amber-300 hover:bg-amber-100"
+                        >
+                          {word}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              )}
             </div>
 
             <div className="hidden">
