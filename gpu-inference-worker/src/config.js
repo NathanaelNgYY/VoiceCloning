@@ -64,7 +64,13 @@ export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_M
 // failed re-roll cost less text; too short loses the context that steadies pronunciation
 // and adds chunk seams. 240 (~1.5-2 medical sentences) is a touch tighter than the old
 // 280; tune empirically on the GPU box (try 200 / 240 / 280) via FULL_MAX_CHUNK_LENGTH.
-export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 240));
+// Lowered 240 -> 170: a hard medical term (cohesin, kinetochore) sitting deep in a
+// long chunk is where the AR decoder rushes/drifts it into a near neighbour
+// ("cohesin" -> "cohesion") even though g2p fed the correct phonemes — the reported
+// failure. Shorter chunks give each hard word a controlled acoustic context. Live Full
+// accepts the extra chunk-seam / latency cost for accuracy; Live Fast does not chunk and
+// is unaffected. Tune via FULL_MAX_CHUNK_LENGTH.
+export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 170));
 
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended

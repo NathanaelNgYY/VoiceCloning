@@ -154,8 +154,30 @@ async function synthesizeLiveFastChunk(baseParams, {
   let lastError = null;
   let best = null;
 
+  // A babble / drone ("aaaaa"), silent, or clipped take is a CATASTROPHIC degeneration of
+  // the AR decoder, not a mere dropped word — and a fresh seed reliably escapes it. Shipping
+  // one as best-effort is far worse than a little extra latency, so when every take so far is
+  // catastrophic we spend extra reseeds beyond the normal budget (capped). This never touches
+  // the good-take path (a clean take early-returns) and changes nothing about how the model
+  // speaks — it only keeps re-rolling audio that is already unusable.
+  const isCatastrophic = (analysis) => {
+    const m = analysis?.metrics || {};
+    return !analysis?.ok && (
+      (m.loopScore ?? 0) > 0.5
+      || (m.rms ?? 1) < 0.003
+      || (m.zeroishRatio ?? 0) > 0.995
+      || (m.clippedRatio ?? 0) > 0.2
+    );
+  };
+  const MAX_BABBLE_ESCAPE_RESEEDS = 4;
+  let babbleEscapesLeft = MAX_BABBLE_ESCAPE_RESEEDS;
+
+  // takeIndex increases on every take (including babble-escape reseeds) so each take gets
+  // a genuinely different seed from buildAttemptVariants; `attempt` only tracks the budget.
+  let takeIndex = -1;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const params = buildAttemptVariants({ ...baseParams, text: `${chunkText} ` }, attempt);
+    takeIndex += 1;
+    const params = buildAttemptVariants({ ...baseParams, text: `${chunkText} ` }, takeIndex);
     try {
       const audioBuffer = await synthesize(params);
 
@@ -182,7 +204,7 @@ async function synthesizeLiveFastChunk(baseParams, {
       }
 
       const score = scoreAudioCandidate(analysis, verification);
-      if (!best || score > best.score) best = { audioBuffer, score };
+      if (!best || score > best.score) best = { audioBuffer, score, catastrophic: isCatastrophic(analysis) };
 
       if (!analysis.ok) throw new Error(analysis.reason || 'Audio failed quality analysis');
       if (verification && !verification.ok) {
@@ -191,6 +213,14 @@ async function synthesizeLiveFastChunk(baseParams, {
       return audioBuffer;
     } catch (err) {
       lastError = err;
+    }
+
+    // Out of normal budget but every take we kept is babble/silent — buy extra reseeds
+    // rather than ship a drone. Only the best (highest-scoring) take being catastrophic
+    // triggers this, so a single stray babble among usable takes does not extend the loop.
+    if (attempt === maxRetries && best?.catastrophic && babbleEscapesLeft > 0) {
+      babbleEscapesLeft -= 1;
+      attempt -= 1; // grant one more iteration (takeIndex still advances → fresh seed)
     }
   }
 
