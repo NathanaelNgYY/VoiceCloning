@@ -2147,8 +2147,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setOovScanning(true);
     setOovScanError('');
     try {
-      const result = await scanOovWords(text);
-      setOovScan(result);
+      const res = await scanOovWords(text);
+      const result = res.data || {};
+      setOovScan({
+        flagged: Array.isArray(result.flagged) ? result.flagged : [],
+        totalWords: result.totalWords ?? 0,
+        coveredWords: result.coveredWords ?? 0,
+        dictionaryLoaded: result.dictionaryLoaded !== false,
+      });
     } catch (err) {
       setOovScanError(err?.response?.data?.error || err.message || 'Scan failed.');
       setOovScan(null);
