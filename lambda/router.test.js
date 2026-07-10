@@ -92,7 +92,7 @@ test('router resolves generated inference chunk route', () => {
     {
       name: 'InferenceFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/inference(?:\/(?:generate|result\/[A-Za-z0-9-]+|chunk\/[A-Za-z0-9-]+\/\d+|cancel|current|status|start|stop))?\/?$/u,
+      pattern: /^\/api\/inference(?:\/(?:generate|scan-oov|result\/[A-Za-z0-9-]+|chunk\/[A-Za-z0-9-]+\/\d+|cancel|current|status|start|stop))?\/?$/u,
       modulePath: './inference/index.js',
       lambdaPath: '/api/inference/chunk/abc-123/2',
     },

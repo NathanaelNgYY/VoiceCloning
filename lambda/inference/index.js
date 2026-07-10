@@ -82,6 +82,12 @@ export function createHandler({
         return ok(await postJson('/inference/generate', resolvedBody, demoHdr));
       }
 
+      // Read-only pronunciation pre-check: flags words the engine would pronounce by
+      // neural guess. No ref audio / synthesis — just forward the text to the worker.
+      if (method === 'POST' && routePath.endsWith('/inference/scan-oov')) {
+        return ok(await postJson('/inference/scan-oov', { text: body.text || '' }));
+      }
+
       if (method === 'GET' && routePath.includes('/inference/result/')) {
         const sessionId = routePath.split('/inference/result/')[1]?.replace(/\/$/u, '');
         if (!sessionId || !/^[A-Za-z0-9-]+$/u.test(sessionId)) {
