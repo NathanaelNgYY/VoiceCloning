@@ -51,15 +51,14 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  // The "best zone" is 1 full sentence to ~3 connected sentences: enough context for
-  // natural pronunciation, but short enough that the model keeps control and (with
-  // cut0) its natural pacing doesn't drift. Break only at SENTENCE ends (commas stay
-  // inside the chunk and are handled by the model, not turned into chunk-join
-  // silences), grouped up to ~280 chars (≈ 2-3 medical sentences). Going bigger only
-  // hurts retry granularity and risks tail-drop, for little naturalness gain. Tunable
-  // via FULL_MAX_CHUNK_LENGTH (default 240) — see config.js for the tradeoff.
+  // Keep each normal sentence as its own autoregressive take. Real-user testing found
+  // one- or two-sentence requests materially more faithful than a whole script, and
+  // grouping short sentences recreated the same cumulative drift inside a chunk. A
+  // single-sentence unit also gives ASR/retries precise recovery granularity: one bad
+  // sentence is re-seeded without regenerating neighbouring good sentences. Sentences
+  // longer than maxChunkLength still use the guarded long-sentence splitter below.
   maxChunkLength: FULL_MAX_CHUNK_LENGTH,
-  maxSentencesPerChunk: 50, // length governs grouping; sentence cap is just a guard
+  maxSentencesPerChunk: 1,
   // Seamless natural join — match Live Fast, which inserts no synthetic silence and
   // keeps each clip's natural tail. See DEFAULTS.chunkJoinPauseMs for the full why.
   chunkJoinPauseMs: 0,

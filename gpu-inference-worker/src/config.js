@@ -59,11 +59,11 @@ export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUS
 export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 0));
 
 // Max characters per chunk on the Live Full / Live Full Queue path (FULL_QUALITY_OPTIONS
-// only — Live Fast does not chunk). Shorter chunks keep a hard medical word from sitting
-// deep in a long sentence where the AR decoder is likeliest to rush/clip it, and make a
-// failed re-roll cost less text; too short loses the context that steadies pronunciation
-// and adds chunk seams. 240 (~1.5-2 medical sentences) is a touch tighter than the old
-// 280; tune empirically on the GPU box (try 200 / 240 / 280) via FULL_MAX_CHUNK_LENGTH.
+// only — Live Fast does not chunk). Normal sentences are isolated by the quality preset;
+// this limit governs only unusually long individual sentences. Shorter chunks keep a
+// hard medical word from sitting deep in a long sentence where the AR decoder is
+// likeliest to rush/clip it, and make a failed re-roll cost less text; too short loses
+// the context that steadies pronunciation and adds chunk seams.
 // Lowered 240 -> 170: a hard medical term (cohesin, kinetochore) sitting deep in a
 // long chunk is where the AR decoder rushes/drifts it into a near neighbour
 // ("cohesin" -> "cohesion") even though g2p fed the correct phonemes — the reported

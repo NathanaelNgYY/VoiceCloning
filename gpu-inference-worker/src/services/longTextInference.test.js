@@ -256,6 +256,21 @@ test('full inference quality keeps comma splicing off by default (opt-in via env
   assert.equal(options.commaPauseMs, 0);
 });
 
+test('full inference quality isolates normal sentences for precise retries', () => {
+  const options = fullInferenceQualityOptions();
+  const chunks = splitTextIntoChunks(
+    'The first sentence explains the process clearly. The second sentence contains another important detail. The third sentence concludes the explanation.',
+    options,
+  );
+
+  assert.equal(options.maxSentencesPerChunk, 1);
+  assert.deepEqual(chunks, [
+    'The first sentence explains the process clearly.',
+    'The second sentence contains another important detail.',
+    'The third sentence concludes the explanation.',
+  ]);
+});
+
 test('retry takes are voice-faithful: ONLY the seed changes', () => {
   const base = applyFullInferenceQualityPreset({
     text: 'Cellular respiration releases energy from glucose.',
