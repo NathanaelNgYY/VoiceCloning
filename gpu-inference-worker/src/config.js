@@ -59,8 +59,8 @@ export const COMMA_PAUSE_SECONDS = Math.max(0, parseFloatEnv(readEnv('COMMA_PAUS
 export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_MS'), 0));
 
 // Max characters per chunk on the Live Full / Live Full Queue path (FULL_QUALITY_OPTIONS
-// only — Live Fast does not chunk). Normal sentences are isolated by the quality preset;
-// this limit governs only unusually long individual sentences. Shorter chunks keep a
+// only — Live Fast does not chunk). The quality preset allows at most two sentences;
+// this limit remains the primary grouping guard. Shorter chunks keep a
 // hard medical word from sitting deep in a long sentence where the AR decoder is
 // likeliest to rush/clip it, and make a failed re-roll cost less text; too short loses
 // the context that steadies pronunciation and adds chunk seams.

@@ -51,14 +51,13 @@ const FULL_QUALITY_PRESET = {
 };
 
 const FULL_QUALITY_OPTIONS = {
-  // Keep each normal sentence as its own autoregressive take. Real-user testing found
-  // one- or two-sentence requests materially more faithful than a whole script, and
-  // grouping short sentences recreated the same cumulative drift inside a chunk. A
-  // single-sentence unit also gives ASR/retries precise recovery granularity: one bad
-  // sentence is re-seeded without regenerating neighbouring good sentences. Sentences
-  // longer than maxChunkLength still use the guarded long-sentence splitter below.
+  // Keep each take to at most two normal sentences. Real-user testing found one- or
+  // two-sentence requests materially more faithful than a whole script; the character
+  // cap remains the primary guard, while this ceiling preserves useful neighbouring
+  // context without allowing many tiny sentences to accumulate into one drifting take.
+  // Sentences longer than maxChunkLength still use the guarded splitter below.
   maxChunkLength: FULL_MAX_CHUNK_LENGTH,
-  maxSentencesPerChunk: 1,
+  maxSentencesPerChunk: 2,
   // Seamless natural join — match Live Fast, which inserts no synthetic silence and
   // keeps each clip's natural tail. See DEFAULTS.chunkJoinPauseMs for the full why.
   chunkJoinPauseMs: 0,
