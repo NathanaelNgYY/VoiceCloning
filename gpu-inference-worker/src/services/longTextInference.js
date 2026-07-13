@@ -142,22 +142,36 @@ function splitIntoSentences(text) {
   return [normalized];
 }
 
-function splitLongSentence(sentence, maxChunkLength) {
-  if (sentence.length <= maxChunkLength) return [sentence];
+function countChunkWords(text) {
+  return String(text || '').match(/[\p{L}\p{N}']+/gu)?.length || 0;
+}
+
+function wordLimitCutIndex(text, maxWords) {
+  if (!(maxWords > 0)) return text.length;
+  const matches = Array.from(text.matchAll(/[\p{L}\p{N}']+/gu));
+  if (matches.length <= maxWords) return text.length;
+  const last = matches[maxWords - 1];
+  return last.index + last[0].length;
+}
+
+function splitLongSentence(sentence, maxChunkLength, maxChunkWords = 0) {
+  if (sentence.length <= maxChunkLength && (!(maxChunkWords > 0) || countChunkWords(sentence) <= maxChunkWords)) return [sentence];
 
   // Protect semantic units before splitting
   const protected_ = protectSemanticUnits(sentence);
 
   const parts = [];
   let remaining = protected_.trim();
-  const minCut = Math.floor(maxChunkLength * 0.6);
 
   // Priority tiers for split points. Do not prefer commas here: a comma-ended
   // synthesized chunk plus a chunk join can sound like a skipped or merged word.
   const clauseSeparators = [';', ':', '；', '：'];      // clause boundaries (preferred)
 
-  while (remaining.length > maxChunkLength) {
-    const searchWindow = remaining.slice(0, maxChunkLength + 1);
+  while (remaining.length > maxChunkLength || (maxChunkWords > 0 && countChunkWords(remaining) > maxChunkWords)) {
+    const wordCut = wordLimitCutIndex(remaining, maxChunkWords);
+    const hardLimit = Math.min(maxChunkLength, wordCut);
+    const minCut = Math.floor(hardLimit * 0.6);
+    const searchWindow = remaining.slice(0, hardLimit + 1);
     let cut = -1;
 
     // Tier 1: prefer clause-level separators
@@ -173,12 +187,12 @@ function splitLongSentence(sentence, maxChunkLength) {
 
     // Tier 3: hard cut at max length
     if (cut < minCut) {
-      cut = maxChunkLength;
+      cut = hardLimit;
     }
 
-    const slice = remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    const slice = remaining.slice(0, cut + (cut === hardLimit ? 0 : 1)).trim();
     parts.push(restoreSemanticUnits(slice));
-    remaining = remaining.slice(cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    remaining = remaining.slice(cut + (cut === hardLimit ? 0 : 1)).trim();
   }
 
   if (remaining) parts.push(restoreSemanticUnits(remaining));
@@ -212,10 +226,14 @@ export function splitTextIntoChunks(text, options = {}) {
 }
 
 function chunkSegment(text, options = {}) {
-  const maxChunkLength = Math.max(80, clampNumber(options.maxChunkLength, DEFAULTS.maxChunkLength));
+  const maxChunkWords = Math.max(0, clampNumber(options.maxChunkWords, 0));
+  // An explicit word override takes priority over the default character heuristic.
+  const maxChunkLength = maxChunkWords > 0
+    ? Number.MAX_SAFE_INTEGER
+    : Math.max(80, clampNumber(options.maxChunkLength, DEFAULTS.maxChunkLength));
   const maxSentencesPerChunk = Math.max(1, clampNumber(options.maxSentencesPerChunk, DEFAULTS.maxSentencesPerChunk));
 
-  const rawSentences = splitIntoSentences(text).flatMap(sentence => splitLongSentence(sentence, maxChunkLength));
+  const rawSentences = splitIntoSentences(text).flatMap(sentence => splitLongSentence(sentence, maxChunkLength, maxChunkWords));
   const chunks = [];
   let current = '';
   let sentenceCount = 0;
@@ -223,9 +241,10 @@ function chunkSegment(text, options = {}) {
   for (const sentence of rawSentences) {
     const candidate = current ? `${current} ${sentence}` : sentence;
     const exceedsLength = candidate.length > maxChunkLength;
+    const exceedsWords = maxChunkWords > 0 && countChunkWords(candidate) > maxChunkWords;
     const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
 
-    if (current && (exceedsLength || exceedsSentenceCount)) {
+    if (current && (exceedsLength || exceedsWords || exceedsSentenceCount)) {
       chunks.push(current.trim());
       current = sentence;
       sentenceCount = 1;
@@ -242,7 +261,9 @@ function chunkSegment(text, options = {}) {
     const trimmed = current.trimEnd();
     const lastChar = trimmed.slice(-1);
     const endsSentence = trimmed.endsWith('...') || trimmed.endsWith('…') || '.!?。！？'.includes(lastChar);
-    const fullEnough = trimmed.length >= Math.floor(maxChunkLength * 0.6);
+    const fullEnough = maxChunkWords > 0
+      ? countChunkWords(trimmed) >= Math.floor(maxChunkWords * 0.6)
+      : trimmed.length >= Math.floor(maxChunkLength * 0.6);
     if (trimmed && endsSentence && fullEnough) {
       chunks.push(trimmed);
       current = '';
@@ -251,8 +272,8 @@ function chunkSegment(text, options = {}) {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  const merged = mergeShortChunks(chunks, MIN_CHUNK_LENGTH);
-  return keepDictionaryWordsOffChunkTails(merged, options.avoidChunkFinalWords, maxChunkLength);
+  const merged = mergeShortChunks(chunks, MIN_CHUNK_LENGTH, maxChunkWords);
+  return keepDictionaryWordsOffChunkTails(merged, options.avoidChunkFinalWords, maxChunkLength, maxChunkWords);
 }
 
 // Last spoken word of a chunk, lowercased and stripped of punctuation.
@@ -268,7 +289,7 @@ function chunkFinalWord(text) {
 // so the term is followed by more speech and sits away from the risky edge. Purely a
 // re-grouping: chunk boundaries stay on sentence ends, no text is altered, and the
 // move is skipped whenever it would violate the existing length invariants.
-function keepDictionaryWordsOffChunkTails(chunks, avoidWords, maxChunkLength) {
+function keepDictionaryWordsOffChunkTails(chunks, avoidWords, maxChunkLength, maxChunkWords = 0) {
   const words = new Set(
     (Array.isArray(avoidWords) ? avoidWords : [])
       .map((w) => chunkFinalWord(w))
@@ -285,7 +306,7 @@ function keepDictionaryWordsOffChunkTails(chunks, avoidWords, maxChunkLength) {
     const remainder = sentences.slice(0, -1).join(' ').trim();
     const movedNext = `${lastSentence} ${out[i + 1]}`.trim();
     // Respect the existing invariants: never create an over-long or under-short chunk.
-    if (movedNext.length > maxChunkLength || remainder.length < MIN_CHUNK_LENGTH) continue;
+    if (movedNext.length > maxChunkLength || (maxChunkWords > 0 && countChunkWords(movedNext) > maxChunkWords) || remainder.length < MIN_CHUNK_LENGTH) continue;
     out[i] = remainder;
     out[i + 1] = movedNext;
   }
@@ -304,8 +325,9 @@ function endsSentence(text) {
   return '.!?。！？'.includes(trimmed.slice(-1));
 }
 
-function mergeShortChunks(chunks, minLength) {
+function mergeShortChunks(chunks, minLength, maxChunkWords = 0) {
   if (chunks.length <= 1) return chunks;
+  const canMerge = (left, right) => !(maxChunkWords > 0) || countChunkWords(`${left} ${right}`) <= maxChunkWords;
 
   // Pass 1: fold a short fragment backward into the previous chunk — but NOT when
   // that previous chunk already ends a sentence. Gluing e.g. "Structurally," onto
@@ -317,7 +339,7 @@ function mergeShortChunks(chunks, minLength) {
     const text = chunk.trim();
     if (!text) continue;
     const prev = merged.length > 0 ? merged[merged.length - 1] : null;
-    if (prev && text.length < minLength && !endsSentence(prev)) {
+    if (prev && text.length < minLength && !endsSentence(prev) && canMerge(prev, text)) {
       merged[merged.length - 1] = `${prev} ${text}`.trim();
     } else {
       merged.push(text);
@@ -328,7 +350,7 @@ function mergeShortChunks(chunks, minLength) {
   // Covers a short leading fragment ("Typically,") and a lead-in deferred from a
   // completed sentence ("Structurally,") — both belong with the clause after them.
   for (let i = 0; i < merged.length - 1;) {
-    if (merged[i].length < minLength) {
+    if (merged[i].length < minLength && canMerge(merged[i], merged[i + 1])) {
       merged[i + 1] = `${merged[i]} ${merged[i + 1]}`.trim();
       merged.splice(i, 1);
     } else {
@@ -338,7 +360,8 @@ function mergeShortChunks(chunks, minLength) {
 
   // Pass 3: a short *trailing* chunk has no forward neighbour left — fold it
   // backward as a last resort so no chunk is ever short enough to render silent.
-  while (merged.length > 1 && merged[merged.length - 1].length < minLength) {
+  while (merged.length > 1 && merged[merged.length - 1].length < minLength
+    && canMerge(merged[merged.length - 2], merged[merged.length - 1])) {
     merged[merged.length - 2] = `${merged[merged.length - 2]} ${merged[merged.length - 1]}`.trim();
     merged.pop();
   }

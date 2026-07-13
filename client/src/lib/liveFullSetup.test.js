@@ -28,6 +28,8 @@ test('buildLiveFullRefParams uses full settings and selected references', () => 
       topP: 0.8,
       temperature: 0.55,
       repPenalty: 1.4,
+      maxChunkWords: 40,
+      maxSentencesPerChunk: 3,
     },
   });
 
@@ -44,6 +46,8 @@ test('buildLiveFullRefParams uses full settings and selected references', () => 
     top_p: 0.8,
     temperature: 0.55,
     repetition_penalty: 1.4,
+    max_chunk_words: 40,
+    max_sentences_per_chunk: 3,
   });
 });
 

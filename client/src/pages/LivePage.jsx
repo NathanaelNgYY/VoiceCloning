@@ -385,6 +385,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [liveFullTopP, setLiveFullTopP] = useState(DEFAULT_LIVE_FULL_SETTINGS.topP);
   const [liveFullTemperature, setLiveFullTemperature] = useState(DEFAULT_LIVE_FULL_SETTINGS.temperature);
   const [liveFullRepPenalty, setLiveFullRepPenalty] = useState(DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
+  const [liveFullMaxChunkWords, setLiveFullMaxChunkWords] = useState(DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords);
+  const [liveFullMaxSentences, setLiveFullMaxSentences] = useState(DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk);
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   // Chatbot synthesis engine: 'fast' (live/tts-sentence) or 'full' (/inference for accuracy).
@@ -479,7 +481,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     topP: liveFullTopP,
     temperature: liveFullTemperature,
     repPenalty: liveFullRepPenalty,
-  }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty]);
+    maxChunkWords: liveFullMaxChunkWords,
+    maxSentencesPerChunk: liveFullMaxSentences,
+  }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty, liveFullMaxChunkWords, liveFullMaxSentences]);
   const liveFastRankOneReferenceSummary = useMemo(() => {
     const rankOneConfig = voiceConfigs[0] || null;
     const { primaryPath, auxPaths } = getConfigReferencePaths(rankOneConfig);
@@ -1379,6 +1383,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setLiveFullTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : DEFAULT_LIVE_FULL_SETTINGS.topP);
     setLiveFullTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : DEFAULT_LIVE_FULL_SETTINGS.temperature);
     setLiveFullRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
+    setLiveFullMaxChunkWords(Number.isInteger(defaults.max_chunk_words) ? defaults.max_chunk_words : DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords);
+    setLiveFullMaxSentences(Number.isInteger(defaults.max_sentences_per_chunk) ? defaults.max_sentences_per_chunk : DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk);
     setLoadedLiveFullConfigId(config?.configId || '');
     if (!silent) {
       setLiveFullMessage(`Loaded Live Full config ${config.configName || config.configId}.`);
@@ -1504,6 +1510,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       topP: defaults.top_p ?? DEFAULT_LIVE_FULL_SETTINGS.topP,
       temperature: defaults.temperature ?? DEFAULT_LIVE_FULL_SETTINGS.temperature,
       repPenalty: defaults.repetition_penalty ?? DEFAULT_LIVE_FULL_SETTINGS.repPenalty,
+      maxChunkWords: defaults.max_chunk_words ?? DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords,
+      maxSentencesPerChunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk,
     });
     if (!params) {
       setLiveFullMessage('Live Full sample needs Live Fast rank #1 with a primary reference transcript.');
@@ -2062,6 +2070,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setStreamingRoute(null);
       ttsInference.reset();
     }
+  }
+
+  function deleteTtsHistoryItem(result) {
+    if (!result?.id) return;
+    if (String(result.url || '').startsWith('blob:')) URL.revokeObjectURL(result.url);
+    setTtsHistory((current) => {
+      const next = current.filter((item) => item.id !== result.id);
+      ttsHistoryRef.current = next;
+      return next;
+    });
   }
 
   async function regenerateFullChunk(historyItem, chunk) {
@@ -3624,6 +3642,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
                       { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                       { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
+                      { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
+                      { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                     ].map(({ label, display, min, max, step, val, set }) => (
                       <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
                         <div className="flex items-center justify-between">
@@ -3651,6 +3671,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     </p>
                     <p className="mt-1 truncate">
                       top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
+                    </p>
+                    <p className="mt-1 truncate">
+                      chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
                     </p>
                   </div>
 
@@ -3843,13 +3866,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                               {result.voiceName || 'Selected voice'} · {result.languageLabel || liveLanguageConfig.label}
                             </p>
                           </div>
-                          <a
-                            href={result.url}
-                            download={result.filename}
-                            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                          >
-                            <Download size={12} /> WAV
-                          </a>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <a
+                              href={result.url}
+                              download={result.filename}
+                              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 active:scale-[0.98]"
+                            >
+                              <Download size={12} /> WAV
+                            </a>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              onClick={() => deleteTtsHistoryItem(result)}
+                              className="h-8 w-8 rounded-lg border-red-100 bg-white text-red-500 hover:bg-red-50 hover:text-red-600 active:scale-[0.98]"
+                              title="Remove this output from browser history"
+                            >
+                              <Trash2 size={12} />
+                            </Button>
+                          </div>
                         </div>
                         <audio className="w-full" controls src={result.url} />
                         {result.text && (
@@ -4619,6 +4654,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
                     { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                     { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
+                    { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
+                    { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                   ].map(({ label, display, min, max, step, val, set }) => (
                     <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
                       <div className="flex items-center justify-between">
@@ -4646,6 +4683,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </p>
                   <p className="mt-1 truncate">
                     top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
+                  </p>
+                  <p className="mt-1 truncate">
+                    chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
                   </p>
                 </div>
 

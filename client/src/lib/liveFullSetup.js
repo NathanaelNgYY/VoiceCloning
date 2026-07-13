@@ -8,6 +8,8 @@ export const DEFAULT_LIVE_FULL_SETTINGS = {
   topP: 0.85,
   temperature: 0.7,
   repPenalty: 1.35,
+  maxChunkWords: 0,
+  maxSentencesPerChunk: 2,
 };
 
 function numberInRange(value, min, max, fallback) {
@@ -27,6 +29,8 @@ export function normalizeLiveFullSettings(settings = {}) {
     topP: numberInRange(settings.topP, 0, 1, DEFAULT_LIVE_FULL_SETTINGS.topP),
     temperature: numberInRange(settings.temperature, 0, 1, DEFAULT_LIVE_FULL_SETTINGS.temperature),
     repPenalty: numberInRange(settings.repPenalty, 1.0, 2.0, DEFAULT_LIVE_FULL_SETTINGS.repPenalty),
+    maxChunkWords: integerInRange(settings.maxChunkWords, 0, 100, DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords),
+    maxSentencesPerChunk: integerInRange(settings.maxSentencesPerChunk, 1, 5, DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk),
   };
 }
 
@@ -66,6 +70,8 @@ export function buildLiveFullRefParams({
     top_p: normalized.topP,
     temperature: normalized.temperature,
     repetition_penalty: normalized.repPenalty,
+    ...(normalized.maxChunkWords > 0 ? { max_chunk_words: normalized.maxChunkWords } : {}),
+    max_sentences_per_chunk: normalized.maxSentencesPerChunk,
   };
 }
 
@@ -96,6 +102,8 @@ export function buildLiveFullConfigPayload({
         temperature: normalized.temperature,
         repetition_penalty: normalized.repPenalty,
         speed_factor: normalized.speed,
+        max_chunk_words: normalized.maxChunkWords,
+        max_sentences_per_chunk: normalized.maxSentencesPerChunk,
       },
       ...(configId ? { configId } : {}),
     },

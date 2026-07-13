@@ -271,6 +271,28 @@ test('full inference quality groups at most two short sentences', () => {
   ]);
 });
 
+test('explicit max chunk words overrides the default character limit', () => {
+  const text = `${'extraordinary '.repeat(12).trim()}.`;
+  const chunks = splitTextIntoChunks(text, {
+    maxChunkLength: 80,
+    maxChunkWords: 20,
+    maxSentencesPerChunk: 2,
+  });
+
+  assert.equal(chunks.length, 1, `word override should take priority over 80 characters: ${JSON.stringify(chunks)}`);
+  assert.ok(chunks[0].length > 80);
+  assert.ok(chunks[0].match(/[\p{L}\p{N}']+/gu).length <= 20);
+});
+
+test('explicit max chunk words is enforced for a long sentence', () => {
+  const text = Array.from({ length: 27 }, (_, index) => `word${index + 1}`).join(' ');
+  const chunks = splitTextIntoChunks(text, { maxChunkWords: 10, maxSentencesPerChunk: 5 });
+  assert.ok(chunks.length >= 3);
+  for (const chunk of chunks) {
+    assert.ok(chunk.match(/[\p{L}\p{N}']+/gu).length <= 10, JSON.stringify(chunks));
+  }
+});
+
 test('retry takes are voice-faithful: ONLY the seed changes', () => {
   const base = applyFullInferenceQualityPreset({
     text: 'Cellular respiration releases energy from glucose.',

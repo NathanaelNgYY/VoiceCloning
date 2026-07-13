@@ -133,6 +133,17 @@ function readInferenceParams(body) {
   };
 }
 
+function readFullChunkingOptions(body = {}) {
+  const maxChunkWords = Number(body.max_chunk_words);
+  const maxSentencesPerChunk = Number(body.max_sentences_per_chunk);
+  return {
+    ...(Number.isInteger(maxChunkWords) && maxChunkWords >= 10 && maxChunkWords <= 100 ? { maxChunkWords } : {}),
+    ...(Number.isInteger(maxSentencesPerChunk) && maxSentencesPerChunk >= 1 && maxSentencesPerChunk <= 5
+      ? { maxSentencesPerChunk }
+      : {}),
+  };
+}
+
 // Live Fast retries each chunk up to this many times (total takes = value + 1). Kept
 // lower than Live Full (which does 5 + sentence-split escalation) so Live Fast stays
 // fast: the common case early-accepts on the first clean take, and a stubborn chunk
@@ -428,6 +439,7 @@ router.post('/inference', async (req, res) => {
     ));
     const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
     const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions({
+      ...readFullChunkingOptions(req.body),
       ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
     }));
@@ -481,6 +493,7 @@ router.post('/inference/generate', async (req, res) => {
     res.json({ sessionId });
 
     synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions({
+      ...readFullChunkingOptions(req.body),
       ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
     })).catch((err) => {
