@@ -387,6 +387,10 @@ export function startGeneration(params) {
   return api.post('/inference/generate', params);
 }
 
+export function regenerateInferenceChunk(sessionId, index) {
+  return api.post('/inference/regenerate-chunk', { sessionId, index });
+}
+
 export function getCurrentInference() {
   return api.get('/inference/current');
 }
@@ -499,6 +503,11 @@ export async function getInferenceChunk(sessionId, index) {
     throw new Error(`Chunk not available (${res.status})`);
   }
   return new Blob([res.data], { type: 'audio/wav' });
+}
+
+export function getInferenceChunkPreviewUrl(sessionId, index, revision = '') {
+  const base = resolveApiPath(`/api/inference/chunk-preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`);
+  return revision ? `${base}?v=${encodeURIComponent(revision)}` : base;
 }
 
 export function cancelGeneration(sessionId) {

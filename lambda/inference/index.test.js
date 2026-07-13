@@ -127,6 +127,55 @@ test('inference chunk proxies chunk audio from the GPU worker', async () => {
   assert.deepEqual(calls, [{ type: 'getBinary', routePath: '/inference/chunk/abc-123/2' }]);
 });
 
+test('inference normalized chunk preview proxies preview audio', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    resolveSynthesisBody: async (body) => body,
+    shouldUseGpuWorkerArtifacts: () => false,
+    postJson: async () => ({}),
+    getJson: async () => ({}),
+    postBinary: async () => { throw new Error('unexpected post'); },
+    buildInferencePublicUrl: () => '',
+    buildPresignedGetUrl: async () => '',
+    isWorkerUnavailable: () => false,
+    getBinary: async (routePath) => {
+      calls.push(routePath);
+      return { buffer: Buffer.from('RIFFpreview'), contentType: 'audio/wav' };
+    },
+  });
+  const response = await localHandler({
+    requestContext: { http: { method: 'GET' } },
+    rawPath: '/api/inference/chunk-preview/abc-123/2',
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, ['/inference/chunk-preview/abc-123/2']);
+});
+
+test('inference targeted regeneration forwards the session and sentence index', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    resolveSynthesisBody: async (body) => body,
+    shouldUseGpuWorkerArtifacts: () => false,
+    postJson: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { revision: 42 };
+    },
+    getJson: async () => ({}),
+    postBinary: async () => { throw new Error('unexpected post'); },
+    getBinary: async () => { throw new Error('unexpected get'); },
+    buildInferencePublicUrl: () => '',
+    buildPresignedGetUrl: async () => '',
+    isWorkerUnavailable: () => false,
+  });
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/regenerate-chunk',
+    body: JSON.stringify({ sessionId: 'abc-123', index: 2 }),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{ routePath: '/inference/regenerate-chunk', payload: { sessionId: 'abc-123', index: 2 } }]);
+});
+
 test('inference current returns idle when the GPU worker is not reachable', async () => {
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://localhost:3999';

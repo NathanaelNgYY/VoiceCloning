@@ -5,6 +5,7 @@ export function useInferenceSSE() {
   const [status, setStatus] = useState('idle'); // idle | waiting | generating | complete | error | cancelled
   const [totalChunks, setTotalChunks] = useState(0);
   const [completedChunks, setCompletedChunks] = useState(0);
+  const [chunks, setChunks] = useState([]);
   const [currentChunkText, setCurrentChunkText] = useState('');
   const [error, setError] = useState(null);
   const esRef = useRef(null);
@@ -14,6 +15,7 @@ export function useInferenceSSE() {
       initialStatus = 'idle',
       initialTotalChunks = 0,
       initialCompletedChunks = 0,
+      initialChunks = [],
       initialCurrentChunkText = '',
       initialError = null,
     } = initialState;
@@ -21,6 +23,7 @@ export function useInferenceSSE() {
     setStatus(initialStatus);
     setTotalChunks(initialTotalChunks);
     setCompletedChunks(initialCompletedChunks);
+    setChunks(initialChunks);
     setCurrentChunkText(initialCurrentChunkText);
     setError(initialError);
   }, []);
@@ -43,6 +46,7 @@ export function useInferenceSSE() {
       onStart(data) {
         setStatus('generating');
         setTotalChunks(data.totalChunks || 0);
+        setChunks(Array.isArray(data.chunks) ? data.chunks : []);
       },
       onChunkStart(data) {
         setStatus('generating');
@@ -84,6 +88,7 @@ export function useInferenceSSE() {
     status,
     totalChunks,
     completedChunks,
+    chunks,
     currentChunkText,
     error,
     connect,

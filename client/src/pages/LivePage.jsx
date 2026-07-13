@@ -15,6 +15,8 @@ import {
   getCurrentInference,
   getGenerationResultSource,
   getInferenceChunk,
+  getInferenceChunkPreviewUrl,
+  regenerateInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
   scanOovWords,
@@ -389,6 +391,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [liveEngine, setLiveEngine] = useState('fast');
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
+  const [regeneratingFullChunk, setRegeneratingFullChunk] = useState('');
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
   const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
@@ -2012,8 +2015,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setQueuePlayback({ active: false, paused: false });
   }
 
-  function recordTtsHistory({ route, url, text, voiceName, languageLabel }) {
-    const item = createTtsHistoryItem({ route, url, text, voiceName, languageLabel });
+  function recordTtsHistory({ route, url, text, voiceName, languageLabel, sessionId = '', chunks = [] }) {
+    const item = createTtsHistoryItem({ route, url, text, voiceName, languageLabel, sessionId, chunks });
     setTtsHistory((current) => {
       const next = addTtsHistoryItem(current, item);
       ttsHistoryRef.current = next;
@@ -2036,6 +2039,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         text: pending.text,
         voiceName: pending.voiceName,
         languageLabel: pending.languageLabel,
+        sessionId,
+        chunks: ttsInference.chunks,
       });
     } catch (err) {
       setTtsError(err.message || 'Could not fetch the generated audio.');
@@ -2056,6 +2061,33 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       }
       setStreamingRoute(null);
       ttsInference.reset();
+    }
+  }
+
+  async function regenerateFullChunk(historyItem, chunk) {
+    if (!historyItem?.sessionId || !Number.isInteger(chunk?.index)) return;
+    const busyKey = `${historyItem.id}:${chunk.index}`;
+    setRegeneratingFullChunk(busyKey);
+    setTtsError('');
+    try {
+      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index);
+      const revision = res.data?.revision || Date.now();
+      const source = await getGenerationResultSource(historyItem.sessionId);
+      const separator = source.url.includes('?') ? '&' : '?';
+      const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      setTtsHistory((current) => {
+        const next = current.map((item) => item.id === historyItem.id ? {
+          ...item,
+          url: playableUrl,
+          revision,
+        } : item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+    } catch (err) {
+      setTtsError(err.response?.data?.error || err.message || 'Could not regenerate this sentence.');
+    } finally {
+      setRegeneratingFullChunk('');
     }
   }
 
@@ -3822,6 +3854,49 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         <audio className="w-full" controls src={result.url} />
                         {result.text && (
                           <p className="mt-2 max-h-10 overflow-hidden text-xs leading-5 text-slate-500">{result.text}</p>
+                        )}
+                        {item.title === 'Full inference output' && result.sessionId && result.chunks?.length > 0 && (
+                          <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                            <div>
+                              <p className="text-xs font-semibold text-slate-700">Review sentences</p>
+                              <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
+                                These previews use the same shared loudness normalization as the full WAV. Regenerating replaces only that sentence and rebuilds the full audio.
+                              </p>
+                            </div>
+                            {result.chunks.map((chunk) => {
+                              const busyKey = `${result.id}:${chunk.index}`;
+                              const busy = regeneratingFullChunk === busyKey;
+                              const revision = result.revision || '';
+                              return (
+                                <div key={chunk.index} className="rounded-lg border border-slate-200 bg-white p-2.5">
+                                  <div className="mb-2 flex items-start justify-between gap-2">
+                                    <p className="text-xs leading-5 text-slate-600">
+                                      <span className="mr-1.5 font-semibold text-slate-700">{chunk.index + 1}.</span>
+                                      {chunk.text}
+                                    </p>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => regenerateFullChunk(result, chunk)}
+                                      disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null}
+                                      className="h-7 shrink-0 rounded-md px-2 text-[11px]"
+                                    >
+                                      {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                      {busy ? 'Rebuilding' : 'Regenerate'}
+                                    </Button>
+                                  </div>
+                                  <audio
+                                    key={`${result.sessionId}:${chunk.index}:${revision}`}
+                                    className="h-8 w-full"
+                                    controls
+                                    preload="metadata"
+                                    src={getInferenceChunkPreviewUrl(result.sessionId, chunk.index, revision)}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     ))}

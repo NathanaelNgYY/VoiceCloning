@@ -3,7 +3,7 @@ import path from 'path';
 import { Router } from 'express';
 import { GPT_SOVITS_ROOT, LOCAL_TEMP_ROOT } from '../config.js';
 import { isPathInside } from '../utils/paths.js';
-import { getSessionChunkPath } from '../services/longTextInference.js';
+import { getSessionChunkPath, getSessionChunkPreviewPath } from '../services/longTextInference.js';
 
 const router = Router();
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.ogg', '.flac', '.m4a', '.webm', '.mp4']);
@@ -60,6 +60,22 @@ router.get('/inference/chunk/:sessionId/:index', (req, res) => {
     sendAudioFile(res, filePath);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/inference/chunk-preview/:sessionId/:index', (req, res) => {
+  const { sessionId, index } = req.params;
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId) || !/^\d+$/u.test(index)) {
+    return res.status(400).json({ error: 'Invalid chunk preview request' });
+  }
+  try {
+    const filePath = getSessionChunkPreviewPath(sessionId, Number(index));
+    if (!isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Chunk preview not ready or session not found' });
+    }
+    return sendAudioFile(res, filePath);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

@@ -8,6 +8,7 @@ import {
   buildAttemptVariants,
   synthesizeLongText,
   concatWavs,
+  normalizeWavChunksForPreview,
   insertCommaPauses,
   parseWav,
   scoreAudioCandidate,
@@ -492,6 +493,20 @@ test('joined chunks are matched to a shared loudness without inflation', () => {
     analysis.metrics.absPeak > 0.3 && analysis.metrics.absPeak <= 0.62,
     `joined chunks should sit near the median, not be inflated: ${JSON.stringify(analysis.metrics)}`,
   );
+});
+
+test('sentence previews use the same shared peak as the joined full output', () => {
+  const quiet = makeNoiseWav(1.0);
+  const loud = makeNoiseWav(1.0);
+  for (let i = 44; i + 1 < loud.length; i += 2) {
+    loud.writeInt16LE(Math.max(-32768, Math.min(32767, loud.readInt16LE(i) * 2)), i);
+  }
+  const previews = normalizeWavChunksForPreview([quiet, loud]);
+  const previewPeaks = previews.map((buffer) => analyzeAudioQuality(buffer, '').metrics.absPeak);
+  const joinedPeak = analyzeAudioQuality(concatWavs([quiet, loud], 0), '').metrics.absPeak;
+
+  assert.ok(Math.abs(previewPeaks[0] - previewPeaks[1]) < 0.01);
+  assert.ok(Math.abs(previewPeaks[0] - joinedPeak) < 0.01);
 });
 
 test('concatWavs preserves generated chunk samples at joins', () => {

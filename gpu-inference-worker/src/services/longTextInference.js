@@ -980,6 +980,27 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
   return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
 }
 
+export function normalizeWavChunksForPreview(buffers) {
+  if (!Array.isArray(buffers) || buffers.length === 0) return [];
+  const parsed = buffers.map(parseWav);
+  const first = parsed[0];
+  const compatible = parsed.every((wav) => (
+    wav.audioFormat === first.audioFormat
+    && wav.numChannels === first.numChannels
+    && wav.sampleRate === first.sampleRate
+    && wav.bitsPerSample === first.bitsPerSample
+    && wav.blockAlign === first.blockAlign
+  ));
+  if (!compatible) throw new Error('Cannot normalize WAV chunks with mismatched audio formats');
+  if (first.audioFormat !== 1 || first.bitsPerSample !== 16) return buffers.map(buffer => Buffer.from(buffer));
+  const sharedPeak = computeSharedChunkPeak(parsed.map((wav) => getChunkAbsPeak(wav.dataChunk)));
+  return parsed.map((wav) => {
+    const data = Buffer.from(wav.dataChunk);
+    normalizeChunkPeak(data, sharedPeak);
+    return buildWav(wav.fmtChunk, data);
+  });
+}
+
 export function analyzeAudioQuality(buffer, expectedText = '') {
   const wav = parseWav(buffer);
   const bytes = wav.dataChunk;
@@ -1480,6 +1501,66 @@ export function getSessionChunkPath(sessionId, index) {
   return path.join(getSessionDir(sessionId), `chunk_${String(index).padStart(3, '0')}.wav`);
 }
 
+export function getSessionChunkPreviewPath(sessionId, index) {
+  return path.join(getSessionDir(sessionId), `chunk_preview_${String(index).padStart(3, '0')}.wav`);
+}
+
+function writeNormalizedChunkPreviews(sessionId, chunkBuffers) {
+  normalizeWavChunksForPreview(chunkBuffers).forEach((buffer, index) => {
+    fs.writeFileSync(getSessionChunkPreviewPath(sessionId, index), buffer);
+  });
+}
+
+function getSessionManifestPath(sessionId) {
+  return path.join(getSessionDir(sessionId), 'session.json');
+}
+
+export function getLongTextSessionMetadata(sessionId) {
+  const manifestPath = getSessionManifestPath(sessionId);
+  if (!fs.existsSync(manifestPath)) throw new Error('Generation session is no longer available');
+  return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+}
+
+export async function regenerateLongTextChunk(sessionId, index, options = {}) {
+  const manifest = getLongTextSessionMetadata(sessionId);
+  const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
+  const chunkIndex = Number(index);
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= chunks.length) {
+    throw new Error('Invalid chunk index');
+  }
+
+  const chunkText = chunks[chunkIndex];
+  const params = manifest.params || {};
+  const result = await synthesizeChunkResilient(
+    chunkText,
+    { ...params, text: chunkText },
+    options,
+  );
+  fs.writeFileSync(getSessionChunkPath(sessionId, chunkIndex), result.audioBuffer);
+
+  const chunkBuffers = chunks.map((_, currentIndex) => {
+    const chunkPath = getSessionChunkPath(sessionId, currentIndex);
+    if (!fs.existsSync(chunkPath)) throw new Error(`Chunk ${currentIndex + 1} is unavailable`);
+    return fs.readFileSync(chunkPath);
+  });
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const finalBuffer = concatWavs(
+    chunkBuffers,
+    computeChunkPauses(chunks, basePause),
+    computeChunkFades(chunks),
+  );
+  writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+  fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
+  await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
+
+  return {
+    index: chunkIndex,
+    text: stripBreakSentinels(chunkText),
+    attempts: result.attempts,
+    revision: Date.now(),
+  };
+}
+
 export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
   const chunks = splitTextIntoChunks(params.text, options);
   if (chunks.length === 0) {
@@ -1490,6 +1571,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   const sessionDir = getSessionDir(sessionId);
   fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify({ params, chunks }, null, 2));
 
   const session = { cancelled: false };
   activeSessions.set(sessionId, session);
@@ -1558,6 +1640,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     const pauses = computeChunkPauses(chunks, basePause);
     const fades = computeChunkFades(chunks);
     const finalBuffer = concatWavs(chunkBuffers, pauses, fades);
+    writeNormalizedChunkPreviews(sessionId, chunkBuffers);
 
     const finalPath = path.join(sessionDir, 'final.wav');
     fs.writeFileSync(finalPath, finalBuffer);

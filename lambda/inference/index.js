@@ -82,6 +82,15 @@ export function createHandler({
         return ok(await postJson('/inference/generate', resolvedBody, demoHdr));
       }
 
+      if (method === 'POST' && routePath.endsWith('/inference/regenerate-chunk')) {
+        if (!body.sessionId) return err(400, 'sessionId is required');
+        if (!Number.isInteger(Number(body.index)) || Number(body.index) < 0) return err(400, 'Invalid chunk index');
+        return ok(await postJson('/inference/regenerate-chunk', {
+          sessionId: body.sessionId,
+          index: Number(body.index),
+        }));
+      }
+
       // Read-only pronunciation pre-check: flags words the engine would pronounce by
       // neural guess. No ref audio / synthesis — just forward the text to the worker.
       if (method === 'POST' && routePath.endsWith('/inference/scan-oov')) {
@@ -99,6 +108,16 @@ export function createHandler({
         }
         const url = await buildPresignedGetUrl(`audio/output/${sessionId}/final.wav`);
         return event.queryStringParameters?.audio === '1' ? redirect(url) : ok({ url });
+      }
+
+      if (method === 'GET' && routePath.includes('/inference/chunk-preview/')) {
+        const match = routePath.match(/\/inference\/chunk-preview\/([A-Za-z0-9-]+)\/(\d+)\/?$/u);
+        if (!match) return err(400, 'Invalid inference chunk preview path');
+        const [, sessionId, index] = match;
+        const { buffer, contentType } = await getBinary(
+          `/inference/chunk-preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`,
+        );
+        return binaryWav(buffer, contentType);
       }
 
       if (method === 'GET' && routePath.includes('/inference/chunk/')) {

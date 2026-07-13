@@ -4,6 +4,8 @@ export function createTtsHistoryItem({
   text,
   voiceName = '',
   languageLabel = '',
+  sessionId = '',
+  chunks = [],
   now = () => new Date(),
 }) {
   const createdAt = now();
@@ -18,6 +20,8 @@ export function createTtsHistoryItem({
     text: String(text || '').trim(),
     voiceName,
     languageLabel,
+    sessionId,
+    chunks: Array.isArray(chunks) ? chunks : [],
     createdAt: timestamp,
     filename: normalizedRoute === 'full' ? 'full_inference_tts.wav' : 'live_fast_tts.wav',
   };
