@@ -61,16 +61,16 @@ const FULL_QUALITY_OPTIONS = {
   // Seamless natural join — match Live Fast, which inserts no synthetic silence and
   // keeps each clip's natural tail. See DEFAULTS.chunkJoinPauseMs for the full why.
   chunkJoinPauseMs: 0,
-  // Five voice-faithful takes per chunk (retryCount = takes - 1). Full/Queue generate
-  // the complete set and select the strongest verified candidate instead of shipping
-  // the first merely-acceptable read. Live Fast uses a separate path and is unchanged.
+  // Adaptive voice-faithful tournament: rank the first three takes and stop when at
+  // least one passes; only stubborn text expands to five total takes. Live Fast uses
+  // a separate path and is unchanged.
   retryCount: 4,
+  initialTakeCount: 3,
   selectBestVerifiedCandidate: true,
   isolateRiskySentences: true,
-  // Full/Full Queue must never publish audio that the verifier already knows is
-  // incomplete. Exhausted retries now fail the chunk instead of putting a skipped
-  // or clipped take into the final WAV/progressive playback queue.
-  allowBestEffortFallback: false,
+  // After whole-chunk and sentence-level 3→5 recovery, keep the strongest complete
+  // sentence-shaped audio candidate rather than failing the entire user request.
+  allowBestEffortFallback: true,
   // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
   // in practice (drift lands the cut too close to speech), so the breath is opt-in via
   // COMMA_PAUSE_MS rather than on by default.
@@ -1373,6 +1373,11 @@ function withCommaPauses(audioBuffer, chunkText, verification, options) {
 
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
+  const totalTakeCount = retryCount + 1;
+  const initialTakeCount = Math.min(
+    totalTakeCount,
+    Math.max(1, Math.round(clampNumber(options.initialTakeCount, 3))),
+  );
   const allowBestEffortFallback = Boolean(options.allowBestEffortFallback);
   const verifyChunk = typeof options.verifyChunk === 'function' ? options.verifyChunk : null;
   let lastError = null;
@@ -1432,6 +1437,24 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
         if (!bestVerifiedCandidate || score > bestVerifiedCandidate.score) {
           bestVerifiedCandidate = { audioBuffer, analysis, verification, paramsUsed: params, score };
         }
+        // Evaluate/rank three takes in the normal case. Only when none of those three
+        // passes do we spend takes four and five; after escalation the full set runs.
+        if (attempt + 1 === initialTakeCount && bestVerifiedCandidate) {
+          return {
+            audioBuffer: withCommaPauses(
+              bestVerifiedCandidate.audioBuffer,
+              chunkText,
+              bestVerifiedCandidate.verification,
+              options,
+            ),
+            analysis: bestVerifiedCandidate.analysis,
+            verification: bestVerifiedCandidate.verification,
+            paramsUsed: bestVerifiedCandidate.paramsUsed,
+            attempts: attempt + 1,
+            verifiedCandidateCount,
+            tournament: true,
+          };
+        }
         continue;
       }
       const paused = withCommaPauses(audioBuffer, chunkText, verification, options);
@@ -1452,19 +1475,23 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       analysis: bestVerifiedCandidate.analysis,
       verification: bestVerifiedCandidate.verification,
       paramsUsed: bestVerifiedCandidate.paramsUsed,
-      attempts: retryCount + 1,
+      attempts: totalTakeCount,
       verifiedCandidateCount,
       tournament: true,
     };
   }
 
-  if (allowBestEffortFallback && bestCandidate) {
+  if (
+    allowBestEffortFallback
+    && bestCandidate?.analysis?.ok
+    && !bestCandidate.verification?.verificationUnavailable
+  ) {
     return {
       audioBuffer: withCommaPauses(bestCandidate.audioBuffer, chunkText, bestCandidate.verification, options),
       analysis: bestCandidate.analysis,
       verification: bestCandidate.verification,
       paramsUsed: bestCandidate.paramsUsed,
-      attempts: retryCount + 1,
+      attempts: totalTakeCount,
       fallback: true,
       fallbackReason: lastError?.message || bestCandidate.analysis?.reason || 'Used best available chunk candidate',
     };
@@ -1481,86 +1508,102 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
 // sentence. Sub-sentence fragmenting was removed: independently generated fragments
 // differ in pitch/energy so joining them mid-clause produced audible seams, and the
 // lost context degraded pronunciation. Order:
-//   (1) whole chunk, re-seed until a clean read (best context — usually passes fast);
-//   (2) on failure, split at SENTENCE boundaries only and re-seed each whole sentence,
-//       returning only if EVERY sentence passes clean (joins land on natural pauses);
-//   (3) terminal: strict callers fail rather than publish a take known to contain a
-//       skip/cut; explicitly best-effort callers may retain the legacy whole-sentence
-//       fallback. Live Full and Live Full Queue are strict.
+//   (1) rank three whole-chunk takes; expand to five only when none passes;
+//   (2) on failure, split at SENTENCE boundaries only and run the same 3→5 ladder;
+//   (3) if a sentence still has no passing take, use its strongest usable full-sentence
+//       candidate, then stitch every sentence in order. No partial span can replace one.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   // A trailing SSML break sentinel is a routing hint for the pause stage, not text to
   // speak — strip it before anything reaches the model, ASR, or the sentence splitter.
   const cleanText = stripBreakSentinels(chunkText);
   const escalate = { ...options, allowBestEffortFallback: false };
   let lastError = null;
+  let wholeBestCandidate = null;
+  const totalTakeCount = Math.max(1, Math.round(clampNumber(options.retryCount, DEFAULTS.retryCount)) + 1);
 
-  // Pass 1: whole-chunk five-take tournament; select the strongest verified read.
+  const useBestCandidate = (candidate, text) => {
+    if (
+      !candidate?.analysis?.ok
+      || candidate.verification?.verificationUnavailable
+      || !Buffer.isBuffer(candidate.audioBuffer)
+    ) return null;
+    return {
+      audioBuffer: withCommaPauses(candidate.audioBuffer, text, candidate.verification, options),
+      attempts: totalTakeCount,
+      analysis: candidate.analysis,
+      fallback: true,
+    };
+  };
+
+  // Pass 1: rank three whole-chunk takes; spend takes four and five only if needed.
   try {
     const result = await synthesizeChunkWithRetry(cleanText, { ...baseParams, text: cleanText }, escalate);
     return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
   } catch (err) {
     lastError = err;
+    wholeBestCandidate = err.bestCandidate || null;
   }
 
   const sentences = splitIntoSentences(cleanText);
 
-  // Pass 2: sentence-boundary split. Retry each WHOLE sentence; only return if every
-  // one passes clean (a passing sentence must not stand in for a failing one — that
-  // would drop the failing sentence's words). Joins fall on sentence ends = natural
-  // pauses, so there is no mid-clause seam.
+  // Pass 2: sentence-boundary split. Each WHOLE sentence gets its own adaptive 3→5
+  // tournament. If none passes after five, keep that sentence's strongest usable
+  // candidate so every sentence is still represented in the final stitched chunk.
   if (sentences.length >= 2) {
     if (onSplit) onSplit(sentences);
     try {
       const buffers = [];
       let attempts = 0;
+      let usedFallback = false;
+      const fallbackReasons = [];
       for (const sentence of sentences) {
-        const r = await synthesizeChunkWithRetry(sentence, { ...baseParams, text: sentence }, escalate);
+        let r;
+        try {
+          r = await synthesizeChunkWithRetry(sentence, { ...baseParams, text: sentence }, escalate);
+        } catch (sentenceError) {
+          if (!options.allowBestEffortFallback) throw sentenceError;
+          r = useBestCandidate(sentenceError.bestCandidate, sentence);
+          if (!r) throw sentenceError;
+          usedFallback = true;
+          fallbackReasons.push(sentenceError.message);
+        }
         buffers.push(r.audioBuffer);
         attempts += r.attempts;
       }
       const audioBuffer = concatWavs(buffers, computeChunkPauses(sentences), computeChunkFades(sentences));
-      return { audioBuffer, attempts, split: true };
+      if (usedFallback) {
+        console.warn(
+          `[inference] stitched strongest full-sentence candidates after adaptive retries; `
+          + `text="${cleanText.slice(0, 80)}"`,
+        );
+      }
+      return {
+        audioBuffer,
+        attempts,
+        split: true,
+        fallback: usedFallback,
+        fallbackReason: usedFallback ? fallbackReasons.join(' | ') : undefined,
+      };
     } catch (err) {
       lastError = err;
     }
   }
 
-  // Terminal safety net is opt-in only. Live Full/Queue disable it: if Whisper or
-  // the clip detector rejects every take, do not publish known-bad audio. Progressive
-  // playback cannot retract a skipped sentence after it has already been heard.
-  if (!options.allowBestEffortFallback) {
-    const detail = lastError?.message ? ` Last rejection: ${lastError.message}` : '';
-    throw new Error(`Could not produce a complete reading after all retries.${detail}`);
+  // A one-sentence primary chunk has already completed the same 3→5 ladder, so do
+  // not synthesize five duplicate takes again. Reuse the strongest usable candidate.
+  if (options.allowBestEffortFallback) {
+    const fallback = useBestCandidate(wholeBestCandidate, cleanText);
+    if (fallback) {
+      console.warn(
+        `[inference] kept strongest full-sentence candidate after adaptive retries: `
+        + `${lastError?.message}; text="${cleanText.slice(0, 80)}"`,
+      );
+      return { ...fallback, split: false, fallbackReason: lastError?.message };
+    }
   }
 
-  // Legacy/explicit best-effort path for callers that prefer some audio over a hard
-  // failure. It remains whole-sentence only and is not used by Live Full/Queue.
-  const units = sentences.length >= 2 ? sentences : [cleanText];
-  const buffers = [];
-  let attempts = 0;
-  for (const unit of units) {
-    const r = await synthesizeChunkWithRetry(
-      unit,
-      { ...baseParams, text: unit },
-      { ...options, allowBestEffortFallback: true },
-    );
-    buffers.push(r.audioBuffer);
-    attempts += r.attempts;
-  }
-  const audioBuffer = units.length >= 2
-    ? concatWavs(buffers, computeChunkPauses(units), computeChunkFades(units))
-    : concatWavs(buffers, DEFAULTS.chunkJoinPauseMs);
-  console.warn(
-    `[inference] chunk kept best-effort audio after exhausting clean retries `
-    + `(${units.length} sentence(s)): ${lastError?.message}; text="${cleanText.slice(0, 80)}"`,
-  );
-  return {
-    audioBuffer,
-    attempts,
-    split: units.length > 1,
-    fallback: true,
-    fallbackReason: lastError?.message || 'best-effort sentence audio',
-  };
+  const detail = lastError?.message ? ` Last rejection: ${lastError.message}` : '';
+  throw new Error(`Could not produce a usable full-sentence reading after all retries.${detail}`);
 }
 
 export function cancelSession(sessionId) {

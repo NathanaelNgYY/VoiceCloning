@@ -3469,7 +3469,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {streamingRoute && (
               <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
                 {ttsInference.totalChunks > 0
-                  ? `Evaluating five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  ? `Evaluating up to five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
                   : 'Preparing maximum-quality synthesis…'}
               </p>
             )}

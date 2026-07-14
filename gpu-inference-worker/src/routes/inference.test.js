@@ -1,5 +1,7 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
+import { speakerSimilarity } from '../services/speakerSimilarity.js';
 
 async function loadInferenceRouteModule() {
   try {
@@ -41,6 +43,33 @@ test('handleLiveTtsRequest synthesizes immediately without a readiness probe', a
   assert.equal(resolveCalls, 1);
   assert.equal(synthesizeCalls, 1);
   assert.equal(result.audioBuffer.toString('utf-8'), 'RIFFdemo');
+});
+
+test('Live Full keeps ASR validation when speaker verification is unavailable', async () => {
+  const module = await loadInferenceRouteModule();
+  mock.method(transcriptionVerifier, 'verifyChunk', async () => ({
+    ok: true,
+    coverage: 1,
+    missingWords: [],
+    extraWords: [],
+    suspectWords: [],
+    skippedWords: [],
+    words: [],
+    transcript: 'A complete sentence.',
+  }));
+  mock.method(speakerSimilarity, 'scoreChunk', async () => null);
+  try {
+    const verifyChunk = module.verificationOptions(
+      { ref_audio_path: '/tmp/reference.wav' },
+      { finalWordTailCheck: true },
+    ).verifyChunk;
+    const result = await verifyChunk(Buffer.from('RIFFdemo'), 'A complete sentence.');
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.coverage, 1);
+    assert.equal(result.speakerVerificationUnavailable, true);
+  } finally {
+    mock.restoreAll();
+  }
 });
 
 test('handleLiveTtsRequest re-seeds a rejected take and accepts the next clean one', async () => {

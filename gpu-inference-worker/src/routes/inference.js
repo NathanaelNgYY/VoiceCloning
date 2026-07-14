@@ -67,7 +67,7 @@ async function arpabetProtectedWords() {
 // only when ASR confirms it spoke all the words (no skipped/clipped words) AND it
 // still sounds like the reference voice. Live Full fails closed if either configured
 // verifier disappears; Live Fast retains its established best-effort behavior.
-function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
+export function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
   const useAsr = TRANSCRIPTION_VERIFY_ENABLED;
   const refAudioPath = params.ref_audio_path || '';
   const useSpeaker = SPEAKER_VERIFY_ENABLED && Boolean(refAudioPath);
@@ -89,13 +89,12 @@ function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
         useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords, finalWordTailCheck }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
-      // Fail closed for Full when ASR was configured but the sidecar disappeared.
-      // Returning null here used to make synthesizeChunkWithRetry treat verification
-      // as "no opinion" and accept unchecked audio. Live Fast can still exhaust its
-      // retries and use its explicit best-effort policy.
+      // Fail closed for Full only when its completeness checker disappears. Speaker
+      // similarity is a ranking/identity signal, not evidence that words were skipped:
+      // if that sidecar is down, keep ASR validation and rank without similarity.
       const asrUnavailable = useAsr && finalWordTailCheck && !asr;
       const speakerUnavailable = useSpeaker && finalWordTailCheck && !speaker;
-      if (asrUnavailable || speakerUnavailable) {
+      if (asrUnavailable) {
         return {
           ok: false,
           coverage: 0,
@@ -123,6 +122,7 @@ function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
         transcript: asr?.transcript,
         similarity: speaker?.similarity,
         similarityOk: speaker ? speaker.ok : null,
+        speakerVerificationUnavailable: speakerUnavailable,
       };
     },
   };

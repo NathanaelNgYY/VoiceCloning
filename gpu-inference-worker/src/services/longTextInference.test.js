@@ -255,8 +255,9 @@ test('full inference quality keeps comma splicing off by default (opt-in via env
   const options = fullInferenceQualityOptions();
   // Timestamp-spliced comma breaths still glitch in practice, so default is cut0-only.
   assert.equal(options.commaPauseMs, 0);
-  assert.equal(options.allowBestEffortFallback, false);
+  assert.equal(options.allowBestEffortFallback, true);
   assert.equal(options.retryCount, 4);
+  assert.equal(options.initialTakeCount, 3);
   assert.equal(options.selectBestVerifiedCandidate, true);
   assert.equal(options.isolateRiskySentences, true);
 });
@@ -397,14 +398,37 @@ test('full-quality options hard-fail instead of publishing a known-bad silent ch
         applyFullInferenceQualityPreset({ text: 'A short standalone sentence for synthesis.' }),
         fullInferenceQualityOptions({ retryCount: 1 }),
       ),
-      /could not produce a complete reading/iu,
+      /could not produce a usable full-sentence reading/iu,
     );
   } finally {
     mock.restoreAll();
   }
 });
 
-test('full-quality tournament evaluates five takes and selects the strongest verified voice match', async () => {
+test('full-quality fallback never publishes audio when accurate ASR is unavailable', async () => {
+  mock.method(inferenceServer, 'synthesize', async () => makeNoiseWav(4));
+  try {
+    await assert.rejects(
+      synthesizeLongText(
+        applyFullInferenceQualityPreset({ text: 'This sentence requires a real completeness check.' }),
+        fullInferenceQualityOptions({
+          verifyChunk: async () => ({
+            ok: false,
+            coverage: 0,
+            missingWords: [],
+            suspectWords: [],
+            verificationUnavailable: true,
+          }),
+        }),
+      ),
+      /could not produce a usable full-sentence reading/iu,
+    );
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('full-quality tournament ranks three takes and stops when at least one passes', async () => {
   const text = 'The selected take should be complete, natural, and voice faithful.';
   const buffers = [];
   const similarities = [0.7, 0.76, 0.94, 0.81, 0.79];
@@ -432,8 +456,43 @@ test('full-quality tournament evaluates five takes and selects the strongest ver
       applyFullInferenceQualityPreset({ text }),
       fullInferenceQualityOptions({ verifyChunk }),
     );
-    assert.equal(synthCalls, 5);
+    assert.equal(synthCalls, 3);
     assert.equal(result.audioBuffer.length, buffers[2].length);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('full-quality tournament expands from three to five when the first three all fail', async () => {
+  const text = 'Stubborn text should receive two additional voice-faithful takes.';
+  const buffers = [];
+  const similarities = [0.4, 0.45, 0.5, 0.78, 0.93];
+  let synthCalls = 0;
+  mock.method(inferenceServer, 'synthesize', async () => {
+    const buffer = makeNoiseWav(4 + synthCalls * 0.05);
+    buffers.push(buffer);
+    synthCalls += 1;
+    return buffer;
+  });
+  const verifyChunk = async () => ({
+    ok: synthCalls >= 4,
+    coverage: synthCalls >= 4 ? 1 : 0.8,
+    missingWords: synthCalls >= 4 ? [] : ['stubborn'],
+    extraWords: [],
+    repeatedPhrases: [],
+    suspectWords: [],
+    skippedWords: [],
+    similarity: similarities[synthCalls - 1],
+    similarityOk: synthCalls >= 4,
+  });
+
+  try {
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text }),
+      fullInferenceQualityOptions({ verifyChunk }),
+    );
+    assert.equal(synthCalls, 5);
+    assert.equal(result.audioBuffer.length, buffers[4].length);
   } finally {
     mock.restoreAll();
   }
@@ -507,7 +566,7 @@ test('resilient synthesis splits only at sentence boundaries, never below a sent
   }
 });
 
-test('sentence recovery uses five takes per sentence after whole-chunk tournament fails', async () => {
+test('sentence recovery uses up to five takes and stitches the best full-sentence fallbacks', async () => {
   const first = 'The first sentence must be complete.';
   const second = 'The second sentence must also be complete.';
   const counts = new Map();
@@ -525,12 +584,44 @@ test('sentence recovery uses five takes per sentence after whole-chunk tournamen
   };
 
   try {
-    await assert.rejects(synthesizeLongText(
+    const result = await synthesizeLongText(
       applyFullInferenceQualityPreset({ text: `${first} ${second}` }),
       fullInferenceQualityOptions({ retryCount: 4, verifyChunk }),
-    ));
+    );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
     assert.equal(counts.get(first), 5);
     assert.equal(counts.get(second), 5);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('sentence recovery stops at three takes per sentence when valid candidates exist', async () => {
+  const first = 'The first recovered sentence is complete.';
+  const second = 'The second recovered sentence is complete too.';
+  const whole = `${first} ${second}`;
+  const counts = new Map();
+  mock.method(inferenceServer, 'synthesize', async (params) => {
+    const text = params.text.trim();
+    counts.set(text, (counts.get(text) || 0) + 1);
+    return makeNoiseWav(Math.max(2, params.text.length * 0.1));
+  });
+  const verifyChunk = async (_buffer, expectedText) => ({
+    ok: expectedText.trim() !== whole,
+    coverage: expectedText.trim() === whole ? 0.8 : 1,
+    missingWords: expectedText.trim() === whole ? ['complete'] : [],
+    suspectWords: [],
+  });
+
+  try {
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text: whole }),
+      fullInferenceQualityOptions({ verifyChunk }),
+    );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
+    assert.equal(counts.get(whole), 5);
+    assert.equal(counts.get(first), 3);
+    assert.equal(counts.get(second), 3);
   } finally {
     mock.restoreAll();
   }
