@@ -26,13 +26,14 @@ function normalizeEntry(body, now) {
   const word = normalizeWord(body.word);
   if (!word) throw new Error('word is required');
   const category = normalizeCategory(body.category);
+  const arpabet = normalizeArpabet(body.arpabet);
+  if (!arpabet) throw new Error('arpabet is required; readable pronunciations are no longer supported');
   return {
     id: word.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '') || `entry-${Date.now()}`,
     language: 'en',
     category,
     word,
-    readable: String(body.readable || '').trim(),
-    arpabet: normalizeArpabet(body.arpabet),
+    arpabet,
     // Opt-in only: the runtime dictionary contains thousands of general entries,
     // so ARPAbet presence alone must never make a word a strict phoneme gate.
     verifyPhonemes: body.verifyPhonemes === true,
@@ -50,7 +51,14 @@ async function readDictionary(readObject, category) {
       schemaVersion: 1,
       language: 'en',
       category: normalizeCategory(category),
-      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+      entries: (Array.isArray(parsed.entries) ? parsed.entries : [])
+        .map((entry) => ({
+          ...entry,
+          category: normalizeCategory(entry.category || category),
+          arpabet: normalizeArpabet(entry.arpabet),
+        }))
+        .filter((entry) => normalizeWord(entry.word) && entry.arpabet)
+        .map(({ readable: _readable, ...entry }) => entry),
       updatedAt: parsed.updatedAt || '',
     };
   } catch (error) {
@@ -59,6 +67,39 @@ async function readDictionary(readObject, category) {
     }
     throw error;
   }
+}
+
+async function readAllDictionaries(readObject, { dedupe = true } = {}) {
+  const dictionaries = await Promise.all([...CATEGORIES].map((category) => readDictionary(readObject, category)));
+  const byCategory = new Map(dictionaries.map((dictionary) => [dictionary.category, dictionary]));
+  if (!dedupe) return byCategory;
+  const winnerByWord = new Map();
+  for (const dictionary of dictionaries) {
+    for (const entry of dictionary.entries) {
+      const key = normalizeWord(entry.word).toLowerCase();
+      const current = winnerByWord.get(key);
+      const entryTime = Date.parse(String(entry.updatedAt || '')) || 0;
+      const currentTime = Date.parse(String(current?.entry?.updatedAt || '')) || 0;
+      if (!current || entryTime > currentTime
+        || (entryTime === currentTime && dictionary.category.localeCompare(current.category) < 0)) {
+        winnerByWord.set(key, { category: dictionary.category, entry });
+      }
+    }
+  }
+  for (const dictionary of dictionaries) {
+    dictionary.entries = dictionary.entries.filter((entry) => (
+      winnerByWord.get(normalizeWord(entry.word).toLowerCase())?.entry === entry
+    ));
+  }
+  return byCategory;
+}
+
+async function writeDictionary(writeObject, dictionary) {
+  await writeObject(
+    dictionaryKey(dictionary.category),
+    Buffer.from(JSON.stringify(dictionary), 'utf-8'),
+    'application/json',
+  );
 }
 
 export function createHandler({
@@ -75,7 +116,8 @@ export function createHandler({
     try {
       if (method === 'GET' && DICTIONARY_PATH.test(routePath)) {
         const category = normalizeCategory(event.queryStringParameters?.category);
-        return ok(await readDictionary(readObject, category), {}, event);
+        const dictionaries = await readAllDictionaries(readObject);
+        return ok(dictionaries.get(category), {}, event);
       }
 
       if (method === 'POST' && DICTIONARY_PATH.test(routePath)) {
@@ -84,20 +126,38 @@ export function createHandler({
           const category = normalizeCategory(body.category);
           const word = normalizeWord(body.word);
           if (!word) return err(400, 'word is required', event);
-          const dictionary = await readDictionary(readObject, category);
-          const entries = dictionary.entries.filter((item) => String(item.word || '').toLowerCase() !== word.toLowerCase());
-          const saved = { ...dictionary, entries, updatedAt: now() };
-          await writeObject(dictionaryKey(category), Buffer.from(JSON.stringify(saved), 'utf-8'), 'application/json');
-          return ok({ deleted: entries.length !== dictionary.entries.length, word, dictionary: saved }, {}, event);
+          const dictionaries = await readAllDictionaries(readObject, { dedupe: false });
+          let deleted = false;
+          const writes = [];
+          for (const dictionary of dictionaries.values()) {
+            const entries = dictionary.entries.filter((item) => String(item.word || '').toLowerCase() !== word.toLowerCase());
+            if (entries.length === dictionary.entries.length) continue;
+            deleted = true;
+            const saved = { ...dictionary, entries, updatedAt: now() };
+            dictionaries.set(dictionary.category, saved);
+            writes.push(writeDictionary(writeObject, saved));
+          }
+          await Promise.all(writes);
+          return ok({ deleted, word, dictionary: dictionaries.get(category) }, {}, event);
+        }
+        if (!normalizeArpabet(body.arpabet)) {
+          return err(400, 'arpabet is required; readable pronunciations are no longer supported', event);
         }
         const entry = normalizeEntry(body, now);
-        const dictionary = await readDictionary(readObject, entry.category);
+        const dictionaries = await readAllDictionaries(readObject, { dedupe: false });
+        for (const dictionary of dictionaries.values()) {
+          dictionary.entries = dictionary.entries.filter(
+            (item) => String(item.word || '').toLowerCase() !== entry.word.toLowerCase(),
+          );
+        }
+        const dictionary = dictionaries.get(entry.category);
         const entries = [
           entry,
-          ...dictionary.entries.filter((item) => String(item.word || '').toLowerCase() !== entry.word.toLowerCase()),
+          ...dictionary.entries,
         ].sort((a, b) => String(a.word || '').localeCompare(String(b.word || '')));
         const saved = { ...dictionary, entries, updatedAt: now() };
-        await writeObject(dictionaryKey(entry.category), Buffer.from(JSON.stringify(saved), 'utf-8'), 'application/json');
+        dictionaries.set(entry.category, saved);
+        await Promise.all([...dictionaries.values()].map((item) => writeDictionary(writeObject, item)));
         return ok({ entry, dictionary: saved }, {}, event);
       }
 

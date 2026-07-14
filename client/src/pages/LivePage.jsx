@@ -84,7 +84,7 @@ import {
 import { concatWavBlobs } from '@/lib/wavConcat';
 import { waitForPlayableAudioSource } from '@/lib/audioReadiness';
 import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
-import { fetchDatamuseArpabet, arpabetToReadable } from '@/lib/arpabet';
+import { fetchDatamuseArpabet } from '@/lib/arpabet';
 import {
   parsePronunciationCsv,
   serializePronunciationCsv,
@@ -345,7 +345,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsWarning, setTtsWarning] = useState('');
   const [pronunciationCategory, setPronunciationCategory] = useState('general');
   const [pronunciationWord, setPronunciationWord] = useState('');
-  const [pronunciationReadable, setPronunciationReadable] = useState('');
   const [pronunciationArpabet, setPronunciationArpabet] = useState('');
   const [pronunciationVerifyPhonemes, setPronunciationVerifyPhonemes] = useState(false);
   const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
@@ -2194,12 +2193,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const result = await fetchDatamuseArpabet(word);
       if (!result) {
         setPronunciationArpabet('');
-        setPronunciationReadable('');
         setPronunciationMessage(`No pronunciation found for "${word}" — enter it manually.`);
         return;
       }
       setPronunciationArpabet(result.arpabet);
-      setPronunciationReadable(arpabetToReadable(result.arpabet));
       setPronunciationMessage('Generated — review and Save entry.');
     } catch {
       setPronunciationMessage('Could not reach Datamuse — check your connection or enter manually.');
@@ -2214,8 +2211,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setPronunciationMessage('Enter a word before saving.');
       return;
     }
-    if (!pronunciationReadable.trim() && !pronunciationArpabet.trim()) {
-      setPronunciationMessage('Add a readable pronunciation or ARPAbet before saving.');
+    if (!pronunciationArpabet.trim()) {
+      setPronunciationMessage('Add an ARPAbet pronunciation before saving.');
       return;
     }
     setPronunciationBusy(true);
@@ -2224,18 +2221,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const res = await savePronunciationEntry({
         word,
         category: pronunciationCategory,
-        readable: pronunciationReadable,
         arpabet: pronunciationArpabet,
-        verifyPhonemes: pronunciationArpabet.trim() ? pronunciationVerifyPhonemes : false,
-        source: pronunciationArpabet ? 'admin-arpabet' : 'admin-readable',
+        verifyPhonemes: pronunciationVerifyPhonemes,
+        source: 'admin-arpabet',
       });
       setPronunciationEntries(res.data.dictionary?.entries || []);
-      if (pronunciationArpabet.trim()) {
-        setPronunciationReloadPending(true);
-        setPronunciationMessage(`Saved ${word}. Click "Load changes" to apply.`);
-      } else {
-        setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
-      }
+      setPronunciationReloadPending(true);
+      setPronunciationMessage(`Saved ${word}. Any older category entry was replaced. Click "Load changes" to apply.`);
       setEditingPronunciationWord('');
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
@@ -2247,7 +2239,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   function editPronunciation(entry) {
     setEditingPronunciationWord(entry.word || '');
     setPronunciationWord(entry.word || '');
-    setPronunciationReadable(entry.readable || '');
     setPronunciationArpabet(entry.arpabet || '');
     setPronunciationVerifyPhonemes(entry.verifyPhonemes === true);
     setPronunciationMessage(`Editing ${entry.word}.`);
@@ -2280,7 +2271,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   function startOverrideForWord(word) {
     setEditingPronunciationWord('');
     setPronunciationWord(word);
-    setPronunciationReadable('');
     setPronunciationArpabet('');
     setPronunciationVerifyPhonemes(false);
     setPronunciationMessage(`Add an override for "${word}", then Generate or type the ARPAbet and Save entry.`);
@@ -2289,7 +2279,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   function clearPronunciationForm() {
     setEditingPronunciationWord('');
     setPronunciationWord('');
-    setPronunciationReadable('');
     setPronunciationArpabet('');
     setPronunciationVerifyPhonemes(false);
     setPronunciationMessage('');
@@ -2304,12 +2293,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const res = await deletePronunciationEntry({ word, category: pronunciationCategory });
       setPronunciationEntries(res.data.dictionary?.entries || []);
       if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
-      if (entry.arpabet) {
-        setPronunciationReloadPending(true);
-        setPronunciationMessage(`Deleted ${word}. Click "Load changes" to apply.`);
-      } else {
-        setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
-      }
+      setPronunciationReloadPending(true);
+      setPronunciationMessage(`Deleted ${word} from every category. Click "Load changes" to apply.`);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not delete pronunciation entry.');
     } finally {
@@ -2319,15 +2304,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   function buildPronunciationTestText(entry) {
     const word = String(entry.word || '').trim();
-    const readable = String(entry.readable || '').trim();
-    const arpabet = String(entry.arpabet || '').trim();
-    const spoken = readable && !arpabet ? readable : word;
-    return `Pronunciation test. ${spoken}. ${spoken} is used in this sentence.`;
+    return `Pronunciation test. ${word}. ${word} is used in this sentence.`;
   }
 
   async function testPronunciation(entry = null) {
     const word = String(entry?.word || pronunciationWord || '').trim();
-    const readable = String(entry?.readable || pronunciationReadable || '').trim();
     const arpabet = String(entry?.arpabet || pronunciationArpabet || '').trim();
     if (!word) {
       setPronunciationMessage('Enter a word before testing.');
@@ -2349,7 +2330,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationTestingWord(word);
     setPronunciationMessage(`Testing ${word} with Live Fast sentence TTS...`);
     try {
-      const text = buildPronunciationTestText({ word, readable, arpabet });
+      const text = buildPronunciationTestText({ word });
       const result = await synthesizeSentence({
         text,
         voiceProfileId: selectedVoiceProfileId,
@@ -2393,27 +2374,21 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       const rows = parsePronunciationCsv(await file.text(), pronunciationCategory);
       if (rows.length === 0) {
-        setPronunciationMessage('No valid pronunciation rows found. CSV needs word plus readable or ARPAbet.');
+        setPronunciationMessage('No valid pronunciation rows found. CSV needs word plus ARPAbet.');
         return;
       }
 
-      let hasArpabet = false;
       for (const row of rows) {
-        if (row.arpabet) hasArpabet = true;
         await savePronunciationEntry({
           ...row,
-          verifyPhonemes: row.arpabet ? row.verifyPhonemes === true : false,
-          source: row.arpabet ? 'csv-arpabet' : 'csv-readable',
+          verifyPhonemes: row.verifyPhonemes === true,
+          source: 'csv-arpabet',
         });
       }
 
       await loadPronunciationEntries(pronunciationCategory);
-      if (hasArpabet) {
-        setPronunciationReloadPending(true);
-        setPronunciationMessage(`Imported ${rows.length} entries. Click "Load changes" to apply.`);
-        return;
-      }
-      setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
+      setPronunciationReloadPending(true);
+      setPronunciationMessage(`Imported ${rows.length} ARPAbet entries. Click "Load changes" to apply.`);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not import pronunciation CSV.');
     } finally {
@@ -3787,7 +3762,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-800">Pronunciation dictionary</p>
-                  <p className="mt-0.5 text-xs text-slate-400">English entries saved by category.</p>
+                  <p className="mt-0.5 text-xs text-slate-400">Globally unique English ARPAbet entries, organized by category.</p>
                 </div>
                 <Select value={pronunciationCategory} onValueChange={setPronunciationCategory}>
                   <SelectTrigger className="h-8 w-[130px] rounded-lg border-slate-200 bg-white text-xs">
@@ -3800,9 +3775,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr]">
+              <div className="mt-3">
                 <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
-                <Input value={pronunciationReadable} onChange={(event) => setPronunciationReadable(event.target.value)} placeholder="Readable pronunciation" className="h-9 rounded-lg bg-white" />
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
               <label className="mt-2 flex items-start gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
@@ -3887,7 +3861,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       >
                         <span className="block truncate font-medium text-slate-700">{entry.word}</span>
                         <span className="block truncate font-mono text-slate-400">
-                          {entry.arpabet || entry.readable}{entry.verifyPhonemes ? ' · strict phoneme' : ''}
+                          {entry.arpabet}{entry.verifyPhonemes ? ' · strict phoneme' : ''}
                         </span>
                       </button>
                       <div className="flex items-center gap-1">

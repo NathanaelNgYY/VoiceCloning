@@ -6,25 +6,27 @@ import path from 'path';
 import {
   applyReadableOverrides,
   buildHotDictionaryLines,
+  dedupePronunciationEntries,
   writeHotDictionaryOverrides,
 } from './runtimePronunciationDictionary.js';
 
-test('applyReadableOverrides lets admin custom words override synthesis text immediately', () => {
+test('applyReadableOverrides never changes synthesis text', () => {
   const text = applyReadableOverrides('Enzyme activity helps Foozyme work.', [
     { word: 'Foozyme', readable: 'foo zyme' },
     { word: 'enzyme', readable: 'en zyme' },
   ]);
 
-  assert.equal(text, 'en zyme activity helps foo zyme work.');
+  assert.equal(text, 'Enzyme activity helps Foozyme work.');
 });
 
-test('applyReadableOverrides leaves ARPAbet entries as original words for dictionary lookup', () => {
-  const text = applyReadableOverrides('Foozyme activity helps Barase work.', [
-    { word: 'Foozyme', readable: 'foo zyme', arpabet: 'F UW1 Z AY0 M' },
-    { word: 'Barase', readable: 'bar ace' },
+test('dedupePronunciationEntries removes readable-only records and keeps the newest global word', () => {
+  assert.deepEqual(dedupePronunciationEntries([
+    { word: 'iron', category: 'general', readable: 'eye urn', updatedAt: '2026-07-14T00:00:00.000Z' },
+    { word: 'iron', category: 'biology', arpabet: 'AY1 ER0 N', updatedAt: '2026-07-14T00:01:00.000Z' },
+    { word: 'iron', category: 'chemistry', arpabet: 'OLD', updatedAt: '2026-07-13T00:00:00.000Z' },
+  ]), [
+    { word: 'iron', category: 'biology', arpabet: 'AY1 ER0 N', updatedAt: '2026-07-14T00:01:00.000Z' },
   ]);
-
-  assert.equal(text, 'Foozyme activity helps bar ace work.');
 });
 
 test('buildHotDictionaryLines converts admin ARPAbet entries into engdict-hot lines', () => {
