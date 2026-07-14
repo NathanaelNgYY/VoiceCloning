@@ -31,6 +31,7 @@ test('pronunciation dictionary saves reviewed English entries by category', asyn
     category: 'biology',
     arpabet: 'HH AY0 D R AA1 L AH0 S IH0 S',
     readable: 'high-DRAW-luh-sis',
+    verifyPhonemes: true,
   }));
   assert.equal(save.statusCode, 200);
 
@@ -38,6 +39,7 @@ test('pronunciation dictionary saves reviewed English entries by category', asyn
   const body = JSON.parse(list.body);
   assert.equal(body.entries[0].word, 'hydrolysis');
   assert.equal(body.entries[0].category, 'biology');
+  assert.equal(body.entries[0].verifyPhonemes, true);
 });
 
 test('pronunciation dictionary overrides an existing word when admin saves it again', async () => {

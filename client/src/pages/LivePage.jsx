@@ -347,6 +347,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationWord, setPronunciationWord] = useState('');
   const [pronunciationReadable, setPronunciationReadable] = useState('');
   const [pronunciationArpabet, setPronunciationArpabet] = useState('');
+  const [pronunciationVerifyPhonemes, setPronunciationVerifyPhonemes] = useState(false);
   const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
   const [pronunciationMessage, setPronunciationMessage] = useState('');
@@ -2225,6 +2226,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         category: pronunciationCategory,
         readable: pronunciationReadable,
         arpabet: pronunciationArpabet,
+        verifyPhonemes: pronunciationArpabet.trim() ? pronunciationVerifyPhonemes : false,
         source: pronunciationArpabet ? 'admin-arpabet' : 'admin-readable',
       });
       setPronunciationEntries(res.data.dictionary?.entries || []);
@@ -2247,6 +2249,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationWord(entry.word || '');
     setPronunciationReadable(entry.readable || '');
     setPronunciationArpabet(entry.arpabet || '');
+    setPronunciationVerifyPhonemes(entry.verifyPhonemes === true);
     setPronunciationMessage(`Editing ${entry.word}.`);
   }
 
@@ -2279,6 +2282,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationWord(word);
     setPronunciationReadable('');
     setPronunciationArpabet('');
+    setPronunciationVerifyPhonemes(false);
     setPronunciationMessage(`Add an override for "${word}", then Generate or type the ARPAbet and Save entry.`);
   }
 
@@ -2287,6 +2291,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationWord('');
     setPronunciationReadable('');
     setPronunciationArpabet('');
+    setPronunciationVerifyPhonemes(false);
     setPronunciationMessage('');
   }
 
@@ -2397,6 +2402,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         if (row.arpabet) hasArpabet = true;
         await savePronunciationEntry({
           ...row,
+          verifyPhonemes: row.arpabet ? row.verifyPhonemes === true : false,
           source: row.arpabet ? 'csv-arpabet' : 'csv-readable',
         });
       }
@@ -3799,6 +3805,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 <Input value={pronunciationReadable} onChange={(event) => setPronunciationReadable(event.target.value)} placeholder="Readable pronunciation" className="h-9 rounded-lg bg-white" />
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
+              <label className="mt-2 flex items-start gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                <Checkbox
+                  checked={pronunciationVerifyPhonemes}
+                  onCheckedChange={(checked) => setPronunciationVerifyPhonemes(checked === true)}
+                  disabled={!pronunciationArpabet.trim()}
+                  className="mt-0.5"
+                />
+                <span className="text-xs text-slate-600">
+                  <span className="block font-medium text-slate-700">Strict phoneme verification (Live Full only)</span>
+                  <span className="mt-0.5 block text-slate-400">Use only for difficult reviewed terms. Uncertain results stay advisory.</span>
+                </span>
+              </label>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -3868,7 +3886,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         disabled={pronunciationBusy}
                       >
                         <span className="block truncate font-medium text-slate-700">{entry.word}</span>
-                        <span className="block truncate font-mono text-slate-400">{entry.arpabet || entry.readable}</span>
+                        <span className="block truncate font-mono text-slate-400">
+                          {entry.arpabet || entry.readable}{entry.verifyPhonemes ? ' · strict phoneme' : ''}
+                        </span>
                       </button>
                       <div className="flex items-center gap-1">
                         <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady} className="h-7 w-7 rounded-lg text-blue-500">

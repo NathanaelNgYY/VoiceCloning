@@ -129,6 +129,21 @@ def ctc_viterbi_score(log_probs, target_ids, blank_id):
     return float(final.item() / max(1, log_probs.shape[0]))
 
 
+def classify_phoneme_scores(crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity):
+    """Return pass/reject/uncertain using agreement across nearby word crops."""
+    if not crop_scores:
+        return "uncertain"
+    passing = [score for score in crop_scores if score["ctcScore"] >= min_ctc and score["similarity"] >= min_similarity]
+    required_passes = 2 if len(crop_scores) >= 3 else len(crop_scores)
+    if len(passing) >= required_passes:
+        return "pass"
+    if all(score["ctcScore"] <= reject_ctc for score in crop_scores) and all(
+        score["similarity"] <= reject_similarity for score in crop_scores
+    ):
+        return "reject"
+    return "uncertain"
+
+
 def build_phoneme_verifier():
     import torch
     from transformers import AutoModelForCTC, AutoProcessor
@@ -172,26 +187,13 @@ def verify_phonemes(path, start, end, arpabet, state):
     expected_ipa = arpabet_to_ipa(arpabet)
     waveform, sample_rate = torchaudio.load(path)
     waveform = waveform.mean(dim=0)
-    padding = float(os.environ.get("PHONEME_SPAN_PADDING_SEC", "0.06"))
-    clip_start = max(0.0, float(start) - padding)
-    clip_end = min(waveform.shape[-1] / sample_rate, float(end) + padding)
-    if clip_end <= clip_start:
-        return {"ok": False, "inconclusive": True, "reason": "invalid phoneme span"}
-    waveform = waveform[int(clip_start * sample_rate):math.ceil(clip_end * sample_rate)]
     if sample_rate != 16000:
         waveform = torchaudio.functional.resample(waveform, sample_rate, 16000)
+        sample_rate = 16000
 
     processor = verifier["processor"]
     model = verifier["model"]
     device = verifier["device"]
-    inputs = processor(waveform.numpy(), sampling_rate=16000, return_tensors="pt")
-    input_values = inputs.input_values.to(device)
-    with torch.no_grad():
-        logits = model(input_values).logits[0]
-    log_probs = torch.log_softmax(logits.float(), dim=-1)
-    predicted_ids = torch.argmax(logits, dim=-1)
-    observed_ipa = processor.batch_decode(predicted_ids.unsqueeze(0))[0]
-
     tokenizer = processor.tokenizer
     # The target is already IPA from the saved ARPAbet entry. Convert the explicit
     # phone tokens directly so the tokenizer cannot run grapheme-to-phoneme over
@@ -203,27 +205,74 @@ def verify_phonemes(path, start, end, arpabet, state):
         return {
             "ok": False,
             "inconclusive": True,
+            "decision": "uncertain",
             "reason": "expected phones are outside phoneme model vocabulary",
             "expected": expected_ipa,
-            "observed": observed_ipa,
+            "observed": "",
         }
     blank_id = model.config.pad_token_id
     if blank_id is None:
         blank_id = tokenizer.pad_token_id
     if blank_id is None:
         blank_id = 0
-    ctc_score = ctc_viterbi_score(log_probs, target_ids, blank_id)
-    similarity = edit_similarity(expected_ipa, observed_ipa)
+
+    raw_paddings = os.environ.get("PHONEME_SPAN_PADDINGS_SEC", "0.02,0.05,0.08")
+    try:
+        paddings = sorted({max(0.0, float(value.strip())) for value in raw_paddings.split(",") if value.strip()})
+    except ValueError:
+        paddings = [0.02, 0.05, 0.08]
+    if not paddings:
+        paddings = [0.05]
+
+    duration = waveform.shape[-1] / sample_rate
+    crop_scores = []
+    for padding in paddings:
+        clip_start = max(0.0, float(start) - padding)
+        clip_end = min(duration, float(end) + padding)
+        if clip_end <= clip_start:
+            continue
+        clip = waveform[int(clip_start * sample_rate):math.ceil(clip_end * sample_rate)]
+        inputs = processor(clip.numpy(), sampling_rate=16000, return_tensors="pt")
+        input_values = inputs.input_values.to(device)
+        with torch.no_grad():
+            logits = model(input_values).logits[0]
+        log_probs = torch.log_softmax(logits.float(), dim=-1)
+        predicted_ids = torch.argmax(logits, dim=-1)
+        observed_ipa = processor.batch_decode(predicted_ids.unsqueeze(0))[0]
+        crop_scores.append({
+            "paddingSec": round(padding, 3),
+            "start": round(clip_start, 4),
+            "end": round(clip_end, 4),
+            "observed": observed_ipa,
+            "ctcScore": round(ctc_viterbi_score(log_probs, target_ids, blank_id), 4),
+            "similarity": round(edit_similarity(expected_ipa, observed_ipa), 4),
+        })
+
+    if not crop_scores:
+        return {"ok": False, "inconclusive": True, "decision": "uncertain", "reason": "invalid phoneme span"}
+
     min_ctc = float(os.environ.get("PHONEME_MIN_CTC_LOG_PROB", "-3.8"))
     min_similarity = float(os.environ.get("PHONEME_MIN_SIMILARITY", "0.5"))
-    ok = ctc_score >= min_ctc and similarity >= min_similarity
+    reject_ctc = float(os.environ.get("PHONEME_REJECT_MAX_CTC_LOG_PROB", "-5.5"))
+    reject_similarity = float(os.environ.get("PHONEME_REJECT_MAX_SIMILARITY", "0.25"))
+    decision = classify_phoneme_scores(crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity)
+    best = max(
+        crop_scores,
+        key=lambda score: (
+            score["ctcScore"] >= min_ctc and score["similarity"] >= min_similarity,
+            score["similarity"],
+            score["ctcScore"],
+        ),
+    )
     return {
-        "ok": ok,
-        "inconclusive": False,
+        "ok": decision == "pass",
+        "inconclusive": decision == "uncertain",
+        "decision": decision,
         "expected": expected_ipa,
-        "observed": observed_ipa,
-        "ctcScore": round(ctc_score, 4),
-        "similarity": round(similarity, 4),
+        "observed": best["observed"],
+        "ctcScore": best["ctcScore"],
+        "similarity": best["similarity"],
+        "crops": crop_scores,
         "model": verifier["name"],
     }
 

@@ -56,6 +56,7 @@ test('dictionary word mis-transcribed but present (word count matches) is forgiv
 
 test('Live Full forgives a hard dictionary word only when an aligned timed token was spoken', async () => {
   const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  const logs = [];
   mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
     text: heard.join(' '),
     words: heard.map((word, index) => ({
@@ -68,11 +69,13 @@ test('Live Full forgives a hard dictionary word only when an aligned timed token
   mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
     ok: true,
     inconclusive: false,
+    decision: 'pass',
     expected: 'maɪkeɪlɪs',
     observed: 'maɪkeɪlɪs',
     ctcScore: -0.8,
     similarity: 1,
   }));
+  mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
   try {
     const res = await transcriptionVerifier.verifyChunk(
       makePcm16Wav(9),
@@ -85,6 +88,7 @@ test('Live Full forgives a hard dictionary word only when an aligned timed token
     );
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.deepEqual(res.forgivenDictionaryWords, ['michaelis']);
+    assert.match(logs.find((line) => line.includes('[phoneme]')) || '', /word="michaelis" decision=pass/u);
   } finally {
     mock.restoreAll();
   }
@@ -106,10 +110,78 @@ test('Live Full rejects a present technical word when its phonemes do not match'
   mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
     ok: false,
     inconclusive: false,
+    decision: 'reject',
     expected: 'maɪkeɪlɪs',
     observed: 'mɛkænɪks',
     ctcScore: -6.2,
     similarity: 0.25,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S', verifyPhonemes: true }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
+    assert.equal(res.phonemeAssessments[0].ok, false);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full does not phoneme-gate an ordinary dictionary word that Whisper transcribed correctly', async () => {
+  const heard = 'We introduce two important parameters'.split(' ');
+  let phonemeCalls = 0;
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({ w: word, start: index, end: index + 0.4, p: 0.95 })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => {
+    phonemeCalls += 1;
+    return { ok: false, decision: 'reject', ctcScore: -9, similarity: 0 };
+  });
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(6),
+      'We introduce two important parameters',
+      {
+        dictionaryWords: ['parameters'],
+        dictionaryEntries: [{ word: 'parameters', arpabet: 'P ER0 AE1 M AH0 T ER0 Z' }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(phonemeCalls, 0);
+    assert.deepEqual(res.phonemeAssessments, []);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('an uncertain phoneme result cannot forgive a Whisper-mismatched technical word', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: false,
+    inconclusive: true,
+    decision: 'uncertain',
+    expected: 'm aɪ k eɪ l ɪ s',
+    observed: 'm aɪ k l ɪ s',
+    ctcScore: -3.2,
+    similarity: 0.45,
   }));
   try {
     const res = await transcriptionVerifier.verifyChunk(
@@ -123,7 +195,7 @@ test('Live Full rejects a present technical word when its phonemes do not match'
     );
     assert.equal(res.ok, false, JSON.stringify(res));
     assert.deepEqual(res.forgivenDictionaryWords, []);
-    assert.equal(res.phonemeAssessments[0].ok, false);
+    assert.equal(res.phonemeAssessments[0].decision, 'uncertain');
   } finally {
     mock.restoreAll();
   }

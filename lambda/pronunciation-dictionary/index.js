@@ -33,6 +33,9 @@ function normalizeEntry(body, now) {
     word,
     readable: String(body.readable || '').trim(),
     arpabet: normalizeArpabet(body.arpabet),
+    // Opt-in only: the runtime dictionary contains thousands of general entries,
+    // so ARPAbet presence alone must never make a word a strict phoneme gate.
+    verifyPhonemes: body.verifyPhonemes === true,
     source: String(body.source || 'admin').trim() || 'admin',
     notes: String(body.notes || '').trim(),
     updatedAt: now(),

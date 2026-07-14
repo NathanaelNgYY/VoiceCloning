@@ -13,12 +13,13 @@ test('serializePronunciationCsv exports reviewed dictionary entries', () => {
       category: 'biology',
       readable: 'en zyme',
       arpabet: 'EH1 N Z AY0 M',
+      verifyPhonemes: true,
       notes: 'quoted, note',
     },
   ]);
 
-  assert.match(csv, /^word,category,readable,arpabet,notes/u);
-  assert.match(csv, /enzyme,biology,en zyme,EH1 N Z AY0 M,"quoted, note"/u);
+  assert.match(csv, /^word,category,readable,arpabet,verifyPhonemes,notes/u);
+  assert.match(csv, /enzyme,biology,en zyme,EH1 N Z AY0 M,true,"quoted, note"/u);
 });
 
 test('parsePronunciationCsv imports header and headerless rows', () => {
@@ -28,6 +29,7 @@ test('parsePronunciationCsv imports header and headerless rows', () => {
       category: 'biology',
       readable: '',
       arpabet: 'EY1 T IY1 P IY1',
+      verifyPhonemes: false,
       notes: '',
     },
   ]);
@@ -38,7 +40,19 @@ test('parsePronunciationCsv imports header and headerless rows', () => {
       category: 'biology',
       readable: 'en zyme',
       arpabet: '',
+      verifyPhonemes: false,
       notes: '',
+    },
+  ]);
+
+  assert.deepEqual(parsePronunciationCsv('enzyme,biology,en zyme,,legacy note', 'general'), [
+    {
+      word: 'enzyme',
+      category: 'biology',
+      readable: 'en zyme',
+      arpabet: '',
+      verifyPhonemes: false,
+      notes: 'legacy note',
     },
   ]);
 });

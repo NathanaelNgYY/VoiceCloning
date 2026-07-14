@@ -1338,13 +1338,17 @@ export function scoreAudioCandidate(analysis, verification = null) {
 
   // When all Full takes miss the strict bar and best-effort must choose one,
   // prefer a take whose independently measured technical-word phones were closer
-  // to the saved dictionary pronunciation. Inconclusive checks add no penalty:
-  // unavailable verification is not evidence of a bad pronunciation.
+  // to the saved dictionary pronunciation. A clear reject gets the full penalty;
+  // uncertainty gets only a small ranking nudge because it is not evidence of a
+  // bad pronunciation and must never behave like a hard failure.
   const failedPhonemeAssessments = (verification?.phonemeAssessments || [])
-    .filter((assessment) => assessment?.ok === false && !assessment?.inconclusive);
+    .filter((assessment) => assessment?.decision === 'reject'
+      || (assessment?.decision == null && assessment?.ok === false && !assessment?.inconclusive));
   const phonemePenalty = failedPhonemeAssessments.reduce((penalty, assessment) => (
     penalty + 8 + ((1 - clampNumber(assessment?.similarity, 0)) * 4)
-  ), 0);
+  ), 0) + (verification?.phonemeAssessments || [])
+    .filter((assessment) => assessment?.decision === 'uncertain')
+    .length * 2;
 
   return (
     coverageBonus

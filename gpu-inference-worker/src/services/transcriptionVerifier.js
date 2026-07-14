@@ -323,6 +323,7 @@ class TranscriptionVerifier {
       .map((entry) => ({
         word: String(entry?.word || '').trim().toLowerCase(),
         arpabet: String(entry?.arpabet || '').trim().toUpperCase(),
+        verifyPhonemes: entry?.verifyPhonemes === true,
       }))
       .filter((entry) => entry.word);
     const dictionaryEntryByWord = new Map(normalizedDictionaryEntries.map((entry) => [entry.word, entry]));
@@ -377,18 +378,31 @@ class TranscriptionVerifier {
         const missingDictionaryWords = new Set(
           missingWords.filter((word) => dictSet.has(word.toLowerCase())).map((word) => word.toLowerCase()),
         );
-        // Full verifies every saved technical pronunciation present in the source,
-        // even when Whisper guessed the expected spelling from context. Fast keeps
-        // the established missing-word-only forgiveness path and does no phone work.
-        const expectedDictionaryWords = finalWordTailCheck
-          ? [...new Set(
-            (String(expectedText).toLowerCase().match(/[\p{L}\p{N}']+/gu) || [])
-              .filter((word) => dictSet.has(word)),
-          )]
-          : missingWords;
-        const presenceCandidates = expectedDictionaryWords.map((word) => ({
-          word,
-          timing: hasTimings ? timingAndEnergyEvidence(word) : null,
+        // Production-safe scope: a general dictionary entry does not become a hard
+        // phoneme gate merely because it has ARPAbet. Full checks missing/misheard
+        // dictionary words when deciding whether to forgive Whisper. Correctly
+        // transcribed words are checked only when an admin explicitly opted them in.
+        const expectedWordSet = new Set(String(expectedText).toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
+        const candidateByWord = new Map();
+        for (const word of missingWords) {
+          if (dictSet.has(word.toLowerCase())) {
+            candidateByWord.set(word.toLowerCase(), { word, needsForgiveness: true, strict: false });
+          }
+        }
+        if (finalWordTailCheck) {
+          for (const entry of normalizedDictionaryEntries) {
+            if (!entry.verifyPhonemes || !expectedWordSet.has(entry.word)) continue;
+            const current = candidateByWord.get(entry.word);
+            candidateByWord.set(entry.word, {
+              word: current?.word || entry.word,
+              needsForgiveness: current?.needsForgiveness || false,
+              strict: true,
+            });
+          }
+        }
+        const presenceCandidates = [...candidateByWord.values()].map((candidate) => ({
+          ...candidate,
+          timing: hasTimings ? timingAndEnergyEvidence(candidate.word) : null,
         })).filter(({ word, timing }) => (
           dictSet.has(word.toLowerCase())
           && !rejectTruncated(word)
@@ -400,7 +414,7 @@ class TranscriptionVerifier {
         } else {
           // Full requires an independent phone recognizer after presence is proven.
           // A forced timestamp cannot establish that the expected phones were spoken.
-          for (const { word, timing } of presenceCandidates) {
+          for (const { word, timing, needsForgiveness, strict } of presenceCandidates) {
             const dictionaryEntry = dictionaryEntryByWord.get(word.toLowerCase());
             if (!dictionaryEntry?.arpabet) continue;
             try {
@@ -409,8 +423,18 @@ class TranscriptionVerifier {
                 end: timing.end,
                 arpabet: dictionaryEntry.arpabet,
               });
-              phonemeAssessments.push({ word, ...assessment });
-              if (assessment.ok === true && missingDictionaryWords.has(word.toLowerCase())) {
+              const decision = assessment?.decision
+                || (assessment?.ok === true ? 'pass' : (assessment?.inconclusive ? 'uncertain' : 'reject'));
+              const recorded = { word, strict, needsForgiveness, ...assessment, decision };
+              phonemeAssessments.push(recorded);
+              console.log(
+                `[phoneme] word=${JSON.stringify(word)} decision=${decision} strict=${strict} `
+                + `forgiveness=${needsForgiveness} ctc=${assessment?.ctcScore ?? 'n/a'} `
+                + `similarity=${assessment?.similarity ?? 'n/a'} span=${timing.start}-${timing.end} `
+                + `expected=${JSON.stringify(assessment?.expected || '')} observed=${JSON.stringify(assessment?.observed || '')} `
+                + `crops=${JSON.stringify(assessment?.crops || [])}`,
+              );
+              if (decision === 'pass' && needsForgiveness && missingDictionaryWords.has(word.toLowerCase())) {
                 forgivenDict.push(word);
               }
             } catch (error) {
@@ -432,9 +456,10 @@ class TranscriptionVerifier {
       && skippedWords.length === 0
       && substantialMissing.length === 0
       && repeatedPhrases.length === 0
-      && !phonemeAssessments.some((assessment) => assessment.ok === false && !assessment.inconclusive)
-      // Low-confidence/short spans remain advisory for Live Fast. Full/Queue have
-      // five candidates to choose from, so uncertainty is a hard rejection there.
+      && !phonemeAssessments.some((assessment) => assessment.strict && assessment.decision === 'reject')
+      // Low-confidence/short Whisper spans remain advisory for Live Fast. Full/Queue
+      // have five candidates to choose from, so that Whisper uncertainty is a hard
+      // rejection there. Phoneme uncertainty above remains advisory.
       && (!finalWordTailCheck || suspectWords.length === 0);
     if (!ok) {
       console.log(

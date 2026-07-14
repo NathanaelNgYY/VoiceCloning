@@ -1,4 +1,5 @@
-const CSV_COLUMNS = ['word', 'category', 'readable', 'arpabet', 'notes'];
+const CSV_COLUMNS = ['word', 'category', 'readable', 'arpabet', 'verifyPhonemes', 'notes'];
+const LEGACY_CSV_COLUMNS = ['word', 'category', 'readable', 'arpabet', 'notes'];
 
 function csvEscape(value) {
   const text = String(value ?? '');
@@ -8,7 +9,9 @@ function csvEscape(value) {
 export function serializePronunciationCsv(entries = []) {
   const rows = [CSV_COLUMNS];
   for (const entry of entries) {
-    rows.push(CSV_COLUMNS.map((column) => entry[column] || ''));
+    rows.push(CSV_COLUMNS.map((column) => (
+      column === 'verifyPhonemes' ? (entry.verifyPhonemes === true ? 'true' : 'false') : (entry[column] || '')
+    )));
   }
   return `${rows.map((row) => row.map(csvEscape).join(',')).join('\n')}\n`;
 }
@@ -65,7 +68,9 @@ export function parsePronunciationCsv(text, defaultCategory = 'general') {
   const headers = rows[0].map((header) => header.trim().toLowerCase());
   const hasHeader = headers.includes('word');
   const dataRows = hasHeader ? rows.slice(1) : rows;
-  const columns = hasHeader ? headers : CSV_COLUMNS;
+  const columns = hasHeader ? headers : (dataRows.some((row) => row.length >= CSV_COLUMNS.length)
+    ? CSV_COLUMNS
+    : LEGACY_CSV_COLUMNS);
 
   return dataRows
     .map((row) => {
@@ -78,6 +83,7 @@ export function parsePronunciationCsv(text, defaultCategory = 'general') {
         category: entry.category || defaultCategory,
         readable: entry.readable || '',
         arpabet: entry.arpabet || '',
+        verifyPhonemes: /^(?:true|1|yes)$/iu.test(entry.verifyPhonemes || ''),
         notes: entry.notes || '',
       };
     })
