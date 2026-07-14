@@ -89,3 +89,18 @@ export function resolveInferenceStatusState({
     loadedSoVITSPath: reconcileLoadedPath(status?.loaded?.sovitsPath, fallbackLoadedSoVITSPath),
   };
 }
+
+export function shouldHoldReadyDuringTransientStatus({
+  nextState = {},
+  previousServerReady = false,
+  hasKnownLoadedModel = false,
+  consecutiveNotReady = 0,
+  requiredConfirmations = 2,
+} = {}) {
+  return Boolean(
+    !nextState.serverReady
+      && previousServerReady
+      && hasKnownLoadedModel
+      && consecutiveNotReady < requiredConfirmations,
+  );
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getInferenceStatus,
   getModels,
@@ -67,6 +67,7 @@ import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
   resolveInferenceStatusState,
+  shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
@@ -438,6 +439,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const autoSyncRequestFingerprintRef = useRef('');
   const lastAutoSyncedFingerprintRef = useRef('');
   const statusRequestVersionRef = useRef(0);
+  const notReadyStatusCountRef = useRef(0);
+  const serverReadyStateRef = useRef(false);
+  const modelLoadVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
   const queuedTtsAudioRef = useRef(null);
@@ -651,7 +655,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       gptPath: String(nextState.loadedGPTPath || '').trim(),
       sovitsPath: String(nextState.loadedSoVITSPath || '').trim(),
     };
-    setServerReady(Boolean(nextState.serverReady));
+    serverReadyStateRef.current = Boolean(nextState.serverReady);
+    setServerReady(serverReadyStateRef.current);
     setLoadedGPTPath(loadedModelStateRef.current.gptPath);
     setLoadedSoVITSPath(loadedModelStateRef.current.sovitsPath);
   }
@@ -663,11 +668,28 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (statusRequestVersionRef.current !== requestVersion) {
         return;
       }
-      applyInferenceStatusState(resolveInferenceStatusState({
+      const nextState = resolveInferenceStatusState({
         status: res.data,
         fallbackLoadedGPTPath: loadedModelStateRef.current.gptPath,
         fallbackLoadedSoVITSPath: loadedModelStateRef.current.sovitsPath,
-      }));
+      });
+      const hasKnownLoadedModel = Boolean(
+        loadedModelStateRef.current.gptPath && loadedModelStateRef.current.sovitsPath,
+      );
+      if (!nextState.serverReady && serverReadyStateRef.current && hasKnownLoadedModel) {
+        notReadyStatusCountRef.current += 1;
+        // A single transient ready:false response occurs while the Python worker
+        // respawns or weights switch. Confirm it twice before flashing "No model".
+        if (shouldHoldReadyDuringTransientStatus({
+          nextState,
+          previousServerReady: serverReadyStateRef.current,
+          hasKnownLoadedModel,
+          consecutiveNotReady: notReadyStatusCountRef.current,
+        })) return;
+      } else {
+        notReadyStatusCountRef.current = 0;
+      }
+      applyInferenceStatusState(nextState);
     } catch {
       // A transient network/gateway failure is NOT proof the model unloaded. Keep
       // the last known-good state so the UI doesn't flap to "not loaded" (which
@@ -1151,8 +1173,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     };
   }
 
-  async function loadSelectedModel(attempt = 0) {
+  async function loadSelectedModel(attempt = 0, requestVersion = null) {
     if (!selectedProfile || isConversationActive) return;
+    const activeRequestVersion = requestVersion ?? (modelLoadVersionRef.current + 1);
+    if (requestVersion == null) modelLoadVersionRef.current = activeRequestVersion;
+    const selectionChanged = () => activeRequestVersion !== modelLoadVersionRef.current;
     setLoadingModel(true); setModelError('');
     try {
       const rankOneConfig = voiceConfigsRef.current[0] || null;
@@ -1162,6 +1187,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         refAudioPath: rankOneReferences.primaryPath,
         auxRefAudioPaths: rankOneReferences.auxPaths,
       }));
+      if (selectionChanged()) {
+        return;
+      }
       const latestRankOneConfig = voiceConfigsRef.current[0] || rankOneConfig;
       const syncedSelection = latestRankOneConfig
         ? null
@@ -1169,6 +1197,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (latestRankOneConfig) {
         applyVoiceConfig(latestRankOneConfig, { silent: true });
         await syncRankOneConfigToVoiceProfile(latestRankOneConfig, { context: 'model-load rank #1 config' });
+        if (selectionChanged()) {
+          return;
+        }
       }
       statusRequestVersionRef.current += 1;
       applyInferenceStatusState({
@@ -1184,11 +1215,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           : 'Voice model loaded.',
       );
     } catch (err) {
+      if (selectionChanged()) return;
       // Model loading can 404/503 for a while (Python inference server still
       // spawning / binding the weights). Retry patiently before surfacing anything,
       // and never show the raw gateway HTML.
       if (isTransientBackendError(err) && attempt < 8) {
-        window.setTimeout(() => loadSelectedModel(attempt + 1), 3000);
+        window.setTimeout(() => loadSelectedModel(attempt + 1, activeRequestVersion), 3000);
         return;
       }
       // Give up quietly on a transient failure but clear the attempt guard so the
@@ -2106,6 +2138,29 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setStreamingRoute(null);
       ttsInference.reset();
     }
+  }
+
+  function handleVoiceSelection(value) {
+    const nextProfile = availableProfiles.find((profile) => profile.key === value) || null;
+    // Keep the visible selection urgent so Radix can close the menu immediately;
+    // defer the many dependent reference-state resets to a transition.
+    setSelectedPersonKey(value);
+    setModelError('');
+    autoReferenceKeyRef.current = '';
+    autoLoadAttemptKeyRef.current = '';
+    modelLoadVersionRef.current += 1;
+    pendingAutoSyncFingerprintRef.current = '';
+    autoSyncRequestFingerprintRef.current = '';
+    startTransition(() => {
+      setTrainingAudioFiles([]);
+      setLoadedTrainingAudioSourceKey('');
+      clearReferenceSelection();
+    });
+    writeVoiceProfileBrowserDebug('live voice switched', createVoiceProfileBrowserDebugSummary({
+      context: 'live voice switch',
+      displayName: nextProfile?.displayName || '',
+      selectedExpName: nextProfile?.expName || '',
+    }));
   }
 
   function deleteTtsHistoryItem(result) {
@@ -3277,22 +3332,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Voice</span>
                   <Select
                     value={selectedPersonKey}
-                    onValueChange={(v) => {
-                      setSelectedPersonKey(v);
-                      setModelError('');
-                      autoReferenceKeyRef.current = '';
-                      autoLoadAttemptKeyRef.current = '';
-                      pendingAutoSyncFingerprintRef.current = '';
-                      autoSyncRequestFingerprintRef.current = '';
-                      setTrainingAudioFiles([]);
-                      setLoadedTrainingAudioSourceKey('');
-                      clearReferenceSelection();
-                      writeVoiceProfileBrowserDebug('live voice switched', createVoiceProfileBrowserDebugSummary({
-                        context: 'live voice switch',
-                        displayName: availableProfiles.find((p) => p.key === v)?.displayName || '',
-                        selectedExpName: availableProfiles.find((p) => p.key === v)?.expName || '',
-                      }));
-                    }}
+                    onValueChange={handleVoiceSelection}
                     disabled={isConversationActive || savingProfile || availableProfiles.length === 0}
                   >
               <SelectTrigger className="h-9 w-44 rounded-xl border-slate-200 bg-white text-sm shadow-none">
@@ -3424,7 +3464,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       )}
 
       {isTtsMode ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_400px] xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -3974,14 +4014,26 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                               const draftText = fullChunkDrafts[busyKey] ?? chunk.text ?? '';
                               return (
                                 <div key={chunk.index} className="rounded-lg border border-slate-200 bg-white p-2.5">
-                                  <div className="mb-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-                                    <div className="min-w-0">
+                                  <div className="mb-2 min-w-0">
+                                    <div className="mb-1.5 flex items-center justify-between gap-2">
                                       <Label
                                         htmlFor={`full-chunk-${result.id}-${chunk.index}`}
-                                        className="mb-1.5 block text-[11px] font-semibold text-slate-500"
+                                        className="block text-[11px] font-semibold text-slate-500"
                                       >
                                         Sentence {chunk.index + 1}
                                       </Label>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => regenerateFullChunk(result, chunk)}
+                                        disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
+                                        className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
+                                      >
+                                        {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                        {busy ? 'Rebuilding' : 'Regenerate'}
+                                      </Button>
+                                    </div>
                                       <Textarea
                                         id={`full-chunk-${result.id}-${chunk.index}`}
                                         value={draftText}
@@ -3991,7 +4043,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                         }))}
                                         disabled={busy}
                                         rows={3}
-                                        className="min-h-[72px] resize-y rounded-md border-slate-200 bg-white px-2.5 py-2 text-xs leading-5 shadow-none focus-visible:ring-1"
+                                        className="min-h-[92px] w-full resize-y rounded-md border-slate-200 bg-white px-3 py-2.5 text-sm leading-5 shadow-none focus-visible:ring-1"
                                         aria-describedby={`full-chunk-help-${result.id}-${chunk.index}`}
                                       />
                                       <p
@@ -4000,18 +4052,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                       >
                                         Edit the text, then regenerate to replace only this audio chunk.
                                       </p>
-                                    </div>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => regenerateFullChunk(result, chunk)}
-                                      disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
-                                      className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
-                                    >
-                                      {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                      {busy ? 'Rebuilding' : 'Regenerate'}
-                                    </Button>
                                   </div>
                                   <audio
                                     key={`${result.sessionId}:${chunk.index}:${revision}`}

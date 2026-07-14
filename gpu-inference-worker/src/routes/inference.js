@@ -14,6 +14,7 @@ import {
   analyzeAudioQuality,
   buildAttemptVariants,
   scoreAudioCandidate,
+  hasActiveInferenceSession,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -36,8 +37,11 @@ import { isDemoRequest, preemptActiveGeneration } from '../services/demoPreempt.
 const router = Router();
 let activeLiveTtsRequests = 0;
 
-function synthesisBusy() {
-  return activeLiveTtsRequests > 0 || ['waiting', 'generating'].includes(inferenceState.getState().status);
+export function synthesisBusy() {
+  // `inferenceState` is progress/history and can remain waiting/generating after a
+  // browser disconnect or old process error. Ownership comes only from a live Fast
+  // request, regeneration lock, or an active long-text session.
+  return activeLiveTtsRequests > 0 || hasActiveInferenceSession();
 }
 
 // Pronunciation-dictionary words for the chunker, so a medical dictionary term is

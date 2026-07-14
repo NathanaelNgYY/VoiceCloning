@@ -181,12 +181,17 @@ class TranscriptionVerifier {
       return null;
     }
     const { text, words } = result;
-    const { coverage, missingWords, extraWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
+    const minWordLength = finalWordTailCheck ? 1 : 2;
+    const { coverage, missingWords, extraWords, expectedCount, matchedCount } = computeWordCoverage(
+      expectedText,
+      text,
+      { minWordLength },
+    );
     // Live Full / Queue (finalWordTailCheck) gates on EVERY countable missing word, not
     // just ≥4-char ones — losing "cell" or "one" is as unacceptable as a long term, and
     // those paths accept the extra re-roll cost. Live Fast keeps the ≥4 threshold so
     // short ASR-noisy function words don't cause needless re-rolls in live replies.
-    const substantialLength = finalWordTailCheck ? 2 : SUBSTANTIAL_WORD_LENGTH;
+    const substantialLength = finalWordTailCheck ? 0 : SUBSTANTIAL_WORD_LENGTH;
     // Double-read gate: only a CONSECUTIVE repeat beyond what the text itself repeats
     // ("cell one cell one") re-rolls. The old multiset-surplus gate both false-fired on
     // stray ASR duplicates elsewhere in the transcript and missed doubled number words
@@ -198,7 +203,10 @@ class TranscriptionVerifier {
     // reliable, duration-based, and force a re-roll. suspectWords additionally
     // includes low-confidence words, which are ADVISORY only (best-of-N scoring) — a
     // confident-but-quiet real word ("daughter") must not trigger a re-roll.
-    const { suspectWords, skippedWords } = findClippedWords(expectedText, words, { finalWordTailCheck });
+    const { suspectWords, skippedWords } = findClippedWords(expectedText, words, {
+      finalWordTailCheck,
+      minWordLength,
+    });
 
     // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
     // strict per-word as a short one.

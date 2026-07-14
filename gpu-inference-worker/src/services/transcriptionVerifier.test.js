@@ -322,6 +322,27 @@ test('Live Full gates on a missing SHORT content word that Live Fast tolerates',
   }
 });
 
+test('Live Full has no word-length exemption and rejects a missing one-letter word', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'this is complete sentence for the strict verifier today',
+    words: [],
+  }));
+  try {
+    const expected = 'this is a complete sentence for the strict verifier today';
+    const fast = await transcriptionVerifier.verifyChunk(Buffer.alloc(0), expected, {});
+    assert.equal(fast.ok, true, JSON.stringify(fast));
+    const full = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      expected,
+      { finalWordTailCheck: true },
+    );
+    assert.equal(full.ok, false, JSON.stringify(full));
+    assert.ok(full.missingWords.includes('a'), JSON.stringify(full));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a CLIPPED dict word (chromatin->chroma) is NOT forgiven on Live Full/Queue', async () => {
   // The model cut "chromatin" to "chroma". Token count holds and the head has audio, so
   // the count/timing gates would wrongly forgive it. finalWordTailCheck (Live Full/Queue)

@@ -515,6 +515,7 @@ test('best-effort fallback covers the whole chunk, never a partial span', async 
       fullInferenceQualityOptions({
         retryCount: 0,
         allowBestEffortFallback: true,
+        requireWordCompleteFallback: false,
         // Always-reject verifier forces every clean retry to fail and the full-span
         // best-effort fallback to run.
         verifyChunk: async () => ({ ok: false, coverage: 0.5, missingWords: ['centriole'], suspectWords: [] }),
@@ -580,7 +581,14 @@ test('sentence recovery uses up to five takes and stitches the best full-sentenc
     if (text === first && counts.get(text) === 5) {
       return { ok: true, coverage: 1, missingWords: [], suspectWords: [] };
     }
-    return { ok: false, coverage: 0.5, missingWords: ['missing'], suspectWords: [] };
+    return {
+      ok: false,
+      coverage: 1,
+      missingWords: [],
+      suspectWords: [],
+      skippedWords: [],
+      repeatedPhrases: ['must also'],
+    };
   };
 
   try {
@@ -591,6 +599,31 @@ test('sentence recovery uses up to five takes and stitches the best full-sentenc
     assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
     assert.equal(counts.get(first), 5);
     assert.equal(counts.get(second), 5);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Full fallback never ships a candidate with a known missing word', async () => {
+  const text = 'A complete reading keeps every word.';
+  mock.method(inferenceServer, 'synthesize', async () => makeNoiseWav(4));
+  try {
+    await assert.rejects(
+      () => synthesizeLongText(
+        applyFullInferenceQualityPreset({ text }),
+        fullInferenceQualityOptions({
+          retryCount: 0,
+          verifyChunk: async () => ({
+            ok: false,
+            coverage: 0.9,
+            missingWords: ['a'],
+            suspectWords: [],
+            skippedWords: [],
+          }),
+        }),
+      ),
+      /rejected|failed|missing|complete/iu,
+    );
   } finally {
     mock.restoreAll();
   }

@@ -331,6 +331,13 @@ test('isTruncatedDictWord detects a clipped word (heard prefix, tail cut)', () =
   assert.equal(isTruncatedDictWord('environment', 'in its natural environ the cell'), true);
 });
 
+test('Live Full zero-length exemption scrutinizes a one-letter cut', () => {
+  const result = findClippedWords('this is a test', [
+    word('this', 0.25), word('is', 0.12), word('a', 0.01, 0.1), word('test', 0.25),
+  ], { finalWordTailCheck: true, minWordLength: 1 });
+  assert.ok(result.skippedWords.includes('a'), JSON.stringify(result));
+});
+
 test('isTruncatedDictWord does not fire on a genuine mis-transcription', () => {
   // "centriole" heard as "central" is a spelling slip, not a truncation (not a prefix).
   assert.equal(isTruncatedDictWord('centriole', 'the mother central and daughter'), false);

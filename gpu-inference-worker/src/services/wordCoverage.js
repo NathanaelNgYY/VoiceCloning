@@ -38,8 +38,8 @@ export function countWords(text) {
   return tokenize(text).length;
 }
 
-function isCountable(token) {
-  if (token.length < 2) return false;
+function isCountable(token, minWordLength = 2) {
+  if (token.length < minWordLength) return false;
   if (/\p{N}/u.test(token)) return false;
   return true;
 }
@@ -125,10 +125,13 @@ function isFuzzyMatch(expected, actual) {
  * @returns {{ coverage: number, missingWords: string[], expectedCount: number, matchedCount: number }}
  *   coverage is 1 when there are no countable expected words.
  */
-export function computeWordCoverage(expectedText, transcript) {
+export function computeWordCoverage(expectedText, transcript, opts = {}) {
+  const minWordLength = Number.isFinite(opts.minWordLength)
+    ? Math.max(0, opts.minWordLength)
+    : 2;
   // Keep the original word for reporting, match on the canonical form.
   const expected = tokenize(expectedText)
-    .filter(isCountable)
+    .filter((token) => isCountable(token, minWordLength))
     .map((raw) => ({ raw, key: canonicalize(raw) }));
   if (expected.length === 0) {
     return { coverage: 1, missingWords: [], expectedCount: 0, matchedCount: 0 };
@@ -324,7 +327,7 @@ export function isWordSpokenByTiming(expectedText, targetWord, words = [], opts 
   const target = canonicalize(String(targetWord || '').toLowerCase());
   if (!target || !Array.isArray(words) || words.length === 0) return false;
 
-  const expected = tokenize(expectedText).filter(isCountable).map(canonicalize);
+  const expected = tokenize(expectedText).filter((token) => isCountable(token)).map(canonicalize);
   const expectedCount = expected.length;
   const idx = expected.indexOf(target);
   if (idx === -1 || expectedCount === 0) return false;
@@ -376,8 +379,11 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   // Match against ALL countable expected words (not just long ones): a skipped
   // short word ("or", "is") is exactly what the absolute-duration check must see.
   // Keep the original word (for reporting + length-based scrutiny), match on canon.
+  const minWordLength = Number.isFinite(opts.minWordLength)
+    ? Math.max(0, opts.minWordLength)
+    : 2;
   const allExpected = tokenize(expectedText)
-    .map((raw) => ({ raw, key: canonicalize(raw), countable: isCountable(raw) }));
+    .map((raw) => ({ raw, key: canonicalize(raw), countable: isCountable(raw, minWordLength) }));
   const expected = allExpected
     .map((entry, index) => ({ ...entry, index }))
     .filter((entry) => entry.countable);
@@ -416,10 +422,10 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const firstExpectedIndex = expected[0].index;
   const minFinalWordDuration = Number.isFinite(opts.minFinalWordDuration) ? opts.minFinalWordDuration : 0.12;
 
-  // Live Full / Queue (finalWordTailCheck) scrutinizes EVERY countable word, not just
-  // ≥4-char ones: a clipped "cell" or "rate" is as unacceptable there as a long term,
-  // and those paths accept the extra re-roll cost. Live Fast keeps the ≥4 gate.
-  const scrutinyLength = finalWordTailCheck ? 2 : MIN_SCRUTINY_LENGTH;
+  // Live Full / Queue uses zero length-based exemption: every alphabetic word that
+  // reaches this verifier is scrutinized, including one-letter "a". Live Fast keeps
+  // the established ≥4 timing/confidence gate for latency and ASR-noise tolerance.
+  const scrutinyLength = finalWordTailCheck ? 0 : MIN_SCRUTINY_LENGTH;
 
   for (const { raw, key, index } of expected) {
     let foundIndex = -1;

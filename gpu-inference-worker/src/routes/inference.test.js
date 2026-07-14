@@ -2,6 +2,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
+import { inferenceState } from '../services/inferenceState.js';
 
 async function loadInferenceRouteModule() {
   try {
@@ -69,6 +70,17 @@ test('Live Full keeps ASR validation when speaker verification is unavailable', 
     assert.equal(result.speakerVerificationUnavailable, true);
   } finally {
     mock.restoreAll();
+  }
+});
+
+test('stale inference progress does not report another user when no session owns synthesis', async () => {
+  const module = await loadInferenceRouteModule();
+  inferenceState.resetForNewSession({ sessionId: 'stale-session', params: {} });
+  try {
+    assert.equal(inferenceState.getState().status, 'waiting');
+    assert.equal(module.synthesisBusy(), false);
+  } finally {
+    inferenceState.setError('cleared test state', 'cancelled');
   }
 });
 
