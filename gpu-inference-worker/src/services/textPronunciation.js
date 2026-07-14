@@ -162,6 +162,15 @@ const LETTER_NAMES = {
   Y: 'wy', Z: 'zee',
 };
 
+// A and I are normally real words, but inside an explicit initialism they must be
+// letter names. This also makes dotted input ("F.A.D") and already space-separated
+// input ("F A D") converge on exactly the same deterministic spoken form.
+const INITIALISM_LETTER_NAMES = {
+  ...LETTER_NAMES,
+  A: 'ay',
+  I: 'eye',
+};
+
 const SYMBOL_MAP = {
   '@': 'at',
   '&': 'and',
@@ -305,6 +314,14 @@ export function prepareTextForSynthesis(text) {
   result = result.replace(/\b([A-Za-z]+)\s*\/\s*([A-Za-z]+)\b/gu, '$1 or $2');
 
   result = result.replace(symbolPattern, (match) => SYMBOL_MAP[match] || match);
+
+  // Convert explicit sequences before the standalone-letter pass so A/I are read
+  // as letters here, while ordinary uses such as "A patient" and "I agree" remain
+  // untouched. Dotted initialisms have already been rendered as spaced capitals by
+  // applyEmphasisAndSpelling on synthesis routes.
+  result = result.replace(/\b([A-Z](?:\s+[A-Z])+?)\b/gu, (sequence) => (
+    sequence.split(/\s+/u).map((letter) => INITIALISM_LETTER_NAMES[letter] || letter).join(' ')
+  ));
 
   // Spell out standalone capital letters used as letters ("delta G", "type S").
   // Runs late so it can't disturb the abbreviation/symbol passes above. A and I

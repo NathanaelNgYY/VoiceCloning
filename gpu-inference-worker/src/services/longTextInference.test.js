@@ -302,6 +302,41 @@ test('full inference quality groups at most two short sentences', () => {
   ]);
 });
 
+test('two fitting sentences are not split by the old percentage-full heuristic', () => {
+  const chunks = splitTextIntoChunks(
+    'The first moderately detailed sentence is deliberately longer than sixty percent of the configured limit. The second one still fits.',
+    { maxChunkLength: 160, maxSentencesPerChunk: 2 },
+  );
+
+  assert.deepEqual(chunks, [
+    'The first moderately detailed sentence is deliberately longer than sixty percent of the configured limit. The second one still fits.',
+  ]);
+});
+
+test('a sentence-limited chunk may absorb exactly one more sentence when context is too short', () => {
+  const chunks = splitTextIntoChunks(
+    'Cells grow. DNA copies. Division begins. The longer final sentence provides enough words by itself today.',
+    { maxChunkLength: 170, maxSentencesPerChunk: 2 },
+  );
+
+  assert.deepEqual(chunks, [
+    'Cells grow. DNA copies. Division begins.',
+    'The longer final sentence provides enough words by itself today.',
+  ]);
+});
+
+test('the short-context exception never absorbs more than one extra sentence', () => {
+  const chunks = splitTextIntoChunks(
+    'Alpha one. Beta two. Gamma three. Delta four. Epsilon five. Zeta six.',
+    { maxChunkLength: 170, maxSentencesPerChunk: 2 },
+  );
+
+  assert.deepEqual(chunks, [
+    'Alpha one. Beta two. Gamma three.',
+    'Delta four. Epsilon five. Zeta six.',
+  ]);
+});
+
 test('full inference isolates a sentence containing a guarded technical term', () => {
   const chunks = splitTextIntoChunks(
     'Cells continue growing steadily today. The biopsy confirmed metastasis. Recovery continued normally.',

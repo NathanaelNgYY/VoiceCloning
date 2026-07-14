@@ -27,7 +27,20 @@ export function applyEmphasisAndSpelling(text, options = {}) {
 
   // 1. Explicit dotted spell-out, uppercase only so lowercase abbreviations
   //    (e.g., i.e., a.m.) are left untouched: W.H.O.  E.C.G.  U.S.A.
-  result = result.replace(/\b([A-Z](?:\.[A-Z])+\.?)/gu, (m) => renderSpellout(m));
+  result = result.replace(/\b([A-Z](?:\.[A-Z])+\.?)/gu, (m, _initialism, offset, source) => {
+    const remainder = source.slice(offset + m.length);
+    const hasFinalDot = m.endsWith('.');
+    // The last dot in "F.A.D. Another sentence" serves both as acronym punctuation
+    // and as the sentence terminator. Keep one terminal dot when the initialism ends
+    // the input or the following text looks like a new sentence. Mid-sentence forms
+    // such as "W.H.O. guidance" still lose all internal pause-heavy periods.
+    const endsSentence = hasFinalDot && (
+      remainder.trim() === ''
+      || /^\s*[\r\n]/u.test(remainder)
+      || /^\s+["'“‘(\[]*[A-Z0-9]/u.test(remainder)
+    );
+    return `${renderSpellout(m)}${endsSentence ? '.' : ''}`;
+  });
 
   // 2. Explicit space-separated single capitals: W H O  E C G
   result = result.replace(/\b([A-Z](?:\s+[A-Z])+)\b/gu, (m) => renderSpellout(m));

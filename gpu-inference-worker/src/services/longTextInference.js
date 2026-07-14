@@ -81,6 +81,10 @@ const FULL_QUALITY_OPTIONS = {
 // short lead-in clause like "Typically," from being stranded as its own rushed
 // 1-2 word chunk; it merges forward into the following clause instead.
 const MIN_CHUNK_LENGTH = 24;
+// A handful of very short sentences gives GPT-SoVITS too little context and can
+// produce rushed or near-silent audio. When the configured sentence ceiling is
+// reached below this total word count, permit exactly one neighbouring sentence.
+const MIN_CONTEXT_WORDS = 8;
 
 function clampNumber(value, fallback) {
   const num = Number(value);
@@ -268,7 +272,10 @@ function chunkSegment(text, options = {}) {
     const candidate = current ? `${current} ${sentence}` : sentence;
     const exceedsLength = candidate.length > maxChunkLength;
     const exceedsWords = maxChunkWords > 0 && countChunkWords(candidate) > maxChunkWords;
-    const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
+    const mayAbsorbOneForContext = sentenceCount === maxSentencesPerChunk
+      && countChunkWords(current) < MIN_CONTEXT_WORDS;
+    const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk
+      && !mayAbsorbOneForContext;
 
     if (current && (exceedsLength || exceedsWords || exceedsSentenceCount)) {
       chunks.push(current.trim());
@@ -279,19 +286,15 @@ function chunkSegment(text, options = {}) {
       sentenceCount += 1;
     }
 
-    // Break a chunk only at a SENTENCE end (never at a comma -- commas stay inside
-    // the chunk and are handled by the model's natural prosody under cut0, instead
-    // of a chunk-join silence), and only once the chunk is reasonably full. This lets
-    // several short sentences group into one context-rich, naturally-flowing read
-    // while still breaking at clean sentence boundaries near the length cap.
-    const trimmed = current.trimEnd();
-    const lastChar = trimmed.slice(-1);
-    const endsSentence = trimmed.endsWith('...') || trimmed.endsWith('…') || '.!?。！？'.includes(lastChar);
-    const fullEnough = maxChunkWords > 0
-      ? countChunkWords(trimmed) >= Math.floor(maxChunkWords * 0.6)
-      : trimmed.length >= Math.floor(maxChunkLength * 0.6);
-    if (trimmed && endsSentence && fullEnough) {
-      chunks.push(trimmed);
+    // Do not flush merely because one sentence reached a percentage of the size
+    // limit. The next sentence is the only reliable way to know whether the pair
+    // fits, and the checks above will flush before adding it when it does not. This
+    // makes maxSentencesPerChunk=2 actually group two fitting sentences instead of
+    // prematurely emitting a single sentence at the old 60% threshold.
+    const hasEnoughContext = countChunkWords(current) >= MIN_CONTEXT_WORDS;
+    const usedExtraContextSentence = sentenceCount > maxSentencesPerChunk;
+    if (sentenceCount >= maxSentencesPerChunk && (hasEnoughContext || usedExtraContextSentence)) {
+      chunks.push(current.trim());
       current = '';
       sentenceCount = 0;
     }

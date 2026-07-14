@@ -18,6 +18,12 @@ test('prepareTextForSynthesis spells lone capital letters as letter names, leavi
   assert.equal(prepareTextForSynthesis('A patient told I would recover'), 'A patient told I would recover');
 });
 
+test('prepareTextForSynthesis gives explicit initialisms deterministic letter names', () => {
+  assert.equal(prepareTextForSynthesis('F A D'), 'eff ay dee');
+  assert.equal(prepareTextForSynthesis('A I'), 'ay eye');
+  assert.equal(prepareTextForSynthesis('A patient told I would recover'), 'A patient told I would recover');
+});
+
 test('prepareTextForSynthesis expands known compounds before synthesis', () => {
   const result = prepareTextForSynthesis('The biomolecule dataset supports healthcare workflows.');
 

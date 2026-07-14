@@ -151,7 +151,7 @@ test('handleLiveTtsRequest removes pause-heavy periods from dotted initialisms',
       ref_audio_path: '/tmp/reference.wav',
     }),
     synthesize: async (params) => {
-      assert.match(params.text, /W H O/u);
+      assert.match(params.text, /double you aitch oh/u);
       assert.doesNotMatch(params.text, /W\.H\.O/u);
       return Buffer.from('RIFFdemo');
     },
