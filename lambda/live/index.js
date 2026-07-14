@@ -54,6 +54,9 @@ export function createHandler({
       if (error instanceof VoiceProfileResolutionError) {
         return err(error.statusCode, error.message);
       }
+      if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599) {
+        return err(error.statusCode, error.message);
+      }
       return err(500, error.message);
     }
   };

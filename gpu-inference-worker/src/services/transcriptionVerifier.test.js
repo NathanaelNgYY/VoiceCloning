@@ -143,6 +143,24 @@ test('an advisory clipped word (low confidence, real audio) no longer forces a r
   }
 });
 
+test('Live Full rejects the same low-confidence word and chooses another take', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the daughter centriole respectively',
+    words: [w('the', 0.2), w('daughter', 0.5, 0.1), w('centriole', 0.5), w('respectively', 0.6)],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the daughter centriole respectively',
+      { finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.suspectWords.includes('daughter'), JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('a short-span word with real audio is advisory only and does NOT re-roll', async () => {
   // "microtubules" given 0.2s is brisk but has real audio. Whisper word-boundary
   // timing is imprecise, so this must NOT force a re-roll (it used to, which made

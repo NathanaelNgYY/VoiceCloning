@@ -219,7 +219,11 @@ class TranscriptionVerifier {
     );
     let forgivenDict = [];
     let adjustedCoverage = coverage;
-    if (dictSet.size > 0) {
+    // Maximum-quality Full/Queue never forgives a mismatched dictionary word. The
+    // ARPAbet entry makes synthesis deterministic, but the acoustic model can still
+    // render it incorrectly; accepting a same-length different word would hide that
+    // mispronunciation. Live Fast keeps the established forgiveness behavior.
+    if (dictSet.size > 0 && !finalWordTailCheck) {
       const expectedTokens = countWords(expectedText);
       const heardTokens = countWords(text);
       // Gate 1 (count): a mispronunciation keeps the token count exactly (one word in,
@@ -267,7 +271,10 @@ class TranscriptionVerifier {
     const ok = adjustedCoverage >= minCoverage
       && skippedWords.length === 0
       && substantialMissing.length === 0
-      && repeatedPhrases.length === 0;
+      && repeatedPhrases.length === 0
+      // Low-confidence/short spans remain advisory for Live Fast. Full/Queue have
+      // five candidates to choose from, so uncertainty is a hard rejection there.
+      && (!finalWordTailCheck || suspectWords.length === 0);
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `

@@ -151,7 +151,7 @@ test('inference normalized chunk preview proxies preview audio', async () => {
   assert.deepEqual(calls, ['/inference/chunk-preview/abc-123/2']);
 });
 
-test('inference targeted regeneration forwards the session and sentence index', async () => {
+test('inference targeted regeneration forwards edited sentence text', async () => {
   const calls = [];
   const localHandler = createHandler({
     resolveSynthesisBody: async (body) => body,
@@ -170,10 +170,33 @@ test('inference targeted regeneration forwards the session and sentence index', 
   const response = await localHandler({
     requestContext: { http: { method: 'POST' } },
     rawPath: '/api/inference/regenerate-chunk',
-    body: JSON.stringify({ sessionId: 'abc-123', index: 2 }),
+    body: JSON.stringify({ sessionId: 'abc-123', index: 2, text: 'Edited sentence text.' }),
   });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(calls, [{ routePath: '/inference/regenerate-chunk', payload: { sessionId: 'abc-123', index: 2 } }]);
+  assert.deepEqual(calls, [{
+    routePath: '/inference/regenerate-chunk',
+    payload: { sessionId: 'abc-123', index: 2, text: 'Edited sentence text.' },
+  }]);
+});
+
+test('inference preserves worker busy status for multi-user feedback', async () => {
+  const localHandler = createHandler({
+    resolveSynthesisBody: async (body) => ({ ...body, ref_audio_path: 'ref.wav' }),
+    postJson: async () => {
+      const error = new Error('Another generation is already running on this instance');
+      error.statusCode = 409;
+      throw error;
+    },
+  });
+
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/generate',
+    body: JSON.stringify({ text: 'Hello.', voiceProfileId: 'voice-1' }),
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.match(JSON.parse(response.body).error, /another generation/iu);
 });
 
 test('inference current returns idle when the GPU worker is not reachable', async () => {

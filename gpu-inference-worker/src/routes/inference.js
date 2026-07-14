@@ -34,6 +34,11 @@ import { speakerSimilarity } from '../services/speakerSimilarity.js';
 import { isDemoRequest, preemptActiveGeneration } from '../services/demoPreempt.js';
 
 const router = Router();
+let activeLiveTtsRequests = 0;
+
+function synthesisBusy() {
+  return activeLiveTtsRequests > 0 || ['waiting', 'generating'].includes(inferenceState.getState().status);
+}
 
 // Pronunciation-dictionary words for the chunker, so a medical dictionary term is
 // kept away from the risky chunk-final position. Never blocks synthesis: with no
@@ -60,8 +65,8 @@ async function arpabetProtectedWords() {
 
 // Per-chunk acceptance check for the chunked full-quality path. A take is accepted
 // only when ASR confirms it spoke all the words (no skipped/clipped words) AND it
-// still sounds like the reference voice. Either check degrades to "no opinion" if
-// its sidecar is unavailable, so synthesis is never blocked by a verification fault.
+// still sounds like the reference voice. Live Full fails closed if either configured
+// verifier disappears; Live Fast retains its established best-effort behavior.
 function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
   const useAsr = TRANSCRIPTION_VERIFY_ENABLED;
   const refAudioPath = params.ref_audio_path || '';
@@ -84,6 +89,28 @@ function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
         useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords, finalWordTailCheck }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
+      // Fail closed for Full when ASR was configured but the sidecar disappeared.
+      // Returning null here used to make synthesizeChunkWithRetry treat verification
+      // as "no opinion" and accept unchecked audio. Live Fast can still exhaust its
+      // retries and use its explicit best-effort policy.
+      const asrUnavailable = useAsr && finalWordTailCheck && !asr;
+      const speakerUnavailable = useSpeaker && finalWordTailCheck && !speaker;
+      if (asrUnavailable || speakerUnavailable) {
+        return {
+          ok: false,
+          coverage: 0,
+          missingWords: [],
+          extraWords: [],
+          suspectWords: [],
+          skippedWords: [],
+          words: [],
+          transcript: '',
+          similarity: speaker?.similarity,
+          similarityOk: speaker ? speaker.ok : null,
+          verificationUnavailable: asrUnavailable,
+          speakerVerificationUnavailable: speakerUnavailable,
+        };
+      }
       if (!asr && !speaker) return null;
       return {
         ok: (asr ? asr.ok : true) && (speaker ? speaker.ok : true),
@@ -380,12 +407,17 @@ router.post('/inference/weights/sovits', async (req, res) => {
 });
 
 router.post('/inference/tts', async (req, res) => {
+  const demoRequest = isDemoRequest(req);
+  if (!demoRequest && synthesisBusy()) {
+    return res.status(409).json({ error: 'Another generation is already running on this instance' });
+  }
+  activeLiveTtsRequests += 1;
   try {
     activityState.mark();
     // Demo Live Fast requests take GPU priority: cancel any in-flight Live Full session
     // so this phrase runs next. (No-op if nothing is running. The in-flight Live Fast
     // phrase, if any, is not tracked/cancellable and simply finishes — see demoPreempt.)
-    if (isDemoRequest(req)) {
+    if (demoRequest) {
       preemptActiveGeneration();
     }
     const { audioBuffer } = await handleLiveTtsRequest(req.body);
@@ -398,6 +430,8 @@ router.post('/inference/tts', async (req, res) => {
     res.send(audioBuffer);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
   }
 });
 
@@ -459,6 +493,7 @@ router.post('/inference', async (req, res) => {
 
 router.post('/inference/generate', async (req, res) => {
   const params = readInferenceParams(req.body);
+  let requestLockAcquired = false;
 
   if (!params.text) {
     return res.status(400).json({ error: 'text is required' });
@@ -472,7 +507,7 @@ router.post('/inference/generate', async (req, res) => {
     if (!status.ready) {
       return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
     }
-    if (['waiting', 'generating'].includes(inferenceState.getState().status)) {
+    if (synthesisBusy()) {
       // Demo requests (X-Demo-Request from the demo CloudFront) jump the queue: cancel
       // the in-flight generation and take over. All other traffic keeps the 409.
       if (isDemoRequest(req)) {
@@ -481,6 +516,10 @@ router.post('/inference/generate', async (req, res) => {
         return res.status(409).json({ error: 'Another generation is already running on this instance' });
       }
     }
+    // Hold the shared synthesis lock while resolving references/dictionaries. Without
+    // this, two requests can both pass the busy check before either resets state.
+    activeLiveTtsRequests += 1;
+    requestLockAcquired = true;
 
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
@@ -503,30 +542,44 @@ router.post('/inference/generate', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  } finally {
+    if (requestLockAcquired) {
+      activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    }
   }
 });
 
 router.post('/inference/regenerate-chunk', async (req, res) => {
   const sessionId = String(req.body?.sessionId || '');
   const index = Number(req.body?.index);
+  const replacementText = String(req.body?.text || '').trim();
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
-  if (['waiting', 'generating'].includes(inferenceState.getState().status)) {
+  if (synthesisBusy()) {
     return res.status(409).json({ error: 'Another generation is already running on this instance' });
   }
 
+  activeLiveTtsRequests += 1;
   try {
     activityState.mark();
     const session = getLongTextSessionMetadata(sessionId);
+    let preparedReplacement = '';
+    if (replacementText) {
+      preparedReplacement = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
+        expandSsml(replacementText, { protectedWords: await arpabetProtectedWords() }),
+      ));
+    }
     const result = await regenerateLongTextChunk(sessionId, index, fullInferenceQualityOptions({
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
-    }));
+    }), preparedReplacement);
     activityState.mark();
     return res.json(result);
   } catch (err) {
     const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
     return res.status(status).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
   }
 });
 

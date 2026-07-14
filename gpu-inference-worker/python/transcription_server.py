@@ -102,10 +102,13 @@ def main():
             continue
 
         try:
-            segments, _info = model_for(request.get("tier")).transcribe(
+            tier = request.get("tier")
+            beam_env = "TRANSCRIPTION_BEAM_SIZE_ACCURATE" if tier == "accurate" else "TRANSCRIPTION_BEAM_SIZE"
+            beam_default = "5" if tier == "accurate" else "1"
+            segments, _info = model_for(tier).transcribe(
                 path,
                 language=language,
-                beam_size=int(os.environ.get("TRANSCRIPTION_BEAM_SIZE", "1")),
+                beam_size=int(os.environ.get(beam_env, beam_default)),
                 condition_on_previous_text=False,
                 # Per-word timing + probability lets the worker spot a word that
                 # Whisper "filled in" from context but the audio only said halfway

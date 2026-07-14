@@ -387,8 +387,12 @@ export function startGeneration(params) {
   return api.post('/inference/generate', params);
 }
 
-export function regenerateInferenceChunk(sessionId, index) {
-  return api.post('/inference/regenerate-chunk', { sessionId, index });
+export function regenerateInferenceChunk(sessionId, index, text = '') {
+  return api.post('/inference/regenerate-chunk', {
+    sessionId,
+    index,
+    ...(String(text || '').trim() ? { text: String(text).trim() } : {}),
+  });
 }
 
 export function getCurrentInference() {

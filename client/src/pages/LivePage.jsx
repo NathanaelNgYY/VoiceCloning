@@ -394,6 +394,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [regeneratingFullChunk, setRegeneratingFullChunk] = useState('');
+  const [fullChunkDrafts, setFullChunkDrafts] = useState({});
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
   const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
@@ -401,6 +402,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // Progressive-queue playback controls (Live Fast Queue / Full Inference Queue).
   const [queuePlayback, setQueuePlayback] = useState({ active: false, paused: false });
   const [ttsError, setTtsError] = useState('');
+  const [ttsWarning, setTtsWarning] = useState('');
   const [pronunciationCategory, setPronunciationCategory] = useState('general');
   const [pronunciationWord, setPronunciationWord] = useState('');
   const [pronunciationReadable, setPronunciationReadable] = useState('');
@@ -415,6 +417,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [oovScan, setOovScan] = useState(null); // { flagged, totalWords, coveredWords, dictionaryLoaded } | null
   const [oovScanning, setOovScanning] = useState(false);
   const [oovScanError, setOovScanError] = useState('');
+  const [fullOovAcknowledgedKey, setFullOovAcknowledgedKey] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -1856,6 +1859,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const languageLabel = liveLanguageConfig.label;
 
     setTtsError('');
+    setTtsWarning('');
 
     if (route === 'fastQueued') {
       setTtsFastGenerating(true);
@@ -1887,7 +1891,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
         }
       } catch (err) {
-        setTtsError(err.response?.data?.error || err.message || 'Could not generate queued Live Fast audio.');
+        setTtsError(friendlyTtsError(err, 'Could not generate queued Live Fast audio.'));
       } finally {
         queueProducingRef.current = false;
         // If playback already drained while we were still generating, clear the controls.
@@ -1921,7 +1925,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         const blob = clips.length > 1 ? await concatWavBlobs(clips, { pauseMs: 120 }) : clips[0];
         recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
       } catch (err) {
-        setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+        setTtsError(friendlyTtsError(err, 'Could not generate text to speech audio.'));
       } finally {
         setTtsFastGenerating(false);
         setTtsFastProgress({ total: 0, current: 0, text: '' });
@@ -1936,6 +1940,38 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     if (!liveFullRefParams) {
       setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
       return;
+    }
+    // Maximum-quality Full preflight: automatically surface words that would fall
+    // through to neural pronunciation guessing. Stop once so the user can add an
+    // override; a deliberate second click acknowledges the warning and proceeds.
+    setOovScanning(true);
+    try {
+      const scanResponse = await scanOovWords(text);
+      const scanResult = scanResponse.data || {};
+      const flagged = Array.isArray(scanResult.flagged) ? scanResult.flagged : [];
+      const scanState = {
+        flagged,
+        totalWords: scanResult.totalWords ?? 0,
+        coveredWords: scanResult.coveredWords ?? 0,
+        dictionaryLoaded: scanResult.dictionaryLoaded !== false,
+      };
+      setOovScan(scanState);
+      setOovScanError('');
+      const warningKey = `${text}\n${flagged.join('|').toLowerCase()}`;
+      if (scanState.dictionaryLoaded && flagged.length > 0 && fullOovAcknowledgedKey !== warningKey) {
+        setFullOovAcknowledgedKey(warningKey);
+        setTtsWarning(
+          `Review ${flagged.length} pronunciation ${flagged.length === 1 ? 'word' : 'words'} below before Full synthesis. `
+          + 'Add overrides for maximum quality, or click the Full button again to continue intentionally.',
+        );
+        return;
+      }
+    } catch (err) {
+      // The worker's strict ASR verification still protects Full output. A preflight
+      // scan outage should not make the primary synthesis button unusable.
+      setOovScanError(friendlyTtsError(err, 'Pronunciation preflight was unavailable.'));
+    } finally {
+      setOovScanning(false);
     }
     // Full Inference Queue: play each chunk as the server finishes it (progressive
     // playback), instead of waiting for the whole passage — same UX as Live Fast Queue.
@@ -1953,7 +1989,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       ttsInference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
       pendingFullTtsRef.current = null;
-      setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+      setTtsError(friendlyTtsError(err, 'Could not generate text to speech audio.'));
       setStreamingRoute(null);
       if (route === 'fullQueued') stopQueuedTtsPlayback();
     }
@@ -2082,14 +2118,36 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     });
   }
 
+  function friendlyTtsError(err, fallback) {
+    const status = err?.response?.status;
+    const raw = err?.response?.data?.error || err?.message || '';
+    if (status === 409 || /another generation is already running/iu.test(raw)) {
+      return 'Another person is using Live Full right now. Wait for their generation to finish, then try again.';
+    }
+    if (status === 404) {
+      return 'This Live Full session is no longer available. Generate it again to create a new editable session.';
+    }
+    const sanitized = sanitizeBackendError(raw);
+    if (!sanitized && isTransientBackendError(err)) {
+      return 'The shared GPU did not respond in time. Please wait a moment and try again.';
+    }
+    return sanitized || fallback;
+  }
+
   async function regenerateFullChunk(historyItem, chunk) {
     if (!historyItem?.sessionId || !Number.isInteger(chunk?.index)) return;
     const busyKey = `${historyItem.id}:${chunk.index}`;
+    const editedText = String(fullChunkDrafts[busyKey] ?? chunk.text ?? '').trim();
+    if (!editedText) {
+      setTtsError('Sentence text cannot be empty.');
+      return;
+    }
     setRegeneratingFullChunk(busyKey);
     setTtsError('');
     try {
-      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index);
+      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index, editedText);
       const revision = res.data?.revision || Date.now();
+      const savedText = res.data?.text || editedText;
       const source = await getGenerationResultSource(historyItem.sessionId);
       const separator = source.url.includes('?') ? '&' : '?';
       const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
@@ -2098,12 +2156,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           ...item,
           url: playableUrl,
           revision,
+          chunks: item.chunks.map((itemChunk) => itemChunk.index === chunk.index
+            ? { ...itemChunk, text: savedText }
+            : itemChunk),
         } : item);
         ttsHistoryRef.current = next;
         return next;
       });
+      setFullChunkDrafts((current) => ({ ...current, [busyKey]: savedText }));
     } catch (err) {
-      setTtsError(err.response?.data?.error || err.message || 'Could not regenerate this sentence.');
+      setTtsError(friendlyTtsError(err, 'Could not regenerate this sentence.'));
     } finally {
       setRegeneratingFullChunk('');
     }
@@ -3377,13 +3439,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             </div>
             <Textarea
               value={ttsText}
-              onChange={(event) => setTtsText(event.target.value)}
+              onChange={(event) => {
+                setTtsText(event.target.value);
+                setFullOovAcknowledgedKey('');
+                setTtsWarning('');
+              }}
               disabled={!isReady || ttsFastGenerating || streamingRoute !== null}
               placeholder={isReady ? 'Type the text to synthesize.' : 'Load a voice profile first.'}
               className="mt-4 min-h-[220px] rounded-xl border-slate-200 bg-white text-sm leading-6 shadow-none"
             />
             {ttsError && (
               <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
+            )}
+            {ttsWarning && (
+              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{ttsWarning}</p>
             )}
             {ttsFastGenerating && (
               <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
@@ -3400,8 +3469,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {streamingRoute && (
               <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
                 {ttsInference.totalChunks > 0
-                  ? `Synthesizing chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
-                  : 'Preparing synthesis…'}
+                  ? `Evaluating five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing maximum-quality synthesis…'}
               </p>
             )}
             <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
@@ -3450,20 +3519,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('full')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
-                {streamingRoute === 'full' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                {(oovScanning || streamingRoute === 'full') ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference TTS
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('fullQueued')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
-                {streamingRoute === 'fullQueued' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                {(oovScanning || streamingRoute === 'fullQueued') ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference Queue
               </Button>
             </div>
@@ -3902,20 +3971,43 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                               const busyKey = `${result.id}:${chunk.index}`;
                               const busy = regeneratingFullChunk === busyKey;
                               const revision = result.revision || '';
+                              const draftText = fullChunkDrafts[busyKey] ?? chunk.text ?? '';
                               return (
                                 <div key={chunk.index} className="rounded-lg border border-slate-200 bg-white p-2.5">
-                                  <div className="mb-2 flex items-start justify-between gap-2">
-                                    <p className="text-xs leading-5 text-slate-600">
-                                      <span className="mr-1.5 font-semibold text-slate-700">{chunk.index + 1}.</span>
-                                      {chunk.text}
-                                    </p>
+                                  <div className="mb-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                                    <div className="min-w-0">
+                                      <Label
+                                        htmlFor={`full-chunk-${result.id}-${chunk.index}`}
+                                        className="mb-1.5 block text-[11px] font-semibold text-slate-500"
+                                      >
+                                        Sentence {chunk.index + 1}
+                                      </Label>
+                                      <Textarea
+                                        id={`full-chunk-${result.id}-${chunk.index}`}
+                                        value={draftText}
+                                        onChange={(event) => setFullChunkDrafts((current) => ({
+                                          ...current,
+                                          [busyKey]: event.target.value,
+                                        }))}
+                                        disabled={busy}
+                                        rows={3}
+                                        className="min-h-[72px] resize-y rounded-md border-slate-200 bg-white px-2.5 py-2 text-xs leading-5 shadow-none focus-visible:ring-1"
+                                        aria-describedby={`full-chunk-help-${result.id}-${chunk.index}`}
+                                      />
+                                      <p
+                                        id={`full-chunk-help-${result.id}-${chunk.index}`}
+                                        className="mt-1 text-[10px] leading-4 text-slate-400"
+                                      >
+                                        Edit the text, then regenerate to replace only this audio chunk.
+                                      </p>
+                                    </div>
                                     <Button
                                       type="button"
                                       size="sm"
                                       variant="outline"
                                       onClick={() => regenerateFullChunk(result, chunk)}
-                                      disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null}
-                                      className="h-7 shrink-0 rounded-md px-2 text-[11px]"
+                                      disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
+                                      className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
                                     >
                                       {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                                       {busy ? 'Rebuilding' : 'Regenerate'}

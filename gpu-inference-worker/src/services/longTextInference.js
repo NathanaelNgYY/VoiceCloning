@@ -61,14 +61,16 @@ const FULL_QUALITY_OPTIONS = {
   // Seamless natural join — match Live Fast, which inserts no synthetic silence and
   // keeps each clip's natural tail. See DEFAULTS.chunkJoinPauseMs for the full why.
   chunkJoinPauseMs: 0,
-  // Voice-faithful takes per chunk (retryCount = takes - 1), early-accept as soon as
-  // ASR confirms a complete read. Set to 5: re-seeding the WHOLE chunk is now the
-  // primary way we recover a dropped word (we no longer split below a sentence), so a
-  // few more seeds here is what keeps a stubborn word from forcing a sentence split.
-  // Early-accept means the common case still stops at 1-2 takes, so latency is unchanged
-  // when chunks pass; only genuinely stubborn chunks spend the extra seeds.
-  retryCount: 5,
-  allowBestEffortFallback: true,
+  // Five voice-faithful takes per chunk (retryCount = takes - 1). Full/Queue generate
+  // the complete set and select the strongest verified candidate instead of shipping
+  // the first merely-acceptable read. Live Fast uses a separate path and is unchanged.
+  retryCount: 4,
+  selectBestVerifiedCandidate: true,
+  isolateRiskySentences: true,
+  // Full/Full Queue must never publish audio that the verifier already knows is
+  // incomplete. Exhausted retries now fail the chunk instead of putting a skipped
+  // or clipped take into the final WAV/progressive playback queue.
+  allowBestEffortFallback: false,
   // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
   // in practice (drift lands the cut too close to speech), so the breath is opt-in via
   // COMMA_PAUSE_MS rather than on by default.
@@ -144,6 +146,23 @@ function splitIntoSentences(text) {
 
 function countChunkWords(text) {
   return String(text || '').match(/[\p{L}\p{N}']+/gu)?.length || 0;
+}
+
+function containsRiskySynthesisContent(sentence, options = {}) {
+  if (!options.isolateRiskySentences) return false;
+  const text = String(sentence || '').trim();
+  if (!text || text.length < MIN_CHUNK_LENGTH) return false;
+
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
+  const guardedWords = new Set(
+    (Array.isArray(options.avoidChunkFinalWords) ? options.avoidChunkFinalWords : [])
+      .map((word) => String(word || '').toLowerCase())
+      .filter(Boolean),
+  );
+  const hasGuardedTerm = tokens.some((token) => guardedWords.has(token));
+  const hasNumberOrAcronym = /\d/u.test(text) || /\b[A-Z]{2,}\b/u.test(text);
+  const clauseBreaks = (text.match(/[,;:—]/gu) || []).length;
+  return hasGuardedTerm || hasNumberOrAcronym || tokens.length >= 28 || clauseBreaks >= 3;
 }
 
 function wordLimitCutIndex(text, maxWords) {
@@ -239,6 +258,13 @@ function chunkSegment(text, options = {}) {
   let sentenceCount = 0;
 
   for (const sentence of rawSentences) {
+    if (containsRiskySynthesisContent(sentence, options)) {
+      if (current.trim()) chunks.push(current.trim());
+      chunks.push(sentence.trim());
+      current = '';
+      sentenceCount = 0;
+      continue;
+    }
     const candidate = current ? `${current} ${sentence}` : sentence;
     const exceedsLength = candidate.length > maxChunkLength;
     const exceedsWords = maxChunkWords > 0 && countChunkWords(candidate) > maxChunkWords;
@@ -1181,7 +1207,7 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
     ok: !reason,
     durationSec,
     reason,
-    metrics: { rms, absPeak, zeroishRatio, clippedRatio, longestQuietSec, loopScore },
+    metrics: { rms, absPeak, zeroishRatio, clippedRatio, longestQuietSec, loopScore, expectedDurationSec },
   };
 }
 
@@ -1223,8 +1249,9 @@ export function buildAttemptVariants(baseParams, attemptIndex) {
   // parameters (temperature, top_k, top_p, cut0, repetition_penalty) — identical to
   // the Live Fast settings that pronounce correctly — and varies ONLY the seed. Each
   // take is a full, faithful read; the caller keeps generating (up to retryCount)
-  // until ASR confirms a complete one, then stops (early-accept). Nothing about HOW
-  // the model speaks changes between takes, so the cloned voice never drifts.
+  // Full/Queue evaluate the complete five-take tournament; other callers may still
+  // early-accept. Nothing about HOW the model speaks changes between takes, so the
+  // cloned voice never drifts.
 
   if (attemptIndex === 0) {
     return base;
@@ -1258,6 +1285,9 @@ export function scoreAudioCandidate(analysis, verification = null) {
   const longestQuietSec = clampNumber(metrics.longestQuietSec, 99);
   const loopScore = clampNumber(metrics.loopScore, 1);
   const durationSec = clampNumber(analysis?.durationSec, 0);
+  const expectedDurationSec = Math.max(0.1, clampNumber(metrics.expectedDurationSec, durationSec || 0.1));
+  const durationRatio = durationSec / expectedDurationSec;
+  const naturalPaceBonus = Math.max(0, 2.5 - Math.abs(Math.log(Math.max(0.01, durationRatio))) * 3);
 
   const absPeak = clampNumber(metrics.absPeak, 0);
   // A clear repetition loop (the dragging "aaaa" / laughing drone) is as
@@ -1279,7 +1309,7 @@ export function scoreAudioCandidate(analysis, verification = null) {
   // sounds most like the reference voice is preferred.
   const coverageBonus = verification ? clampNumber(verification.coverage, 1) * 10 : 0;
   const similarityBonus = Number.isFinite(verification?.similarity)
-    ? clampNumber(verification.similarity, 0) * 4
+    ? clampNumber(verification.similarity, 0) * 8
     : 0;
 
   // A half-cut word PASSES coverage (Whisper fills it in from context), so coverage
@@ -1309,7 +1339,7 @@ export function scoreAudioCandidate(analysis, verification = null) {
   return (
     coverageBonus
     + similarityBonus
-    + durationSec
+    + naturalPaceBonus
     + Math.min(rms * 20, 3)
     - clippedWordPenalty
     - missingWordPenalty
@@ -1347,6 +1377,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const verifyChunk = typeof options.verifyChunk === 'function' ? options.verifyChunk : null;
   let lastError = null;
   let bestCandidate = null;
+  let bestVerifiedCandidate = null;
+  let verifiedCandidateCount = 0;
 
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const paddedText = `${chunkText.trim()} `;
@@ -1376,22 +1408,54 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
         const voiceDrift = verification.similarityOk === false
           ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
           : '';
+        const unavailable = verification.verificationUnavailable
+          ? 'transcription verification unavailable'
+          : '';
+        const speakerUnavailable = verification.speakerVerificationUnavailable
+          ? 'voice verification unavailable'
+          : '';
         const detail = [
           missing ? `missing: ${missing}` : '',
           clipped ? `clipped: ${clipped}` : '',
           doubled ? `doubled: ${doubled}` : '',
           voiceDrift,
+          unavailable,
+          speakerUnavailable,
         ].filter(Boolean).join('; ');
         throw new Error(
           `Take rejected — covered ${(verification.coverage * 100).toFixed(0)}% of the text`
           + (detail ? ` (${detail})` : ''),
         );
       }
+      if (options.selectBestVerifiedCandidate) {
+        verifiedCandidateCount += 1;
+        if (!bestVerifiedCandidate || score > bestVerifiedCandidate.score) {
+          bestVerifiedCandidate = { audioBuffer, analysis, verification, paramsUsed: params, score };
+        }
+        continue;
+      }
       const paused = withCommaPauses(audioBuffer, chunkText, verification, options);
       return { audioBuffer: paused, analysis, verification, paramsUsed: params, attempts: attempt + 1 };
     } catch (error) {
       lastError = error;
     }
+  }
+
+  if (bestVerifiedCandidate) {
+    return {
+      audioBuffer: withCommaPauses(
+        bestVerifiedCandidate.audioBuffer,
+        chunkText,
+        bestVerifiedCandidate.verification,
+        options,
+      ),
+      analysis: bestVerifiedCandidate.analysis,
+      verification: bestVerifiedCandidate.verification,
+      paramsUsed: bestVerifiedCandidate.paramsUsed,
+      attempts: retryCount + 1,
+      verifiedCandidateCount,
+      tournament: true,
+    };
   }
 
   if (allowBestEffortFallback && bestCandidate) {
@@ -1406,8 +1470,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
     };
   }
 
-  // Carry the best audio we saw on the error so the resilient wrapper can salvage
-  // it as a last resort instead of aborting an entire long generation.
+  // Carry the best audio on the error for explicitly best-effort callers. Strict
+  // Live Full/Queue callers ignore it and surface a failed completeness check.
   const failure = lastError || new Error('Chunk synthesis failed');
   if (bestCandidate) failure.bestCandidate = bestCandidate;
   throw failure;
@@ -1420,10 +1484,9 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
 //   (1) whole chunk, re-seed until a clean read (best context — usually passes fast);
 //   (2) on failure, split at SENTENCE boundaries only and re-seed each whole sentence,
 //       returning only if EVERY sentence passes clean (joins land on natural pauses);
-//   (3) terminal: best-effort each whole sentence (highest-coverage take) so every word
-//       is still spoken — an imperfect word is acceptable for medical text, a dropped
-//       one is not, and the same skip/half-cut/dict verifier still runs on each unit.
-// Only a genuine inference-server error (no audio ever produced) propagates.
+//   (3) terminal: strict callers fail rather than publish a take known to contain a
+//       skip/cut; explicitly best-effort callers may retain the legacy whole-sentence
+//       fallback. Live Full and Live Full Queue are strict.
 async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { onSplit } = {}) {
   // A trailing SSML break sentinel is a routing hint for the pause stage, not text to
   // speak — strip it before anything reaches the model, ASR, or the sentence splitter.
@@ -1431,7 +1494,7 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
   const escalate = { ...options, allowBestEffortFallback: false };
   let lastError = null;
 
-  // Pass 1: whole chunk, re-seed suite (early-accept on the first clean take).
+  // Pass 1: whole-chunk five-take tournament; select the strongest verified read.
   try {
     const result = await synthesizeChunkWithRetry(cleanText, { ...baseParams, text: cleanText }, escalate);
     return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
@@ -1462,11 +1525,16 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
     }
   }
 
-  // Terminal (safety net): no clean read exists. Best-effort each WHOLE sentence (never
-  // below a sentence) and concatenate, so the entire chunk text is always spoken. A
-  // single-sentence chunk is best-efforted whole. The same verifier still scores each
-  // take, so we keep the most-complete one; a dropped/half-cut word is only tolerated
-  // here as the absolute last resort (fix recurring ones via the pronunciation dict).
+  // Terminal safety net is opt-in only. Live Full/Queue disable it: if Whisper or
+  // the clip detector rejects every take, do not publish known-bad audio. Progressive
+  // playback cannot retract a skipped sentence after it has already been heard.
+  if (!options.allowBestEffortFallback) {
+    const detail = lastError?.message ? ` Last rejection: ${lastError.message}` : '';
+    throw new Error(`Could not produce a complete reading after all retries.${detail}`);
+  }
+
+  // Legacy/explicit best-effort path for callers that prefer some audio over a hard
+  // failure. It remains whole-sentence only and is not used by Live Full/Queue.
   const units = sentences.length >= 2 ? sentences : [cleanText];
   const buffers = [];
   let attempts = 0;
@@ -1543,7 +1611,7 @@ export function getLongTextSessionMetadata(sessionId) {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 }
 
-export async function regenerateLongTextChunk(sessionId, index, options = {}) {
+export async function regenerateLongTextChunk(sessionId, index, options = {}, replacementText = '') {
   const manifest = getLongTextSessionMetadata(sessionId);
   const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
   const chunkIndex = Number(index);
@@ -1551,7 +1619,8 @@ export async function regenerateLongTextChunk(sessionId, index, options = {}) {
     throw new Error('Invalid chunk index');
   }
 
-  const chunkText = chunks[chunkIndex];
+  const editedText = stripBreakSentinels(String(replacementText || '')).trim();
+  const chunkText = editedText || chunks[chunkIndex];
   const params = manifest.params || {};
   const result = await synthesizeChunkResilient(
     chunkText,
@@ -1559,6 +1628,14 @@ export async function regenerateLongTextChunk(sessionId, index, options = {}) {
     options,
   );
   fs.writeFileSync(getSessionChunkPath(sessionId, chunkIndex), result.audioBuffer);
+
+  // Commit edited text only after synthesis succeeds. A failed repair leaves the
+  // prior manifest and the prior playable audio intact.
+  if (editedText) {
+    chunks[chunkIndex] = editedText;
+    manifest.chunks = chunks;
+    fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
+  }
 
   const chunkBuffers = chunks.map((_, currentIndex) => {
     const chunkPath = getSessionChunkPath(sessionId, currentIndex);
