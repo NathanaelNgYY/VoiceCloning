@@ -82,15 +82,19 @@ export function verificationOptions(params = {}, { finalWordTailCheck = false } 
       // Admin pronunciation-dictionary words are rare medical terms Whisper often
       // mis-transcribes; pass them so Full can verify an anchored timed token occupied
       // the expected slot instead of demanding Whisper's exact spelling.
-      let dictionaryWords = [];
+      let dictionaryEntries = [];
       if (useAsr) {
         try {
           const entries = await loadRuntimePronunciationEntries();
-          dictionaryWords = entries.map((e) => e.word).filter(Boolean);
+          dictionaryEntries = entries.filter((entry) => entry?.word);
         } catch { /* no dictionary → strict spelling check, as before */ }
       }
       const [asr, speaker] = await Promise.all([
-        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, { dictionaryWords, finalWordTailCheck }) : null,
+        useAsr ? transcriptionVerifier.verifyChunk(audioBuffer, expectedText, {
+          dictionaryWords: dictionaryEntries.map((entry) => entry.word),
+          dictionaryEntries,
+          finalWordTailCheck,
+        }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
       // Fail closed for Full only when its completeness checker disappears. Speaker
@@ -124,6 +128,7 @@ export function verificationOptions(params = {}, { finalWordTailCheck = false } 
         skippedWords: asr?.skippedWords ?? [],
         words: asr?.words ?? [],
         transcript: asr?.transcript,
+        phonemeAssessments: asr?.phonemeAssessments ?? [],
         similarity: speaker?.similarity,
         similarityOk: speaker ? speaker.ok : null,
         speakerVerificationUnavailable: speakerUnavailable,

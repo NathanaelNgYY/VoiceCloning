@@ -196,6 +196,32 @@ test('a doubled-word take scores lower than a clean take, all else equal', () =>
   assert.ok(doubled < clean, `doubled (${doubled}) should score below clean (${clean})`);
 });
 
+test('candidate scoring prefers a verified technical-word pronunciation', () => {
+  const analysis = analyzeAudioQuality(makeNoiseWav(4.0), 'the Michaelis constant');
+  const base = {
+    coverage: 1,
+    missingWords: [],
+    suspectWords: [],
+    extraWords: [],
+    repeatedPhrases: [],
+  };
+  const correct = scoreAudioCandidate(analysis, {
+    ...base,
+    phonemeAssessments: [{ word: 'michaelis', ok: true, similarity: 0.9 }],
+  });
+  const incorrect = scoreAudioCandidate(analysis, {
+    ...base,
+    phonemeAssessments: [{ word: 'michaelis', ok: false, similarity: 0.3 }],
+  });
+  const unavailable = scoreAudioCandidate(analysis, {
+    ...base,
+    phonemeAssessments: [{ word: 'michaelis', ok: false, inconclusive: true }],
+  });
+
+  assert.ok(correct > incorrect);
+  assert.equal(correct, unavailable);
+});
+
 test('quiet recoverable audio with a real waveform is not rejected as silent', () => {
   const result = analyzeAudioQuality(makeSparseQuietWav(6.0), 'short phrase');
   assert.doesNotMatch(result.reason || '', /silent/i, `quiet non-empty audio should be recoverable: ${result.reason}`);

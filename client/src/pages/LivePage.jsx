@@ -82,6 +82,7 @@ import {
   getTtsHistoryByRoute,
 } from '@/lib/ttsHistory';
 import { concatWavBlobs } from '@/lib/wavConcat';
+import { waitForPlayableAudioSource } from '@/lib/audioReadiness';
 import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
 import { fetchDatamuseArpabet, arpabetToReadable } from '@/lib/arpabet';
 import {
@@ -126,68 +127,6 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-
-function withCacheBuster(url) {
-  if (!url || url.startsWith('blob:')) return url;
-  try {
-    const parsed = new URL(url, window.location.href);
-    parsed.searchParams.set('_audioReady', String(Date.now()));
-    return parsed.toString();
-  } catch {
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}_audioReady=${Date.now()}`;
-  }
-}
-
-function waitForAudioMetadata(url, timeoutMs = 3500) {
-  return new Promise((resolve, reject) => {
-    const audio = new Audio();
-    let settled = false;
-    let timer = null;
-    const cleanup = () => {
-      if (timer) window.clearTimeout(timer);
-      audio.onloadedmetadata = null;
-      audio.oncanplay = null;
-      audio.onerror = null;
-    };
-    const done = (ok) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (ok) resolve();
-      else reject(new Error('Audio metadata was not ready yet.'));
-    };
-    timer = window.setTimeout(() => done(false), timeoutMs);
-    audio.preload = 'metadata';
-    audio.onloadedmetadata = () => done(true);
-    audio.oncanplay = () => done(true);
-    audio.onerror = () => done(false);
-    audio.src = url;
-    audio.load();
-  });
-}
-
-// The result URL 404s until the server has finished writing/uploading final.wav, and
-// in S3 mode that file can lag the completion signal (assembly + upload + eventual
-// consistency). The <audio> element reports that transient 404 as onerror, so we keep
-// retrying with backoff. Budget is generous (8 attempts, growing delay ≈ 25s) so a
-// slow final upload no longer surfaces as a spurious "audio not ready" error.
-async function waitForPlayableAudioSource(url, { attempts = 8, delayMs = 700 } = {}) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const candidateUrl = withCacheBuster(url);
-    try {
-      await waitForAudioMetadata(candidateUrl);
-      return candidateUrl;
-    } catch (err) {
-      lastError = err;
-      if (attempt < attempts) {
-        await new Promise((resolve) => window.setTimeout(resolve, delayMs * attempt));
-      }
-    }
-  }
-  throw lastError || new Error('Generated audio is not playable yet.');
-}
 
 function messageStatusText(message) {
   if (message.role === 'user') {
@@ -2206,6 +2145,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const source = await getGenerationResultSource(historyItem.sessionId);
       const separator = source.url.includes('?') ? '&' : '?';
       const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      if (String(historyItem.url || '').startsWith('blob:') && historyItem.url !== playableUrl) {
+        URL.revokeObjectURL(historyItem.url);
+      }
       setTtsHistory((current) => {
         const next = current.map((item) => item.id === historyItem.id ? {
           ...item,

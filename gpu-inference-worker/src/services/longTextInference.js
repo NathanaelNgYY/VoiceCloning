@@ -1336,6 +1336,16 @@ export function scoreAudioCandidate(analysis, verification = null) {
   const repeatedCount = verification?.repeatedPhrases?.length || 0;
   const repeatedPhrasePenalty = repeatedCount * 6;
 
+  // When all Full takes miss the strict bar and best-effort must choose one,
+  // prefer a take whose independently measured technical-word phones were closer
+  // to the saved dictionary pronunciation. Inconclusive checks add no penalty:
+  // unavailable verification is not evidence of a bad pronunciation.
+  const failedPhonemeAssessments = (verification?.phonemeAssessments || [])
+    .filter((assessment) => assessment?.ok === false && !assessment?.inconclusive);
+  const phonemePenalty = failedPhonemeAssessments.reduce((penalty, assessment) => (
+    penalty + 8 + ((1 - clampNumber(assessment?.similarity, 0)) * 4)
+  ), 0);
+
   return (
     coverageBonus
     + similarityBonus
@@ -1345,6 +1355,7 @@ export function scoreAudioCandidate(analysis, verification = null) {
     - missingWordPenalty
     - extraWordPenalty
     - repeatedPhrasePenalty
+    - phonemePenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)
     - Math.max(0, longestQuietSec - 1.4)

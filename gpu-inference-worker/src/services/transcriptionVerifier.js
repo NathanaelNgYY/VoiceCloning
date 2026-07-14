@@ -211,10 +211,10 @@ class TranscriptionVerifier {
     this.pending.delete(message.id);
     clearTimeout(entry.timer);
     if (message.error) entry.reject(new Error(message.error));
-    else entry.resolve({ text: String(message.text || ''), words: Array.isArray(message.words) ? message.words : [] });
+    else entry.resolve(message);
   }
 
-  async transcribeBuffer(audioBuffer, { tier } = {}) {
+  async requestSidecar(audioBuffer, payload = {}) {
     const started = await this.ensureStarted();
     if (!started || !this.process) throw new Error('Transcription sidecar unavailable');
 
@@ -226,16 +226,34 @@ class TranscriptionVerifier {
 
     try {
       return await new Promise((resolve, reject) => {
+        const requestTimeoutMs = payload.operation === 'phoneme_verify' ? 180_000 : REQUEST_TIMEOUT_MS;
         const timer = setTimeout(() => {
           this.pending.delete(id);
           reject(new Error('Transcription timed out'));
-        }, REQUEST_TIMEOUT_MS);
+        }, requestTimeoutMs);
         this.pending.set(id, { resolve, reject, timer });
-        this.process.stdin.write(`${JSON.stringify({ id, path: filePath, tier })}\n`);
+        this.process.stdin.write(`${JSON.stringify({ id, path: filePath, ...payload })}\n`);
       });
     } finally {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
     }
+  }
+
+  async transcribeBuffer(audioBuffer, { tier } = {}) {
+    const message = await this.requestSidecar(audioBuffer, { operation: 'transcribe', tier });
+    return {
+      text: String(message.text || ''),
+      words: Array.isArray(message.words) ? message.words : [],
+    };
+  }
+
+  async verifyPhonemeBuffer(audioBuffer, { start, end, arpabet } = {}) {
+    return this.requestSidecar(audioBuffer, {
+      operation: 'phoneme_verify',
+      start,
+      end,
+      arpabet,
+    });
   }
 
   /**
@@ -245,7 +263,12 @@ class TranscriptionVerifier {
    *
    * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
    */
-  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [], finalWordTailCheck = false } = {}) {
+  async verifyChunk(audioBuffer, expectedText, {
+    minCoverage = TRANSCRIPTION_MIN_COVERAGE,
+    dictionaryWords = [],
+    dictionaryEntries = [],
+    finalWordTailCheck = false,
+  } = {}) {
     let result;
     try {
       // Live Full / Queue (finalWordTailCheck) transcribe with the heavier accurate
@@ -296,12 +319,19 @@ class TranscriptionVerifier {
     // words AND the heard word count matches the expected count (nothing dropped),
     // treat them as spoken-but-mistranscribed instead of missing. A real skip lowers
     // the count → not forgiven → still re-rolled (safe for medical text).
-    const dictSet = new Set(
-      dictionaryWords
-        .map((w) => String(w || '').toLowerCase())
-        .filter((w) => w.length >= DICTIONARY_FORGIVEN_MIN_LENGTH),
-    );
+    const normalizedDictionaryEntries = Array.from(dictionaryEntries || [])
+      .map((entry) => ({
+        word: String(entry?.word || '').trim().toLowerCase(),
+        arpabet: String(entry?.arpabet || '').trim().toUpperCase(),
+      }))
+      .filter((entry) => entry.word);
+    const dictionaryEntryByWord = new Map(normalizedDictionaryEntries.map((entry) => [entry.word, entry]));
+    const dictSet = new Set([
+      ...dictionaryWords.map((w) => String(w || '').toLowerCase()),
+      ...normalizedDictionaryEntries.map((entry) => entry.word),
+    ].filter((w) => w.length >= DICTIONARY_FORGIVEN_MIN_LENGTH));
     let forgivenDict = [];
+    const phonemeAssessments = [];
     let adjustedCoverage = coverage;
     // A hard dictionary word may be spoken correctly while Whisper spells it as a
     // different token (for example "Michaelis"). Full may forgive that spelling
@@ -337,21 +367,57 @@ class TranscriptionVerifier {
         // heard token is a strict prefix of it. Gated on finalWordTailCheck so only the
         // heavy-safeguard paths pay for the extra scrutiny; Live Fast is unaffected.
         const rejectTruncated = (w) => finalWordTailCheck && isTruncatedDictWord(w, text);
-        const timingAndEnergyConfirm = (w) => {
+        const timingAndEnergyEvidence = (w) => {
           const timing = findWordTimingEvidence(expectedText, w, words, { minWordLength });
-          if (!timing) return false;
+          if (!timing) return null;
           // Full must confirm actual waveform activity inside Whisper's aligned slot;
           // a hallucinated timestamp over silence is not evidence that the word spoke.
-          return !finalWordTailCheck || hasSpeechEnergyInTimedSpan(audioBuffer, timing);
+          return !finalWordTailCheck || hasSpeechEnergyInTimedSpan(audioBuffer, timing) ? timing : null;
         };
-        forgivenDict = missingWords.filter((w) => (
-          dictSet.has(w.toLowerCase())
-          && !rejectTruncated(w)
-          && (
-            (!hasTimings && !finalWordTailCheck)
-            || (hasTimings && timingAndEnergyConfirm(w))
-          )
+        const missingDictionaryWords = new Set(
+          missingWords.filter((word) => dictSet.has(word.toLowerCase())).map((word) => word.toLowerCase()),
+        );
+        // Full verifies every saved technical pronunciation present in the source,
+        // even when Whisper guessed the expected spelling from context. Fast keeps
+        // the established missing-word-only forgiveness path and does no phone work.
+        const expectedDictionaryWords = finalWordTailCheck
+          ? [...new Set(
+            (String(expectedText).toLowerCase().match(/[\p{L}\p{N}']+/gu) || [])
+              .filter((word) => dictSet.has(word)),
+          )]
+          : missingWords;
+        const presenceCandidates = expectedDictionaryWords.map((word) => ({
+          word,
+          timing: hasTimings ? timingAndEnergyEvidence(word) : null,
+        })).filter(({ word, timing }) => (
+          dictSet.has(word.toLowerCase())
+          && !rejectTruncated(word)
+          && ((!hasTimings && !finalWordTailCheck) || timing)
         ));
+
+        if (!finalWordTailCheck) {
+          forgivenDict = presenceCandidates.map(({ word }) => word);
+        } else {
+          // Full requires an independent phone recognizer after presence is proven.
+          // A forced timestamp cannot establish that the expected phones were spoken.
+          for (const { word, timing } of presenceCandidates) {
+            const dictionaryEntry = dictionaryEntryByWord.get(word.toLowerCase());
+            if (!dictionaryEntry?.arpabet) continue;
+            try {
+              const assessment = await this.verifyPhonemeBuffer(audioBuffer, {
+                start: timing.start,
+                end: timing.end,
+                arpabet: dictionaryEntry.arpabet,
+              });
+              phonemeAssessments.push({ word, ...assessment });
+              if (assessment.ok === true && missingDictionaryWords.has(word.toLowerCase())) {
+                forgivenDict.push(word);
+              }
+            } catch (error) {
+              console.warn(`[phoneme] verification unavailable for "${word}": ${error.message}`);
+            }
+          }
+        }
         if (forgivenDict.length > 0) {
           const forgivenSet = new Set(forgivenDict.map((w) => w.toLowerCase()));
           substantialMissing = substantialMissing.filter((w) => !forgivenSet.has(w.toLowerCase()));
@@ -366,6 +432,7 @@ class TranscriptionVerifier {
       && skippedWords.length === 0
       && substantialMissing.length === 0
       && repeatedPhrases.length === 0
+      && !phonemeAssessments.some((assessment) => assessment.ok === false && !assessment.inconclusive)
       // Low-confidence/short spans remain advisory for Live Fast. Full/Queue have
       // five candidates to choose from, so uncertainty is a hard rejection there.
       && (!finalWordTailCheck || suspectWords.length === 0);
@@ -384,6 +451,7 @@ class TranscriptionVerifier {
       coverage: adjustedCoverage,
       missingWords,
       forgivenDictionaryWords: forgivenDict,
+      phonemeAssessments,
       extraWords,
       repeatedPhrases,
       suspectWords,
