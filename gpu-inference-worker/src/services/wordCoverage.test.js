@@ -326,6 +326,14 @@ test('isWordSpokenByTiming rejects a word whose position has only near-zero span
   assert.equal(isWordSpokenByTiming(text, 'centriole', words), false);
 });
 
+test('isWordSpokenByTiming does not borrow healthy timing from neighbouring words', () => {
+  const text = 'alpha beta gamma centriole delta epsilon';
+  const words = 'alpha beta gamma central delta epsilon'
+    .split(' ')
+    .map((wd, i) => ({ w: wd, start: i, end: i + (i === 3 ? 0.01 : 0.3), p: 0.9 }));
+  assert.equal(isWordSpokenByTiming(text, 'centriole', words), false);
+});
+
 test('isTruncatedDictWord detects a clipped word (heard prefix, tail cut)', () => {
   assert.equal(isTruncatedDictWord('chromatin', 'the chroma condenses during mitosis'), true);
   assert.equal(isTruncatedDictWord('environment', 'in its natural environ the cell'), true);

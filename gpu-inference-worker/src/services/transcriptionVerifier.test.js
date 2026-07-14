@@ -7,6 +7,34 @@ function w(word, durationSec, p = 0.95) {
   return { w: word, start: 0, end: durationSec, p };
 }
 
+function makePcm16Wav(durationSec, silentRanges = []) {
+  const sampleRate = 16000;
+  const samples = Math.ceil(durationSec * sampleRate);
+  const data = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i += 1) {
+    const time = i / sampleRate;
+    const silent = silentRanges.some((range) => time >= range.start && time <= range.end);
+    const sample = silent ? 0 : (i % 2 === 0 ? 5000 : -5000);
+    data.writeInt16LE(sample, i * 2);
+  }
+  const wav = Buffer.alloc(44 + data.length);
+  wav.write('RIFF', 0, 4, 'ascii');
+  wav.writeUInt32LE(36 + data.length, 4);
+  wav.write('WAVE', 8, 4, 'ascii');
+  wav.write('fmt ', 12, 4, 'ascii');
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36, 4, 'ascii');
+  wav.writeUInt32LE(data.length, 40);
+  data.copy(wav, 44);
+  return wav;
+}
+
 test('dictionary word mis-transcribed but present (word count matches) is forgiven', async () => {
   // Model said every word, just pronounced "centriole" as "sensual". Whisper heard
   // the same NUMBER of words → nothing dropped → forgive the dictionary mis-spelling.
@@ -21,6 +49,78 @@ test('dictionary word mis-transcribed but present (word count matches) is forgiv
       { dictionaryWords: ['centriole', 'centrioles'] },
     );
     assert.equal(res.ok, true, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full forgives a hard dictionary word only when an aligned timed token was spoken', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      { dictionaryWords: ['michaelis'], finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, ['michaelis']);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full does not forgive a hallucinated technical timestamp over silence', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9, [{ start: 3, end: 3.6 }]),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      { dictionaryWords: ['michaelis'], finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full does not timing-forgive a hard dictionary word when its aligned slot is absent', async () => {
+  const heard = 'Km or the constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      { dictionaryWords: ['michaelis'], finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
   } finally {
     mock.restoreAll();
   }

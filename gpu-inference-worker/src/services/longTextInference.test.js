@@ -405,24 +405,27 @@ test('full-quality options hard-fail instead of publishing a known-bad silent ch
   }
 });
 
-test('full-quality fallback never publishes audio when accurate ASR is unavailable', async () => {
-  mock.method(inferenceServer, 'synthesize', async () => makeNoiseWav(4));
+test('single-sentence Full uses its best usable take after five when ASR is unavailable', async () => {
+  let synthCalls = 0;
+  mock.method(inferenceServer, 'synthesize', async () => {
+    synthCalls += 1;
+    return makeNoiseWav(4);
+  });
   try {
-    await assert.rejects(
-      synthesizeLongText(
-        applyFullInferenceQualityPreset({ text: 'This sentence requires a real completeness check.' }),
-        fullInferenceQualityOptions({
-          verifyChunk: async () => ({
-            ok: false,
-            coverage: 0,
-            missingWords: [],
-            suspectWords: [],
-            verificationUnavailable: true,
-          }),
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text: 'This sentence still needs a usable fallback.' }),
+      fullInferenceQualityOptions({
+        verifyChunk: async () => ({
+          ok: false,
+          coverage: 0,
+          missingWords: [],
+          suspectWords: [],
+          verificationUnavailable: true,
         }),
-      ),
-      /could not produce a usable full-sentence reading/iu,
+      }),
     );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
+    assert.equal(synthCalls, 5);
   } finally {
     mock.restoreAll();
   }
@@ -515,7 +518,6 @@ test('best-effort fallback covers the whole chunk, never a partial span', async 
       fullInferenceQualityOptions({
         retryCount: 0,
         allowBestEffortFallback: true,
-        requireWordCompleteFallback: false,
         // Always-reject verifier forces every clean retry to fail and the full-span
         // best-effort fallback to run.
         verifyChunk: async () => ({ ok: false, coverage: 0.5, missingWords: ['centriole'], suspectWords: [] }),
@@ -604,26 +606,29 @@ test('sentence recovery uses up to five takes and stitches the best full-sentenc
   }
 });
 
-test('Full fallback never ships a candidate with a known missing word', async () => {
+test('single-sentence Full returns the best take after five coverage rejections', async () => {
   const text = 'A complete reading keeps every word.';
-  mock.method(inferenceServer, 'synthesize', async () => makeNoiseWav(4));
+  let synthCalls = 0;
+  mock.method(inferenceServer, 'synthesize', async () => {
+    synthCalls += 1;
+    return makeNoiseWav(4);
+  });
   try {
-    await assert.rejects(
-      () => synthesizeLongText(
-        applyFullInferenceQualityPreset({ text }),
-        fullInferenceQualityOptions({
-          retryCount: 0,
-          verifyChunk: async () => ({
-            ok: false,
-            coverage: 0.9,
-            missingWords: ['a'],
-            suspectWords: [],
-            skippedWords: [],
-          }),
+    const result = await synthesizeLongText(
+      applyFullInferenceQualityPreset({ text }),
+      fullInferenceQualityOptions({
+        retryCount: 4,
+        verifyChunk: async () => ({
+          ok: false,
+          coverage: 0.9,
+          missingWords: ['a'],
+          suspectWords: [],
+          skippedWords: [],
         }),
-      ),
-      /rejected|failed|missing|complete/iu,
+      }),
     );
+    assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
+    assert.equal(synthCalls, 5);
   } finally {
     mock.restoreAll();
   }

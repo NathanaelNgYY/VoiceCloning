@@ -12,7 +12,14 @@ import {
   TRANSCRIPTION_MODEL_ACCURATE,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, findRepeatedPhrases, countWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
+import {
+  computeWordCoverage,
+  findClippedWords,
+  findRepeatedPhrases,
+  countWords,
+  findWordTimingEvidence,
+  isTruncatedDictWord,
+} from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -26,6 +33,75 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // "cell") force a re-roll instead of being hidden by high overall coverage.
 const SUBSTANTIAL_WORD_LENGTH = 4;
 const DICTIONARY_FORGIVEN_MIN_LENGTH = 7;
+
+function readPcm16Wav(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 44) return null;
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let offset = 12;
+  let format = null;
+  let data = null;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString('ascii', offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    if (end > buffer.length) return null;
+    if (id === 'fmt ' && size >= 16) {
+      format = {
+        audioFormat: buffer.readUInt16LE(start),
+        channels: buffer.readUInt16LE(start + 2),
+        sampleRate: buffer.readUInt32LE(start + 4),
+        blockAlign: buffer.readUInt16LE(start + 12),
+        bitsPerSample: buffer.readUInt16LE(start + 14),
+      };
+    } else if (id === 'data') {
+      data = buffer.subarray(start, end);
+    }
+    offset = end + (size % 2);
+  }
+  if (!format || !data || format.audioFormat !== 1 || format.bitsPerSample !== 16
+    || format.channels < 1 || format.sampleRate < 1 || format.blockAlign < 2) return null;
+  return { ...format, data };
+}
+
+export function hasSpeechEnergyInTimedSpan(audioBuffer, timing, opts = {}) {
+  const wav = readPcm16Wav(audioBuffer);
+  if (!wav || !timing || !(timing.end > timing.start)) return false;
+  const frameCount = Math.floor(wav.data.length / wav.blockAlign);
+  const startFrame = Math.max(0, Math.min(frameCount, Math.floor(timing.start * wav.sampleRate)));
+  const endFrame = Math.max(startFrame + 1, Math.min(frameCount, Math.ceil(timing.end * wav.sampleRate)));
+  if (endFrame <= startFrame) return false;
+
+  const measure = (fromFrame, toFrame) => {
+    let sumSquares = 0;
+    let peak = 0;
+    let voiced = 0;
+    let count = 0;
+    for (let frame = fromFrame; frame < toFrame; frame += 1) {
+      for (let channel = 0; channel < wav.channels; channel += 1) {
+        const byteOffset = frame * wav.blockAlign + channel * 2;
+        if (byteOffset + 2 > wav.data.length) break;
+        const amplitude = Math.abs(wav.data.readInt16LE(byteOffset) / 32768);
+        sumSquares += amplitude * amplitude;
+        peak = Math.max(peak, amplitude);
+        if (amplitude >= 0.003) voiced += 1;
+        count += 1;
+      }
+    }
+    return {
+      rms: count ? Math.sqrt(sumSquares / count) : 0,
+      peak,
+      voicedRatio: count ? voiced / count : 0,
+    };
+  };
+
+  const whole = measure(0, frameCount);
+  const span = measure(startFrame, endFrame);
+  const minRms = Number.isFinite(opts.minRms) ? opts.minRms : Math.max(0.0025, whole.rms * 0.1);
+  const minPeak = Number.isFinite(opts.minPeak) ? opts.minPeak : Math.max(0.012, whole.peak * 0.08);
+  const minVoicedRatio = Number.isFinite(opts.minVoicedRatio) ? opts.minVoicedRatio : 0.03;
+  return span.rms >= minRms && span.peak >= minPeak && span.voicedRatio >= minVoicedRatio;
+}
 
 /**
  * Manages a persistent faster-whisper sidecar (python/transcription_server.py).
@@ -227,11 +303,11 @@ class TranscriptionVerifier {
     );
     let forgivenDict = [];
     let adjustedCoverage = coverage;
-    // Maximum-quality Full/Queue never forgives a mismatched dictionary word. The
-    // ARPAbet entry makes synthesis deterministic, but the acoustic model can still
-    // render it incorrectly; accepting a same-length different word would hide that
-    // mispronunciation. Live Fast keeps the established forgiveness behavior.
-    if (dictSet.size > 0 && !finalWordTailCheck) {
+    // A hard dictionary word may be spoken correctly while Whisper spells it as a
+    // different token (for example "Michaelis"). Full may forgive that spelling
+    // mismatch only when anchored word timing confirms a real token occupied the
+    // expected slot; a shorter gap still means an omission and remains rejected.
+    if (dictSet.size > 0) {
       const expectedTokens = countWords(expectedText);
       const heardTokens = countWords(text);
       // Gate 1 (count): a mispronunciation keeps the token count exactly (one word in,
@@ -252,7 +328,7 @@ class TranscriptionVerifier {
         // forgive a dict word we can positively locate in the audio — one that was
         // actually skipped has no real span under it and stays un-forgiven (safe for
         // medical text). Degrade safely: with no timing data we can't add this check,
-        // so fall back to the count + non-dict gates rather than never forgiving.
+        // so Fast falls back to the count + non-dict gates. Full requires timings.
         const hasTimings = Array.isArray(words) && words.length > 0;
         // Gate 4 (Live Full / Queue only): never forgive a dict word the model CLIPPED.
         // A truncation ("chromatin" -> "chroma") reads as a mere mis-transcription to the
@@ -261,10 +337,20 @@ class TranscriptionVerifier {
         // heard token is a strict prefix of it. Gated on finalWordTailCheck so only the
         // heavy-safeguard paths pay for the extra scrutiny; Live Fast is unaffected.
         const rejectTruncated = (w) => finalWordTailCheck && isTruncatedDictWord(w, text);
+        const timingAndEnergyConfirm = (w) => {
+          const timing = findWordTimingEvidence(expectedText, w, words, { minWordLength });
+          if (!timing) return false;
+          // Full must confirm actual waveform activity inside Whisper's aligned slot;
+          // a hallucinated timestamp over silence is not evidence that the word spoke.
+          return !finalWordTailCheck || hasSpeechEnergyInTimedSpan(audioBuffer, timing);
+        };
         forgivenDict = missingWords.filter((w) => (
           dictSet.has(w.toLowerCase())
           && !rejectTruncated(w)
-          && (!hasTimings || isWordSpokenByTiming(expectedText, w, words))
+          && (
+            (!hasTimings && !finalWordTailCheck)
+            || (hasTimings && timingAndEnergyConfirm(w))
+          )
         ));
         if (forgivenDict.length > 0) {
           const forgivenSet = new Set(forgivenDict.map((w) => w.toLowerCase()));
@@ -293,7 +379,18 @@ class TranscriptionVerifier {
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage: adjustedCoverage, missingWords, extraWords, repeatedPhrases, suspectWords, skippedWords, transcript: text, words };
+    return {
+      ok,
+      coverage: adjustedCoverage,
+      missingWords,
+      forgivenDictionaryWords: forgivenDict,
+      extraWords,
+      repeatedPhrases,
+      suspectWords,
+      skippedWords,
+      transcript: text,
+      words,
+    };
   }
 
   /** Is the ASR sidecar usable right now? */

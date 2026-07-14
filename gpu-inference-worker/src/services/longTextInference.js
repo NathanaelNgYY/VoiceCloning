@@ -68,12 +68,9 @@ const FULL_QUALITY_OPTIONS = {
   initialTakeCount: 3,
   selectBestVerifiedCandidate: true,
   isolateRiskySentences: true,
-  // After whole-chunk and sentence-level 3→5 recovery, keep the strongest complete
-  // sentence-shaped audio candidate rather than failing the entire user request.
+  // After whole-chunk and sentence-level 3→5 recovery, keep the strongest audio-usable
+  // full-sentence candidate rather than failing the entire user request.
   allowBestEffortFallback: true,
-  // A Full fallback may relax softer ranking signals, but it must never ship audio
-  // the verifier already knows omitted or clipped even a one-character word.
-  requireWordCompleteFallback: true,
   // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
   // in practice (drift lands the cut too close to speech), so the breath is opt-in via
   // COMMA_PAUSE_MS rather than on by default.
@@ -1374,12 +1371,6 @@ function withCommaPauses(audioBuffer, chunkText, verification, options) {
   return out;
 }
 
-function hasKnownWordCompletenessDefect(verification) {
-  if (!verification) return true;
-  return ['missingWords', 'skippedWords', 'suspectWords']
-    .some((field) => Array.isArray(verification[field]) && verification[field].length > 0);
-}
-
 async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   const retryCount = Math.max(0, clampNumber(options.retryCount, DEFAULTS.retryCount));
   const totalTakeCount = retryCount + 1;
@@ -1493,8 +1484,6 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
   if (
     allowBestEffortFallback
     && bestCandidate?.analysis?.ok
-    && !bestCandidate.verification?.verificationUnavailable
-    && (!options.requireWordCompleteFallback || !hasKnownWordCompletenessDefect(bestCandidate.verification))
   ) {
     return {
       audioBuffer: withCommaPauses(bestCandidate.audioBuffer, chunkText, bestCandidate.verification, options),
@@ -1534,8 +1523,6 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
   const useBestCandidate = (candidate, text) => {
     if (
       !candidate?.analysis?.ok
-      || candidate.verification?.verificationUnavailable
-      || (options.requireWordCompleteFallback && hasKnownWordCompletenessDefect(candidate.verification))
       || !Buffer.isBuffer(candidate.audioBuffer)
     ) return null;
     return {

@@ -80,8 +80,8 @@ export function verificationOptions(params = {}, { finalWordTailCheck = false } 
   return {
     verifyChunk: async (audioBuffer, expectedText) => {
       // Admin pronunciation-dictionary words are rare medical terms Whisper often
-      // mis-transcribes; pass them so the verifier checks their PRESENCE (word count)
-      // rather than demanding correct spelling — kills wasted re-rolls on those words.
+      // mis-transcribes; pass them so Full can verify an anchored timed token occupied
+      // the expected slot instead of demanding Whisper's exact spelling.
       let dictionaryWords = [];
       if (useAsr) {
         try {
