@@ -44,6 +44,12 @@ async function parseResponse(response) {
   }
 }
 
+function upstreamError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
 export async function gpuPost(routePath, body = {}) {
   const response = await fetch(`${baseUrl()}${routePath}`, {
     method: 'POST',
@@ -95,7 +101,7 @@ export async function inferencePost(routePath, body = {}, extraHeaders = {}) {
   });
   const data = await parseResponse(response);
   if (!response.ok) {
-    throw new Error(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`);
+    throw upstreamError(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`, response.status);
   }
   return data;
 }
@@ -104,7 +110,7 @@ export async function inferenceGet(routePath) {
   const response = await fetch(`${inferenceBaseUrl()}${routePath}`);
   const data = await parseResponse(response);
   if (!response.ok) {
-    throw new Error(data.error || data.message || `Inference Worker GET ${routePath} failed (${response.status})`);
+    throw upstreamError(data.error || data.message || `Inference Worker GET ${routePath} failed (${response.status})`, response.status);
   }
   return data;
 }
@@ -122,7 +128,7 @@ export async function inferencePostBinary(routePath, body = {}, extraHeaders = {
   });
   if (!response.ok) {
     const data = await parseResponse(response);
-    throw new Error(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`);
+    throw upstreamError(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`, response.status);
   }
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
@@ -134,7 +140,7 @@ export async function inferenceGetBinary(routePath) {
   const response = await fetch(`${inferenceBaseUrl()}${routePath}`);
   if (!response.ok) {
     const data = await parseResponse(response);
-    throw new Error(data.error || data.message || `Inference Worker GET ${routePath} failed (${response.status})`);
+    throw upstreamError(data.error || data.message || `Inference Worker GET ${routePath} failed (${response.status})`, response.status);
   }
   return {
     buffer: Buffer.from(await response.arrayBuffer()),

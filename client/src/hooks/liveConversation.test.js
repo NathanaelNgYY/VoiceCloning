@@ -159,11 +159,43 @@ test('chat messages keep stable ids and can be patched immutably', () => {
   assert.equal(next[0].status, 'ready');
 });
 
-test('splitLiveReplyChunks groups short sentences into one context-rich chunk', () => {
+test('splitLiveReplyChunks defaults to one sentence and lets a short sentence absorb one neighbour', () => {
   assert.deepEqual(
     splitLiveReplyChunks('Yes. That helps. Thanks a lot.'),
-    ['Yes. That helps. Thanks a lot.'],
+    ['Yes. That helps.', 'Thanks a lot.'],
   );
+});
+
+test('splitLiveReplyChunks keeps normal sentences separate by default', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  assert.deepEqual(splitLiveReplyChunks(`${first} ${second}`), [first, second]);
+});
+
+test('splitLiveReplyChunks gives an explicit sentence limit priority over the default', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  assert.deepEqual(
+    splitLiveReplyChunks(`${first} ${second}`, { maxSentencesPerChunk: 2 }),
+    [`${first} ${second}`],
+  );
+});
+
+test('splitLiveReplyChunks gives an explicit word limit priority over the 280-character default', () => {
+  const sentence = `${Array.from({ length: 12 }, (_, index) => `extraordinarilylongword${index}`).join(' ')}.`;
+  assert.ok(sentence.length > 280);
+  assert.deepEqual(
+    splitLiveReplyChunks(sentence, { maxChunkWords: 20 }),
+    [sentence],
+  );
+});
+
+test('splitLiveReplyChunks enforces an explicit word limit inside a long sentence', () => {
+  const sentence = `${Array.from({ length: 23 }, (_, index) => `word${index}`).join(' ')}.`;
+  const chunks = splitLiveReplyChunks(sentence, { maxChunkWords: 10 });
+  assert.ok(chunks.length >= 3, JSON.stringify(chunks));
+  assert.ok(chunks.every((chunk) => (chunk.match(/[\p{L}\p{N}']+/gu) || []).length <= 10));
+  assert.equal(chunks.join(' '), sentence);
 });
 
 test('splitLiveReplyChunks breaks a long passage at sentence boundaries into multiple chunks', () => {

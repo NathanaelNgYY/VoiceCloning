@@ -13,6 +13,14 @@ test('dotted acronyms are spelled out', () => {
   assert.equal(result, 'the W H O guidelines');
 });
 
+test('a dotted initialism preserves a period that also ends its sentence', () => {
+  assert.equal(
+    applyEmphasisAndSpelling('The F.A.D. Another sentence follows.', opts),
+    'The F A D. Another sentence follows.',
+  );
+  assert.equal(applyEmphasisAndSpelling('The F.A.D.', opts), 'The F A D.');
+});
+
 test('space-separated single capitals are spelled out', () => {
   const result = applyEmphasisAndSpelling('order an E C G now', opts);
   assert.match(result, /E C G/u);

@@ -12,7 +12,14 @@ import {
   TRANSCRIPTION_MODEL_ACCURATE,
   TRANSCRIPTION_MIN_COVERAGE,
 } from '../config.js';
-import { computeWordCoverage, findClippedWords, findRepeatedPhrases, countWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
+import {
+  computeWordCoverage,
+  findClippedWords,
+  findRepeatedPhrases,
+  countWords,
+  findWordTimingEvidence,
+  isTruncatedDictWord,
+} from './wordCoverage.js';
 
 const STARTUP_TIMEOUT_MS = 120_000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -26,6 +33,75 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // "cell") force a re-roll instead of being hidden by high overall coverage.
 const SUBSTANTIAL_WORD_LENGTH = 4;
 const DICTIONARY_FORGIVEN_MIN_LENGTH = 7;
+
+function readPcm16Wav(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 44) return null;
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let offset = 12;
+  let format = null;
+  let data = null;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString('ascii', offset, offset + 4);
+    const size = buffer.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    if (end > buffer.length) return null;
+    if (id === 'fmt ' && size >= 16) {
+      format = {
+        audioFormat: buffer.readUInt16LE(start),
+        channels: buffer.readUInt16LE(start + 2),
+        sampleRate: buffer.readUInt32LE(start + 4),
+        blockAlign: buffer.readUInt16LE(start + 12),
+        bitsPerSample: buffer.readUInt16LE(start + 14),
+      };
+    } else if (id === 'data') {
+      data = buffer.subarray(start, end);
+    }
+    offset = end + (size % 2);
+  }
+  if (!format || !data || format.audioFormat !== 1 || format.bitsPerSample !== 16
+    || format.channels < 1 || format.sampleRate < 1 || format.blockAlign < 2) return null;
+  return { ...format, data };
+}
+
+export function hasSpeechEnergyInTimedSpan(audioBuffer, timing, opts = {}) {
+  const wav = readPcm16Wav(audioBuffer);
+  if (!wav || !timing || !(timing.end > timing.start)) return false;
+  const frameCount = Math.floor(wav.data.length / wav.blockAlign);
+  const startFrame = Math.max(0, Math.min(frameCount, Math.floor(timing.start * wav.sampleRate)));
+  const endFrame = Math.max(startFrame + 1, Math.min(frameCount, Math.ceil(timing.end * wav.sampleRate)));
+  if (endFrame <= startFrame) return false;
+
+  const measure = (fromFrame, toFrame) => {
+    let sumSquares = 0;
+    let peak = 0;
+    let voiced = 0;
+    let count = 0;
+    for (let frame = fromFrame; frame < toFrame; frame += 1) {
+      for (let channel = 0; channel < wav.channels; channel += 1) {
+        const byteOffset = frame * wav.blockAlign + channel * 2;
+        if (byteOffset + 2 > wav.data.length) break;
+        const amplitude = Math.abs(wav.data.readInt16LE(byteOffset) / 32768);
+        sumSquares += amplitude * amplitude;
+        peak = Math.max(peak, amplitude);
+        if (amplitude >= 0.003) voiced += 1;
+        count += 1;
+      }
+    }
+    return {
+      rms: count ? Math.sqrt(sumSquares / count) : 0,
+      peak,
+      voicedRatio: count ? voiced / count : 0,
+    };
+  };
+
+  const whole = measure(0, frameCount);
+  const span = measure(startFrame, endFrame);
+  const minRms = Number.isFinite(opts.minRms) ? opts.minRms : Math.max(0.0025, whole.rms * 0.1);
+  const minPeak = Number.isFinite(opts.minPeak) ? opts.minPeak : Math.max(0.012, whole.peak * 0.08);
+  const minVoicedRatio = Number.isFinite(opts.minVoicedRatio) ? opts.minVoicedRatio : 0.03;
+  return span.rms >= minRms && span.peak >= minPeak && span.voicedRatio >= minVoicedRatio;
+}
 
 /**
  * Manages a persistent faster-whisper sidecar (python/transcription_server.py).
@@ -135,10 +211,10 @@ class TranscriptionVerifier {
     this.pending.delete(message.id);
     clearTimeout(entry.timer);
     if (message.error) entry.reject(new Error(message.error));
-    else entry.resolve({ text: String(message.text || ''), words: Array.isArray(message.words) ? message.words : [] });
+    else entry.resolve(message);
   }
 
-  async transcribeBuffer(audioBuffer, { tier } = {}) {
+  async requestSidecar(audioBuffer, payload = {}) {
     const started = await this.ensureStarted();
     if (!started || !this.process) throw new Error('Transcription sidecar unavailable');
 
@@ -150,16 +226,34 @@ class TranscriptionVerifier {
 
     try {
       return await new Promise((resolve, reject) => {
+        const requestTimeoutMs = payload.operation === 'phoneme_verify' ? 180_000 : REQUEST_TIMEOUT_MS;
         const timer = setTimeout(() => {
           this.pending.delete(id);
           reject(new Error('Transcription timed out'));
-        }, REQUEST_TIMEOUT_MS);
+        }, requestTimeoutMs);
         this.pending.set(id, { resolve, reject, timer });
-        this.process.stdin.write(`${JSON.stringify({ id, path: filePath, tier })}\n`);
+        this.process.stdin.write(`${JSON.stringify({ id, path: filePath, ...payload })}\n`);
       });
     } finally {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
     }
+  }
+
+  async transcribeBuffer(audioBuffer, { tier } = {}) {
+    const message = await this.requestSidecar(audioBuffer, { operation: 'transcribe', tier });
+    return {
+      text: String(message.text || ''),
+      words: Array.isArray(message.words) ? message.words : [],
+    };
+  }
+
+  async verifyPhonemeBuffer(audioBuffer, { start, end, arpabet } = {}) {
+    return this.requestSidecar(audioBuffer, {
+      operation: 'phoneme_verify',
+      start,
+      end,
+      arpabet,
+    });
   }
 
   /**
@@ -169,7 +263,13 @@ class TranscriptionVerifier {
    *
    * @returns {Promise<null | { ok: boolean, coverage: number, missingWords: string[], transcript: string }>}
    */
-  async verifyChunk(audioBuffer, expectedText, { minCoverage = TRANSCRIPTION_MIN_COVERAGE, dictionaryWords = [], finalWordTailCheck = false } = {}) {
+  async verifyChunk(audioBuffer, expectedText, {
+    minCoverage = TRANSCRIPTION_MIN_COVERAGE,
+    dictionaryWords = [],
+    dictionaryEntries = [],
+    finalWordTailCheck = false,
+    phonemeVerification = finalWordTailCheck,
+  } = {}) {
     let result;
     try {
       // Live Full / Queue (finalWordTailCheck) transcribe with the heavier accurate
@@ -181,12 +281,17 @@ class TranscriptionVerifier {
       return null;
     }
     const { text, words } = result;
-    const { coverage, missingWords, extraWords, expectedCount, matchedCount } = computeWordCoverage(expectedText, text);
+    const minWordLength = finalWordTailCheck ? 1 : 2;
+    const { coverage, missingWords, extraWords, expectedCount, matchedCount } = computeWordCoverage(
+      expectedText,
+      text,
+      { minWordLength },
+    );
     // Live Full / Queue (finalWordTailCheck) gates on EVERY countable missing word, not
     // just ≥4-char ones — losing "cell" or "one" is as unacceptable as a long term, and
     // those paths accept the extra re-roll cost. Live Fast keeps the ≥4 threshold so
     // short ASR-noisy function words don't cause needless re-rolls in live replies.
-    const substantialLength = finalWordTailCheck ? 2 : SUBSTANTIAL_WORD_LENGTH;
+    const substantialLength = finalWordTailCheck ? 0 : SUBSTANTIAL_WORD_LENGTH;
     // Double-read gate: only a CONSECUTIVE repeat beyond what the text itself repeats
     // ("cell one cell one") re-rolls. The old multiset-surplus gate both false-fired on
     // stray ASR duplicates elsewhere in the transcript and missed doubled number words
@@ -198,7 +303,10 @@ class TranscriptionVerifier {
     // reliable, duration-based, and force a re-roll. suspectWords additionally
     // includes low-confidence words, which are ADVISORY only (best-of-N scoring) — a
     // confident-but-quiet real word ("daughter") must not trigger a re-roll.
-    const { suspectWords, skippedWords } = findClippedWords(expectedText, words, { finalWordTailCheck });
+    const { suspectWords, skippedWords } = findClippedWords(expectedText, words, {
+      finalWordTailCheck,
+      minWordLength,
+    });
 
     // Gate on the ABSOLUTE count of substantial content words so a long chunk is as
     // strict per-word as a short one.
@@ -212,13 +320,25 @@ class TranscriptionVerifier {
     // words AND the heard word count matches the expected count (nothing dropped),
     // treat them as spoken-but-mistranscribed instead of missing. A real skip lowers
     // the count → not forgiven → still re-rolled (safe for medical text).
-    const dictSet = new Set(
-      dictionaryWords
-        .map((w) => String(w || '').toLowerCase())
-        .filter((w) => w.length >= DICTIONARY_FORGIVEN_MIN_LENGTH),
-    );
+    const normalizedDictionaryEntries = Array.from(dictionaryEntries || [])
+      .map((entry) => ({
+        word: String(entry?.word || '').trim().toLowerCase(),
+        arpabet: String(entry?.arpabet || '').trim().toUpperCase(),
+        verifyPhonemes: entry?.verifyPhonemes === true,
+      }))
+      .filter((entry) => entry.word);
+    const dictionaryEntryByWord = new Map(normalizedDictionaryEntries.map((entry) => [entry.word, entry]));
+    const dictSet = new Set([
+      ...dictionaryWords.map((w) => String(w || '').toLowerCase()),
+      ...normalizedDictionaryEntries.map((entry) => entry.word),
+    ].filter((w) => w.length >= DICTIONARY_FORGIVEN_MIN_LENGTH));
     let forgivenDict = [];
+    const phonemeAssessments = [];
     let adjustedCoverage = coverage;
+    // A hard dictionary word may be spoken correctly while Whisper spells it as a
+    // different token (for example "Michaelis"). Full may forgive that spelling
+    // mismatch only when anchored word timing confirms a real token occupied the
+    // expected slot; a shorter gap still means an omission and remains rejected.
     if (dictSet.size > 0) {
       const expectedTokens = countWords(expectedText);
       const heardTokens = countWords(text);
@@ -240,7 +360,7 @@ class TranscriptionVerifier {
         // forgive a dict word we can positively locate in the audio — one that was
         // actually skipped has no real span under it and stays un-forgiven (safe for
         // medical text). Degrade safely: with no timing data we can't add this check,
-        // so fall back to the count + non-dict gates rather than never forgiving.
+        // so Fast falls back to the count + non-dict gates. Full requires timings.
         const hasTimings = Array.isArray(words) && words.length > 0;
         // Gate 4 (Live Full / Queue only): never forgive a dict word the model CLIPPED.
         // A truncation ("chromatin" -> "chroma") reads as a mere mis-transcription to the
@@ -249,11 +369,80 @@ class TranscriptionVerifier {
         // heard token is a strict prefix of it. Gated on finalWordTailCheck so only the
         // heavy-safeguard paths pay for the extra scrutiny; Live Fast is unaffected.
         const rejectTruncated = (w) => finalWordTailCheck && isTruncatedDictWord(w, text);
-        forgivenDict = missingWords.filter((w) => (
-          dictSet.has(w.toLowerCase())
-          && !rejectTruncated(w)
-          && (!hasTimings || isWordSpokenByTiming(expectedText, w, words))
+        const timingAndEnergyEvidence = (w) => {
+          const timing = findWordTimingEvidence(expectedText, w, words, { minWordLength });
+          if (!timing) return null;
+          // Phoneme-gated paths must confirm waveform activity inside Whisper's aligned slot;
+          // a hallucinated timestamp over silence is not evidence that the word spoke.
+          return !phonemeVerification || hasSpeechEnergyInTimedSpan(audioBuffer, timing) ? timing : null;
+        };
+        const missingDictionaryWords = new Set(
+          missingWords.filter((word) => dictSet.has(word.toLowerCase())).map((word) => word.toLowerCase()),
+        );
+        // Production-safe scope: a general dictionary entry does not become a hard
+        // phoneme gate merely because it has ARPAbet. Full and Fast check missing/misheard
+        // dictionary words when deciding whether to forgive Whisper. Correctly
+        // transcribed words are checked only when an admin explicitly opted them in.
+        const expectedWordSet = new Set(String(expectedText).toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
+        const candidateByWord = new Map();
+        for (const word of missingWords) {
+          if (dictSet.has(word.toLowerCase())) {
+            candidateByWord.set(word.toLowerCase(), { word, needsForgiveness: true, strict: false });
+          }
+        }
+        if (phonemeVerification) {
+          for (const entry of normalizedDictionaryEntries) {
+            if (!entry.verifyPhonemes || !expectedWordSet.has(entry.word)) continue;
+            const current = candidateByWord.get(entry.word);
+            candidateByWord.set(entry.word, {
+              word: current?.word || entry.word,
+              needsForgiveness: current?.needsForgiveness || false,
+              strict: true,
+            });
+          }
+        }
+        const presenceCandidates = [...candidateByWord.values()].map((candidate) => ({
+          ...candidate,
+          timing: hasTimings ? timingAndEnergyEvidence(candidate.word) : null,
+        })).filter(({ word, timing }) => (
+          dictSet.has(word.toLowerCase())
+          && !rejectTruncated(word)
+          && ((!hasTimings && !phonemeVerification) || timing)
         ));
+
+        if (!phonemeVerification) {
+          forgivenDict = presenceCandidates.map(({ word }) => word);
+        } else {
+          // Full and Live Fast require an independent phone recognizer after presence is proven.
+          // A forced timestamp cannot establish that the expected phones were spoken.
+          for (const { word, timing, needsForgiveness, strict } of presenceCandidates) {
+            const dictionaryEntry = dictionaryEntryByWord.get(word.toLowerCase());
+            if (!dictionaryEntry?.arpabet) continue;
+            try {
+              const assessment = await this.verifyPhonemeBuffer(audioBuffer, {
+                start: timing.start,
+                end: timing.end,
+                arpabet: dictionaryEntry.arpabet,
+              });
+              const decision = assessment?.decision
+                || (assessment?.ok === true ? 'pass' : (assessment?.inconclusive ? 'uncertain' : 'reject'));
+              const recorded = { word, strict, needsForgiveness, ...assessment, decision };
+              phonemeAssessments.push(recorded);
+              console.log(
+                `[phoneme] word=${JSON.stringify(word)} decision=${decision} strict=${strict} `
+                + `forgiveness=${needsForgiveness} ctc=${assessment?.ctcScore ?? 'n/a'} `
+                + `similarity=${assessment?.similarity ?? 'n/a'} span=${timing.start}-${timing.end} `
+                + `expected=${JSON.stringify(assessment?.expected || '')} observed=${JSON.stringify(assessment?.observed || '')} `
+                + `crops=${JSON.stringify(assessment?.crops || [])}`,
+              );
+              if (decision === 'pass' && needsForgiveness && missingDictionaryWords.has(word.toLowerCase())) {
+                forgivenDict.push(word);
+              }
+            } catch (error) {
+              console.warn(`[phoneme] verification unavailable for "${word}": ${error.message}`);
+            }
+          }
+        }
         if (forgivenDict.length > 0) {
           const forgivenSet = new Set(forgivenDict.map((w) => w.toLowerCase()));
           substantialMissing = substantialMissing.filter((w) => !forgivenSet.has(w.toLowerCase()));
@@ -267,7 +456,12 @@ class TranscriptionVerifier {
     const ok = adjustedCoverage >= minCoverage
       && skippedWords.length === 0
       && substantialMissing.length === 0
-      && repeatedPhrases.length === 0;
+      && repeatedPhrases.length === 0
+      && !phonemeAssessments.some((assessment) => assessment.strict && assessment.decision === 'reject')
+      // Low-confidence/short Whisper spans remain advisory for Live Fast. Full/Queue
+      // have five candidates to choose from, so that Whisper uncertainty is a hard
+      // rejection there. Phoneme uncertainty above remains advisory.
+      && (!finalWordTailCheck || suspectWords.length === 0);
     if (!ok) {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
@@ -278,7 +472,19 @@ class TranscriptionVerifier {
         + `heard="${text.slice(0, 120)}"`,
       );
     }
-    return { ok, coverage: adjustedCoverage, missingWords, extraWords, repeatedPhrases, suspectWords, skippedWords, transcript: text, words };
+    return {
+      ok,
+      coverage: adjustedCoverage,
+      missingWords,
+      forgivenDictionaryWords: forgivenDict,
+      phonemeAssessments,
+      extraWords,
+      repeatedPhrases,
+      suspectWords,
+      skippedWords,
+      transcript: text,
+      words,
+    };
   }
 
   /** Is the ASR sidecar usable right now? */

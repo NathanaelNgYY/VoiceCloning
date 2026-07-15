@@ -112,3 +112,36 @@ test('live tts handler proxies synthesis through the inference worker URL', asyn
     }
   }
 });
+
+test('live tts preserves worker busy status for multi-user feedback', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousInferenceWorkerUrl = process.env.INFERENCE_WORKER_URL;
+  process.env.INFERENCE_WORKER_URL = 'http://inference-worker.local:3003';
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: 'Another generation is already running on this instance',
+  }), {
+    status: 409,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const response = await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/live/tts-sentence',
+      body: JSON.stringify({
+        text: 'Hello there.',
+        ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+      }),
+    });
+
+    assert.equal(response.statusCode, 409);
+    assert.match(JSON.parse(response.body).error, /another generation/iu);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousInferenceWorkerUrl === undefined) {
+      delete process.env.INFERENCE_WORKER_URL;
+    } else {
+      process.env.INFERENCE_WORKER_URL = previousInferenceWorkerUrl;
+    }
+  }
+});

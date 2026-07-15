@@ -38,8 +38,8 @@ export function countWords(text) {
   return tokenize(text).length;
 }
 
-function isCountable(token) {
-  if (token.length < 2) return false;
+function isCountable(token, minWordLength = 2) {
+  if (token.length < minWordLength) return false;
   if (/\p{N}/u.test(token)) return false;
   return true;
 }
@@ -125,10 +125,13 @@ function isFuzzyMatch(expected, actual) {
  * @returns {{ coverage: number, missingWords: string[], expectedCount: number, matchedCount: number }}
  *   coverage is 1 when there are no countable expected words.
  */
-export function computeWordCoverage(expectedText, transcript) {
+export function computeWordCoverage(expectedText, transcript, opts = {}) {
+  const minWordLength = Number.isFinite(opts.minWordLength)
+    ? Math.max(0, opts.minWordLength)
+    : 2;
   // Keep the original word for reporting, match on the canonical form.
   const expected = tokenize(expectedText)
-    .filter(isCountable)
+    .filter((token) => isCountable(token, minWordLength))
     .map((raw) => ({ raw, key: canonicalize(raw) }));
   if (expected.length === 0) {
     return { coverage: 1, missingWords: [], expectedCount: 0, matchedCount: 0 };
@@ -318,27 +321,75 @@ function isNumericKey(key) {
  * @param {object} opts
  * @returns {boolean}
  */
-export function isWordSpokenByTiming(expectedText, targetWord, words = [], opts = {}) {
+export function findWordTimingEvidence(expectedText, targetWord, words = [], opts = {}) {
   const minDuration = Number.isFinite(opts.minDuration) ? opts.minDuration : 0.12;
-  const windowRadius = Number.isFinite(opts.windowRadius) ? opts.windowRadius : 2;
+  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.35;
+  const minWordLength = Number.isFinite(opts.minWordLength) ? Math.max(0, opts.minWordLength) : 2;
   const target = canonicalize(String(targetWord || '').toLowerCase());
-  if (!target || !Array.isArray(words) || words.length === 0) return false;
+  if (!target || !Array.isArray(words) || words.length === 0) return null;
 
-  const expected = tokenize(expectedText).filter(isCountable).map(canonicalize);
-  const expectedCount = expected.length;
+  const expected = tokenize(expectedText)
+    .filter((token) => isCountable(token, minWordLength))
+    .map(canonicalize);
   const idx = expected.indexOf(target);
-  if (idx === -1 || expectedCount === 0) return false;
+  if (idx === -1 || expected.length === 0) return null;
 
-  const durations = words.map((w) => Math.max(0, Number(w.end) - Number(w.start)));
-  // Proportional position of the word within the heard sequence, then scan a small
-  // window around it (ASR word boundaries drift, so an exact index would be brittle).
-  const center = Math.round((idx / expectedCount) * durations.length);
-  const lo = Math.max(0, center - windowRadius);
-  const hi = Math.min(durations.length - 1, center + windowRadius);
-  for (let i = lo; i <= hi; i += 1) {
-    if (durations[i] >= minDuration) return true;
+  const actual = words.map((entry) => ({
+    token: canonicalize(tokenize(entry.w)[0] || ''),
+    start: Number(entry.start),
+    end: Number(entry.end),
+    duration: Math.max(0, Number(entry.end) - Number(entry.start)),
+    probability: Number.isFinite(entry.p) ? entry.p : 1,
+  })).filter((entry) => entry.token);
+  if (actual.length === 0) return null;
+
+  const tokensMatch = (a, b) => a === b || isFuzzyMatch(a, b);
+  let beforeExpected = -1;
+  let beforeActual = -1;
+  for (let e = idx - 1; e >= 0 && beforeExpected === -1; e -= 1) {
+    for (let a = actual.length - 1; a >= 0; a -= 1) {
+      if (tokensMatch(expected[e], actual[a].token)) {
+        beforeExpected = e;
+        beforeActual = a;
+        break;
+      }
+    }
   }
-  return false;
+
+  let afterExpected = expected.length;
+  let afterActual = actual.length;
+  for (let e = idx + 1; e < expected.length; e += 1) {
+    const start = Math.max(0, beforeActual + 1);
+    const found = actual.findIndex((entry, a) => a >= start && tokensMatch(expected[e], entry.token));
+    if (found !== -1) {
+      afterExpected = e;
+      afterActual = found;
+      break;
+    }
+  }
+
+  const expectedGap = afterExpected - beforeExpected - 1;
+  const actualGap = afterActual - beforeActual - 1;
+  // A technical-word substitution keeps a real timed token in the same anchored
+  // slot. If the heard gap is shorter, something was actually omitted; never use a
+  // neighbouring word's healthy timing as evidence for the missing target.
+  if (expectedGap <= 0 || actualGap < expectedGap) return null;
+  const relativeOffset = idx - beforeExpected - 1;
+  const candidateOffset = expectedGap === 1
+    ? Math.floor((actualGap - 1) / 2)
+    : Math.round((relativeOffset / (expectedGap - 1)) * Math.max(0, actualGap - 1));
+  const candidate = actual[beforeActual + 1 + candidateOffset];
+  return candidate
+    && candidate.duration >= minDuration
+    && candidate.probability >= minProbability
+    && Number.isFinite(candidate.start)
+    && Number.isFinite(candidate.end)
+    ? candidate
+    : null;
+}
+
+export function isWordSpokenByTiming(expectedText, targetWord, words = [], opts = {}) {
+  return Boolean(findWordTimingEvidence(expectedText, targetWord, words, opts));
 }
 
 /**
@@ -376,8 +427,11 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   // Match against ALL countable expected words (not just long ones): a skipped
   // short word ("or", "is") is exactly what the absolute-duration check must see.
   // Keep the original word (for reporting + length-based scrutiny), match on canon.
+  const minWordLength = Number.isFinite(opts.minWordLength)
+    ? Math.max(0, opts.minWordLength)
+    : 2;
   const allExpected = tokenize(expectedText)
-    .map((raw) => ({ raw, key: canonicalize(raw), countable: isCountable(raw) }));
+    .map((raw) => ({ raw, key: canonicalize(raw), countable: isCountable(raw, minWordLength) }));
   const expected = allExpected
     .map((entry, index) => ({ ...entry, index }))
     .filter((entry) => entry.countable);
@@ -416,10 +470,10 @@ export function findClippedWords(expectedText, words = [], opts = {}) {
   const firstExpectedIndex = expected[0].index;
   const minFinalWordDuration = Number.isFinite(opts.minFinalWordDuration) ? opts.minFinalWordDuration : 0.12;
 
-  // Live Full / Queue (finalWordTailCheck) scrutinizes EVERY countable word, not just
-  // ≥4-char ones: a clipped "cell" or "rate" is as unacceptable there as a long term,
-  // and those paths accept the extra re-roll cost. Live Fast keeps the ≥4 gate.
-  const scrutinyLength = finalWordTailCheck ? 2 : MIN_SCRUTINY_LENGTH;
+  // Live Full / Queue uses zero length-based exemption: every alphabetic word that
+  // reaches this verifier is scrutinized, including one-letter "a". Live Fast keeps
+  // the established ≥4 timing/confidence gate for latency and ASR-noise tolerance.
+  const scrutinyLength = finalWordTailCheck ? 0 : MIN_SCRUTINY_LENGTH;
 
   for (const { raw, key, index } of expected) {
     let foundIndex = -1;

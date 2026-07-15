@@ -88,6 +88,7 @@ export function createHandler({
         return ok(await postJson('/inference/regenerate-chunk', {
           sessionId: body.sessionId,
           index: Number(body.index),
+          ...(String(body.text || '').trim() ? { text: String(body.text).trim() } : {}),
         }));
       }
 
@@ -173,6 +174,9 @@ export function createHandler({
       return err(404, 'Not found');
     } catch (error) {
       if (error instanceof VoiceProfileResolutionError) {
+        return err(error.statusCode, error.message);
+      }
+      if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599) {
         return err(error.statusCode, error.message);
       }
       return err(500, error.message);

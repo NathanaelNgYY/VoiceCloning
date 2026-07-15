@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getInferenceStatus,
   getModels,
@@ -54,6 +54,7 @@ import {
   DEFAULT_LIVE_FAST_SETTINGS,
   buildLiveFastReferencePreviewItems,
   buildLiveFastRefParams,
+  normalizeLiveFastSettings,
 } from '@/lib/liveFastSetup';
 import {
   DEFAULT_LIVE_FULL_SETTINGS,
@@ -67,6 +68,7 @@ import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
   resolveInferenceStatusState,
+  shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
 } from '@/lib/modelLoading';
 import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
@@ -81,8 +83,9 @@ import {
   getTtsHistoryByRoute,
 } from '@/lib/ttsHistory';
 import { concatWavBlobs } from '@/lib/wavConcat';
+import { waitForPlayableAudioSource } from '@/lib/audioReadiness';
 import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
-import { fetchDatamuseArpabet, arpabetToReadable } from '@/lib/arpabet';
+import { fetchDatamuseArpabet } from '@/lib/arpabet';
 import {
   parsePronunciationCsv,
   serializePronunciationCsv,
@@ -125,68 +128,6 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-
-function withCacheBuster(url) {
-  if (!url || url.startsWith('blob:')) return url;
-  try {
-    const parsed = new URL(url, window.location.href);
-    parsed.searchParams.set('_audioReady', String(Date.now()));
-    return parsed.toString();
-  } catch {
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}_audioReady=${Date.now()}`;
-  }
-}
-
-function waitForAudioMetadata(url, timeoutMs = 3500) {
-  return new Promise((resolve, reject) => {
-    const audio = new Audio();
-    let settled = false;
-    let timer = null;
-    const cleanup = () => {
-      if (timer) window.clearTimeout(timer);
-      audio.onloadedmetadata = null;
-      audio.oncanplay = null;
-      audio.onerror = null;
-    };
-    const done = (ok) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (ok) resolve();
-      else reject(new Error('Audio metadata was not ready yet.'));
-    };
-    timer = window.setTimeout(() => done(false), timeoutMs);
-    audio.preload = 'metadata';
-    audio.onloadedmetadata = () => done(true);
-    audio.oncanplay = () => done(true);
-    audio.onerror = () => done(false);
-    audio.src = url;
-    audio.load();
-  });
-}
-
-// The result URL 404s until the server has finished writing/uploading final.wav, and
-// in S3 mode that file can lag the completion signal (assembly + upload + eventual
-// consistency). The <audio> element reports that transient 404 as onerror, so we keep
-// retrying with backoff. Budget is generous (8 attempts, growing delay ≈ 25s) so a
-// slow final upload no longer surfaces as a spurious "audio not ready" error.
-async function waitForPlayableAudioSource(url, { attempts = 8, delayMs = 700 } = {}) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const candidateUrl = withCacheBuster(url);
-    try {
-      await waitForAudioMetadata(candidateUrl);
-      return candidateUrl;
-    } catch (err) {
-      lastError = err;
-      if (attempt < attempts) {
-        await new Promise((resolve) => window.setTimeout(resolve, delayMs * attempt));
-      }
-    }
-  }
-  throw lastError || new Error('Generated audio is not playable yet.');
-}
 
 function messageStatusText(message) {
   if (message.role === 'user') {
@@ -376,6 +317,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [topP, setTopP] = useState(DEFAULT_LIVE_FAST_SETTINGS.topP);
   const [temperature, setTemperature] = useState(DEFAULT_LIVE_FAST_SETTINGS.temperature);
   const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+  const [liveFastMaxChunkWords, setLiveFastMaxChunkWords] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords);
+  const [liveFastMaxSentences, setLiveFastMaxSentences] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk);
   const [liveFullRefAudioPath, setLiveFullRefAudioPath] = useState('');
   const [liveFullPromptText, setLiveFullPromptText] = useState('');
   const [liveFullPromptLang, setLiveFullPromptLang] = useState('en');
@@ -394,6 +337,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [regeneratingFullChunk, setRegeneratingFullChunk] = useState('');
+  const [fullChunkDrafts, setFullChunkDrafts] = useState({});
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
   const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
@@ -401,10 +345,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // Progressive-queue playback controls (Live Fast Queue / Full Inference Queue).
   const [queuePlayback, setQueuePlayback] = useState({ active: false, paused: false });
   const [ttsError, setTtsError] = useState('');
+  const [ttsWarning, setTtsWarning] = useState('');
   const [pronunciationCategory, setPronunciationCategory] = useState('general');
   const [pronunciationWord, setPronunciationWord] = useState('');
-  const [pronunciationReadable, setPronunciationReadable] = useState('');
   const [pronunciationArpabet, setPronunciationArpabet] = useState('');
+  const [pronunciationVerifyPhonemes, setPronunciationVerifyPhonemes] = useState(false);
   const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
   const [pronunciationMessage, setPronunciationMessage] = useState('');
@@ -415,6 +360,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [oovScan, setOovScan] = useState(null); // { flagged, totalWords, coveredWords, dictionaryLoaded } | null
   const [oovScanning, setOovScanning] = useState(false);
   const [oovScanError, setOovScanError] = useState('');
+  const [fullOovAcknowledgedKey, setFullOovAcknowledgedKey] = useState('');
   const audioRef = useRef(null);
   const messagesEndRef = useRef(null);
   const referencePreviewAudioRef = useRef(null);
@@ -435,6 +381,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const autoSyncRequestFingerprintRef = useRef('');
   const lastAutoSyncedFingerprintRef = useRef('');
   const statusRequestVersionRef = useRef(0);
+  const notReadyStatusCountRef = useRef(0);
+  const serverReadyStateRef = useRef(false);
+  const modelLoadVersionRef = useRef(0);
   const loadedModelStateRef = useRef({ gptPath: '', sovitsPath: '' });
   const ttsHistoryRef = useRef([]);
   const queuedTtsAudioRef = useRef(null);
@@ -471,10 +420,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
   const liveLanguageConfig = getLiveLanguageConfig(liveLanguage);
+  const liveFastSettings = useMemo(() => normalizeLiveFastSettings({
+    speed,
+    topK,
+    topP,
+    temperature,
+    repPenalty,
+    maxChunkWords: liveFastMaxChunkWords,
+    maxSentencesPerChunk: liveFastMaxSentences,
+  }), [speed, topK, topP, temperature, repPenalty, liveFastMaxChunkWords, liveFastMaxSentences]);
   const liveRefParams = useMemo(() => buildLiveFastRefParams({
     primaryPath: refAudioPath, promptText, promptLang, auxRefAudios,
-    settings: { speed, topK, topP, temperature, repPenalty },
-  }), [refAudioPath, promptText, promptLang, auxRefAudios, speed, topK, topP, temperature, repPenalty]);
+    settings: liveFastSettings,
+  }), [refAudioPath, promptText, promptLang, auxRefAudios, liveFastSettings]);
   const liveFullSettings = useMemo(() => normalizeLiveFullSettings({
     speed: liveFullSpeed,
     topK: liveFullTopK,
@@ -513,6 +471,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      max_chunk_words: liveFastMaxChunkWords,
+      max_sentences_per_chunk: liveFastMaxSentences,
     },
   }), [
     selectedExpName,
@@ -528,6 +488,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     temperature,
     repPenalty,
     speed,
+    liveFastMaxChunkWords,
+    liveFastMaxSentences,
   ]);
   const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
     primaryPath: refAudioPath, promptText, trainingAudioFiles, auxRefAudios,
@@ -593,8 +555,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      max_chunk_words: liveFastMaxChunkWords,
+      max_sentences_per_chunk: liveFastMaxSentences,
     },
-  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed]);
+  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastMaxChunkWords, liveFastMaxSentences]);
 
   const liveSpeech = useLiveSpeech({
     refParams: liveRefParams,
@@ -603,6 +567,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     replyMode,
     language: liveLanguage,
     voiceProfileId: selectedVoiceProfileId,
+    fastMaxChunkWords: liveFastSettings.maxChunkWords,
+    fastMaxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
@@ -648,7 +614,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       gptPath: String(nextState.loadedGPTPath || '').trim(),
       sovitsPath: String(nextState.loadedSoVITSPath || '').trim(),
     };
-    setServerReady(Boolean(nextState.serverReady));
+    serverReadyStateRef.current = Boolean(nextState.serverReady);
+    setServerReady(serverReadyStateRef.current);
     setLoadedGPTPath(loadedModelStateRef.current.gptPath);
     setLoadedSoVITSPath(loadedModelStateRef.current.sovitsPath);
   }
@@ -660,11 +627,28 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (statusRequestVersionRef.current !== requestVersion) {
         return;
       }
-      applyInferenceStatusState(resolveInferenceStatusState({
+      const nextState = resolveInferenceStatusState({
         status: res.data,
         fallbackLoadedGPTPath: loadedModelStateRef.current.gptPath,
         fallbackLoadedSoVITSPath: loadedModelStateRef.current.sovitsPath,
-      }));
+      });
+      const hasKnownLoadedModel = Boolean(
+        loadedModelStateRef.current.gptPath && loadedModelStateRef.current.sovitsPath,
+      );
+      if (!nextState.serverReady && serverReadyStateRef.current && hasKnownLoadedModel) {
+        notReadyStatusCountRef.current += 1;
+        // A single transient ready:false response occurs while the Python worker
+        // respawns or weights switch. Confirm it twice before flashing "No model".
+        if (shouldHoldReadyDuringTransientStatus({
+          nextState,
+          previousServerReady: serverReadyStateRef.current,
+          hasKnownLoadedModel,
+          consecutiveNotReady: notReadyStatusCountRef.current,
+        })) return;
+      } else {
+        notReadyStatusCountRef.current = 0;
+      }
+      applyInferenceStatusState(nextState);
     } catch {
       // A transient network/gateway failure is NOT proof the model unloaded. Keep
       // the last known-good state so the UI doesn't flap to "not loaded" (which
@@ -842,6 +826,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature: defaults.temperature ?? temperature,
         repetition_penalty: defaults.repetition_penalty ?? repPenalty,
         speed_factor: defaults.speed_factor ?? speed,
+        max_chunk_words: defaults.max_chunk_words ?? DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords,
+        max_sentences_per_chunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk,
       },
       trainingMetadata: config.trainingMetadata || trainingRunMetadata || activeVoiceProfile?.metadata?.training,
       referenceMetadata: reference,
@@ -967,6 +953,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : topP);
     setTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : temperature);
     setRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : repPenalty);
+    const chunkSettings = normalizeLiveFastSettings({
+      maxChunkWords: defaults.max_chunk_words,
+      maxSentencesPerChunk: defaults.max_sentences_per_chunk,
+    });
+    setLiveFastMaxChunkWords(chunkSettings.maxChunkWords);
+    setLiveFastMaxSentences(chunkSettings.maxSentencesPerChunk);
     setLoadedConfigId(config?.configId || '');
     if (!silent) {
       setReferenceMessage(`Loaded config ${config.configName || config.configId}.`);
@@ -1012,6 +1004,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           temperature,
           repetition_penalty: repPenalty,
           speed_factor: speed,
+          max_chunk_words: liveFastMaxChunkWords,
+          max_sentences_per_chunk: liveFastMaxSentences,
         },
       });
     }
@@ -1031,6 +1025,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        max_chunk_words: liveFastMaxChunkWords,
+        max_sentences_per_chunk: liveFastMaxSentences,
       },
     }));
     setReferenceMessage(
@@ -1148,8 +1144,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     };
   }
 
-  async function loadSelectedModel(attempt = 0) {
+  async function loadSelectedModel(attempt = 0, requestVersion = null) {
     if (!selectedProfile || isConversationActive) return;
+    const activeRequestVersion = requestVersion ?? (modelLoadVersionRef.current + 1);
+    if (requestVersion == null) modelLoadVersionRef.current = activeRequestVersion;
+    const selectionChanged = () => activeRequestVersion !== modelLoadVersionRef.current;
     setLoadingModel(true); setModelError('');
     try {
       const rankOneConfig = voiceConfigsRef.current[0] || null;
@@ -1159,6 +1158,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         refAudioPath: rankOneReferences.primaryPath,
         auxRefAudioPaths: rankOneReferences.auxPaths,
       }));
+      if (selectionChanged()) {
+        return;
+      }
       const latestRankOneConfig = voiceConfigsRef.current[0] || rankOneConfig;
       const syncedSelection = latestRankOneConfig
         ? null
@@ -1166,6 +1168,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (latestRankOneConfig) {
         applyVoiceConfig(latestRankOneConfig, { silent: true });
         await syncRankOneConfigToVoiceProfile(latestRankOneConfig, { context: 'model-load rank #1 config' });
+        if (selectionChanged()) {
+          return;
+        }
       }
       statusRequestVersionRef.current += 1;
       applyInferenceStatusState({
@@ -1181,11 +1186,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           : 'Voice model loaded.',
       );
     } catch (err) {
+      if (selectionChanged()) return;
       // Model loading can 404/503 for a while (Python inference server still
       // spawning / binding the weights). Retry patiently before surfacing anything,
       // and never show the raw gateway HTML.
       if (isTransientBackendError(err) && attempt < 8) {
-        window.setTimeout(() => loadSelectedModel(attempt + 1), 3000);
+        window.setTimeout(() => loadSelectedModel(attempt + 1, activeRequestVersion), 3000);
         return;
       }
       // Give up quietly on a transient failure but clear the attempt guard so the
@@ -1223,6 +1229,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        max_chunk_words: liveFastMaxChunkWords,
+        max_sentences_per_chunk: liveFastMaxSentences,
       },
       trainingMetadata: activeVoiceProfile?.metadata?.training,
       referenceMetadata: currentReferenceMetadata,
@@ -1856,6 +1864,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const languageLabel = liveLanguageConfig.label;
 
     setTtsError('');
+    setTtsWarning('');
 
     if (route === 'fastQueued') {
       setTtsFastGenerating(true);
@@ -1868,7 +1877,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           text,
           baseParams: liveFastParams,
           synthesizeSentence,
-          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyChunks(value)),
+          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyChunks(value, {
+            maxChunkWords: liveFastSettings.maxChunkWords,
+            maxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
+          })),
           createObjectUrl: (blob) => URL.createObjectURL(blob),
           onProgress: setTtsFastProgress,
           onClipReady: (clip) => {
@@ -1887,7 +1899,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
         }
       } catch (err) {
-        setTtsError(err.response?.data?.error || err.message || 'Could not generate queued Live Fast audio.');
+        setTtsError(friendlyTtsError(err, 'Could not generate queued Live Fast audio.'));
       } finally {
         queueProducingRef.current = false;
         // If playback already drained while we were still generating, clear the controls.
@@ -1909,7 +1921,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
       try {
-        const phrases = splitLiveReplyChunks(text);
+        const phrases = splitLiveReplyChunks(text, {
+          maxChunkWords: liveFastSettings.maxChunkWords,
+          maxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
+        });
         const clips = [];
         setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
         for (let index = 0; index < phrases.length; index += 1) {
@@ -1921,7 +1936,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         const blob = clips.length > 1 ? await concatWavBlobs(clips, { pauseMs: 120 }) : clips[0];
         recordTtsHistory({ route: 'fast', url: URL.createObjectURL(blob), text, voiceName, languageLabel });
       } catch (err) {
-        setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+        setTtsError(friendlyTtsError(err, 'Could not generate text to speech audio.'));
       } finally {
         setTtsFastGenerating(false);
         setTtsFastProgress({ total: 0, current: 0, text: '' });
@@ -1936,6 +1951,38 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     if (!liveFullRefParams) {
       setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
       return;
+    }
+    // Maximum-quality Full preflight: automatically surface words that would fall
+    // through to neural pronunciation guessing. Stop once so the user can add an
+    // override; a deliberate second click acknowledges the warning and proceeds.
+    setOovScanning(true);
+    try {
+      const scanResponse = await scanOovWords(text);
+      const scanResult = scanResponse.data || {};
+      const flagged = Array.isArray(scanResult.flagged) ? scanResult.flagged : [];
+      const scanState = {
+        flagged,
+        totalWords: scanResult.totalWords ?? 0,
+        coveredWords: scanResult.coveredWords ?? 0,
+        dictionaryLoaded: scanResult.dictionaryLoaded !== false,
+      };
+      setOovScan(scanState);
+      setOovScanError('');
+      const warningKey = `${text}\n${flagged.join('|').toLowerCase()}`;
+      if (scanState.dictionaryLoaded && flagged.length > 0 && fullOovAcknowledgedKey !== warningKey) {
+        setFullOovAcknowledgedKey(warningKey);
+        setTtsWarning(
+          `Review ${flagged.length} pronunciation ${flagged.length === 1 ? 'word' : 'words'} below before Full synthesis. `
+          + 'Add overrides for maximum quality, or click the Full button again to continue intentionally.',
+        );
+        return;
+      }
+    } catch (err) {
+      // The worker's strict ASR verification still protects Full output. A preflight
+      // scan outage should not make the primary synthesis button unusable.
+      setOovScanError(friendlyTtsError(err, 'Pronunciation preflight was unavailable.'));
+    } finally {
+      setOovScanning(false);
     }
     // Full Inference Queue: play each chunk as the server finishes it (progressive
     // playback), instead of waiting for the whole passage — same UX as Live Fast Queue.
@@ -1953,7 +2000,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       ttsInference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
       pendingFullTtsRef.current = null;
-      setTtsError(err.response?.data?.error || err.message || 'Could not generate text to speech audio.');
+      setTtsError(friendlyTtsError(err, 'Could not generate text to speech audio.'));
       setStreamingRoute(null);
       if (route === 'fullQueued') stopQueuedTtsPlayback();
     }
@@ -2072,6 +2119,29 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
+  function handleVoiceSelection(value) {
+    const nextProfile = availableProfiles.find((profile) => profile.key === value) || null;
+    // Keep the visible selection urgent so Radix can close the menu immediately;
+    // defer the many dependent reference-state resets to a transition.
+    setSelectedPersonKey(value);
+    setModelError('');
+    autoReferenceKeyRef.current = '';
+    autoLoadAttemptKeyRef.current = '';
+    modelLoadVersionRef.current += 1;
+    pendingAutoSyncFingerprintRef.current = '';
+    autoSyncRequestFingerprintRef.current = '';
+    startTransition(() => {
+      setTrainingAudioFiles([]);
+      setLoadedTrainingAudioSourceKey('');
+      clearReferenceSelection();
+    });
+    writeVoiceProfileBrowserDebug('live voice switched', createVoiceProfileBrowserDebugSummary({
+      context: 'live voice switch',
+      displayName: nextProfile?.displayName || '',
+      selectedExpName: nextProfile?.expName || '',
+    }));
+  }
+
   function deleteTtsHistoryItem(result) {
     if (!result?.id) return;
     if (String(result.url || '').startsWith('blob:')) URL.revokeObjectURL(result.url);
@@ -2082,28 +2152,57 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     });
   }
 
+  function friendlyTtsError(err, fallback) {
+    const status = err?.response?.status;
+    const raw = err?.response?.data?.error || err?.message || '';
+    if (status === 409 || /another generation is already running/iu.test(raw)) {
+      return 'Another person is using Live Full right now. Wait for their generation to finish, then try again.';
+    }
+    if (status === 404) {
+      return 'This Live Full session is no longer available. Generate it again to create a new editable session.';
+    }
+    const sanitized = sanitizeBackendError(raw);
+    if (!sanitized && isTransientBackendError(err)) {
+      return 'The shared GPU did not respond in time. Please wait a moment and try again.';
+    }
+    return sanitized || fallback;
+  }
+
   async function regenerateFullChunk(historyItem, chunk) {
     if (!historyItem?.sessionId || !Number.isInteger(chunk?.index)) return;
     const busyKey = `${historyItem.id}:${chunk.index}`;
+    const editedText = String(fullChunkDrafts[busyKey] ?? chunk.text ?? '').trim();
+    if (!editedText) {
+      setTtsError('Sentence text cannot be empty.');
+      return;
+    }
     setRegeneratingFullChunk(busyKey);
     setTtsError('');
     try {
-      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index);
+      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index, editedText);
       const revision = res.data?.revision || Date.now();
+      const savedText = res.data?.text || editedText;
       const source = await getGenerationResultSource(historyItem.sessionId);
       const separator = source.url.includes('?') ? '&' : '?';
       const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      if (String(historyItem.url || '').startsWith('blob:') && historyItem.url !== playableUrl) {
+        URL.revokeObjectURL(historyItem.url);
+      }
       setTtsHistory((current) => {
         const next = current.map((item) => item.id === historyItem.id ? {
           ...item,
           url: playableUrl,
           revision,
+          chunks: item.chunks.map((itemChunk) => itemChunk.index === chunk.index
+            ? { ...itemChunk, text: savedText }
+            : itemChunk),
         } : item);
         ttsHistoryRef.current = next;
         return next;
       });
+      setFullChunkDrafts((current) => ({ ...current, [busyKey]: savedText }));
     } catch (err) {
-      setTtsError(err.response?.data?.error || err.message || 'Could not regenerate this sentence.');
+      setTtsError(friendlyTtsError(err, 'Could not regenerate this sentence.'));
     } finally {
       setRegeneratingFullChunk('');
     }
@@ -2134,12 +2233,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const result = await fetchDatamuseArpabet(word);
       if (!result) {
         setPronunciationArpabet('');
-        setPronunciationReadable('');
         setPronunciationMessage(`No pronunciation found for "${word}" — enter it manually.`);
         return;
       }
       setPronunciationArpabet(result.arpabet);
-      setPronunciationReadable(arpabetToReadable(result.arpabet));
       setPronunciationMessage('Generated — review and Save entry.');
     } catch {
       setPronunciationMessage('Could not reach Datamuse — check your connection or enter manually.');
@@ -2154,8 +2251,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setPronunciationMessage('Enter a word before saving.');
       return;
     }
-    if (!pronunciationReadable.trim() && !pronunciationArpabet.trim()) {
-      setPronunciationMessage('Add a readable pronunciation or ARPAbet before saving.');
+    if (!pronunciationArpabet.trim()) {
+      setPronunciationMessage('Add an ARPAbet pronunciation before saving.');
       return;
     }
     setPronunciationBusy(true);
@@ -2164,17 +2261,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const res = await savePronunciationEntry({
         word,
         category: pronunciationCategory,
-        readable: pronunciationReadable,
         arpabet: pronunciationArpabet,
-        source: pronunciationArpabet ? 'admin-arpabet' : 'admin-readable',
+        verifyPhonemes: pronunciationVerifyPhonemes,
+        source: 'admin-arpabet',
       });
       setPronunciationEntries(res.data.dictionary?.entries || []);
-      if (pronunciationArpabet.trim()) {
-        setPronunciationReloadPending(true);
-        setPronunciationMessage(`Saved ${word}. Click "Load changes" to apply.`);
-      } else {
-        setPronunciationMessage(`${editingPronunciationWord ? 'Updated' : 'Saved'} ${word} in ${pronunciationCategory}.`);
-      }
+      setPronunciationReloadPending(true);
+      setPronunciationMessage(`Saved ${word}. Any older category entry was replaced. Click "Load changes" to apply.`);
       setEditingPronunciationWord('');
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
@@ -2186,8 +2279,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   function editPronunciation(entry) {
     setEditingPronunciationWord(entry.word || '');
     setPronunciationWord(entry.word || '');
-    setPronunciationReadable(entry.readable || '');
     setPronunciationArpabet(entry.arpabet || '');
+    setPronunciationVerifyPhonemes(entry.verifyPhonemes === true);
     setPronunciationMessage(`Editing ${entry.word}.`);
   }
 
@@ -2218,16 +2311,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   function startOverrideForWord(word) {
     setEditingPronunciationWord('');
     setPronunciationWord(word);
-    setPronunciationReadable('');
     setPronunciationArpabet('');
+    setPronunciationVerifyPhonemes(false);
     setPronunciationMessage(`Add an override for "${word}", then Generate or type the ARPAbet and Save entry.`);
   }
 
   function clearPronunciationForm() {
     setEditingPronunciationWord('');
     setPronunciationWord('');
-    setPronunciationReadable('');
     setPronunciationArpabet('');
+    setPronunciationVerifyPhonemes(false);
     setPronunciationMessage('');
   }
 
@@ -2240,12 +2333,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const res = await deletePronunciationEntry({ word, category: pronunciationCategory });
       setPronunciationEntries(res.data.dictionary?.entries || []);
       if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
-      if (entry.arpabet) {
-        setPronunciationReloadPending(true);
-        setPronunciationMessage(`Deleted ${word}. Click "Load changes" to apply.`);
-      } else {
-        setPronunciationMessage(`Deleted ${word} from ${pronunciationCategory}.`);
-      }
+      setPronunciationReloadPending(true);
+      setPronunciationMessage(`Deleted ${word} from every category. Click "Load changes" to apply.`);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not delete pronunciation entry.');
     } finally {
@@ -2255,15 +2344,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   function buildPronunciationTestText(entry) {
     const word = String(entry.word || '').trim();
-    const readable = String(entry.readable || '').trim();
-    const arpabet = String(entry.arpabet || '').trim();
-    const spoken = readable && !arpabet ? readable : word;
-    return `Pronunciation test. ${spoken}. ${spoken} is used in this sentence.`;
+    return `Pronunciation test. ${word}. ${word} is used in this sentence.`;
   }
 
   async function testPronunciation(entry = null) {
     const word = String(entry?.word || pronunciationWord || '').trim();
-    const readable = String(entry?.readable || pronunciationReadable || '').trim();
     const arpabet = String(entry?.arpabet || pronunciationArpabet || '').trim();
     if (!word) {
       setPronunciationMessage('Enter a word before testing.');
@@ -2285,7 +2370,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationTestingWord(word);
     setPronunciationMessage(`Testing ${word} with Live Fast sentence TTS...`);
     try {
-      const text = buildPronunciationTestText({ word, readable, arpabet });
+      const text = buildPronunciationTestText({ word });
       const result = await synthesizeSentence({
         text,
         voiceProfileId: selectedVoiceProfileId,
@@ -2329,26 +2414,21 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       const rows = parsePronunciationCsv(await file.text(), pronunciationCategory);
       if (rows.length === 0) {
-        setPronunciationMessage('No valid pronunciation rows found. CSV needs word plus readable or ARPAbet.');
+        setPronunciationMessage('No valid pronunciation rows found. CSV needs word plus ARPAbet.');
         return;
       }
 
-      let hasArpabet = false;
       for (const row of rows) {
-        if (row.arpabet) hasArpabet = true;
         await savePronunciationEntry({
           ...row,
-          source: row.arpabet ? 'csv-arpabet' : 'csv-readable',
+          verifyPhonemes: row.verifyPhonemes === true,
+          source: 'csv-arpabet',
         });
       }
 
       await loadPronunciationEntries(pronunciationCategory);
-      if (hasArpabet) {
-        setPronunciationReloadPending(true);
-        setPronunciationMessage(`Imported ${rows.length} entries. Click "Load changes" to apply.`);
-        return;
-      }
-      setPronunciationMessage(`Imported ${rows.length} pronunciation entries.`);
+      setPronunciationReloadPending(true);
+      setPronunciationMessage(`Imported ${rows.length} ARPAbet entries. Click "Load changes" to apply.`);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not import pronunciation CSV.');
     } finally {
@@ -2494,6 +2574,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        max_chunk_words: liveFastMaxChunkWords,
+        max_sentences_per_chunk: liveFastMaxSentences,
       },
     });
   }
@@ -3039,6 +3121,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(activeVoiceProfile?.defaults?.top_p) ? activeVoiceProfile.defaults.top_p : DEFAULT_LIVE_FAST_SETTINGS.topP);
     setTemperature(Number.isFinite(activeVoiceProfile?.defaults?.temperature) ? activeVoiceProfile.defaults.temperature : DEFAULT_LIVE_FAST_SETTINGS.temperature);
     setRepPenalty(Number.isFinite(activeVoiceProfile?.defaults?.repetition_penalty) ? activeVoiceProfile.defaults.repetition_penalty : DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+    const chunkSettings = normalizeLiveFastSettings({
+      maxChunkWords: activeVoiceProfile?.defaults?.max_chunk_words,
+      maxSentencesPerChunk: activeVoiceProfile?.defaults?.max_sentences_per_chunk,
+    });
+    setLiveFastMaxChunkWords(chunkSettings.maxChunkWords);
+    setLiveFastMaxSentences(chunkSettings.maxSentencesPerChunk);
     setPreviewReference({ path: '', url: null, filename: '', role: '' });
     setReferenceMessage(`Restored saved voice profile ${activeVoiceProfile.displayName || activeVoiceProfile.voiceProfileId}.`);
   }, [
@@ -3215,22 +3303,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Voice</span>
                   <Select
                     value={selectedPersonKey}
-                    onValueChange={(v) => {
-                      setSelectedPersonKey(v);
-                      setModelError('');
-                      autoReferenceKeyRef.current = '';
-                      autoLoadAttemptKeyRef.current = '';
-                      pendingAutoSyncFingerprintRef.current = '';
-                      autoSyncRequestFingerprintRef.current = '';
-                      setTrainingAudioFiles([]);
-                      setLoadedTrainingAudioSourceKey('');
-                      clearReferenceSelection();
-                      writeVoiceProfileBrowserDebug('live voice switched', createVoiceProfileBrowserDebugSummary({
-                        context: 'live voice switch',
-                        displayName: availableProfiles.find((p) => p.key === v)?.displayName || '',
-                        selectedExpName: availableProfiles.find((p) => p.key === v)?.expName || '',
-                      }));
-                    }}
+                    onValueChange={handleVoiceSelection}
                     disabled={isConversationActive || savingProfile || availableProfiles.length === 0}
                   >
               <SelectTrigger className="h-9 w-44 rounded-xl border-slate-200 bg-white text-sm shadow-none">
@@ -3362,7 +3435,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       )}
 
       {isTtsMode ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_400px] xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -3377,13 +3450,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             </div>
             <Textarea
               value={ttsText}
-              onChange={(event) => setTtsText(event.target.value)}
+              onChange={(event) => {
+                setTtsText(event.target.value);
+                setFullOovAcknowledgedKey('');
+                setTtsWarning('');
+              }}
               disabled={!isReady || ttsFastGenerating || streamingRoute !== null}
               placeholder={isReady ? 'Type the text to synthesize.' : 'Load a voice profile first.'}
               className="mt-4 min-h-[220px] rounded-xl border-slate-200 bg-white text-sm leading-6 shadow-none"
             />
             {ttsError && (
               <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">{ttsError}</p>
+            )}
+            {ttsWarning && (
+              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{ttsWarning}</p>
             )}
             {ttsFastGenerating && (
               <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
@@ -3400,8 +3480,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {streamingRoute && (
               <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
                 {ttsInference.totalChunks > 0
-                  ? `Synthesizing chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
-                  : 'Preparing synthesis…'}
+                  ? `Evaluating up to five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing maximum-quality synthesis…'}
               </p>
             )}
             <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
@@ -3450,20 +3530,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('full')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
-                {streamingRoute === 'full' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                {(oovScanning || streamingRoute === 'full') ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference TTS
               </Button>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('fullQueued')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
-                {streamingRoute === 'fullQueued' ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+                {(oovScanning || streamingRoute === 'fullQueued') ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
                 Full Inference Queue
               </Button>
             </div>
@@ -3730,7 +3810,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-800">Pronunciation dictionary</p>
-                  <p className="mt-0.5 text-xs text-slate-400">English entries saved by category.</p>
+                  <p className="mt-0.5 text-xs text-slate-400">Globally unique English ARPAbet entries, organized by category.</p>
                 </div>
                 <Select value={pronunciationCategory} onValueChange={setPronunciationCategory}>
                   <SelectTrigger className="h-8 w-[130px] rounded-lg border-slate-200 bg-white text-xs">
@@ -3743,11 +3823,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr]">
+              <div className="mt-3">
                 <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
-                <Input value={pronunciationReadable} onChange={(event) => setPronunciationReadable(event.target.value)} placeholder="Readable pronunciation" className="h-9 rounded-lg bg-white" />
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
+              <label className="mt-2 flex items-start gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                <Checkbox
+                  checked={pronunciationVerifyPhonemes}
+                  onCheckedChange={(checked) => setPronunciationVerifyPhonemes(checked === true)}
+                  disabled={!pronunciationArpabet.trim()}
+                  className="mt-0.5"
+                />
+                <span className="text-xs text-slate-600">
+                  <span className="block font-medium text-slate-700">Strict phoneme verification (Live Fast + Full)</span>
+                  <span className="mt-0.5 block text-slate-400">Use only for difficult reviewed terms. Uncertain results stay advisory.</span>
+                </span>
+              </label>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -3817,7 +3908,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         disabled={pronunciationBusy}
                       >
                         <span className="block truncate font-medium text-slate-700">{entry.word}</span>
-                        <span className="block truncate font-mono text-slate-400">{entry.arpabet || entry.readable}</span>
+                        <span className="block truncate font-mono text-slate-400">
+                          {entry.arpabet}{entry.verifyPhonemes ? ' · strict phoneme' : ''}
+                        </span>
                       </button>
                       <div className="flex items-center gap-1">
                         <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady} className="h-7 w-7 rounded-lg text-blue-500">
@@ -3902,24 +3995,47 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                               const busyKey = `${result.id}:${chunk.index}`;
                               const busy = regeneratingFullChunk === busyKey;
                               const revision = result.revision || '';
+                              const draftText = fullChunkDrafts[busyKey] ?? chunk.text ?? '';
                               return (
                                 <div key={chunk.index} className="rounded-lg border border-slate-200 bg-white p-2.5">
-                                  <div className="mb-2 flex items-start justify-between gap-2">
-                                    <p className="text-xs leading-5 text-slate-600">
-                                      <span className="mr-1.5 font-semibold text-slate-700">{chunk.index + 1}.</span>
-                                      {chunk.text}
-                                    </p>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => regenerateFullChunk(result, chunk)}
-                                      disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null}
-                                      className="h-7 shrink-0 rounded-md px-2 text-[11px]"
-                                    >
-                                      {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                      {busy ? 'Rebuilding' : 'Regenerate'}
-                                    </Button>
+                                  <div className="mb-2 min-w-0">
+                                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                                      <Label
+                                        htmlFor={`full-chunk-${result.id}-${chunk.index}`}
+                                        className="block text-[11px] font-semibold text-slate-500"
+                                      >
+                                        Sentence {chunk.index + 1}
+                                      </Label>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => regenerateFullChunk(result, chunk)}
+                                        disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
+                                        className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
+                                      >
+                                        {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                        {busy ? 'Rebuilding' : 'Regenerate'}
+                                      </Button>
+                                    </div>
+                                      <Textarea
+                                        id={`full-chunk-${result.id}-${chunk.index}`}
+                                        value={draftText}
+                                        onChange={(event) => setFullChunkDrafts((current) => ({
+                                          ...current,
+                                          [busyKey]: event.target.value,
+                                        }))}
+                                        disabled={busy}
+                                        rows={3}
+                                        className="min-h-[92px] w-full resize-y rounded-md border-slate-200 bg-white px-3 py-2.5 text-sm leading-5 shadow-none focus-visible:ring-1"
+                                        aria-describedby={`full-chunk-help-${result.id}-${chunk.index}`}
+                                      />
+                                      <p
+                                        id={`full-chunk-help-${result.id}-${chunk.index}`}
+                                        className="mt-1 text-[10px] leading-4 text-slate-400"
+                                      >
+                                        Edit the text, then regenerate to replace only this audio chunk.
+                                      </p>
                                   </div>
                                   <audio
                                     key={`${result.sessionId}:${chunk.index}:${revision}`}
@@ -4285,7 +4401,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     Speed {speed.toFixed(1)} · Top K {topK} · Top P {topP.toFixed(2)}
                   </p>
                   <p className="rounded-lg bg-slate-50 px-2 py-1.5">
-                    Temp {temperature.toFixed(2)} · Rep {repPenalty.toFixed(2)} · {liveLanguageConfig.label}
+                    Temp {temperature.toFixed(2)} · Rep {repPenalty.toFixed(2)} · chunks {liveFastSettings.maxChunkWords > 0 ? `${liveFastSettings.maxChunkWords} words` : 'auto (280 chars)'} · max {liveFastSettings.maxSentencesPerChunk} sentence{liveFastSettings.maxSentencesPerChunk === 1 ? '' : 's'} · {liveLanguageConfig.label}
                   </p>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-2 py-2 text-xs text-slate-500">
@@ -4381,7 +4497,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                 </div>
                                 <p className="mt-0.5 truncate text-[11px] text-slate-500">
                                   Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
-                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
+                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'} · chunks {(defaults.max_chunk_words ?? DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords) > 0 ? `${defaults.max_chunk_words} words` : 'auto'} · max {defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk} sentence{(defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk) === 1 ? '' : 's'}
                                 </p>
                                 {config.trainingMetadata?.engineVersion && (
                                   <p className="mt-0.5 truncate text-[11px] text-slate-400">
@@ -4435,6 +4551,42 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     <span className="font-mono text-sm font-semibold text-slate-700">{repPenalty.toFixed(2)}</span>
                   </div>
                   <Slider min={1.0} max={2.0} step={0.05} value={[repPenalty]} onValueChange={([v]) => setRepPenalty(v)} disabled={isConversationActive} />
+                </div>
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Max chunk words</Label>
+                    <span className="font-mono text-sm font-semibold text-slate-700">
+                      {liveFastSettings.maxChunkWords === 0 ? 'Auto · 280 chars' : liveFastSettings.maxChunkWords}
+                    </span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={10}
+                    value={[liveFastSettings.maxChunkWords]}
+                    onValueChange={([value]) => setLiveFastMaxChunkWords(value)}
+                    disabled={isConversationActive}
+                  />
+                  <p className="text-xs leading-5 text-slate-400">
+                    Auto keeps the 280-character limit. A selected 10–100 word limit takes priority over it.
+                  </p>
+                </div>
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Max sentences per chunk</Label>
+                    <span className="font-mono text-sm font-semibold text-slate-700">{liveFastSettings.maxSentencesPerChunk}</span>
+                  </div>
+                  <Slider
+                    min={1}
+                    max={5}
+                    step={1}
+                    value={[liveFastSettings.maxSentencesPerChunk]}
+                    onValueChange={([value]) => setLiveFastMaxSentences(value)}
+                    disabled={isConversationActive}
+                  />
+                  <p className="text-xs leading-5 text-slate-400">
+                    Takes priority over the default. A chunk below eight words may absorb one extra sentence for stable voice context.
+                  </p>
                 </div>
               </div>
             </div>

@@ -7,6 +7,34 @@ function w(word, durationSec, p = 0.95) {
   return { w: word, start: 0, end: durationSec, p };
 }
 
+function makePcm16Wav(durationSec, silentRanges = []) {
+  const sampleRate = 16000;
+  const samples = Math.ceil(durationSec * sampleRate);
+  const data = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i += 1) {
+    const time = i / sampleRate;
+    const silent = silentRanges.some((range) => time >= range.start && time <= range.end);
+    const sample = silent ? 0 : (i % 2 === 0 ? 5000 : -5000);
+    data.writeInt16LE(sample, i * 2);
+  }
+  const wav = Buffer.alloc(44 + data.length);
+  wav.write('RIFF', 0, 4, 'ascii');
+  wav.writeUInt32LE(36 + data.length, 4);
+  wav.write('WAVE', 8, 4, 'ascii');
+  wav.write('fmt ', 12, 4, 'ascii');
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36, 4, 'ascii');
+  wav.writeUInt32LE(data.length, 40);
+  data.copy(wav, 44);
+  return wav;
+}
+
 test('dictionary word mis-transcribed but present (word count matches) is forgiven', async () => {
   // Model said every word, just pronounced "centriole" as "sensual". Whisper heard
   // the same NUMBER of words → nothing dropped → forgive the dictionary mis-spelling.
@@ -21,6 +49,272 @@ test('dictionary word mis-transcribed but present (word count matches) is forgiv
       { dictionaryWords: ['centriole', 'centrioles'] },
     );
     assert.equal(res.ok, true, JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full forgives a hard dictionary word only when an aligned timed token was spoken', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  const logs = [];
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: true,
+    inconclusive: false,
+    decision: 'pass',
+    expected: 'maɪkeɪlɪs',
+    observed: 'maɪkeɪlɪs',
+    ctcScore: -0.8,
+    similarity: 1,
+  }));
+  mock.method(console, 'log', (...args) => logs.push(args.join(' ')));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S' }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, ['michaelis']);
+    assert.match(logs.find((line) => line.includes('[phoneme]')) || '', /word="michaelis" decision=pass/u);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Fast phoneme verification can forgive a Whisper-mismatched dictionary word', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: true,
+    inconclusive: false,
+    decision: 'pass',
+    ctcScore: -0.8,
+    similarity: 1,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S' }],
+        phonemeVerification: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, ['michaelis']);
+    assert.equal(res.phonemeAssessments[0].decision, 'pass');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Fast phoneme rejection rejects a take even when Whisper spells a strict word correctly', async () => {
+  const heard = 'Km or the Michaelis constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: false,
+    inconclusive: false,
+    decision: 'reject',
+    ctcScore: -6.2,
+    similarity: 0.25,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S', verifyPhonemes: true }],
+        phonemeVerification: true,
+      },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.equal(res.phonemeAssessments[0].decision, 'reject');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full rejects a present technical word when its phonemes do not match', async () => {
+  // Whisper can context-correct a mispronunciation back to the expected spelling;
+  // the independent phone check must still reject it.
+  const heard = 'Km or the Michaelis constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: false,
+    inconclusive: false,
+    decision: 'reject',
+    expected: 'maɪkeɪlɪs',
+    observed: 'mɛkænɪks',
+    ctcScore: -6.2,
+    similarity: 0.25,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S', verifyPhonemes: true }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
+    assert.equal(res.phonemeAssessments[0].ok, false);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full does not phoneme-gate an ordinary dictionary word that Whisper transcribed correctly', async () => {
+  const heard = 'We introduce two important parameters'.split(' ');
+  let phonemeCalls = 0;
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({ w: word, start: index, end: index + 0.4, p: 0.95 })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => {
+    phonemeCalls += 1;
+    return { ok: false, decision: 'reject', ctcScore: -9, similarity: 0 };
+  });
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(6),
+      'We introduce two important parameters',
+      {
+        dictionaryWords: ['parameters'],
+        dictionaryEntries: [{ word: 'parameters', arpabet: 'P ER0 AE1 M AH0 T ER0 Z' }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(phonemeCalls, 0);
+    assert.deepEqual(res.phonemeAssessments, []);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('an uncertain phoneme result cannot forgive a Whisper-mismatched technical word', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: false,
+    inconclusive: true,
+    decision: 'uncertain',
+    expected: 'm aɪ k eɪ l ɪ s',
+    observed: 'm aɪ k l ɪ s',
+    ctcScore: -3.2,
+    similarity: 0.45,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S' }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
+    assert.equal(res.phonemeAssessments[0].decision, 'uncertain');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full does not forgive a hallucinated technical timestamp over silence', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9, [{ start: 3, end: 3.6 }]),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      { dictionaryWords: ['michaelis'], finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full does not timing-forgive a hard dictionary word when its aligned slot is absent', async () => {
+  const heard = 'Km or the constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      { dictionaryWords: ['michaelis'], finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, []);
   } finally {
     mock.restoreAll();
   }
@@ -138,6 +432,24 @@ test('an advisory clipped word (low confidence, real audio) no longer forces a r
     );
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.ok(res.suspectWords.includes('daughter'), 'still reported as advisory');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full rejects the same low-confidence word and chooses another take', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the daughter centriole respectively',
+    words: [w('the', 0.2), w('daughter', 0.5, 0.1), w('centriole', 0.5), w('respectively', 0.6)],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the daughter centriole respectively',
+      { finalWordTailCheck: true },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.ok(res.suspectWords.includes('daughter'), JSON.stringify(res));
   } finally {
     mock.restoreAll();
   }
@@ -299,6 +611,27 @@ test('Live Full gates on a missing SHORT content word that Live Fast tolerates',
     );
     assert.equal(full.ok, false, JSON.stringify(full));
     assert.ok(full.missingWords.includes('wet'), JSON.stringify(full));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Full has no word-length exemption and rejects a missing one-letter word', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'this is complete sentence for the strict verifier today',
+    words: [],
+  }));
+  try {
+    const expected = 'this is a complete sentence for the strict verifier today';
+    const fast = await transcriptionVerifier.verifyChunk(Buffer.alloc(0), expected, {});
+    assert.equal(fast.ok, true, JSON.stringify(fast));
+    const full = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      expected,
+      { finalWordTailCheck: true },
+    );
+    assert.equal(full.ok, false, JSON.stringify(full));
+    assert.ok(full.missingWords.includes('a'), JSON.stringify(full));
   } finally {
     mock.restoreAll();
   }

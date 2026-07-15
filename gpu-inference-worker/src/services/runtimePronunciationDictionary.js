@@ -23,28 +23,42 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
-export function applyReadableOverrides(text, entries = []) {
-  let result = String(text || '');
-  const readableEntries = entries
-    .map((entry) => ({
-      word: normalizeWord(entry.word),
-      readable: String(entry.readable || '').trim(),
-      arpabet: normalizeArpabet(entry.arpabet),
-    }))
-    .filter((entry) => entry.word && entry.readable && !entry.arpabet)
-    .sort((a, b) => b.word.length - a.word.length);
+export function applyReadableOverrides(text) {
+  // Readable replacements changed the verifier's expected token sequence (for
+  // example, "iron" -> "eye urn") and could reject correctly spoken audio.
+  // Pronunciation overrides are ARPAbet-only now, so synthesis text stays exact.
+  return String(text || '');
+}
 
-  for (const entry of readableEntries) {
-    const pattern = new RegExp(`\\b${escapeRegExp(entry.word)}\\b`, 'giu');
-    result = result.replace(pattern, entry.readable);
+function updatedAtValue(entry) {
+  const value = Date.parse(String(entry?.updatedAt || ''));
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function dedupePronunciationEntries(entries = []) {
+  const byWord = new Map();
+  for (const rawEntry of entries) {
+    const word = normalizeWord(rawEntry?.word);
+    const arpabet = normalizeArpabet(rawEntry?.arpabet);
+    if (!word || !arpabet) continue;
+    const candidate = { ...rawEntry, word, arpabet };
+    delete candidate.readable;
+    const key = word.toLowerCase();
+    const current = byWord.get(key);
+    const candidateTime = updatedAtValue(candidate);
+    const currentTime = updatedAtValue(current);
+    const winsTie = String(candidate.category || '').localeCompare(String(current?.category || '')) < 0;
+    if (!current || candidateTime > currentTime || (candidateTime === currentTime && winsTie)) {
+      byWord.set(key, candidate);
+    }
   }
-  return result;
+  return [...byWord.values()].sort((a, b) => a.word.localeCompare(b.word));
 }
 
 export function buildHotDictionaryLines(entries = []) {
   const lines = [];
   const seen = new Set();
-  for (const entry of entries) {
+  for (const entry of dedupePronunciationEntries(entries)) {
     const rawWord = normalizeWord(entry.word).toUpperCase();
     // GPT-SoVITS' g2p keys on the ASCII letters/digits only, so we strip everything
     // else to form the dictionary key. But a word built ENTIRELY (or mostly) of
@@ -168,9 +182,12 @@ export async function loadRuntimePronunciationEntries({
       const parsed = JSON.parse(body.toString('utf-8'));
       if (Array.isArray(parsed.entries)) entries.push(...parsed.entries);
     }
-    cachedEntries = entries;
+    cachedEntries = dedupePronunciationEntries(entries);
     cacheLoadedAt = now;
-    console.log(`[pronunciation] loaded ${entries.length} admin dictionary entries from S3 (${DICTIONARY_PREFIX})`);
+    console.log(
+      `[pronunciation] loaded ${cachedEntries.length} unique ARPAbet entries from `
+      + `${entries.length} stored admin entries (${DICTIONARY_PREFIX})`,
+    );
     return cachedEntries;
   } catch (error) {
     console.warn(`[pronunciation] Could not load admin dictionary: ${error.message}`);

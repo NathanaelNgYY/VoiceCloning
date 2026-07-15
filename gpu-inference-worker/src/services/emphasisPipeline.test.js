@@ -28,11 +28,15 @@ for (const input of ['Wait. STOP now.', 'The WHO says STOP.', 'order an ECG; STO
 }
 
 test('pipeline preserves the WHO spell-out', () => {
-  assert.match(pipeline('The WHO says STOP.'), /W H O/u);
+  assert.match(pipeline('The WHO says STOP.'), /double you aitch oh/u);
 });
 
 test('pipeline preserves the ECG spell-out', () => {
-  assert.match(pipeline('order an ECG; STOP.'), /E C G/u);
+  assert.match(pipeline('order an ECG; STOP.'), /ee cee gee/u);
+});
+
+test('pipeline preserves the sentence boundary after a dotted initialism', () => {
+  assert.equal(pipeline('The F.A.D. Another sentence follows.'), 'The eff ay dee. Another sentence follows.');
 });
 
 test('pipeline does not glue the emphasis after the period in "Wait. STOP now."', () => {

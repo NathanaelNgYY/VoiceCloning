@@ -18,7 +18,15 @@ test('normalizeLiveFastSettings bounds user-editable inference controls', () => 
     topP: 2,
     temperature: -1,
     repPenalty: 5,
+    maxChunkWords: 9,
+    maxSentencesPerChunk: 6,
   }), DEFAULT_LIVE_FAST_SETTINGS);
+});
+
+test('normalizeLiveFastSettings accepts saved chunk limits', () => {
+  const settings = normalizeLiveFastSettings({ maxChunkWords: 30, maxSentencesPerChunk: 3 });
+  assert.equal(settings.maxChunkWords, 30);
+  assert.equal(settings.maxSentencesPerChunk, 3);
 });
 
 test('buildLiveFastRefParams uses trained primary, five aux clips, and inference controls', () => {

@@ -4,6 +4,7 @@ import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
   resolveInferenceStatusState,
+  shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
 } from './modelLoading.js';
 
@@ -208,4 +209,20 @@ test('resolveInferenceStatusState preserves the last known loaded weights when s
     loadedGPTPath: 'models/gpt/other.ckpt',
     loadedSoVITSPath: 'models/sovits/other.pth',
   });
+});
+
+test('one transient not-ready status does not flash a loaded model as missing', () => {
+  const nextState = { serverReady: false, loadedGPTPath: 'gpt.ckpt', loadedSoVITSPath: 'sovits.pth' };
+  assert.equal(shouldHoldReadyDuringTransientStatus({
+    nextState,
+    previousServerReady: true,
+    hasKnownLoadedModel: true,
+    consecutiveNotReady: 1,
+  }), true);
+  assert.equal(shouldHoldReadyDuringTransientStatus({
+    nextState,
+    previousServerReady: true,
+    hasKnownLoadedModel: true,
+    consecutiveNotReady: 2,
+  }), false);
 });

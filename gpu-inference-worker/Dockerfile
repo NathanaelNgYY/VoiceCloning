@@ -24,6 +24,7 @@ RUN apt-get update \
       build-essential \
       ca-certificates \
       curl \
+      espeak-ng \
       ffmpeg \
       git \
       gnupg \
@@ -70,7 +71,7 @@ RUN mkdir -p "$GPT_SOVITS_ROOT" /tmp/gpt-sovits-unpack \
       torchaudio==2.1.1 \
       --index-url https://download.pytorch.org/whl/cu118 \
     && "$PYTHON_EXEC" -m pip install -r "$GPT_SOVITS_ROOT/requirements.txt" \
-    && "$PYTHON_EXEC" -m pip install "fastapi<0.112.2" "uvicorn[standard]" attrdict faster-whisper resemblyzer \
+    && "$PYTHON_EXEC" -m pip install "fastapi<0.112.2" "uvicorn[standard]" attrdict faster-whisper resemblyzer phonemizer "transformers>=4.40,<5" \
     && mkdir -p \
       "$LOCAL_TEMP_ROOT" \
       "$GPT_SOVITS_ROOT/GPT_weights_v2" \

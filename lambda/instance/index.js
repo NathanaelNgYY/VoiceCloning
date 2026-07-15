@@ -224,8 +224,11 @@ async function getStatus() {
   if (!id) return unconfiguredStatus();
 
   const ec2 = createEc2Client();
+  // The common path is an already-running GPU. Probe worker health in parallel with
+  // EC2 state instead of paying those network latencies serially on every page load.
+  const workerReadyPromise = checkWorkerReady();
   const state = await describeInstance(ec2, id);
-  const workerReady = state === 'running' ? await checkWorkerReady() : false;
+  const workerReady = state === 'running' ? await workerReadyPromise : false;
   return statusPayload({ id, state, workerReady });
 }
 

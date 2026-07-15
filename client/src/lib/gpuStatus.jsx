@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getInstanceStatus, startInstance } from '../services/api.js';
+import { cacheGpuReadyStatus, readCachedGpuReadyStatus } from './gpuReadyCache.js';
 
 const GpuStatusContext = createContext(null);
 
@@ -21,8 +22,9 @@ function sameStatus(a, b) {
 // their backend calls on `workerReady` so we never fire model/status requests at
 // a cold GPU (which is what surfaced the raw 503 / 404 error banners).
 export function GpuStatusProvider({ children, autoStart = false }) {
-  const [status, setStatus] = useState(null);
-  const [checking, setChecking] = useState(true);
+  const cachedStatus = useMemo(() => readCachedGpuReadyStatus(), []);
+  const [status, setStatus] = useState(cachedStatus);
+  const [checking, setChecking] = useState(!cachedStatus);
   const [starting, setStarting] = useState(false);
   const autoStartedRef = useRef(false);
   const prevWorkerReadyRef = useRef(false);
@@ -34,6 +36,7 @@ export function GpuStatusProvider({ children, autoStart = false }) {
     if (!background) setChecking(true);
     try {
       const res = await getInstanceStatus();
+      cacheGpuReadyStatus(res.data);
       setStatus((prev) => (sameStatus(prev, res.data) ? prev : res.data));
     } catch (err) {
       const next = {
@@ -43,6 +46,7 @@ export function GpuStatusProvider({ children, autoStart = false }) {
         startable: false,
         message: err.response?.data?.error || err.message || 'Could not check GPU instance status.',
       };
+      cacheGpuReadyStatus(next);
       setStatus((prev) => (sameStatus(prev, next) ? prev : next));
     } finally {
       if (!background) setChecking(false);
@@ -53,32 +57,37 @@ export function GpuStatusProvider({ children, autoStart = false }) {
     setStarting(true);
     try {
       const res = await startInstance();
+      cacheGpuReadyStatus(res.data);
       setStatus(res.data);
       window.setTimeout(refreshStatus, 5000);
     } catch (err) {
-      setStatus((current) => ({
-        ...(current || {}),
-        configured: true,
-        state: current?.state || 'unknown',
-        workerReady: false,
-        startable: false,
-        message: err.response?.data?.error || err.message || 'Could not start GPU instance.',
-      }));
+      setStatus((current) => {
+        const next = {
+          ...(current || {}),
+          configured: true,
+          state: current?.state || 'unknown',
+          workerReady: false,
+          startable: false,
+          message: err.response?.data?.error || err.message || 'Could not start GPU instance.',
+        };
+        cacheGpuReadyStatus(next);
+        return next;
+      });
     } finally {
       setStarting(false);
     }
   }, [refreshStatus]);
 
   useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+    refreshStatus({ background: Boolean(cachedStatus?.workerReady) });
+  }, [refreshStatus, cachedStatus]);
 
   // Poll the instance state continuously. Fast while we're waiting for it to come
   // up; slower once ready — but we keep polling so an idle auto-stop is detected
   // (which then re-shows the overlay and re-triggers auto-start).
   useEffect(() => {
     if (!status?.configured) return undefined;
-    const cadence = status.workerReady ? 20000 : 8000;
+    const cadence = status.workerReady ? 20000 : 3000;
     const id = window.setInterval(() => refreshStatus({ background: true }), cadence);
     return () => window.clearInterval(id);
   }, [status?.configured, status?.workerReady, status?.state, refreshStatus]);
