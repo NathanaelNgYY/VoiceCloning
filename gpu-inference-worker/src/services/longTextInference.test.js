@@ -113,6 +113,15 @@ test('increment symbol also becomes "delta"', () => {
   assert.ok(!joined.includes('∆'), `no raw increment symbol should survive: "${joined}"`);
 });
 
+test('Live Full chunking expands chemical formulas before synthesis', () => {
+  const chunks = splitTextIntoChunks('Glucose has formula C6H12O6 and a carboxyl group contains COOH.');
+  const joined = chunks.join(' ');
+
+  assert.match(joined, /cee six aitch twelve oh six/u);
+  assert.match(joined, /cee oh oh aitch/u);
+  assert.doesNotMatch(joined, /C6H12O6|COOH/u);
+});
+
 // A short lead-in clause ("Typically,", "However,", "Therefore,") must not be
 // stranded as its own 1-2 word chunk — GPT-SoVITS has no context to pace a lone
 // word and rushes it. It should merge forward into the following clause.

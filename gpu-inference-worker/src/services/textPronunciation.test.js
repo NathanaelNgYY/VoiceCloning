@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareTextForSynthesis } from './textPronunciation.js';
+import {
+  prepareTextForFullSynthesis,
+  prepareTextForSynthesis,
+} from './textPronunciation.js';
 
 test('prepareTextForSynthesis normalizes symbols and dashes for any synthesis route', () => {
   const result = prepareTextForSynthesis('The free-energy change ΔG - or ∆G - is real-time.');
@@ -64,4 +67,30 @@ test('prepareTextForSynthesis expands Roman numerals only after a classifier wor
 
   assert.match(result, /stage 4/u);       // classified -> expanded
   assert.match(result, /\bIV fluids\b/u); // bare IV (intravenous) left intact
+});
+
+test('Live Full spells compact chemical formulas into deterministic spoken tokens', () => {
+  const result = prepareTextForFullSynthesis(
+    'Glucose is C6H12O6, carbohydrates approximate (CH2O)n, and the carboxyl group is COOH.',
+  );
+
+  assert.match(result, /cee six aitch twelve oh six/u);
+  assert.match(result, /open parenthesis cee aitch two oh close parenthesis en/u);
+  assert.match(result, /cee oh oh aitch/u);
+  assert.doesNotMatch(result, /C6H12O6|\(CH2O\)n|COOH/u);
+});
+
+test('Live Full recognizes element-symbol casing without treating normal capitals as formulas', () => {
+  const result = prepareTextForFullSynthesis('NaCl dissolves in H2O, but ATP and NASA stay ordinary tokens.');
+
+  assert.match(result, /en ay cee el/u);
+  assert.match(result, /aitch two oh/u);
+  assert.match(result, /\bATP\b/u);
+  assert.match(result, /\bNASA\b/u);
+});
+
+test('shared normalization keeps compact formulas unchanged for Live Fast', () => {
+  const result = prepareTextForSynthesis('C6H12O6 and (CH2O)n');
+
+  assert.equal(result, 'C6H12O6 and (CH2O)n');
 });
