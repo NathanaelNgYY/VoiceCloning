@@ -162,3 +162,27 @@ behavior.
 Final verification: the full inference-worker suite passed **198/198** tests. The
 targeted formatter coverage run passed **12/12** tests with 99.77% line, 82.89% branch,
 and 96.30% function coverage.
+
+## Follow-up: one-syllable formula C
+
+Production listening found that the cloned voice stretched the formula spelling
+`cee` into "see-ee". Formula rendering now uses the common word `see` for `C`, while
+ordinary initialisms keep their established letter map and Live Fast remains unchanged.
+
+### Formula-C RED/GREEN
+
+Command:
+
+```text
+node --test src/services/textPronunciation.test.js src/services/longTextInference.test.js
+```
+
+RED: **61 passed, 4 failed** because all formula paths still emitted `cee`.
+
+Checkpoint: `4e1d2a9 test: reproduce elongated formula C pronunciation`
+
+GREEN: **65/65 passed** after the formula-only `C` override emitted `see` through both
+the unit formatter and Live Full chunking path.
+
+Final verification: **198/198** full-suite tests passed. Targeted formatter coverage
+passed **12/12** tests with 99.78% line, 82.89% branch, and 96.30% function coverage.

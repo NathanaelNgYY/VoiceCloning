@@ -119,11 +119,14 @@ preprocessor does not guess a chemical name or expand symbols to element names.
 
 | Input | Spoken text sent to GPT-SoVITS |
 |---|---|
-| `C6H12O6` | `cee six, aitch twelve, oh six` |
+| `C6H12O6` | `see six, aitch twelve, oh six` |
 | `H2O2` | `aitch two, oh two` |
-| `(CH2O)n` | `open parenthesis, cee, aitch two, oh, close parenthesis, en` |
-| `COOH` | `cee oh oh aitch` |
-| `NaCl` | `en ay cee el` |
+| `(CH2O)n` | `open parenthesis, see, aitch two, oh, close parenthesis, en` |
+| `COOH` | `see oh oh aitch` |
+| `NaCl` | `en ay see el` |
+
+Formula `C` intentionally uses the ordinary word `see`, not the dictionary spelling
+`cee`: this cloned voice stretches `cee` into a two-beat "see-ee" sound.
 
 Candidates are checked against real element symbols before they are expanded, so
 ordinary acronyms such as `ATP` and `NASA` are not treated as formulas. **Live Fast is

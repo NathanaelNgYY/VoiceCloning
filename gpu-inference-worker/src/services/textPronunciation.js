@@ -171,6 +171,14 @@ const INITIALISM_LETTER_NAMES = {
   I: 'eye',
 };
 
+// In this cloned voice the dictionary spelling "cee" can stretch into two vowel
+// beats ("see-ee"). Formula C uses the ordinary word "see", whose familiar lexical
+// pronunciation stays one syllable. Other initialisms retain the established map.
+const FORMULA_LETTER_NAMES = {
+  ...INITIALISM_LETTER_NAMES,
+  C: 'see',
+};
+
 const ELEMENT_SYMBOLS = new Set([
   'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
   'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca',
@@ -238,7 +246,7 @@ function isUnambiguousFormula(core, parts, { grouped = false } = {}) {
 function renderFormulaParts(parts) {
   const groups = parts.map(({ symbol, count }) => {
     const letters = [...symbol.toUpperCase()]
-      .map((letter) => INITIALISM_LETTER_NAMES[letter] || letter.toLowerCase())
+      .map((letter) => FORMULA_LETTER_NAMES[letter] || letter.toLowerCase())
       .join(' ');
     return count ? `${letters} ${formulaNumberToWords(count)}` : letters;
   });
