@@ -111,16 +111,18 @@ These are fixed in the **input text** (what you paste into the TTS page), not th
 ### Chemical formulas in Live Full
 
 Live Full and Live Full Queue automatically turn compact molecular formulas into
-literal, deterministic speech before chunking. The spelling is intentionally literal:
-the same molecular formula can describe more than one compound, so the preprocessor
-does not guess a chemical name.
+literal, deterministic speech before chunking. Each letter or number is separated by
+a comma boundary so cloned voices do not run similar sounds together. The spelling is
+intentionally literal: the same molecular formula can describe more than one compound,
+so the preprocessor does not guess a chemical name or expand symbols to element names.
 
 | Input | Spoken text sent to GPT-SoVITS |
 |---|---|
-| `C6H12O6` | `cee six aitch twelve oh six` |
-| `(CH2O)n` | `open parenthesis cee aitch two oh close parenthesis en` |
-| `COOH` | `cee oh oh aitch` |
-| `NaCl` | `en ay cee el` |
+| `C6H12O6` | `cee, six, aitch, twelve, oh, six` |
+| `H2O2` | `aitch, two, oh, two` |
+| `(CH2O)n` | `open parenthesis, cee, aitch, two, oh, close parenthesis, en` |
+| `COOH` | `cee, oh, oh, aitch` |
+| `NaCl` | `en, ay, cee, el` |
 
 Candidates are checked against real element symbols before they are expanded, so
 ordinary acronyms such as `ATP` and `NASA` are not treated as formulas. **Live Fast is

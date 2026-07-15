@@ -163,14 +163,13 @@ const LETTER_NAMES = {
 };
 
 // A and I are normally real words, but inside an explicit initialism they must be
-// letter names. Formula spelling needs the same complete alphabet, so both paths
-// share this map while ordinary standalone A/I remain real words.
+// letter names. Formula suffixes such as `(CH2O)n` also need an explicit letter name,
+// while ordinary standalone A/I remain real words.
 const INITIALISM_LETTER_NAMES = {
   ...LETTER_NAMES,
   A: 'ay',
   I: 'eye',
 };
-const FORMULA_LETTER_NAMES = INITIALISM_LETTER_NAMES;
 
 const ELEMENT_SYMBOLS = new Set([
   'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
@@ -240,11 +239,13 @@ function renderFormulaParts(parts) {
   const spoken = [];
   for (const { symbol, count } of parts) {
     for (const letter of symbol.toUpperCase()) {
-      spoken.push(FORMULA_LETTER_NAMES[letter] || letter.toLowerCase());
+      spoken.push(INITIALISM_LETTER_NAMES[letter] || letter.toLowerCase());
     }
     if (count) spoken.push(formulaNumberToWords(count));
   }
-  return spoken.join(' ');
+  // Commas force brief boundaries between easily-blended letter-name homophones
+  // ("cee six aitch"), while remaining inside one Live Full sentence/chunk.
+  return spoken.join(', ');
 }
 
 function expandChemicalFormulaCandidate(candidate) {
@@ -253,9 +254,9 @@ function expandChemicalFormulaCandidate(candidate) {
     const parts = parseFormulaCore(grouped[1]);
     if (!isUnambiguousFormula(grouped[1], parts, { grouped: true })) return candidate;
     const suffix = grouped[2] === 'n'
-      ? FORMULA_LETTER_NAMES.N
+      ? INITIALISM_LETTER_NAMES.N
       : (grouped[2] ? formulaNumberToWords(grouped[2]) : '');
-    return `open parenthesis ${renderFormulaParts(parts)} close parenthesis${suffix ? ` ${suffix}` : ''}`;
+    return `open parenthesis, ${renderFormulaParts(parts)}, close parenthesis${suffix ? `, ${suffix}` : ''}`;
   }
 
   const parts = parseFormulaCore(candidate);

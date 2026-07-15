@@ -70,12 +70,58 @@ branches, and 95.45% functions.
 ## Verification and known gaps
 
 - JavaScript syntax checks passed for all modified files.
-- The full inference-worker suite ran 168 tests: 165 passed and 3 pre-existing acronym
-  expectation tests failed because they expect intermediate `W H O` / `E C G` text,
-  while the existing shared normalizer emits final spoken forms such as
-  `double you aitch oh` / `ee cee gee`. The formula tests all passed.
+- The current full inference-worker suite passes 198/198 tests.
 - `npm audit --omit=dev` reports one existing moderate `qs` denial-of-service advisory.
   Dependency upgrades were intentionally left outside this pronunciation change.
 - Audio was not rendered locally because `GPT_SOVITS_ROOT`, the GPU model, and
   production reference audio are not available in this workspace. A production ear
   check remains necessary after deployment.
+
+## Follow-up: separated letter-and-number reading
+
+Production listening showed that the original whitespace-only expansion could still
+blend letter-name homophones in the cloned voice. The clarified requirement is a
+literal letter-and-number reading—not element names—with short boundaries between
+tokens. For example, `C6H12O6` must be sent as
+`cee, six, aitch, twelve, oh, six` on Live Full.
+
+### Follow-up RED
+
+Command:
+
+```text
+node --test src/services/textPronunciation.test.js src/services/longTextInference.test.js
+```
+
+Result: **RED** — 61 passed, 4 failed. Both the unit and Live Full integration targets
+showed the old whitespace-only `cee six aitch twelve oh six` rendering. Live Fast's
+unchanged-formula guard remained green.
+
+Checkpoints:
+
+- `0c948cf test: reproduce fragile Live Full formula spelling`
+- `850dacf test: require separated formula letters in Live Full`
+
+### Follow-up GREEN
+
+Command:
+
+```text
+node --test src/services/textPronunciation.test.js src/services/longTextInference.test.js
+```
+
+Result: **GREEN** — 65/65 passed. The Live Full helper and chunking path now preserve
+the requested letter-and-number reading with comma boundaries; the shared Live Fast
+normalizer still passes formulas through unchanged.
+
+Full-suite and coverage verification:
+
+```text
+node --test
+node --check src/services/textPronunciation.js
+node --test --experimental-test-coverage --test-coverage-include=src/services/textPronunciation.js src/services/textPronunciation.test.js
+```
+
+Results: **198/198 full-suite tests passed** and **12/12 coverage-target tests passed**.
+`textPronunciation.js` coverage was 99.77% lines, 81.94% branches, and 95.83%
+functions.
