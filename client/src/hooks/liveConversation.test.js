@@ -11,6 +11,7 @@ import {
   hasPendingReplyWork,
   getMicOffAction,
   createLiveSynthesisSnapshot,
+  splitLiveReplyChunks,
   splitLiveReplyPhrases,
   shortenFirstFastPhrase,
   shouldTriggerLiveBargeIn,
@@ -141,6 +142,19 @@ test('shortenFirstFastPhrase does not split when a half would be too short', () 
   // than producing a clipped-sounding fragment.
   const phrases = ['Yes, the inference server is fully warmed up and ready to synthesize now.'];
   assert.deepEqual(shortenFirstFastPhrase(phrases), phrases);
+});
+
+test('splitLiveReplyChunks restores the saved sentence limit for Dean Live Fast', () => {
+  const text = 'First sentence has enough words to stand cleanly alone. Second sentence also has enough words to stand cleanly alone. Third sentence has enough words to finish the response clearly.';
+  assert.equal(splitLiveReplyChunks(text).length, 3);
+  assert.equal(splitLiveReplyChunks(text, { maxSentencesPerChunk: 2 }).length, 2);
+});
+
+test('splitLiveReplyChunks gives a saved word limit priority over 280 characters', () => {
+  const sentence = `${Array.from({ length: 30 }, (_, index) => `word${index + 1}`).join(' ')}.`;
+  const chunks = splitLiveReplyChunks(sentence, { maxChunkWords: 10 });
+  assert.equal(chunks.length, 3);
+  assert.ok(chunks.every((chunk) => (chunk.match(/[\p{L}\p{N}']+/gu) || []).length <= 10));
 });
 
 test('buildLiveReplyParams forces English assistant text for full inference', () => {

@@ -21,6 +21,15 @@ test('normalizeLiveFastSettings bounds user-editable inference controls', () => 
   }), DEFAULT_LIVE_FAST_SETTINGS);
 });
 
+test('normalizeLiveFastSettings restores saved chunk controls', () => {
+  const settings = normalizeLiveFastSettings({
+    maxChunkWords: 40,
+    maxSentencesPerChunk: 3,
+  });
+  assert.equal(settings.maxChunkWords, 40);
+  assert.equal(settings.maxSentencesPerChunk, 3);
+});
+
 test('buildLiveFastRefParams uses trained primary, five aux clips, and inference controls', () => {
   const params = buildLiveFastRefParams({
     primaryPath: 'training/datasets/alex/denoised/ref.wav',

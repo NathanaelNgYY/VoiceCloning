@@ -330,6 +330,172 @@ export function shortenFirstFastPhrase(phrases, {
   return phrases;
 }
 
+// Live Fast keeps whole sentences together, then applies the saved word and
+// sentence ceilings before submitting each independently queued TTS request.
+const CHUNK_MAX_LENGTH = 280;
+const CHUNK_MAX_SENTENCES = 1;
+const CHUNK_MIN_LENGTH = 24;
+const CHUNK_MIN_CONTEXT_WORDS = 8;
+const CHUNK_NBSP = ' ';
+
+const CHUNK_SEMANTIC_UNITS = [
+  'of the', 'in the', 'to the', 'for the', 'on the', 'at the', 'by the',
+  'to a', 'of a', 'in a', 'for a', 'on a',
+  'it is', 'that is', 'there is', 'this is', 'it was', 'that was', 'there was',
+  'as well', 'such as', 'due to', 'in order', 'as a',
+  'would be', 'could be', 'should be', 'will be', 'has been', 'have been',
+  'do not', 'does not', 'did not', 'is not', 'was not', 'are not',
+];
+
+function protectChunkSemanticUnits(text) {
+  let result = text;
+  for (const phrase of CHUNK_SEMANTIC_UNITS) {
+    result = result.replace(new RegExp(phrase, 'gi'), (match) => match.replace(/ /g, CHUNK_NBSP));
+  }
+  return result;
+}
+
+function restoreChunkSemanticUnits(text) {
+  return text.replace(/\u00a0/g, ' ');
+}
+
+function splitIntoChunkSentences(text) {
+  const normalized = cleanLiveText(text);
+  if (!normalized) return [];
+  const sentences = normalized
+    .split(/(?<=[.!?。！？…:：;；])\s+|(?<=—)\s*(?=\S)|\n+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return sentences.length > 0 ? sentences : [normalized];
+}
+
+function countChunkWords(text) {
+  return (String(text || '').match(/[\p{L}\p{N}']+/gu) || []).length;
+}
+
+function wordLimitCutIndex(text, maxWords) {
+  if (!(maxWords > 0)) return text.length;
+  const matches = Array.from(text.matchAll(/[\p{L}\p{N}']+/gu));
+  if (matches.length <= maxWords) return text.length;
+  const last = matches[maxWords - 1];
+  return last.index + last[0].length;
+}
+
+function splitLongChunkSentence(sentence, maxChunkLength, maxChunkWords = 0) {
+  if (sentence.length <= maxChunkLength
+    && (!(maxChunkWords > 0) || countChunkWords(sentence) <= maxChunkWords)) return [sentence];
+
+  const parts = [];
+  let remaining = protectChunkSemanticUnits(sentence).trim();
+  const clauseSeparators = [';', ':', '；', '：'];
+  while (remaining.length > maxChunkLength
+    || (maxChunkWords > 0 && countChunkWords(remaining) > maxChunkWords)) {
+    const hardLimit = Math.min(maxChunkLength, wordLimitCutIndex(remaining, maxChunkWords));
+    const searchWindow = remaining.slice(0, hardLimit + 1);
+    const minCut = Math.floor(hardLimit * 0.6);
+    let cut = -1;
+    for (const separator of clauseSeparators) {
+      cut = Math.max(cut, searchWindow.lastIndexOf(separator));
+    }
+    if (cut < minCut) cut = searchWindow.lastIndexOf(' ');
+    if (cut < minCut) cut = hardLimit;
+    const includeSeparator = cut === hardLimit ? 0 : 1;
+    parts.push(restoreChunkSemanticUnits(remaining.slice(0, cut + includeSeparator).trim()));
+    remaining = remaining.slice(cut + includeSeparator).trim();
+  }
+  if (remaining) parts.push(restoreChunkSemanticUnits(remaining));
+  return parts.filter(Boolean);
+}
+
+function chunkEndsSentence(text) {
+  const trimmed = String(text || '').trimEnd();
+  if (trimmed.endsWith('...') || trimmed.endsWith('…')) return true;
+  return '.!?。！？'.includes(trimmed.slice(-1));
+}
+
+function mergeShortChunks(chunks, minLength, {
+  maxChunkLength,
+  maxChunkWords,
+  maxSentencesPerChunk,
+}) {
+  if (chunks.length <= 1) return chunks;
+  const merged = chunks.map((chunk) => chunk.trim()).filter(Boolean);
+  const canMerge = (left, right, shortChunk) => {
+    const candidate = `${left} ${right}`.trim();
+    return (shortChunk.length < minLength || countChunkWords(shortChunk) < CHUNK_MIN_CONTEXT_WORDS)
+      && candidate.length <= maxChunkLength
+      && (!(maxChunkWords > 0) || countChunkWords(candidate) <= maxChunkWords)
+      && splitIntoChunkSentences(candidate).length <= maxSentencesPerChunk + 1;
+  };
+
+  for (let index = 0; index < merged.length;) {
+    const chunk = merged[index];
+    if (index < merged.length - 1 && canMerge(chunk, merged[index + 1], chunk)) {
+      merged[index + 1] = `${chunk} ${merged[index + 1]}`.trim();
+      merged.splice(index, 1);
+      continue;
+    }
+    if (index === merged.length - 1 && index > 0 && canMerge(merged[index - 1], chunk, chunk)) {
+      merged[index - 1] = `${merged[index - 1]} ${chunk}`.trim();
+      merged.splice(index, 1);
+      break;
+    }
+    index += 1;
+  }
+  return merged;
+}
+
+export function splitLiveReplyChunks(text, {
+  maxChunkLength = CHUNK_MAX_LENGTH,
+  maxChunkWords = 0,
+  maxSentencesPerChunk = CHUNK_MAX_SENTENCES,
+} = {}) {
+  const clean = protectDottedInitialisms(cleanLiveText(text));
+  if (!clean) return [];
+  const activeMaxChunkLength = maxChunkWords > 0 ? Number.MAX_SAFE_INTEGER : maxChunkLength;
+  const rawSentences = splitIntoChunkSentences(clean)
+    .flatMap((sentence) => splitLongChunkSentence(sentence, activeMaxChunkLength, maxChunkWords));
+  const chunks = [];
+  let current = '';
+  let sentenceCount = 0;
+
+  for (const sentence of rawSentences) {
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    const exceedsLength = candidate.length > activeMaxChunkLength;
+    const exceedsWords = maxChunkWords > 0 && countChunkWords(candidate) > maxChunkWords;
+    const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
+    const canAbsorbShortContext = exceedsSentenceCount
+      && sentenceCount === maxSentencesPerChunk
+      && countChunkWords(current) < CHUNK_MIN_CONTEXT_WORDS;
+
+    if (current && (exceedsLength || exceedsWords || (exceedsSentenceCount && !canAbsorbShortContext))) {
+      chunks.push(current.trim());
+      current = sentence;
+      sentenceCount = 1;
+    } else {
+      current = candidate;
+      sentenceCount += 1;
+    }
+
+    const trimmed = current.trimEnd();
+    const fullEnough = maxChunkWords > 0
+      ? countChunkWords(trimmed) >= Math.floor(maxChunkWords * 0.6)
+      : trimmed.length >= Math.floor(activeMaxChunkLength * 0.6);
+    if (trimmed && chunkEndsSentence(trimmed) && fullEnough) {
+      chunks.push(trimmed);
+      current = '';
+      sentenceCount = 0;
+    }
+  }
+
+  if (current.trim()) chunks.push(current.trim());
+  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH, {
+    maxChunkLength: activeMaxChunkLength,
+    maxChunkWords,
+    maxSentencesPerChunk,
+  }).map((chunk) => restoreDottedInitialisms(chunk)).filter(Boolean);
+}
+
 export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
   return {
     text: cleanLiveTtsText(text, language),

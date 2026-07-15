@@ -35,7 +35,8 @@ import {
   normalizeLiveLanguage,
   resolvePendingTranscriptPatch,
   resolveSpeakingContinuation,
-  splitLiveReplyPhrases,
+  shortenFirstFastPhrase,
+  splitLiveReplyChunks,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
@@ -136,6 +137,8 @@ export function useLiveSpeech({
   language = 'en',
   voiceProfileId = '',
   systemPrompt = '',
+  fastMaxChunkWords = 0,
+  fastMaxSentencesPerChunk = 1,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -191,11 +194,17 @@ export function useLiveSpeech({
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
   const systemPromptRef = useRef(systemPrompt);
+  const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
+  const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
+  useEffect(() => { fastMaxChunkWordsRef.current = fastMaxChunkWords; }, [fastMaxChunkWords]);
+  useEffect(() => {
+    fastMaxSentencesPerChunkRef.current = fastMaxSentencesPerChunk;
+  }, [fastMaxSentencesPerChunk]);
 
   // Live Full uses the accurate /inference route with its own ref params; it falls
   // back to the Live Fast reference set when no dedicated Live Full set is ready.
@@ -585,7 +594,10 @@ export function useLiveSpeech({
       return;
     }
 
-    const phrases = splitLiveReplyPhrases(text);
+    const phrases = shortenFirstFastPhrase(splitLiveReplyChunks(text, {
+      maxChunkWords: fastMaxChunkWordsRef.current,
+      maxSentencesPerChunk: fastMaxSentencesPerChunkRef.current,
+    }));
     if (phrases.length === 0) {
       patchMessage(messageId, { status: 'ready' });
       return;
