@@ -108,6 +108,30 @@ These are fixed in the **input text** (what you paste into the TTS page), not th
 | `•` bullets | remove |
 | missing space after `.` | add the space |
 
+### Chemical formulas in Live Full
+
+Live Full and Live Full Queue automatically turn compact molecular formulas into
+literal, deterministic speech before chunking. The spelling is intentionally literal:
+the same molecular formula can describe more than one compound, so the preprocessor
+does not guess a chemical name.
+
+| Input | Spoken text sent to GPT-SoVITS |
+|---|---|
+| `C6H12O6` | `cee six aitch twelve oh six` |
+| `(CH2O)n` | `open parenthesis cee aitch two oh close parenthesis en` |
+| `COOH` | `cee oh oh aitch` |
+| `NaCl` | `en ay cee el` |
+
+Candidates are checked against real element symbols before they are expanded, so
+ordinary acronyms such as `ATP` and `NASA` are not treated as formulas. **Live Fast is
+unchanged** and continues to use the shared low-latency text normalization path.
+
+This formula handling does not replace the pronunciation dictionary for actual names
+such as `stoichiometry`, `acetylsalicylic`, or a newly introduced compound name. Run
+the pronunciation pre-check on a lecture script and add any flagged chemical words to
+the chemistry dictionary before generating the full lecture; doing that once up front
+avoids discovering deterministic G2P mistakes one audio edit at a time.
+
 ## Durability
 
 > The canonical, version-controlled copy of our overrides lives at

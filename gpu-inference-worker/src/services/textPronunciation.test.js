@@ -89,6 +89,14 @@ test('Live Full recognizes element-symbol casing without treating normal capital
   assert.match(result, /\bNASA\b/u);
 });
 
+test('Live Full speaks larger subscripts and numeric group counts without changing invalid symbols', () => {
+  const result = prepareTextForFullSynthesis('C20H101O1000 and (CH2O)6 are formulas; Xx2 is not.');
+
+  assert.match(result, /cee twenty aitch one hundred one oh one zero zero zero/u);
+  assert.match(result, /open parenthesis cee aitch two oh close parenthesis six/u);
+  assert.match(result, /\bXx2\b/u);
+});
+
 test('shared normalization keeps compact formulas unchanged for Live Fast', () => {
   const result = prepareTextForSynthesis('C6H12O6 and (CH2O)n');
 
