@@ -117,9 +117,9 @@ test('Live Full chunking expands chemical formulas before synthesis', () => {
   const chunks = splitTextIntoChunks('Glucose has formula C6H12O6, peroxide is H2O2, and a carboxyl group contains COOH.');
   const joined = chunks.join(' ');
 
-  assert.match(joined, /carbon six hydrogen twelve oxygen six/u);
-  assert.match(joined, /hydrogen two oxygen two/u);
-  assert.match(joined, /carbon oxygen oxygen hydrogen/u);
+  assert.match(joined, /cee, six, aitch, twelve, oh, six/u);
+  assert.match(joined, /aitch, two, oh, two/u);
+  assert.match(joined, /cee, oh, oh, aitch/u);
   assert.doesNotMatch(joined, /C6H12O6|H2O2|COOH/u);
 });
 
