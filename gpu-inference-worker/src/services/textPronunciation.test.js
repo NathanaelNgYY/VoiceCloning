@@ -75,24 +75,24 @@ test('prepareTextForSynthesis expands Roman numerals only after a classifier wor
   assert.match(result, /\bIV fluids\b/u); // bare IV (intravenous) left intact
 });
 
-test('Live Full separates compact chemical formulas into explicit letters and numbers', () => {
+test('Live Full groups each formula symbol naturally with its subscript', () => {
   const result = prepareTextForFullSynthesis(
     'Glucose is C6H12O6, peroxide is H2O2, carbohydrates approximate (CH2O)n, and the carboxyl group is COOH.',
   );
 
-  assert.match(result, /cee, six, aitch, twelve, oh, six/u);
-  assert.match(result, /aitch, two, oh, two/u);
-  assert.match(result, /open parenthesis, cee, aitch, two, oh, close parenthesis, en/u);
-  assert.match(result, /cee, oh, oh, aitch/u);
+  assert.match(result, /cee six, aitch twelve, oh six/u);
+  assert.match(result, /aitch two, oh two/u);
+  assert.match(result, /open parenthesis, cee, aitch two, oh, close parenthesis, en/u);
+  assert.match(result, /cee oh oh aitch/u);
   assert.doesNotMatch(result, /C6H12O6|H2O2|\(CH2O\)n|COOH/u);
 });
 
 test('Live Full recognizes element-symbol casing without treating normal capitals as formulas', () => {
   const result = prepareTextForFullSynthesis('NaCl dissolves in H2O and Fe2O3 is solid, but ATP and NASA stay ordinary tokens.');
 
-  assert.match(result, /en, ay, cee, el/u);
-  assert.match(result, /aitch, two, oh/u);
-  assert.match(result, /eff, ee, two, oh, three/u);
+  assert.match(result, /en ay cee el/u);
+  assert.match(result, /aitch two, oh/u);
+  assert.match(result, /eff ee two, oh three/u);
   assert.match(result, /\bATP\b/u);
   assert.match(result, /\bNASA\b/u);
 });
@@ -100,8 +100,8 @@ test('Live Full recognizes element-symbol casing without treating normal capital
 test('Live Full speaks larger subscripts and numeric group counts without changing invalid symbols', () => {
   const result = prepareTextForFullSynthesis('C20H101O1000 and (CH2O)6 are formulas; Xx2 is not.');
 
-  assert.match(result, /cee, twenty, aitch, one hundred one, oh, one zero zero zero/u);
-  assert.match(result, /open parenthesis, cee, aitch, two, oh, close parenthesis, six/u);
+  assert.match(result, /cee twenty, aitch one hundred one, oh one zero zero zero/u);
+  assert.match(result, /open parenthesis, cee, aitch two, oh, close parenthesis, six/u);
   assert.match(result, /\bXx2\b/u);
 });
 
