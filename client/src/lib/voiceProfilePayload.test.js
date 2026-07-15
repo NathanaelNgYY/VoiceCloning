@@ -26,6 +26,8 @@ test('buildVoiceProfilePayload uses S3 model keys and preserves reference settin
         temperature: 0.7,
         repetition_penalty: 1.35,
         speed_factor: 1.0,
+        max_chunk_words: 0,
+        max_sentences_per_chunk: 1,
       },
       storageMode: 's3',
     }),
@@ -46,6 +48,8 @@ test('buildVoiceProfilePayload uses S3 model keys and preserves reference settin
         temperature: 0.7,
         repetition_penalty: 1.35,
         speed_factor: 1.0,
+        max_chunk_words: 0,
+        max_sentences_per_chunk: 1,
       },
     },
   );

@@ -31,6 +31,10 @@ function normalizeDefaults(defaults = {}) {
     ...(defaults.temperature !== undefined ? { temperature: defaults.temperature } : {}),
     ...(defaults.repetition_penalty !== undefined ? { repetition_penalty: defaults.repetition_penalty } : {}),
     ...(defaults.speed_factor !== undefined ? { speed_factor: defaults.speed_factor } : {}),
+    ...(defaults.max_chunk_words !== undefined ? { max_chunk_words: defaults.max_chunk_words } : {}),
+    ...(defaults.max_sentences_per_chunk !== undefined
+      ? { max_sentences_per_chunk: defaults.max_sentences_per_chunk }
+      : {}),
   };
 }
 
@@ -95,7 +99,10 @@ function createVoiceProfileRecord(body, now) {
     aux_ref_audio_paths: Array.isArray(body.aux_ref_audio_paths)
       ? body.aux_ref_audio_paths.filter((item) => hasValue(item))
       : [],
-    defaults: normalizeDefaults(body.defaults),
+    defaults: normalizeDefaults({
+      ...(isPlainObject(body.metadata?.liveFast?.defaults) ? body.metadata.liveFast.defaults : {}),
+      ...(isPlainObject(body.defaults) ? body.defaults : {}),
+    }),
     ...(Object.keys(normalizeMetadata(body.metadata)).length > 0
       ? { metadata: normalizeMetadata(body.metadata) }
       : {}),
@@ -131,7 +138,10 @@ async function parseStoredProfile(readObject, key) {
     aux_ref_audio_paths: Array.isArray(stored.aux_ref_audio_paths)
       ? stored.aux_ref_audio_paths.filter((item) => hasValue(item))
       : [],
-    defaults: normalizeDefaults(stored.defaults),
+    defaults: normalizeDefaults({
+      ...(isPlainObject(stored.metadata?.liveFast?.defaults) ? stored.metadata.liveFast.defaults : {}),
+      ...(isPlainObject(stored.defaults) ? stored.defaults : {}),
+    }),
     ...(Object.keys(normalizeMetadata(stored.metadata)).length > 0
       ? { metadata: normalizeMetadata(stored.metadata) }
       : {}),

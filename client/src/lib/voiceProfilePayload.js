@@ -18,6 +18,10 @@ function normalizeDefaults(defaults = {}) {
     ...(defaults.temperature !== undefined ? { temperature: defaults.temperature } : {}),
     ...(defaults.repetition_penalty !== undefined ? { repetition_penalty: defaults.repetition_penalty } : {}),
     ...(defaults.speed_factor !== undefined ? { speed_factor: defaults.speed_factor } : {}),
+    ...(defaults.max_chunk_words !== undefined ? { max_chunk_words: defaults.max_chunk_words } : {}),
+    ...(defaults.max_sentences_per_chunk !== undefined
+      ? { max_sentences_per_chunk: defaults.max_sentences_per_chunk }
+      : {}),
   };
 }
 

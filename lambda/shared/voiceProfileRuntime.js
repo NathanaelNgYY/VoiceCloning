@@ -35,6 +35,10 @@ function normalizeDefaults(defaults = {}) {
     ...(defaults.temperature !== undefined ? { temperature: defaults.temperature } : {}),
     ...(defaults.repetition_penalty !== undefined ? { repetition_penalty: defaults.repetition_penalty } : {}),
     ...(defaults.speed_factor !== undefined ? { speed_factor: defaults.speed_factor } : {}),
+    ...(defaults.max_chunk_words !== undefined ? { max_chunk_words: defaults.max_chunk_words } : {}),
+    ...(defaults.max_sentences_per_chunk !== undefined
+      ? { max_sentences_per_chunk: defaults.max_sentences_per_chunk }
+      : {}),
   };
 }
 
@@ -51,7 +55,10 @@ function normalizeStoredProfile(profile) {
     aux_ref_audio_paths: Array.isArray(profile.aux_ref_audio_paths)
       ? profile.aux_ref_audio_paths.filter((item) => hasValue(item))
       : [],
-    defaults: normalizeDefaults(profile.defaults),
+    defaults: normalizeDefaults({
+      ...(profile.metadata?.liveFast?.defaults || {}),
+      ...(profile.defaults || {}),
+    }),
   };
 }
 
@@ -80,6 +87,16 @@ function mergeSynthesisBody(body, profile) {
         ? { repetition_penalty: defaults.repetition_penalty }
         : {}),
     ...(body.speed_factor !== undefined ? { speed_factor: body.speed_factor } : defaults.speed_factor !== undefined ? { speed_factor: defaults.speed_factor } : {}),
+    ...(body.max_chunk_words !== undefined
+      ? { max_chunk_words: body.max_chunk_words }
+      : defaults.max_chunk_words !== undefined
+        ? { max_chunk_words: defaults.max_chunk_words }
+        : {}),
+    ...(body.max_sentences_per_chunk !== undefined
+      ? { max_sentences_per_chunk: body.max_sentences_per_chunk }
+      : defaults.max_sentences_per_chunk !== undefined
+        ? { max_sentences_per_chunk: defaults.max_sentences_per_chunk }
+        : {}),
   };
 }
 
