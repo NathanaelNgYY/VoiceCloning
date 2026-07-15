@@ -125,3 +125,40 @@ node --test --experimental-test-coverage --test-coverage-include=src/services/te
 Results: **198/198 full-suite tests passed** and **12/12 coverage-target tests passed**.
 `textPronunciation.js` coverage was 99.77% lines, 81.94% branches, and 95.83%
 functions.
+
+## Follow-up: natural symbol/subscript grouping
+
+Listening showed that comma-separating every token sounded robotic. The refined
+contract keeps a symbol and its subscript together and uses a boundary only between
+counted groups: `C6H12O6` becomes `cee six, aitch twelve, oh six`. Unsubscripted runs
+such as `COOH` become `cee oh oh aitch` without inserted pauses. Live Fast remains
+unchanged.
+
+### Grouping RED
+
+Command:
+
+```text
+node --test src/services/textPronunciation.test.js src/services/longTextInference.test.js
+```
+
+Result: **RED** — 61 passed, 4 failed. The output still used the over-separated
+`cee, six, aitch, twelve, oh, six` form.
+
+Checkpoint: `b91b686 test: reproduce over-paused Live Full formulas`
+
+### Grouping GREEN
+
+Command:
+
+```text
+node --test src/services/textPronunciation.test.js src/services/longTextInference.test.js
+```
+
+Result: **GREEN** — 65/65 passed. Unit and Live Full chunking tests now enforce
+symbol/subscript grouping, continuous unsubscripted formulas, and unchanged Live Fast
+behavior.
+
+Final verification: the full inference-worker suite passed **198/198** tests. The
+targeted formatter coverage run passed **12/12** tests with 99.77% line, 82.89% branch,
+and 96.30% function coverage.

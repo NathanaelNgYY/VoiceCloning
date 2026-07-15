@@ -236,16 +236,17 @@ function isUnambiguousFormula(core, parts, { grouped = false } = {}) {
 }
 
 function renderFormulaParts(parts) {
-  const spoken = [];
-  for (const { symbol, count } of parts) {
-    for (const letter of symbol.toUpperCase()) {
-      spoken.push(INITIALISM_LETTER_NAMES[letter] || letter.toLowerCase());
-    }
-    if (count) spoken.push(formulaNumberToWords(count));
-  }
-  // Commas force brief boundaries between easily-blended letter-name homophones
-  // ("cee six aitch"), while remaining inside one Live Full sentence/chunk.
-  return spoken.join(', ');
+  const groups = parts.map(({ symbol, count }) => {
+    const letters = [...symbol.toUpperCase()]
+      .map((letter) => INITIALISM_LETTER_NAMES[letter] || letter.toLowerCase())
+      .join(' ');
+    return count ? `${letters} ${formulaNumberToWords(count)}` : letters;
+  });
+  // Keep each symbol attached to its subscript ("cee six"), with one natural
+  // phrase boundary between counted element groups. Unsubscripted runs such as
+  // COOH remain continuous instead of sounding like a spelling exercise.
+  const hasSubscript = parts.some(({ count }) => Boolean(count));
+  return groups.join(hasSubscript ? ', ' : ' ');
 }
 
 function expandChemicalFormulaCandidate(candidate) {
