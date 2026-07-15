@@ -56,6 +56,8 @@ test('voice profile activate saves the full profile and marks it active', async 
         temperature: 0.7,
         repetition_penalty: 1.35,
         speed_factor: 1.0,
+        max_chunk_words: 0,
+        max_sentences_per_chunk: 1,
       },
     },
   }));
@@ -87,6 +89,8 @@ test('voice profile activate saves the full profile and marks it active', async 
           temperature: 0.7,
           repetition_penalty: 1.35,
           speed_factor: 1.0,
+          max_chunk_words: 0,
+          max_sentences_per_chunk: 1,
         },
         updatedAt: '2026-05-18T10:00:00.000Z',
       },
@@ -111,6 +115,8 @@ test('voice profile activate saves the full profile and marks it active', async 
           temperature: 0.7,
           repetition_penalty: 1.35,
           speed_factor: 1.0,
+          max_chunk_words: 0,
+          max_sentences_per_chunk: 1,
         },
         updatedAt: '2026-05-18T10:00:00.000Z',
         activatedAt: '2026-05-18T10:00:00.000Z',
@@ -167,6 +173,10 @@ test('voice profile activate saves metadata layers for reproducible Live Fast co
           configName: 'Default',
           selected: true,
           rank: 1,
+          defaults: {
+            max_chunk_words: 35,
+            max_sentences_per_chunk: 1,
+          },
         },
       },
     },
@@ -190,9 +200,20 @@ test('voice profile activate saves metadata layers for reproducible Live Fast co
       configName: 'Default',
       selected: true,
       rank: 1,
+      defaults: {
+        max_chunk_words: 35,
+        max_sentences_per_chunk: 1,
+      },
     },
   });
+  assert.deepEqual(uploads[0].body.defaults, {
+    top_k: 5,
+    speed_factor: 1,
+    max_chunk_words: 35,
+    max_sentences_per_chunk: 1,
+  });
   assert.deepEqual(uploads[1].body.metadata, uploads[0].body.metadata);
+  assert.deepEqual(uploads[1].body.defaults, uploads[0].body.defaults);
 });
 
 test('voice profile activate rejects incomplete profile payloads', async () => {

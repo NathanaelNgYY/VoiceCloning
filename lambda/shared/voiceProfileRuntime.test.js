@@ -36,6 +36,14 @@ test('voice profile resolver loads a saved profile by voiceProfileId for synthes
           repetition_penalty: 1.2,
           speed_factor: 1.05,
         },
+        metadata: {
+          liveFast: {
+            defaults: {
+              max_chunk_words: 35,
+              max_sentences_per_chunk: 1,
+            },
+          },
+        },
       });
     },
     ensureModelsLoaded: async (profile) => {
@@ -68,6 +76,8 @@ test('voice profile resolver loads a saved profile by voiceProfileId for synthes
     temperature: 0.65,
     repetition_penalty: 1.2,
     speed_factor: 1.05,
+    max_chunk_words: 35,
+    max_sentences_per_chunk: 1,
   });
 });
 
