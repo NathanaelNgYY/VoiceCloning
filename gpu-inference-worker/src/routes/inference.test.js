@@ -116,3 +116,25 @@ test('handleLiveTtsRequest removes pause-heavy periods from dotted initialisms',
     },
   });
 });
+
+test('handleLiveTtsRequest leaves compact chemical formulas unchanged on Live Fast', async () => {
+  const module = await loadInferenceRouteModule();
+
+  await module.handleLiveTtsRequest({
+    text: 'Compare C6H12O6 with (CH2O)n.',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+    aux_ref_audio_paths: [],
+  }, {
+    resolveParams: async (body) => ({
+      ...body,
+      ref_audio_path: '/tmp/reference.wav',
+    }),
+    synthesize: async (params) => {
+      assert.match(params.text, /C6H12O6/u);
+      assert.match(params.text, /\(CH2O\)n/u);
+      assert.doesNotMatch(params.text, /open parenthesis|twelve/u);
+      return Buffer.from('RIFFdemo');
+    },
+    verifyChunk: null,
+  });
+});

@@ -162,6 +162,114 @@ const LETTER_NAMES = {
   Y: 'wy', Z: 'zee',
 };
 
+// Formula spelling is deliberately literal: a molecular formula identifies its
+// symbols and subscripts, but does not always identify one unique compound name.
+// Reading the symbols avoids a scientifically unsafe C6H12O6 -> "glucose" guess.
+const FORMULA_LETTER_NAMES = {
+  ...LETTER_NAMES,
+  A: 'ay',
+  I: 'eye',
+};
+
+const ELEMENT_SYMBOLS = new Set([
+  'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
+  'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca',
+  'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
+  'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y', 'Zr',
+  'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
+  'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd',
+  'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb',
+  'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
+  'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn', 'Fr', 'Ra', 'Ac', 'Th',
+  'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm',
+  'Md', 'No', 'Lr', 'Rf', 'Db', 'Sg', 'Bh', 'Hs', 'Mt', 'Ds',
+  'Rg', 'Cn', 'Nh', 'Fl', 'Mc', 'Lv', 'Ts', 'Og',
+]);
+
+const SMALL_NUMBER_WORDS = [
+  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+  'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
+  'seventeen', 'eighteen', 'nineteen',
+];
+const TENS_NUMBER_WORDS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+
+function formulaNumberToWords(raw) {
+  const digits = String(raw || '');
+  const value = Number.parseInt(digits, 10);
+  if (!/^\d+$/u.test(digits)) return digits;
+  // Leading zeroes and unusually large subscripts are notation, not ordinary
+  // quantities; spell their digits individually instead of changing their value.
+  if ((digits.length > 1 && digits.startsWith('0')) || value > 999) {
+    return digits.split('').map((digit) => SMALL_NUMBER_WORDS[Number(digit)]).join(' ');
+  }
+  if (value < 20) return SMALL_NUMBER_WORDS[value];
+  if (value < 100) {
+    const ones = value % 10;
+    return `${TENS_NUMBER_WORDS[Math.floor(value / 10)]}${ones ? ` ${SMALL_NUMBER_WORDS[ones]}` : ''}`;
+  }
+  const remainder = value % 100;
+  return `${SMALL_NUMBER_WORDS[Math.floor(value / 100)]} hundred${remainder ? ` ${formulaNumberToWords(String(remainder))}` : ''}`;
+}
+
+function parseFormulaCore(core) {
+  const parts = [];
+  let index = 0;
+  while (index < core.length) {
+    const symbolMatch = /^[A-Z][a-z]?/u.exec(core.slice(index));
+    if (!symbolMatch || !ELEMENT_SYMBOLS.has(symbolMatch[0])) return null;
+    const symbol = symbolMatch[0];
+    index += symbol.length;
+    const countMatch = /^\d+/u.exec(core.slice(index));
+    const count = countMatch?.[0] || '';
+    index += count.length;
+    parts.push({ symbol, count });
+  }
+  return parts;
+}
+
+function isUnambiguousFormula(core, parts, { grouped = false } = {}) {
+  if (!parts || parts.length === 0) return false;
+  if (grouped || /\d/u.test(core)) return true;
+  // Mixed-case element symbols (NaCl) and longer all-cap element sequences (COOH)
+  // are strong enough evidence. Reject short all-cap English such as NO/IN.
+  return /[a-z]/u.test(core) || (core.length >= 3 && parts.length >= 2);
+}
+
+function renderFormulaParts(parts) {
+  const spoken = [];
+  for (const { symbol, count } of parts) {
+    for (const letter of symbol.toUpperCase()) {
+      spoken.push(FORMULA_LETTER_NAMES[letter] || letter.toLowerCase());
+    }
+    if (count) spoken.push(formulaNumberToWords(count));
+  }
+  return spoken.join(' ');
+}
+
+function expandChemicalFormulaCandidate(candidate) {
+  const grouped = /^\(([A-Za-z0-9]+)\)(n|\d+)?$/u.exec(candidate);
+  if (grouped) {
+    const parts = parseFormulaCore(grouped[1]);
+    if (!isUnambiguousFormula(grouped[1], parts, { grouped: true })) return candidate;
+    const suffix = grouped[2] === 'n'
+      ? FORMULA_LETTER_NAMES.N
+      : (grouped[2] ? formulaNumberToWords(grouped[2]) : '');
+    return `open parenthesis ${renderFormulaParts(parts)} close parenthesis${suffix ? ` ${suffix}` : ''}`;
+  }
+
+  const parts = parseFormulaCore(candidate);
+  return isUnambiguousFormula(candidate, parts) ? renderFormulaParts(parts) : candidate;
+}
+
+// Conservative token matcher followed by element-symbol validation. Validation is
+// what prevents ordinary words/acronyms (ATP, NASA, Carbon) from being rewritten.
+function expandChemicalFormulas(text) {
+  return String(text || '').replace(
+    /(^|[^A-Za-z0-9])(\([A-Z][A-Za-z0-9]*\)(?:n|\d+)?|[A-Z][A-Za-z0-9]*)(?=$|[^A-Za-z0-9])/gu,
+    (_match, prefix, candidate) => `${prefix}${expandChemicalFormulaCandidate(candidate)}`,
+  );
+}
+
 const SYMBOL_MAP = {
   '@': 'at',
   '&': 'and',
@@ -312,4 +420,11 @@ export function prepareTextForSynthesis(text) {
   result = result.replace(/\b([A-Z])\b/gu, (m, letter) => LETTER_NAMES[letter] || m);
 
   return splitCompoundWords(result).trim();
+}
+
+// Live Full accepts the extra preprocessing cost in exchange for deterministic
+// scientific narration. Live Fast intentionally keeps using prepareTextForSynthesis
+// directly, so formula handling cannot change its latency or established output.
+export function prepareTextForFullSynthesis(text) {
+  return prepareTextForSynthesis(expandChemicalFormulas(text));
 }

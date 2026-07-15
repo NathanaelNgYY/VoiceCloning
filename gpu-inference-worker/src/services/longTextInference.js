@@ -6,7 +6,7 @@ import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
 import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS, FULL_MAX_CHUNK_LENGTH } from '../config.js';
 import { uploadBuffer } from './s3Storage.js';
-import { prepareTextForSynthesis } from './textPronunciation.js';
+import { prepareTextForFullSynthesis } from './textPronunciation.js';
 import {
   splitOnBreaks,
   appendBreakSentinel,
@@ -100,7 +100,7 @@ export function fullInferenceQualityOptions(overrides = {}) {
 }
 
 function normalizeWhitespace(text) {
-  return prepareTextForSynthesis(text);
+  return prepareTextForFullSynthesis(text);
 }
 
 // Common multi-word phrases that should not be split across chunks
