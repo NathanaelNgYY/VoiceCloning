@@ -250,14 +250,12 @@ export function shortenFirstFastPhrase(phrases, {
 // --- Live Fast chunking -----------------------------------------------------
 // Live Fast used to split the reply on every .!?;: into tiny phrases, which robbed
 // GPT-SoVITS of the context it needs to pronounce cleanly and made cut/skipped words
-// more likely. It now groups whole sentences into ~1-3 sentence chunks — the exact
-// same shape Live Full uses server-side (splitTextIntoChunks in longTextInference.js)
-// — so each request carries enough context for a stable read. The Live Fast endpoint
-// then runs the same re-seed + ASR retry per chunk to catch any dropped words. This is
-// a faithful client-side port of that server chunker (kept in sync intentionally).
+// more likely. It now keeps whole sentences intact and applies an explicit sentence
+// ceiling. A very short chunk may absorb one neighbouring sentence for enough context.
 const CHUNK_MAX_LENGTH = 280;
-const CHUNK_MAX_SENTENCES = 50; // length governs grouping; sentence cap is just a guard
+const CHUNK_MAX_SENTENCES = 1;
 const CHUNK_MIN_LENGTH = 24;
+const CHUNK_MIN_CONTEXT_WORDS = 8;
 const CHUNK_NBSP = ' '; // NBSP sentinel to protect multi-word units while splitting
 
 // Common multi-word phrases that should not be split across chunks.
@@ -327,33 +325,37 @@ function chunkEndsSentence(text) {
 
 // Fold any sub-minLength fragment into a neighbour so no chunk is ever short enough
 // to make GPT-SoVITS render a near-silent buffer. Mirrors mergeShortChunks server-side.
-function mergeShortChunks(chunks, minLength) {
+function countChunkWords(text) {
+  return (String(text || '').match(/[\p{L}\p{N}']+/gu) || []).length;
+}
+
+function mergeShortChunks(chunks, minLength, {
+  maxChunkLength,
+  maxSentencesPerChunk,
+}) {
   if (chunks.length <= 1) return chunks;
+  const merged = chunks.map((chunk) => chunk.trim()).filter(Boolean);
+  const canMerge = (left, right, shortChunk) => {
+    const candidate = `${left} ${right}`.trim();
+    const sentenceCount = splitIntoChunkSentences(candidate).length;
+    return (shortChunk.length < minLength || countChunkWords(shortChunk) < CHUNK_MIN_CONTEXT_WORDS)
+      && candidate.length <= maxChunkLength
+      && sentenceCount <= maxSentencesPerChunk + 1;
+  };
 
-  const merged = [];
-  for (const chunk of chunks) {
-    const text = chunk.trim();
-    if (!text) continue;
-    const prev = merged.length > 0 ? merged[merged.length - 1] : null;
-    if (prev && text.length < minLength && !chunkEndsSentence(prev)) {
-      merged[merged.length - 1] = `${prev} ${text}`.trim();
-    } else {
-      merged.push(text);
+  for (let index = 0; index < merged.length;) {
+    const chunk = merged[index];
+    if (index < merged.length - 1 && canMerge(chunk, merged[index + 1], chunk)) {
+      merged[index + 1] = `${chunk} ${merged[index + 1]}`.trim();
+      merged.splice(index, 1);
+      continue;
     }
-  }
-
-  for (let i = 0; i < merged.length - 1;) {
-    if (merged[i].length < minLength) {
-      merged[i + 1] = `${merged[i]} ${merged[i + 1]}`.trim();
-      merged.splice(i, 1);
-    } else {
-      i += 1;
+    if (index === merged.length - 1 && index > 0 && canMerge(merged[index - 1], chunk, chunk)) {
+      merged[index - 1] = `${merged[index - 1]} ${chunk}`.trim();
+      merged.splice(index, 1);
+      break;
     }
-  }
-
-  while (merged.length > 1 && merged[merged.length - 1].length < minLength) {
-    merged[merged.length - 2] = `${merged[merged.length - 2]} ${merged[merged.length - 1]}`.trim();
-    merged.pop();
+    index += 1;
   }
   return merged;
 }
@@ -378,8 +380,12 @@ export function splitLiveReplyChunks(text, {
     const candidate = current ? `${current} ${sentence}` : sentence;
     const exceedsLength = candidate.length > maxChunkLength;
     const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
+    const currentWordCount = countChunkWords(current);
+    const canAbsorbShortContext = exceedsSentenceCount
+      && sentenceCount === maxSentencesPerChunk
+      && currentWordCount < CHUNK_MIN_CONTEXT_WORDS;
 
-    if (current && (exceedsLength || exceedsSentenceCount)) {
+    if (current && (exceedsLength || (exceedsSentenceCount && !canAbsorbShortContext))) {
       chunks.push(current.trim());
       current = sentence;
       sentenceCount = 1;
@@ -398,7 +404,7 @@ export function splitLiveReplyChunks(text, {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH)
+  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH, { maxChunkLength, maxSentencesPerChunk })
     .map((chunk) => restoreDottedInitialisms(chunk))
     .filter(Boolean);
 }

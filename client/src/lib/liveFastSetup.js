@@ -4,6 +4,7 @@ export const DEFAULT_LIVE_FAST_SETTINGS = {
   topP: 0.85,
   temperature: 0.7,
   repPenalty: 1.35,
+  maxSentencesPerChunk: 1,
 };
 
 function numberInRange(value, min, max, fallback) {
@@ -23,6 +24,12 @@ export function normalizeLiveFastSettings(settings = {}) {
     topP: numberInRange(settings.topP, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.topP),
     temperature: numberInRange(settings.temperature, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.temperature),
     repPenalty: numberInRange(settings.repPenalty, 1.0, 2.0, DEFAULT_LIVE_FAST_SETTINGS.repPenalty),
+    maxSentencesPerChunk: integerInRange(
+      settings.maxSentencesPerChunk,
+      1,
+      5,
+      DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk,
+    ),
   };
 }
 

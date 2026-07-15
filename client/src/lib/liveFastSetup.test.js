@@ -18,7 +18,12 @@ test('normalizeLiveFastSettings bounds user-editable inference controls', () => 
     topP: 2,
     temperature: -1,
     repPenalty: 5,
+    maxSentencesPerChunk: 6,
   }), DEFAULT_LIVE_FAST_SETTINGS);
+});
+
+test('normalizeLiveFastSettings accepts a saved sentence limit', () => {
+  assert.equal(normalizeLiveFastSettings({ maxSentencesPerChunk: 3 }).maxSentencesPerChunk, 3);
 });
 
 test('buildLiveFastRefParams uses trained primary, five aux clips, and inference controls', () => {

@@ -71,7 +71,10 @@ async function arpabetProtectedWords() {
 // only when ASR confirms it spoke all the words (no skipped/clipped words) AND it
 // still sounds like the reference voice. Live Full fails closed if either configured
 // verifier disappears; Live Fast retains its established best-effort behavior.
-export function verificationOptions(params = {}, { finalWordTailCheck = false } = {}) {
+export function verificationOptions(params = {}, {
+  finalWordTailCheck = false,
+  phonemeVerification = finalWordTailCheck,
+} = {}) {
   const useAsr = TRANSCRIPTION_VERIFY_ENABLED;
   const refAudioPath = params.ref_audio_path || '';
   const useSpeaker = SPEAKER_VERIFY_ENABLED && Boolean(refAudioPath);
@@ -94,6 +97,7 @@ export function verificationOptions(params = {}, { finalWordTailCheck = false } 
           dictionaryWords: dictionaryEntries.map((entry) => entry.word),
           dictionaryEntries,
           finalWordTailCheck,
+          phonemeVerification,
         }) : null,
         useSpeaker ? speakerSimilarity.scoreChunk(refAudioPath, audioBuffer) : null,
       ]);
@@ -304,7 +308,7 @@ export async function handleLiveTtsRequest(body, {
   };
   const activeVerifyChunk = verifyChunk !== undefined
     ? verifyChunk
-    : (verificationOptions(normalizedParams).verifyChunk || null);
+    : (verificationOptions(normalizedParams, { phonemeVerification: true }).verifyChunk || null);
   const audioBuffer = await synthesizeLiveFastChunk(normalizedParams, {
     synthesize,
     verifyChunk: activeVerifyChunk,

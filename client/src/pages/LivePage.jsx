@@ -54,6 +54,7 @@ import {
   DEFAULT_LIVE_FAST_SETTINGS,
   buildLiveFastReferencePreviewItems,
   buildLiveFastRefParams,
+  normalizeLiveFastSettings,
 } from '@/lib/liveFastSetup';
 import {
   DEFAULT_LIVE_FULL_SETTINGS,
@@ -316,6 +317,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [topP, setTopP] = useState(DEFAULT_LIVE_FAST_SETTINGS.topP);
   const [temperature, setTemperature] = useState(DEFAULT_LIVE_FAST_SETTINGS.temperature);
   const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+  const [liveFastMaxSentences, setLiveFastMaxSentences] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk);
   const [liveFullRefAudioPath, setLiveFullRefAudioPath] = useState('');
   const [liveFullPromptText, setLiveFullPromptText] = useState('');
   const [liveFullPromptLang, setLiveFullPromptLang] = useState('en');
@@ -417,10 +419,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
   const liveLanguageConfig = getLiveLanguageConfig(liveLanguage);
+  const liveFastSettings = useMemo(() => normalizeLiveFastSettings({
+    speed,
+    topK,
+    topP,
+    temperature,
+    repPenalty,
+    maxSentencesPerChunk: liveFastMaxSentences,
+  }), [speed, topK, topP, temperature, repPenalty, liveFastMaxSentences]);
   const liveRefParams = useMemo(() => buildLiveFastRefParams({
     primaryPath: refAudioPath, promptText, promptLang, auxRefAudios,
-    settings: { speed, topK, topP, temperature, repPenalty },
-  }), [refAudioPath, promptText, promptLang, auxRefAudios, speed, topK, topP, temperature, repPenalty]);
+    settings: liveFastSettings,
+  }), [refAudioPath, promptText, promptLang, auxRefAudios, liveFastSettings]);
   const liveFullSettings = useMemo(() => normalizeLiveFullSettings({
     speed: liveFullSpeed,
     topK: liveFullTopK,
@@ -459,6 +469,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      max_sentences_per_chunk: liveFastMaxSentences,
     },
   }), [
     selectedExpName,
@@ -474,6 +485,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     temperature,
     repPenalty,
     speed,
+    liveFastMaxSentences,
   ]);
   const selectedReferenceItems = useMemo(() => buildLiveFastReferencePreviewItems({
     primaryPath: refAudioPath, promptText, trainingAudioFiles, auxRefAudios,
@@ -539,8 +551,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      max_sentences_per_chunk: liveFastMaxSentences,
     },
-  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed]);
+  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastMaxSentences]);
 
   const liveSpeech = useLiveSpeech({
     refParams: liveRefParams,
@@ -549,6 +562,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     replyMode,
     language: liveLanguage,
     voiceProfileId: selectedVoiceProfileId,
+    fastMaxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
@@ -806,6 +820,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature: defaults.temperature ?? temperature,
         repetition_penalty: defaults.repetition_penalty ?? repPenalty,
         speed_factor: defaults.speed_factor ?? speed,
+        max_sentences_per_chunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk,
       },
       trainingMetadata: config.trainingMetadata || trainingRunMetadata || activeVoiceProfile?.metadata?.training,
       referenceMetadata: reference,
@@ -931,6 +946,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : topP);
     setTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : temperature);
     setRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : repPenalty);
+    setLiveFastMaxSentences(normalizeLiveFastSettings({
+      maxSentencesPerChunk: defaults.max_sentences_per_chunk,
+    }).maxSentencesPerChunk);
     setLoadedConfigId(config?.configId || '');
     if (!silent) {
       setReferenceMessage(`Loaded config ${config.configName || config.configId}.`);
@@ -976,6 +994,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           temperature,
           repetition_penalty: repPenalty,
           speed_factor: speed,
+          max_sentences_per_chunk: liveFastMaxSentences,
         },
       });
     }
@@ -995,6 +1014,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        max_sentences_per_chunk: liveFastMaxSentences,
       },
     }));
     setReferenceMessage(
@@ -1197,6 +1217,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        max_sentences_per_chunk: liveFastMaxSentences,
       },
       trainingMetadata: activeVoiceProfile?.metadata?.training,
       referenceMetadata: currentReferenceMetadata,
@@ -1843,7 +1864,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           text,
           baseParams: liveFastParams,
           synthesizeSentence,
-          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyChunks(value)),
+          splitText: (value) => shortenFirstFastPhrase(splitLiveReplyChunks(value, {
+            maxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
+          })),
           createObjectUrl: (blob) => URL.createObjectURL(blob),
           onProgress: setTtsFastProgress,
           onClipReady: (clip) => {
@@ -1884,7 +1907,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsFastGenerating(true);
       setTtsFastProgress({ total: 0, current: 0, text: '' });
       try {
-        const phrases = splitLiveReplyChunks(text);
+        const phrases = splitLiveReplyChunks(text, {
+          maxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
+        });
         const clips = [];
         setTtsFastProgress({ total: phrases.length, current: 0, text: phrases[0] || '' });
         for (let index = 0; index < phrases.length; index += 1) {
@@ -2534,6 +2559,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        max_sentences_per_chunk: liveFastMaxSentences,
       },
     });
   }
@@ -3079,6 +3105,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(activeVoiceProfile?.defaults?.top_p) ? activeVoiceProfile.defaults.top_p : DEFAULT_LIVE_FAST_SETTINGS.topP);
     setTemperature(Number.isFinite(activeVoiceProfile?.defaults?.temperature) ? activeVoiceProfile.defaults.temperature : DEFAULT_LIVE_FAST_SETTINGS.temperature);
     setRepPenalty(Number.isFinite(activeVoiceProfile?.defaults?.repetition_penalty) ? activeVoiceProfile.defaults.repetition_penalty : DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+    setLiveFastMaxSentences(normalizeLiveFastSettings({
+      maxSentencesPerChunk: activeVoiceProfile?.defaults?.max_sentences_per_chunk,
+    }).maxSentencesPerChunk);
     setPreviewReference({ path: '', url: null, filename: '', role: '' });
     setReferenceMessage(`Restored saved voice profile ${activeVoiceProfile.displayName || activeVoiceProfile.voiceProfileId}.`);
   }, [
@@ -3787,7 +3816,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   className="mt-0.5"
                 />
                 <span className="text-xs text-slate-600">
-                  <span className="block font-medium text-slate-700">Strict phoneme verification (Live Full only)</span>
+                  <span className="block font-medium text-slate-700">Strict phoneme verification (Live Fast + Full)</span>
                   <span className="mt-0.5 block text-slate-400">Use only for difficult reviewed terms. Uncertain results stay advisory.</span>
                 </span>
               </label>
@@ -4353,7 +4382,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     Speed {speed.toFixed(1)} · Top K {topK} · Top P {topP.toFixed(2)}
                   </p>
                   <p className="rounded-lg bg-slate-50 px-2 py-1.5">
-                    Temp {temperature.toFixed(2)} · Rep {repPenalty.toFixed(2)} · {liveLanguageConfig.label}
+                    Temp {temperature.toFixed(2)} · Rep {repPenalty.toFixed(2)} · max {liveFastSettings.maxSentencesPerChunk} sentence{liveFastSettings.maxSentencesPerChunk === 1 ? '' : 's'} · {liveLanguageConfig.label}
                   </p>
                 </div>
                 <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-2 py-2 text-xs text-slate-500">
@@ -4449,7 +4478,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                 </div>
                                 <p className="mt-0.5 truncate text-[11px] text-slate-500">
                                   Ref {fallbackName(reference.selectedPaths?.primary || reference.primary?.path)} ·
-                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'}
+                                  speed {defaults.speed_factor ?? 'n/a'} · temp {defaults.temperature ?? 'n/a'} · max {defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk} sentence{(defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk) === 1 ? '' : 's'}
                                 </p>
                                 {config.trainingMetadata?.engineVersion && (
                                   <p className="mt-0.5 truncate text-[11px] text-slate-400">
@@ -4503,6 +4532,23 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     <span className="font-mono text-sm font-semibold text-slate-700">{repPenalty.toFixed(2)}</span>
                   </div>
                   <Slider min={1.0} max={2.0} step={0.05} value={[repPenalty]} onValueChange={([v]) => setRepPenalty(v)} disabled={isConversationActive} />
+                </div>
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Max sentences per chunk</Label>
+                    <span className="font-mono text-sm font-semibold text-slate-700">{liveFastSettings.maxSentencesPerChunk}</span>
+                  </div>
+                  <Slider
+                    min={1}
+                    max={5}
+                    step={1}
+                    value={[liveFastSettings.maxSentencesPerChunk]}
+                    onValueChange={([value]) => setLiveFastMaxSentences(value)}
+                    disabled={isConversationActive}
+                  />
+                  <p className="text-xs leading-5 text-slate-400">
+                    Takes priority over the default. A chunk below eight words may absorb one extra sentence for stable voice context.
+                  </p>
                 </div>
               </div>
             </div>

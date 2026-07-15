@@ -159,10 +159,25 @@ test('chat messages keep stable ids and can be patched immutably', () => {
   assert.equal(next[0].status, 'ready');
 });
 
-test('splitLiveReplyChunks groups short sentences into one context-rich chunk', () => {
+test('splitLiveReplyChunks defaults to one sentence and lets a short sentence absorb one neighbour', () => {
   assert.deepEqual(
     splitLiveReplyChunks('Yes. That helps. Thanks a lot.'),
-    ['Yes. That helps. Thanks a lot.'],
+    ['Yes. That helps.', 'Thanks a lot.'],
+  );
+});
+
+test('splitLiveReplyChunks keeps normal sentences separate by default', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  assert.deepEqual(splitLiveReplyChunks(`${first} ${second}`), [first, second]);
+});
+
+test('splitLiveReplyChunks gives an explicit sentence limit priority over the default', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  assert.deepEqual(
+    splitLiveReplyChunks(`${first} ${second}`, { maxSentencesPerChunk: 2 }),
+    [`${first} ${second}`],
   );
 });
 

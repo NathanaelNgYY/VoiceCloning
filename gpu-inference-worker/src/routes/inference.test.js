@@ -73,6 +73,35 @@ test('Live Full keeps ASR validation when speaker verification is unavailable', 
   }
 });
 
+test('Live Fast enables phoneme verification without enabling Full tail checks', async () => {
+  const module = await loadInferenceRouteModule();
+  let receivedOptions = null;
+  mock.method(transcriptionVerifier, 'verifyChunk', async (_audio, _text, options) => {
+    receivedOptions = options;
+    return {
+      ok: true,
+      coverage: 1,
+      missingWords: [],
+      extraWords: [],
+      suspectWords: [],
+      skippedWords: [],
+      words: [],
+      transcript: 'A complete sentence.',
+    };
+  });
+  try {
+    const verifyChunk = module.verificationOptions(
+      {},
+      { phonemeVerification: true },
+    ).verifyChunk;
+    await verifyChunk(Buffer.from('RIFFdemo'), 'A complete sentence.');
+    assert.equal(receivedOptions.phonemeVerification, true);
+    assert.equal(receivedOptions.finalWordTailCheck, false);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('stale inference progress does not report another user when no session owns synthesis', async () => {
   const module = await loadInferenceRouteModule();
   inferenceState.resetForNewSession({ sessionId: 'stale-session', params: {} });
@@ -88,6 +117,7 @@ test('handleLiveTtsRequest re-seeds a rejected take and accepts the next clean o
   const module = await loadInferenceRouteModule();
 
   let synthCalls = 0;
+  let verifyCalls = 0;
   const seeds = [];
   const result = await module.handleLiveTtsRequest({
     text: 'Order the test now.',
@@ -101,12 +131,16 @@ test('handleLiveTtsRequest re-seeds a rejected take and accepts the next clean o
       return Buffer.from(`RIFF-take-${synthCalls}`);
     },
     // Reject the first take (dropped a word), accept the second.
-    verifyChunk: async () => (synthCalls >= 2
-      ? { ok: true, coverage: 1, missingWords: [], suspectWords: [] }
-      : { ok: false, coverage: 0.5, missingWords: ['test'], suspectWords: [] }),
+    verifyChunk: async () => {
+      verifyCalls += 1;
+      return synthCalls >= 2
+        ? { ok: true, coverage: 1, missingWords: [], suspectWords: [] }
+        : { ok: false, coverage: 0.5, missingWords: ['test'], suspectWords: [] };
+    },
   });
 
   assert.equal(synthCalls, 2);
+  assert.equal(verifyCalls, 2);
   assert.equal(result.audioBuffer.toString('utf-8'), 'RIFF-take-2');
   // Each re-seed must vary the seed (a genuinely different take).
   assert.notEqual(seeds[0], seeds[1]);

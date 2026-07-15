@@ -94,6 +94,77 @@ test('Live Full forgives a hard dictionary word only when an aligned timed token
   }
 });
 
+test('Live Fast phoneme verification can forgive a Whisper-mismatched dictionary word', async () => {
+  const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: true,
+    inconclusive: false,
+    decision: 'pass',
+    ctcScore: -0.8,
+    similarity: 1,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S' }],
+        phonemeVerification: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.deepEqual(res.forgivenDictionaryWords, ['michaelis']);
+    assert.equal(res.phonemeAssessments[0].decision, 'pass');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('Live Fast phoneme rejection rejects a take even when Whisper spells a strict word correctly', async () => {
+  const heard = 'Km or the Michaelis constant describes enzyme kinetics'.split(' ');
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: heard.join(' '),
+    words: heard.map((word, index) => ({
+      w: word,
+      start: index,
+      end: index + Math.max(0.24, word.length * 0.06),
+      p: 0.9,
+    })),
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    ok: false,
+    inconclusive: false,
+    decision: 'reject',
+    ctcScore: -6.2,
+    similarity: 0.25,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(9),
+      'Km or the Michaelis constant describes enzyme kinetics',
+      {
+        dictionaryWords: ['michaelis'],
+        dictionaryEntries: [{ word: 'michaelis', arpabet: 'M AY K EY L IH S', verifyPhonemes: true }],
+        phonemeVerification: true,
+      },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.equal(res.phonemeAssessments[0].decision, 'reject');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('Live Full rejects a present technical word when its phonemes do not match', async () => {
   // Whisper can context-correct a mispronunciation back to the expected spelling;
   // the independent phone check must still reject it.

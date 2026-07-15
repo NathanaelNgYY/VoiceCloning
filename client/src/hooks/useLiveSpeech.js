@@ -117,6 +117,7 @@ export function useLiveSpeech({
   replyMode = LIVE_REPLY_MODES.full,
   language = 'en',
   voiceProfileId = '',
+  fastMaxSentencesPerChunk = 1,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -165,10 +166,14 @@ export function useLiveSpeech({
   const fullRefParamsRef = useRef(fullRefParams);
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
+  const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
+  useEffect(() => {
+    fastMaxSentencesPerChunkRef.current = fastMaxSentencesPerChunk;
+  }, [fastMaxSentencesPerChunk]);
 
   // Live Full uses the accurate /inference route with its own ref params; it falls
   // back to the Live Fast reference set when no dedicated Live Full set is ready.
@@ -483,7 +488,9 @@ export function useLiveSpeech({
     // tiny phrases, so each request has enough context for a clean read and the endpoint
     // can re-seed/verify per chunk to catch dropped words. The first chunk is shortened
     // at a clause boundary so the very first audio still starts quickly.
-    const phrases = shortenFirstFastPhrase(splitLiveReplyChunks(text));
+    const phrases = shortenFirstFastPhrase(splitLiveReplyChunks(text, {
+      maxSentencesPerChunk: fastMaxSentencesPerChunkRef.current,
+    }));
     if (phrases.length === 0) return;
 
     currentSynthesisMessageIdRef.current = messageId;

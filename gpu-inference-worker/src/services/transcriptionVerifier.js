@@ -268,6 +268,7 @@ class TranscriptionVerifier {
     dictionaryWords = [],
     dictionaryEntries = [],
     finalWordTailCheck = false,
+    phonemeVerification = finalWordTailCheck,
   } = {}) {
     let result;
     try {
@@ -371,15 +372,15 @@ class TranscriptionVerifier {
         const timingAndEnergyEvidence = (w) => {
           const timing = findWordTimingEvidence(expectedText, w, words, { minWordLength });
           if (!timing) return null;
-          // Full must confirm actual waveform activity inside Whisper's aligned slot;
+          // Phoneme-gated paths must confirm waveform activity inside Whisper's aligned slot;
           // a hallucinated timestamp over silence is not evidence that the word spoke.
-          return !finalWordTailCheck || hasSpeechEnergyInTimedSpan(audioBuffer, timing) ? timing : null;
+          return !phonemeVerification || hasSpeechEnergyInTimedSpan(audioBuffer, timing) ? timing : null;
         };
         const missingDictionaryWords = new Set(
           missingWords.filter((word) => dictSet.has(word.toLowerCase())).map((word) => word.toLowerCase()),
         );
         // Production-safe scope: a general dictionary entry does not become a hard
-        // phoneme gate merely because it has ARPAbet. Full checks missing/misheard
+        // phoneme gate merely because it has ARPAbet. Full and Fast check missing/misheard
         // dictionary words when deciding whether to forgive Whisper. Correctly
         // transcribed words are checked only when an admin explicitly opted them in.
         const expectedWordSet = new Set(String(expectedText).toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
@@ -389,7 +390,7 @@ class TranscriptionVerifier {
             candidateByWord.set(word.toLowerCase(), { word, needsForgiveness: true, strict: false });
           }
         }
-        if (finalWordTailCheck) {
+        if (phonemeVerification) {
           for (const entry of normalizedDictionaryEntries) {
             if (!entry.verifyPhonemes || !expectedWordSet.has(entry.word)) continue;
             const current = candidateByWord.get(entry.word);
@@ -406,13 +407,13 @@ class TranscriptionVerifier {
         })).filter(({ word, timing }) => (
           dictSet.has(word.toLowerCase())
           && !rejectTruncated(word)
-          && ((!hasTimings && !finalWordTailCheck) || timing)
+          && ((!hasTimings && !phonemeVerification) || timing)
         ));
 
-        if (!finalWordTailCheck) {
+        if (!phonemeVerification) {
           forgivenDict = presenceCandidates.map(({ word }) => word);
         } else {
-          // Full requires an independent phone recognizer after presence is proven.
+          // Full and Live Fast require an independent phone recognizer after presence is proven.
           // A forced timestamp cannot establish that the expected phones were spoken.
           for (const { word, timing, needsForgiveness, strict } of presenceCandidates) {
             const dictionaryEntry = dictionaryEntryByWord.get(word.toLowerCase());
