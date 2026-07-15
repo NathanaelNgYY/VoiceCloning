@@ -181,6 +181,23 @@ test('splitLiveReplyChunks gives an explicit sentence limit priority over the de
   );
 });
 
+test('splitLiveReplyChunks gives an explicit word limit priority over the 280-character default', () => {
+  const sentence = `${Array.from({ length: 12 }, (_, index) => `extraordinarilylongword${index}`).join(' ')}.`;
+  assert.ok(sentence.length > 280);
+  assert.deepEqual(
+    splitLiveReplyChunks(sentence, { maxChunkWords: 20 }),
+    [sentence],
+  );
+});
+
+test('splitLiveReplyChunks enforces an explicit word limit inside a long sentence', () => {
+  const sentence = `${Array.from({ length: 23 }, (_, index) => `word${index}`).join(' ')}.`;
+  const chunks = splitLiveReplyChunks(sentence, { maxChunkWords: 10 });
+  assert.ok(chunks.length >= 3, JSON.stringify(chunks));
+  assert.ok(chunks.every((chunk) => (chunk.match(/[\p{L}\p{N}']+/gu) || []).length <= 10));
+  assert.equal(chunks.join(' '), sentence);
+});
+
 test('splitLiveReplyChunks breaks a long passage at sentence boundaries into multiple chunks', () => {
   const long = 'The mitochondrion is the powerhouse of the cell and supplies most of the chemical energy needed to drive many biochemical reactions throughout the body. '
     + 'Ribosomes are the molecular machines that read messenger RNA and assemble the corresponding chain of amino acids into a functioning protein for the organism.';

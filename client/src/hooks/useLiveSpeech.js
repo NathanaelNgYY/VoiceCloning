@@ -117,6 +117,7 @@ export function useLiveSpeech({
   replyMode = LIVE_REPLY_MODES.full,
   language = 'en',
   voiceProfileId = '',
+  fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
@@ -166,11 +167,15 @@ export function useLiveSpeech({
   const fullRefParamsRef = useRef(fullRefParams);
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
+  const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
   const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
+  useEffect(() => {
+    fastMaxChunkWordsRef.current = fastMaxChunkWords;
+  }, [fastMaxChunkWords]);
   useEffect(() => {
     fastMaxSentencesPerChunkRef.current = fastMaxSentencesPerChunk;
   }, [fastMaxSentencesPerChunk]);
@@ -489,6 +494,7 @@ export function useLiveSpeech({
     // can re-seed/verify per chunk to catch dropped words. The first chunk is shortened
     // at a clause boundary so the very first audio still starts quickly.
     const phrases = shortenFirstFastPhrase(splitLiveReplyChunks(text, {
+      maxChunkWords: fastMaxChunkWordsRef.current,
       maxSentencesPerChunk: fastMaxSentencesPerChunkRef.current,
     }));
     if (phrases.length === 0) return;

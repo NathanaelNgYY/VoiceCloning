@@ -291,8 +291,17 @@ function splitIntoChunkSentences(text) {
   return sentences.length > 0 ? sentences : [normalized];
 }
 
-function splitLongChunkSentence(sentence, maxChunkLength) {
-  if (sentence.length <= maxChunkLength) return [sentence];
+function wordLimitCutIndex(text, maxWords) {
+  if (!(maxWords > 0)) return text.length;
+  const matches = Array.from(text.matchAll(/[\p{L}\p{N}']+/gu));
+  if (matches.length <= maxWords) return text.length;
+  const last = matches[maxWords - 1];
+  return last.index + last[0].length;
+}
+
+function splitLongChunkSentence(sentence, maxChunkLength, maxChunkWords = 0) {
+  if (sentence.length <= maxChunkLength
+    && (!(maxChunkWords > 0) || countChunkWords(sentence) <= maxChunkWords)) return [sentence];
 
   const protectedText = protectChunkSemanticUnits(sentence);
   const parts = [];
@@ -300,18 +309,22 @@ function splitLongChunkSentence(sentence, maxChunkLength) {
   const minCut = Math.floor(maxChunkLength * 0.6);
   const clauseSeparators = [';', ':', '；', '：'];
 
-  while (remaining.length > maxChunkLength) {
-    const searchWindow = remaining.slice(0, maxChunkLength + 1);
+  while (remaining.length > maxChunkLength
+    || (maxChunkWords > 0 && countChunkWords(remaining) > maxChunkWords)) {
+    const wordCut = wordLimitCutIndex(remaining, maxChunkWords);
+    const hardLimit = Math.min(maxChunkLength, wordCut);
+    const searchWindow = remaining.slice(0, hardLimit + 1);
+    const minCut = Math.floor(hardLimit * 0.6);
     let cut = -1;
     for (const sep of clauseSeparators) {
       const idx = searchWindow.lastIndexOf(sep);
       if (idx > cut) cut = idx;
     }
     if (cut < minCut) cut = searchWindow.lastIndexOf(' ');
-    if (cut < minCut) cut = maxChunkLength;
-    const slice = remaining.slice(0, cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    if (cut < minCut) cut = hardLimit;
+    const slice = remaining.slice(0, cut + (cut === hardLimit ? 0 : 1)).trim();
     parts.push(restoreChunkSemanticUnits(slice));
-    remaining = remaining.slice(cut + (cut === maxChunkLength ? 0 : 1)).trim();
+    remaining = remaining.slice(cut + (cut === hardLimit ? 0 : 1)).trim();
   }
   if (remaining) parts.push(restoreChunkSemanticUnits(remaining));
   return parts.filter(Boolean);
@@ -331,6 +344,7 @@ function countChunkWords(text) {
 
 function mergeShortChunks(chunks, minLength, {
   maxChunkLength,
+  maxChunkWords,
   maxSentencesPerChunk,
 }) {
   if (chunks.length <= 1) return chunks;
@@ -340,6 +354,7 @@ function mergeShortChunks(chunks, minLength, {
     const sentenceCount = splitIntoChunkSentences(candidate).length;
     return (shortChunk.length < minLength || countChunkWords(shortChunk) < CHUNK_MIN_CONTEXT_WORDS)
       && candidate.length <= maxChunkLength
+      && (!(maxChunkWords > 0) || countChunkWords(candidate) <= maxChunkWords)
       && sentenceCount <= maxSentencesPerChunk + 1;
   };
 
@@ -364,13 +379,17 @@ function mergeShortChunks(chunks, minLength, {
 // initialisms ("W.H.O") are protected so their internal periods don't split a chunk.
 export function splitLiveReplyChunks(text, {
   maxChunkLength = CHUNK_MAX_LENGTH,
+  maxChunkWords = 0,
   maxSentencesPerChunk = CHUNK_MAX_SENTENCES,
 } = {}) {
   const clean = protectDottedInitialisms(cleanLiveText(text));
   if (!clean) return [];
 
+  // An explicit word override takes priority over the default 280-character cap.
+  const activeMaxChunkLength = maxChunkWords > 0 ? Number.MAX_SAFE_INTEGER : maxChunkLength;
+
   const rawSentences = splitIntoChunkSentences(clean)
-    .flatMap((sentence) => splitLongChunkSentence(sentence, maxChunkLength));
+    .flatMap((sentence) => splitLongChunkSentence(sentence, activeMaxChunkLength, maxChunkWords));
 
   const chunks = [];
   let current = '';
@@ -378,14 +397,15 @@ export function splitLiveReplyChunks(text, {
 
   for (const sentence of rawSentences) {
     const candidate = current ? `${current} ${sentence}` : sentence;
-    const exceedsLength = candidate.length > maxChunkLength;
+    const exceedsLength = candidate.length > activeMaxChunkLength;
+    const exceedsWords = maxChunkWords > 0 && countChunkWords(candidate) > maxChunkWords;
     const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
     const currentWordCount = countChunkWords(current);
     const canAbsorbShortContext = exceedsSentenceCount
       && sentenceCount === maxSentencesPerChunk
       && currentWordCount < CHUNK_MIN_CONTEXT_WORDS;
 
-    if (current && (exceedsLength || (exceedsSentenceCount && !canAbsorbShortContext))) {
+    if (current && (exceedsLength || exceedsWords || (exceedsSentenceCount && !canAbsorbShortContext))) {
       chunks.push(current.trim());
       current = sentence;
       sentenceCount = 1;
@@ -395,7 +415,9 @@ export function splitLiveReplyChunks(text, {
     }
 
     const trimmed = current.trimEnd();
-    const fullEnough = trimmed.length >= Math.floor(maxChunkLength * 0.6);
+    const fullEnough = maxChunkWords > 0
+      ? countChunkWords(trimmed) >= Math.floor(maxChunkWords * 0.6)
+      : trimmed.length >= Math.floor(activeMaxChunkLength * 0.6);
     if (trimmed && chunkEndsSentence(trimmed) && fullEnough) {
       chunks.push(trimmed);
       current = '';
@@ -404,7 +426,11 @@ export function splitLiveReplyChunks(text, {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH, { maxChunkLength, maxSentencesPerChunk })
+  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH, {
+    maxChunkLength: activeMaxChunkLength,
+    maxChunkWords,
+    maxSentencesPerChunk,
+  })
     .map((chunk) => restoreDottedInitialisms(chunk))
     .filter(Boolean);
 }
