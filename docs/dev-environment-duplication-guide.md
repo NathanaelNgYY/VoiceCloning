@@ -1,10 +1,9 @@
 # Dev Environment — Complete System Duplication Guide
 
 **Date:** 2026-07-06 (AWS values verified live via read-only discovery, role `Liu_Teng_Yu_Intern2026`)
-**Supersedes/extends:** `docs/superpowers/specs/2026-07-06-dev-staging-environments-design.md` and
-`docs/superpowers/plans/2026-07-06-dev-staging-environments.md`.
-Adds: the 3rd (chatbot) frontend, private-IP + NAT networking for the dev EC2, EventBridge
-idle-stop duplication, and the on-host v2ProPlus specifics discovered on the live EC2.
+This guide is the authoritative from-scratch build recipe. It covers the 3rd (chatbot) frontend,
+private-IP + NAT networking for the dev EC2, EventBridge idle-stop duplication, and the on-host
+v2ProPlus specifics discovered on the live EC2.
 
 **Goal:** Duplicate *absolutely everything* in the current live system (hereafter **staging**)
 into a parallel **dev** environment: new EC2 (private IP), ALB, Lambda + Function URL,

@@ -2,6 +2,7 @@ node_modules/
 dist/
 .superpowers/
 client/dist-training/
+client/dist-chatbot/
 client/dist-live-fast/
 client/dist-combined/
 .dist/
@@ -18,12 +19,12 @@ config.toml887
 config.toml
 touchpoint/
 
-# Understand-Anything tool (cloned repo) + its generated graph/cache
-/Understand-Anything/
-/.understand-anything/
-
 # Graphify generated knowledge graph (rebuilt locally by git post-commit hook)
 graphify-out/
 
 # Local env files
 client/.env.combined
+
+# Python bytecode
+__pycache__/
+*.pyc
