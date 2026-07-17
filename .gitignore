@@ -27,3 +27,4 @@ graphify-out/
 
 # Local env files
 client/.env.combined
+client/dist-chatbot/
