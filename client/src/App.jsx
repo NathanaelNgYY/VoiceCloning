@@ -25,6 +25,7 @@ const GPU_AUTO_START = !APP_MODE_CONFIG.showTraining;
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
 import GiChatPage from './pages/GiChatPage.jsx';
+import GiApp from './GiApp.jsx';
 
 function LiveFastEntry() {
   const location = useLocation();
@@ -162,9 +163,13 @@ function GpuStartingOverlay() {
 }
 
 export default function App() {
+  // The gi build is a full app (search → lesson → chat) with its own chrome and
+  // auth gate, so it replaces AppShell entirely. The GPU still auto-starts in
+  // the background, but the blocking overlay is deliberately not rendered —
+  // browsing lessons and the transcript must not wait on the voice engine.
   return (
     <GpuStatusProvider autoStart={GPU_AUTO_START}>
-      <AppShell />
+      {APP_MODE_CONFIG.gi ? <GiApp /> : <AppShell />}
     </GpuStatusProvider>
   );
 }

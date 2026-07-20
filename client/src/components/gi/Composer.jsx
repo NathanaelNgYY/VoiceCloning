@@ -26,16 +26,19 @@ export function Composer({
           onClick={active ? onStop : onStart}
           disabled={loading || (disabled && !active)}
           className={cn(
-            'inline-flex size-16 items-center justify-center rounded-full transition disabled:opacity-50',
+            // ui-v2 button treatment (white/slate resting, rose while live),
+            // scaled up from its 44px inline size — this is the only control on
+            // a kiosk screen, so it stays a large centered target.
+            'inline-flex size-16 items-center justify-center rounded-full border shadow-sm transition disabled:opacity-50',
             active
-              ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/25 hover:bg-rose-600'
-              : 'bg-primary text-white shadow-lg shadow-primary/25 hover:opacity-90'
+              ? 'border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700'
+              : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700'
           )}
         >
           {loading ? (
-            <Loader2 className="size-6 animate-spin" />
+            <Loader2 className="size-6 animate-spin text-slate-400" />
           ) : active ? (
-            <PhoneOff className="size-5" />
+            <PhoneOff className="size-6" />
           ) : (
             <Mic className="size-6" />
           )}
@@ -47,18 +50,18 @@ export function Composer({
             aria-label={micMuted ? 'Unmute microphone' : 'Mute microphone'}
             onClick={onToggleMute}
             className={cn(
-              'inline-flex size-10 items-center justify-center rounded-full border transition',
+              'inline-flex size-11 items-center justify-center rounded-full border transition',
               micMuted
                 ? 'border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100'
-                : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
             )}
           >
-            {micMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+            {micMuted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
           </button>
         )}
       </div>
 
-      {loading && <span className="text-xs text-ink-muted">Connecting…</span>}
+      {loading && <span className="text-[10px] text-ink-muted">Connecting…</span>}
     </div>
   );
 }

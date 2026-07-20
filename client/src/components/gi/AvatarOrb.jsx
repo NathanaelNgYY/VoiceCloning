@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import defaultAvatar from '@/assets/maleavatar.png';
+import doctorAvatar from '@/assets/doctor-avatar.png';
 
 export function AvatarOrb({ status, docked = false }) {
   const ring =
@@ -24,7 +24,7 @@ export function AvatarOrb({ status, docked = false }) {
           status === 'listening' && 'ring-4 ring-rose-400'
         )}
       >
-        <img src={defaultAvatar} alt="Chatbot avatar" className="h-full w-full object-cover" />
+        <img src={doctorAvatar} alt="Doctor avatar" className="h-full w-full object-cover" />
       </div>
     </div>
   );
