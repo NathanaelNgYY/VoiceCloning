@@ -29,7 +29,6 @@
 | File | Responsibility |
 |---|---|
 | `src/components/gi/ChatMessage.jsx` | One chat bubble. Pure. |
-| `src/components/gi/TypingIndicator.jsx` | Three-dot "thinking" bubble. Pure. |
 | `src/components/gi/ChatList.jsx` | Message list + autoscroll. Pure. |
 | `src/components/gi/ChatHistory.jsx` | Sidebar header + New Chat button. Pure. |
 | `src/components/gi/Composer.jsx` | Mic/mute controls (voice-only). Pure. |
@@ -309,7 +308,16 @@ git commit -m "feat: add gi surface/ink tokens and pulse-ring animation"
 ### Task 3: Port the presentational components
 
 **Files:**
-- Create: `client/src/components/gi/ChatMessage.jsx`, `TypingIndicator.jsx`, `ChatList.jsx`, `ChatHistory.jsx`, `Composer.jsx`, `AvatarOrb.jsx`, `AvatarStage.jsx`, `DisclaimerBanner.jsx`, `VoiceIndicator.jsx`
+- Create: `client/src/components/gi/ChatMessage.jsx`, `ChatList.jsx`, `ChatHistory.jsx`, `Composer.jsx`, `AvatarOrb.jsx`, `AvatarStage.jsx`, `DisclaimerBanner.jsx`, `VoiceIndicator.jsx`
+
+> **Amended during execution (commit `624671a`):** Steps 3 and 4 below originally
+> created `TypingIndicator.jsx` and had `ChatList` render it on
+> `status === 'thinking'`. That produced a *duplicate* indicator: the engine
+> unconditionally appends an assistant message with `text: ''` and
+> `status: 'thinking'` (`hooks/useLiveSpeech.js:438-445`), for which `ChatMessage`
+> already renders in-bubble bounce dots. `TypingIndicator.jsx` was deleted and the
+> `ChatList` branch removed; `ChatList` keeps its `status` prop as an autoscroll
+> trigger. Eight components, not nine.
 - Create: `client/src/assets/maleavatar.png`
 
 **Interfaces:**
@@ -1367,7 +1375,7 @@ Expected: a matching `.gitignore` rule is printed. If it prints nothing, add `di
 
 - [ ] **Step 4: Run the full test suite**
 
-Run: `node --test src/`
+Run: `node --test "src/lib/*.test.js" "src/hooks/*.test.js"`  (the bare `node --test src/` form fails on this machine because the repo path contains a space)
 Expected: PASS. All pre-existing tests plus the new `appMode` and `giChatStatus` tests.
 
 - [ ] **Step 5: Verify every build target still compiles**
