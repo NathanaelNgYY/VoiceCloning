@@ -24,6 +24,7 @@ graphify-out/
 
 # Local env files
 client/.env.combined
+client/dist-chatbot/
 
 # Python bytecode
 __pycache__/
