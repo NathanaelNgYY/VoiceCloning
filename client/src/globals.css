@@ -77,3 +77,12 @@ audio {
   background: hsl(var(--primary));
   color: white;
 }
+
+/* GI-Bleeding skin palette — PANTONE 2758 navy.
+   Scoped to the gi page root so other build modes keep the default blue. */
+.gi-root {
+  --primary: 237 61% 24%;
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 234 46% 94%;
+  --ring: 237 61% 24%;
+}
