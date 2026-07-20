@@ -5,8 +5,13 @@ client/dist-training/
 client/dist-live-fast/
 client/dist-combined/
 client/dist-chatbot/
+client/dist-gi/
 .dist/
 .env
+# Ignore all env variants by default (they may hold real secrets).
+# Already-tracked blank templates keep working (gitignore doesn't untrack).
+# To add a NEW intentional blank template, force it: git add -f <file>
+.env.*
 .claude/
 .worktrees/
 *.wav

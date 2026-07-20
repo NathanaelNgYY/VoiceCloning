@@ -8,10 +8,12 @@
     "dev:training": "vite --mode training --host 0.0.0.0 --port 5173 --strictPort",
     "dev:live-fast": "vite --mode live-fast --host 0.0.0.0 --port 5174 --strictPort",
     "dev:chatbot": "vite --mode chatbot --host 0.0.0.0 --port 5175 --strictPort",
+    "dev:gi": "vite --mode gi --host 0.0.0.0 --port 5176 --strictPort",
     "build": "vite build",
     "build:training": "vite build --mode training --outDir dist-training",
     "build:live-fast": "vite build --mode live-fast --outDir dist-live-fast",
     "build:chatbot": "vite build --mode chatbot --outDir dist-chatbot",
+    "build:gi": "vite build --mode gi --outDir dist-gi",
     "preview": "vite preview"
   },
   "dependencies": {
