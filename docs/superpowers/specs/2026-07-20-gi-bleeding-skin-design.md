@@ -27,7 +27,8 @@ Text-to-Speech are simply not reachable from the new mode's UI.
 | D2 | **New `gi` build mode**, alongside `chatbot`. | The shipped `dist-chatbot` (Dean demo) keeps working untouched; both skins can be compared. |
 | D3 | **Sidebar kept; "New chat" clears the transcript.** No conversation list or persistence. | Preserves the visual layout at zero persistence cost. |
 | D4 | **VoicePicker only**, backed by existing voice profiles. AvatarPicker dropped. | Without LiveKit there is no avatar video to pick. A cloned-voice selector reuses logic already present. |
-| D5 | **New kiosk-only engine hook**; `LivePage.jsx` is not modified. | `LivePage` backs the live production chatbot and has a history of subtle live-path races. Duplicating ~150 lines of kiosk setup is cheaper than risking a regression. Extract later if `gi` becomes the only skin. |
+| D4a | **Amended 2026-07-20 during planning: the picker ships read-only.** It lists profiles and shows the active one, but cannot switch. | `activateVoiceProfile(profile)` takes a full profile payload built from the target's saved rank-1 config, and switching then requires `selectModels` to load new weights — the `modelLoading`/`autoVoiceProfileSync` chain D5 excludes. Functional switching is follow-up work. |
+| D5 | **New kiosk-only engine hook**; `LivePage.jsx` is not modified. | `LivePage` backs the live production chatbot and has a history of subtle live-path races. Duplicating the kiosk setup (~250 lines — the initial ~150 estimate was low) is cheaper than risking a regression. Extract later if `gi` becomes the only skin. |
 | D6 | **gi-bleeding navy `#181c62` scoped to the gi page root.** | Faithful to the source design without changing the palette of other builds. |
 
 ## Architecture
@@ -70,7 +71,7 @@ Returned interface (adapter over `useLiveSpeech`):
 | `micMuted` / `toggleMute` | `isMicInputEnabled` + `enableMicInput`/`disableMicInput` |
 | `inputMode` / `setInputMode` | local state |
 | `send(text)` | text-mode submit path |
-| `voiceOptions` / `selectedVoiceId` / `setSelectedVoiceId` | `voiceProfiles.js` + `savedVoiceProfile.js` |
+| `voiceOptions` / `selectedVoiceId` / `setSelectedVoiceId` | `buildVoiceProfiles(gptModels, sovitsModels)` over `getModels()`; read-only per D4a |
 | `newChat()` | clears `messages` |
 
 Fields with no counterpart (`avatarVideoStream`, `avatarOptions`,
