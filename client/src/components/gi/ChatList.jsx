@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { ChatMessage } from './ChatMessage.jsx';
-import { TypingIndicator } from './TypingIndicator.jsx';
 
 export function ChatList({ messages, status, scrollKey = '' }) {
   const bottomRef = useRef(null);
@@ -14,7 +13,6 @@ export function ChatList({ messages, status, scrollKey = '' }) {
       {messages.map((message) => (
         <ChatMessage key={message.id} message={message} />
       ))}
-      {status === 'thinking' && <TypingIndicator />}
       <div ref={bottomRef} />
     </div>
   );
