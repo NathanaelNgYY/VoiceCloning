@@ -10,8 +10,10 @@ test('toGiStatus passes through the statuses the components already know', () =>
   assert.equal(toGiStatus('speaking'), 'speaking');
 });
 
-test('toGiStatus maps voice generation onto thinking', () => {
-  assert.equal(toGiStatus('generating_voice'), 'thinking');
+test('toGiStatus treats a per-message status as an unknown phase', () => {
+  // 'generating_voice' is a message status, never a phase — it must not be
+  // mistaken for one here.
+  assert.equal(toGiStatus('generating_voice'), 'idle');
 });
 
 test('toGiStatus maps the connecting phase to connecting', () => {
@@ -38,10 +40,10 @@ test('toGiStatus prefers the live phase over a stale error', () => {
 
 test('isResponseBusy is true only while the assistant is producing a reply', () => {
   assert.equal(isResponseBusy('thinking'), true);
-  assert.equal(isResponseBusy('generating_voice'), true);
   assert.equal(isResponseBusy('speaking'), true);
   assert.equal(isResponseBusy('listening'), false);
   assert.equal(isResponseBusy('idle'), false);
+  assert.equal(isResponseBusy('connecting'), false);
 });
 
 test('isVoiceActive is true for every non-idle phase', () => {

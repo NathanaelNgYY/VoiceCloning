@@ -2,11 +2,14 @@
 // ported gi-bleeding components expect. Kept separate from useGiChatEngine so
 // they can be unit-tested without mounting React.
 
+// The engine's complete phase vocabulary, from every setPhase() call site in
+// useLiveSpeech.js: connecting, idle, listening, speaking, stopping, thinking.
+// Note 'generating_voice' is NOT a phase — it is a per-message status set via
+// patchMessage(), and ChatMessage handles it there.
 const PHASE_TO_STATUS = {
   idle: 'idle',
   listening: 'listening',
   thinking: 'thinking',
-  generating_voice: 'thinking',
   speaking: 'speaking',
   // useLiveSpeech.js:1318 sets this while start() is requesting the mic and
   // opening the live-chat socket, before the first 'listening' phase.
@@ -18,7 +21,7 @@ const PHASE_TO_STATUS = {
   stopping: 'idle',
 };
 
-const BUSY_PHASES = new Set(['thinking', 'generating_voice', 'speaking']);
+const BUSY_PHASES = new Set(['thinking', 'speaking']);
 
 export function toGiStatus(phase, { hasError = false } = {}) {
   const status = PHASE_TO_STATUS[phase] || 'idle';
