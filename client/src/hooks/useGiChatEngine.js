@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { getFullActiveVoiceProfile, getModels } from '@/services/api.js';
+import { getFullActiveVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
-import { buildVoiceProfiles } from '@/lib/voiceProfiles';
 import { resolveChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
 import {
   buildDocumentsContext,
@@ -25,7 +24,6 @@ export function useGiChatEngine() {
 
   const [activeProfile, setActiveProfile] = useState(null);
   const [profileError, setProfileError] = useState('');
-  const [voiceProfiles, setVoiceProfiles] = useState([]);
   const [clearedBeforeId, setClearedBeforeId] = useState('');
 
   const profileRequestRef = useRef(0);
@@ -48,8 +46,10 @@ export function useGiChatEngine() {
     } catch (err) {
       if (profileRequestRef.current !== requestId) return;
       if (err.response?.status === 404) {
+        // No voice profile has been activated yet — the ordinary state of a
+        // fresh deployment, not an error. Mirrors pages/LivePage.jsx:691-696.
         setActiveProfile(null);
-        setProfileError('No voice profile is active yet.');
+        setProfileError('');
         return;
       }
       setProfileError(
@@ -58,31 +58,16 @@ export function useGiChatEngine() {
     }
   }, []);
 
-  // buildVoiceProfiles takes (gptModels, sovitsModels) — the two arrays that
-  // getModels() returns — and groups them into { key, displayName, … } profiles.
-  const loadVoiceProfiles = useCallback(async () => {
-    try {
-      const res = await getModels();
-      setVoiceProfiles(buildVoiceProfiles(res.data.gpt || [], res.data.sovits || []) || []);
-    } catch {
-      // A missing profile list is not fatal — the picker simply hides itself.
-      setVoiceProfiles([]);
-    }
-  }, []);
-
   useEffect(() => {
     if (!backendQueryable) return;
     loadActiveProfile();
-    loadVoiceProfiles();
-  }, [backendQueryable, loadActiveProfile, loadVoiceProfiles]);
+  }, [backendQueryable, loadActiveProfile]);
 
-  // Human-readable name of the active cloned voice, for the read-only indicator.
-  const activeVoiceLabel = useMemo(() => {
-    const activeKey = String(activeProfile?.key || '').trim();
-    if (!activeKey) return '';
-    const match = voiceProfiles.find((profile) => profile.key === activeKey);
-    return match?.displayName || activeKey;
-  }, [activeProfile, voiceProfiles]);
+  // Human-readable name of the active cloned voice, for the read-only
+  // indicator. getFullActiveVoiceProfile() returns the stored profile
+  // payload directly (lambda/voice-profile/index.js:197), which carries
+  // displayName — no separate model-list lookup needed.
+  const activeVoiceLabel = String(activeProfile?.displayName || '').trim();
 
   const refParams = useMemo(() => {
     if (!activeProfile) return null;
@@ -131,7 +116,7 @@ export function useGiChatEngine() {
     } else {
       liveSpeech.enableMicInput();
     }
-  }, [liveSpeech]);
+  }, [liveSpeech.isMicInputEnabled, liveSpeech.disableMicInput, liveSpeech.enableMicInput]);
 
   const error = liveSpeech.error || profileError;
 
