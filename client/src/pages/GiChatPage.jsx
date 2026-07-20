@@ -107,7 +107,7 @@ export default function GiChatPage() {
 
   const composer = (
     <Composer
-      disabled={controlsBusy}
+      disabled={controlsBusy || !chat.voiceReady}
       loading={chat.connecting}
       active={chat.voiceActive}
       onStart={chat.startConversation}
@@ -281,6 +281,16 @@ export default function GiChatPage() {
                   <p className="px-4 pb-2 text-center text-xs text-red-600" role="alert">
                     {chat.error}
                   </p>
+                )}
+
+                {!chat.connecting && !chat.voiceReady && (
+                  <p className="px-4 pb-2 text-center text-xs text-amber-600">
+                    {'No cloned voice is set up yet. Activate a voice profile before starting a conversation.'}
+                  </p>
+                )}
+
+                {chat.notice && (
+                  <p className="px-4 pb-2 text-center text-xs text-amber-600">{chat.notice}</p>
                 )}
 
                 {chat.activeVoiceLabel && (

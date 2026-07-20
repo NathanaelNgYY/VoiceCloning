@@ -8,6 +8,14 @@ const PHASE_TO_STATUS = {
   thinking: 'thinking',
   generating_voice: 'thinking',
   speaking: 'speaking',
+  // useLiveSpeech.js:1318 sets this while start() is requesting the mic and
+  // opening the live-chat socket, before the first 'listening' phase.
+  connecting: 'connecting',
+  // useLiveSpeech.js:1371 sets this synchronously inside stop(), immediately
+  // followed by setPhase('idle') in the same call — React's automatic
+  // batching means this never renders as its own frame today, but the phase
+  // is genuinely emitted, so it gets an explicit (not fallback) mapping.
+  stopping: 'idle',
 };
 
 const BUSY_PHASES = new Set(['thinking', 'generating_voice', 'speaking']);

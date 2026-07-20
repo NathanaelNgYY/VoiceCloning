@@ -14,6 +14,14 @@ test('toGiStatus maps voice generation onto thinking', () => {
   assert.equal(toGiStatus('generating_voice'), 'thinking');
 });
 
+test('toGiStatus maps the connecting phase to connecting', () => {
+  assert.equal(toGiStatus('connecting'), 'connecting');
+});
+
+test('toGiStatus maps the stopping phase to idle', () => {
+  assert.equal(toGiStatus('stopping'), 'idle');
+});
+
 test('toGiStatus falls back to idle for unknown phases', () => {
   assert.equal(toGiStatus(''), 'idle');
   assert.equal(toGiStatus(undefined), 'idle');

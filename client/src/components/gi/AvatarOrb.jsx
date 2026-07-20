@@ -5,7 +5,7 @@ export function AvatarOrb({ status, docked = false }) {
   const ring =
     status === 'speaking' || status === 'listening'
       ? 'animate-pulse-ring-fast'
-      : status === 'connecting' || status === 'thinking' || status === 'transcribing'
+      : status === 'connecting' || status === 'thinking'
         ? 'animate-pulse-ring'
         : null;
 

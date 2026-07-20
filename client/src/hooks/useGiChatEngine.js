@@ -133,6 +133,16 @@ export function useGiChatEngine() {
     stopConversation: liveSpeech.stop,
     newChat,
     activeVoiceLabel,
+    // True only once an activated voice profile has produced usable reference
+    // params — gates the mic button so a fresh deployment with no cloned
+    // voice can't reach useLiveSpeech's "Go to the Inference page first"
+    // dead end (gi mode has no Inference page to go to).
+    voiceReady: refParams !== null,
+    // Mic-permission / unsupported-browser advisories from useLiveSpeech —
+    // surfaced separately from `error` so GiChatPage can render them on the
+    // amber advisory channel instead of the red error channel.
+    notice: liveSpeech.notice,
+    speechApiAvailable: liveSpeech.speechApiAvailable,
     // Playback plumbing — GiChatPage drives a hidden <audio> element from these.
     phase: liveSpeech.phase,
     audioSrc: liveSpeech.audioSrc,
