@@ -148,6 +148,15 @@ export function stripBreakSentinels(text) {
   return String(text || '').replace(BREAK_SENTINEL_RE_G, ' ').replace(/[ \t]{2,}/gu, ' ').trim();
 }
 
+// Convert internal sentinels back to editable SSML-lite markup for review textareas.
+// The model/ASR never sees this form; it is only a lossless user-facing rendering.
+export function renderBreakSentinels(text) {
+  return String(text || '').replace(
+    BREAK_SENTINEL_RE_G,
+    (_match, ms) => `<break time="${ms}ms"/>`,
+  ).replace(/[ \t]{2,}/gu, ' ').trim();
+}
+
 // Split text into segments at each break sentinel. Returns
 // [{ text, breakMsAfter }] where breakMsAfter is the pause (ms) requested right after
 // that segment, or null for the final segment. Used by the chunker to force a chunk

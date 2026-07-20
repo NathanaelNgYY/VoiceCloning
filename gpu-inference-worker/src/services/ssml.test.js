@@ -6,12 +6,14 @@ import {
   splitOnBreaks,
   extractBreakMs,
   stripBreakSentinels,
+  renderBreakSentinels,
   appendBreakSentinel,
 } from './ssml.js';
 import { applyEmphasisAndSpelling } from './emphasisAndSpelling.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
 import {
   splitTextIntoChunks,
+  splitTextIntoReviewChunks,
   computeChunkPauses,
   concatWavs,
   parseWav,
@@ -87,6 +89,7 @@ test('containsSsml only fires on supported tags', () => {
 
 test('appendBreakSentinel round-trips through extractBreakMs', () => {
   assert.equal(extractBreakMs(appendBreakSentinel('after meals.', 500)), 500);
+  assert.equal(renderBreakSentinels(appendBreakSentinel('after meals.', 500)), 'after meals. <break time="500ms"/>');
 });
 
 test('<break time> parses ms and seconds; bare/strength map to defaults', () => {
@@ -117,6 +120,24 @@ test('a break forces a chunk boundary and sets the inter-chunk pause', () => {
   assert.deepEqual(computeChunkPauses(chunks, 0), [600]);
   // Spoken text never contains the sentinel.
   assert.equal(stripBreakSentinels(chunks[0]), 'First sentence here today.');
+});
+
+test('a break stays inside one review chunk and does not bypass short-context grouping', () => {
+  const expanded = expandSsml('hello <break time="7000ms"/> hello');
+  const chunks = splitTextIntoReviewChunks(expanded, { maxSentencesPerChunk: 2 });
+  assert.equal(chunks.length, 1);
+  assert.equal(renderBreakSentinels(chunks[0]), 'hello <break time="7000ms"/> hello');
+});
+
+test('ordinary sentence limits still split review chunks and preserve a boundary break', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  const expanded = expandSsml(`${first} <break time="7000ms"/> ${second}`);
+  const chunks = splitTextIntoReviewChunks(expanded, { maxSentencesPerChunk: 1 });
+  assert.equal(chunks.length, 2);
+  assert.equal(renderBreakSentinels(chunks[0]), `${first} <break time="7000ms"/>`);
+  assert.equal(renderBreakSentinels(chunks[1]), second);
+  assert.deepEqual(computeChunkPauses(chunks, 0), [7000]);
 });
 
 test('targeted Full regeneration uses the same break-aware chunk and join pipeline', async () => {

@@ -12,6 +12,8 @@ import {
   appendBreakSentinel,
   extractBreakMs,
   stripBreakSentinels,
+  renderBreakSentinels,
+  BREAK_SENTINEL_RE,
 } from './ssml.js';
 
 const TEMP_DIR = LOCAL_TEMP_ROOT;
@@ -258,6 +260,28 @@ export function splitTextIntoChunks(text, options = {}) {
     out.push(...segChunks);
   }
   return out;
+}
+
+// Review/output chunks follow the ordinary Full sentence/word/context rules. An
+// explicit break is retained inside that parent chunk and only split later by
+// synthesizeBreakAwareFullChunk. This keeps `hello <break/> hello` as one editable
+// review card while still generating two internal clips around deterministic silence.
+export function splitTextIntoReviewChunks(text, options = {}) {
+  const chunks = chunkSegment(text, options);
+
+  // If ordinary sentence limits put a break sentinel at the start of a later parent
+  // chunk, move it to the previous tail so the final top-level join retains the pause.
+  for (let index = 1; index < chunks.length; index += 1) {
+    let current = chunks[index].trimStart();
+    while (current) {
+      const match = BREAK_SENTINEL_RE.exec(current);
+      if (!match || match.index !== 0) break;
+      chunks[index - 1] = appendBreakSentinel(chunks[index - 1], Number.parseInt(match[1], 10));
+      current = current.slice(match[0].length).trimStart();
+    }
+    chunks[index] = current;
+  }
+  return chunks.filter(Boolean);
 }
 
 function chunkSegment(text, options = {}) {
@@ -1686,21 +1710,30 @@ export async function synthesizeBreakAwareFullChunk(
   chunkText,
   baseParams,
   options = {},
-  { synthesizeChunk = synthesizeChunkResilient } = {},
+  { synthesizeChunk = synthesizeChunkResilient, onSplit = null } = {},
 ) {
   const synthesisChunks = splitTextIntoChunks(chunkText, options);
   if (synthesisChunks.length === 0) throw new Error('No text to synthesize');
 
   const buffers = [];
   let attempts = 0;
+  let usedFallback = false;
+  const fallbackReasons = [];
+  let singleAnalysis = null;
   for (const synthesisChunk of synthesisChunks) {
     const result = await synthesizeChunk(
       synthesisChunk,
       { ...baseParams, text: synthesisChunk },
       options,
+      { onSplit },
     );
     buffers.push(result.audioBuffer);
     attempts += result.attempts;
+    singleAnalysis = synthesisChunks.length === 1 ? result.analysis : null;
+    if (result.fallback) {
+      usedFallback = true;
+      if (result.fallbackReason) fallbackReasons.push(result.fallbackReason);
+    }
   }
 
   return {
@@ -1713,6 +1746,9 @@ export async function synthesizeBreakAwareFullChunk(
       ),
     attempts,
     synthesisChunks,
+    analysis: singleAnalysis,
+    fallback: usedFallback,
+    fallbackReason: usedFallback ? fallbackReasons.join(' | ') : undefined,
   };
 }
 
@@ -1775,14 +1811,14 @@ export async function regenerateLongTextChunk(
 
   return {
     index: chunkIndex,
-    text: String(replacementDisplayText || '').trim() || stripBreakSentinels(chunkText),
+    text: String(replacementDisplayText || '').trim() || renderBreakSentinels(chunkText),
     attempts: result.attempts,
     revision: Date.now(),
   };
 }
 
 export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
-  const chunks = splitTextIntoChunks(params.text, options);
+  const chunks = splitTextIntoReviewChunks(params.text, options);
   if (chunks.length === 0) {
     inferenceState.setError('No text to synthesize');
     sseManager.send(sessionId, 'error', { message: 'No text to synthesize' });
@@ -1803,7 +1839,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   sseManager.send(sessionId, 'inference-start', {
     totalChunks: chunks.length,
-    chunks: chunks.map((text, index) => ({ index, text: stripBreakSentinels(text) })),
+    chunks: chunks.map((text, index) => ({ index, text: renderBreakSentinels(text) })),
   });
   inferenceState.setGenerating({ totalChunks: chunks.length });
 
@@ -1816,7 +1852,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       }
 
       const chunkText = chunks[index];
-      const displayText = stripBreakSentinels(chunkText);
+      const displayText = renderBreakSentinels(chunkText);
       sseManager.send(sessionId, 'chunk-start', {
         index,
         text: displayText,
@@ -1829,7 +1865,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       });
 
       const chunkStart = Date.now();
-      const result = await synthesizeChunkResilient(
+      const result = await synthesizeBreakAwareFullChunk(
         chunkText,
         { ...params, text: chunkText },
         options,
@@ -1892,7 +1928,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 }
 
 export async function synthesizeLongText(params, options = {}) {
-  const chunks = splitTextIntoChunks(params.text, options);
+  const chunks = splitTextIntoReviewChunks(params.text, options);
   if (chunks.length === 0) {
     throw new Error('No text to synthesize');
   }
@@ -1901,11 +1937,11 @@ export async function synthesizeLongText(params, options = {}) {
   const metadata = [];
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    const result = await synthesizeChunkResilient(chunk, { ...params, text: chunk }, options);
+    const result = await synthesizeBreakAwareFullChunk(chunk, { ...params, text: chunk }, options);
     buffers.push(result.audioBuffer);
     metadata.push({
       index,
-      text: stripBreakSentinels(chunk),
+      text: renderBreakSentinels(chunk),
       attempts: result.attempts,
       durationSec: result.analysis?.durationSec ?? 0,
       metrics: result.analysis?.metrics ?? {},
