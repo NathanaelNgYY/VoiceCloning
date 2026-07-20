@@ -78,11 +78,13 @@ audio {
   color: white;
 }
 
-/* GI-Bleeding skin palette — PANTONE 2758 navy.
-   Scoped to the gi page root so other build modes keep the default blue. */
+/* GI-Bleeding skin palette — LKCMedicine maroon (#7c1d6f).
+   Scoped to the gi root so other build modes keep the default blue. Every gi
+   surface reads these tokens (text-primary / bg-primary-soft / ring-primary),
+   so a rebrand is this block only — no hardcoded hex in the pages. */
 .gi-root {
-  --primary: 237 61% 24%;
+  --primary: 308 62% 30%; /* #7c1d6f */
   --primary-foreground: 0 0% 100%;
-  --primary-soft: 234 46% 94%;
-  --ring: 237 61% 24%;
+  --primary-soft: 266 33% 96%; /* #f4f1f8 */
+  --ring: 308 62% 30%;
 }
