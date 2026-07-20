@@ -32,11 +32,11 @@
 | `src/components/gi/TypingIndicator.jsx` | Three-dot "thinking" bubble. Pure. |
 | `src/components/gi/ChatList.jsx` | Message list + autoscroll. Pure. |
 | `src/components/gi/ChatHistory.jsx` | Sidebar header + New Chat button. Pure. |
-| `src/components/gi/Composer.jsx` | Mic/mute/send controls. Pure. |
+| `src/components/gi/Composer.jsx` | Mic/mute controls (voice-only). Pure. |
 | `src/components/gi/AvatarOrb.jsx` | Portrait + pulse rings. Pure. |
 | `src/components/gi/AvatarStage.jsx` | Frame around the orb. Pure. |
 | `src/components/gi/DisclaimerBanner.jsx` | Dismissible banner. Pure. |
-| `src/components/gi/VoicePicker.jsx` | Cloned-voice `<select>`. Pure. |
+| `src/components/gi/VoiceIndicator.jsx` | Read-only active-voice label. Pure. |
 | `src/hooks/giChatStatus.js` | Pure mapping helpers (`phase` → status/busy/mute). Unit-tested. |
 | `src/hooks/giChatStatus.test.js` | Tests for the above. |
 | `src/hooks/useGiChatEngine.js` | Engine adapter over `useLiveSpeech`. |
@@ -309,7 +309,7 @@ git commit -m "feat: add gi surface/ink tokens and pulse-ring animation"
 ### Task 3: Port the presentational components
 
 **Files:**
-- Create: `client/src/components/gi/ChatMessage.jsx`, `TypingIndicator.jsx`, `ChatList.jsx`, `ChatHistory.jsx`, `Composer.jsx`, `AvatarOrb.jsx`, `AvatarStage.jsx`, `DisclaimerBanner.jsx`, `VoicePicker.jsx`
+- Create: `client/src/components/gi/ChatMessage.jsx`, `TypingIndicator.jsx`, `ChatList.jsx`, `ChatHistory.jsx`, `Composer.jsx`, `AvatarOrb.jsx`, `AvatarStage.jsx`, `DisclaimerBanner.jsx`, `VoiceIndicator.jsx`
 - Create: `client/src/assets/maleavatar.png`
 
 **Interfaces:**
@@ -318,11 +318,11 @@ git commit -m "feat: add gi surface/ink tokens and pulse-ring animation"
   - `<ChatMessage message />` where `message` is `{ id, role, text, status, error }`
   - `<ChatList messages status scrollKey />`
   - `<ChatHistory onNewChat />`
-  - `<Composer disabled active loading micMuted inputMode onStart onStop onToggleMute onSend />`
+  - `<Composer disabled active loading micMuted onStart onStop onToggleMute />` (voice-only — no `inputMode`/`onSend`)
   - `<AvatarStage status fullScreen />`
   - `<AvatarOrb status docked />`
   - `<DisclaimerBanner />`
-  - `<VoicePicker disabled options value onChange />` where `options` is `[{ id, label }]`
+  - `<VoiceIndicator label />` — read-only text, not a `<select>`
 
 - [ ] **Step 1: Copy the avatar asset**
 
@@ -575,49 +575,40 @@ export function DisclaimerBanner() {
 }
 ```
 
-- [ ] **Step 9: Create `src/components/gi/VoicePicker.jsx`**
+- [ ] **Step 9: Create `src/components/gi/VoiceIndicator.jsx`**
+
+Switching cloned voices is not supported in this version (D4a), so this is a
+read-only indicator, not the source's `<select>`. It renders nothing when the
+active voice is unknown.
 
 ```jsx
-export function VoicePicker({ disabled = false, options, value, onChange }) {
-  if (!options || options.length === 0) {
-    return null;
-  }
-
-  const selectedValue = options.some((option) => option.id === value)
-    ? value
-    : options[0]?.id ?? '';
+export function VoiceIndicator({ label }) {
+  const name = String(label || '').trim();
+  if (!name) return null;
 
   return (
-    <label className="flex items-center justify-center gap-2 text-xs text-ink-muted">
+    <p className="flex items-center justify-center gap-2 text-xs text-ink-muted">
       <span className="font-medium text-ink">Voice</span>
-      <select
-        value={selectedValue}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-        className="min-w-40 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-ink shadow-sm transition focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+      <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-ink shadow-sm">
+        {name}
+      </span>
+    </p>
   );
 }
 ```
 
 - [ ] **Step 10: Create `src/components/gi/Composer.jsx`**
 
-Copied from the source with two changes: the `locked`/intro-lock prop is dropped (no intro sequence in this engine), and `MAX_CONTEXT_MESSAGE_LENGTH` is inlined as a local constant since `lib/conversationContext.js` is not being ported.
+Voice-only. The source's text branch is **not** ported: `useLiveSpeech` exposes no
+text-submit entry point, and adding one would mean modifying the engine, which
+Global Constraint #1 forbids. Shipping a textarea whose Send silently starts a
+voice session would be worse than not shipping it, so the `inputMode`/`onSend`
+props and the whole text branch are omitted. The `locked`/intro-lock prop is also
+dropped (this engine has no intro sequence).
 
 ```jsx
-import { useRef, useState } from 'react';
-import { Loader2, Mic, MicOff, PhoneOff, Send } from 'lucide-react';
+import { Loader2, Mic, MicOff, PhoneOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-const MAX_MESSAGE_LENGTH = 4000;
-const CHARACTER_COUNTER_THRESHOLD = 3500;
 
 export function Composer({
   disabled,
@@ -627,75 +618,7 @@ export function Composer({
   onStop,
   micMuted = false,
   onToggleMute,
-  inputMode = 'voice',
-  onSend,
 }) {
-  const [text, setText] = useState('');
-  const textareaRef = useRef(null);
-
-  const handleSend = () => {
-    const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onSend?.(trimmed);
-    setText('');
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-      });
-    }
-  };
-
-  const handleKeyDown = (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleSend();
-    }
-  };
-
-  const handleTextChange = (event) => {
-    setText(event.target.value);
-    const el = event.target;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-  };
-
-  if (inputMode === 'text') {
-    const showCharacterCounter = text.length >= CHARACTER_COUNTER_THRESHOLD;
-    return (
-      <div className="flex flex-col gap-1">
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={handleTextChange}
-            onKeyDown={handleKeyDown}
-            disabled={disabled}
-            maxLength={MAX_MESSAGE_LENGTH}
-            placeholder="Type your question…"
-            rows={1}
-            className="min-w-0 flex-1 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:opacity-50"
-          />
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={handleSend}
-            disabled={disabled || !text.trim()}
-            aria-label="Send message"
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-primary text-white shadow-lg shadow-primary/25 transition hover:opacity-90 disabled:opacity-50"
-          >
-            <Send className="size-4" />
-          </button>
-        </div>
-        {showCharacterCounter && (
-          <p className="pr-14 text-right text-[11px] text-ink-muted" aria-live="polite">
-            {text.length.toLocaleString()} / {MAX_MESSAGE_LENGTH.toLocaleString()}
-          </p>
-        )}
-      </div>
-    );
-  }
-
   const label = loading
     ? 'Connecting to voice assistant'
     : active
@@ -772,7 +695,7 @@ git commit -m "feat: port gi-bleeding presentational components"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces, for Task 5: `toGiStatus(phase)`, `isResponseBusy(phase)`, `isVoiceActive(phase)`, `toVoiceOptions(profiles)`.
+- Produces, for Task 5: `toGiStatus(phase, { hasError })`, `isResponseBusy(phase)`, `isVoiceActive(phase)`.
 
 `useLiveSpeech` reports `phase` as one of `idle`, `listening`, `thinking`, `generating_voice`, `speaking`. The gi components expect `status` as one of `idle`, `connecting`, `listening`, `thinking`, `speaking`, `error`.
 
@@ -784,12 +707,7 @@ Create `client/src/hooks/giChatStatus.test.js`:
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  isResponseBusy,
-  isVoiceActive,
-  toGiStatus,
-  toVoiceOptions,
-} from './giChatStatus.js';
+import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 
 test('toGiStatus passes through the statuses the components already know', () => {
   assert.equal(toGiStatus('idle'), 'idle');
@@ -830,32 +748,6 @@ test('isVoiceActive is true for every non-idle phase', () => {
   assert.equal(isVoiceActive('speaking'), true);
 });
 
-test('toVoiceOptions maps voice profiles onto picker options', () => {
-  const options = toVoiceOptions([
-    { key: 'dean', displayName: 'Dean' },
-    { key: 'amy', displayName: 'Amy' },
-  ]);
-
-  assert.deepEqual(options, [
-    { id: 'dean', label: 'Dean' },
-    { id: 'amy', label: 'Amy' },
-  ]);
-});
-
-test('toVoiceOptions skips entries with no key and falls back to the key as a label', () => {
-  const options = toVoiceOptions([
-    { key: '', displayName: 'Nameless' },
-    { key: 'raw' },
-    null,
-  ]);
-
-  assert.deepEqual(options, [{ id: 'raw', label: 'raw' }]);
-});
-
-test('toVoiceOptions tolerates a non-array input', () => {
-  assert.deepEqual(toVoiceOptions(undefined), []);
-  assert.deepEqual(toVoiceOptions(null), []);
-});
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -895,16 +787,6 @@ export function isVoiceActive(phase) {
   return Boolean(phase) && phase !== 'idle';
 }
 
-export function toVoiceOptions(profiles) {
-  if (!Array.isArray(profiles)) return [];
-
-  return profiles
-    .filter((profile) => profile && String(profile.key || '').trim())
-    .map((profile) => ({
-      id: String(profile.key).trim(),
-      label: String(profile.displayName || '').trim() || String(profile.key).trim(),
-    }));
-}
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -927,8 +809,8 @@ git commit -m "feat: add gi chat status mapping helpers"
 - Create: `client/src/hooks/useGiChatEngine.js`
 
 **Interfaces:**
-- Consumes: `toGiStatus`, `isResponseBusy`, `isVoiceActive`, `toVoiceOptions` from Task 4; `useLiveSpeech` from `@/hooks/useLiveSpeech.js` (unmodified); `getFullActiveVoiceProfile`, `getModels` from `@/services/api.js` (unmodified); `buildLiveFastRefParams`, `normalizeLiveFastSettings` from `@/lib/liveFastSetup`; `buildVoiceProfiles(gptModels, sovitsModels)` from `@/lib/voiceProfiles`; `resolveChatbotSystemPrompt` from `@/lib/chatbotSystemPrompt`; `resolveChatbotDocuments`, `buildDocumentsContext`, `combineSystemPromptWithDocuments` from `@/lib/chatbotDocuments`; `useGpuStatus` from `@/lib/gpuStatus.jsx`; `sanitizeBackendError` from `@/lib/backendErrors`.
-- Produces, for Task 6: a hook returning `{ status, messages, error, voiceActive, responseBusy, connecting, inputMode, setInputMode, micMuted, toggleMute, startConversation, stopConversation, send, newChat, voiceOptions, selectedVoiceId, setSelectedVoiceId, phase, audioSrc, selectedReplyId, playbackReady, onAudioEnded }`.
+- Consumes: `toGiStatus`, `isResponseBusy`, `isVoiceActive` from Task 4; `useLiveSpeech` from `@/hooks/useLiveSpeech.js` (unmodified); `getFullActiveVoiceProfile`, `getModels` from `@/services/api.js` (unmodified); `buildLiveFastRefParams`, `normalizeLiveFastSettings` from `@/lib/liveFastSetup`; `buildVoiceProfiles(gptModels, sovitsModels)` from `@/lib/voiceProfiles`; `resolveChatbotSystemPrompt` from `@/lib/chatbotSystemPrompt`; `resolveChatbotDocuments`, `buildDocumentsContext`, `combineSystemPromptWithDocuments` from `@/lib/chatbotDocuments`; `useGpuStatus` from `@/lib/gpuStatus.jsx`; `sanitizeBackendError` from `@/lib/backendErrors`.
+- Produces, for Task 6: a hook returning `{ status, messages, error, voiceActive, responseBusy, connecting, micMuted, toggleMute, startConversation, stopConversation, newChat, activeVoiceLabel, phase, audioSrc, selectedReplyId, playbackReady, onAudioEnded }`.
 
 **Origin note for the implementer:** this hook reimplements the kiosk-only subset of the setup in `pages/LivePage.jsx:300-615`. It deliberately omits that page's model-selection, reference-picking, auto-sync, and TTS machinery, which exist to serve the training UI. Do not import from `LivePage.jsx`, and do not modify it.
 
@@ -952,7 +834,7 @@ import {
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
-import { isResponseBusy, isVoiceActive, toGiStatus, toVoiceOptions } from './giChatStatus.js';
+import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
@@ -965,8 +847,6 @@ export function useGiChatEngine() {
   const [activeProfile, setActiveProfile] = useState(null);
   const [profileError, setProfileError] = useState('');
   const [voiceProfiles, setVoiceProfiles] = useState([]);
-  const [selectedVoiceId, setSelectedVoiceIdState] = useState('');
-  const [inputMode, setInputMode] = useState('voice');
   const [clearedBeforeId, setClearedBeforeId] = useState('');
 
   const profileRequestRef = useRef(0);
@@ -1017,10 +897,13 @@ export function useGiChatEngine() {
     loadVoiceProfiles();
   }, [backendQueryable, loadActiveProfile, loadVoiceProfiles]);
 
-  useEffect(() => {
+  // Human-readable name of the active cloned voice, for the read-only indicator.
+  const activeVoiceLabel = useMemo(() => {
     const activeKey = String(activeProfile?.key || '').trim();
-    if (activeKey) setSelectedVoiceIdState(activeKey);
-  }, [activeProfile]);
+    if (!activeKey) return '';
+    const match = voiceProfiles.find((profile) => profile.key === activeKey);
+    return match?.displayName || activeKey;
+  }, [activeProfile, voiceProfiles]);
 
   const refParams = useMemo(() => {
     if (!activeProfile) return null;
@@ -1063,15 +946,6 @@ export function useGiChatEngine() {
     setClearedBeforeId(last ? last.id : '');
   }, [liveSpeech.messages]);
 
-  // Runtime voice switching is NOT implemented in this version. activateVoiceProfile()
-  // posts a whole profile payload (voiceProfileId, ref_audio_path, prompt_text, aux
-  // refs, defaults) built from the target profile's saved rank-1 config, and the new
-  // weights then have to be loaded via selectModels. That is the modelLoading /
-  // autoVoiceProfileSync chain this hook deliberately does not port. The picker
-  // therefore renders read-only, showing which cloned voice is active.
-  // See "Known Limitations" and the follow-up note at the end of this plan.
-  const setSelectedVoiceId = useCallback(() => {}, []);
-
   const toggleMute = useCallback(() => {
     if (liveSpeech.isMicInputEnabled) {
       liveSpeech.disableMicInput();
@@ -1089,17 +963,12 @@ export function useGiChatEngine() {
     voiceActive: isVoiceActive(liveSpeech.phase),
     responseBusy: isResponseBusy(liveSpeech.phase),
     connecting: !backendQueryable,
-    inputMode,
-    setInputMode,
     micMuted: !liveSpeech.isMicInputEnabled,
     toggleMute,
     startConversation: liveSpeech.start,
     stopConversation: liveSpeech.stop,
-    send: liveSpeech.start,
     newChat,
-    voiceOptions: toVoiceOptions(voiceProfiles),
-    selectedVoiceId,
-    setSelectedVoiceId,
+    activeVoiceLabel,
     // Playback plumbing — GiChatPage drives a hidden <audio> element from these.
     phase: liveSpeech.phase,
     audioSrc: liveSpeech.audioSrc,
@@ -1113,7 +982,7 @@ export function useGiChatEngine() {
 - [ ] **Step 2: Verify the module resolves**
 
 Run: `npm run build`
-Expected: build succeeds with no unresolved imports. (`buildVoiceProfiles` is confirmed to have the signature `(gptModels, sovitsModels)` and to return entries shaped `{ key, displayName, gptCandidates, sovitsCandidates }` — see `src/lib/voiceProfiles.js:77-107` — which is the contract `toVoiceOptions` consumes.)
+Expected: build succeeds with no unresolved imports. (`buildVoiceProfiles` is confirmed to have the signature `(gptModels, sovitsModels)` and to return entries shaped `{ key, displayName, gptCandidates, sovitsCandidates }` — see `src/lib/voiceProfiles.js:77-107` — the `displayName` is what the read-only voice indicator shows.)
 
 - [ ] **Step 3: Commit**
 
@@ -1147,7 +1016,7 @@ import { ChatHistory } from '@/components/gi/ChatHistory.jsx';
 import { ChatList } from '@/components/gi/ChatList.jsx';
 import { Composer } from '@/components/gi/Composer.jsx';
 import { DisclaimerBanner } from '@/components/gi/DisclaimerBanner.jsx';
-import { VoicePicker } from '@/components/gi/VoicePicker.jsx';
+import { VoiceIndicator } from '@/components/gi/VoiceIndicator.jsx';
 import { useGiChatEngine } from '@/hooks/useGiChatEngine.js';
 import { nextAudioErrorAction } from '@/hooks/liveConversation.js';
 
@@ -1171,10 +1040,9 @@ export default function GiChatPage() {
     () =>
       JSON.stringify({
         error: Boolean(chat.error),
-        voiceOptions: chat.voiceOptions.length,
-        inputMode: chat.inputMode,
+        voice: chat.activeVoiceLabel,
       }),
-    [chat.error, chat.inputMode, chat.voiceOptions.length]
+    [chat.error, chat.activeVoiceLabel]
   );
 
   useEffect(() => {
@@ -1203,7 +1071,7 @@ export default function GiChatPage() {
     const observer = new ResizeObserver(updateFooterHeight);
     observer.observe(footerElement);
     return () => observer.disconnect();
-  }, [chat.inputMode]);
+  }, []);
 
   // Reply audio plays as a chain of clips that only advances on `ended`. This
   // mirrors pages/LivePage.jsx:3115-3142 exactly, including the retry-then-skip
@@ -1255,8 +1123,6 @@ export default function GiChatPage() {
       onStop={chat.stopConversation}
       micMuted={chat.micMuted}
       onToggleMute={chat.toggleMute}
-      inputMode={chat.inputMode}
-      onSend={chat.send}
     />
   );
 
@@ -1337,32 +1203,8 @@ export default function GiChatPage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              <div className="flex shrink-0 rounded-full bg-slate-100 p-1">
-                <button
-                  type="button"
-                  disabled={controlsBusy}
-                  onClick={() => chat.setInputMode('voice')}
-                  className={cn(
-                    'rounded-full px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                    chat.inputMode === 'voice' ? 'bg-white text-black shadow' : 'text-ink-muted hover:text-ink'
-                  )}
-                >
-                  Voice
-                </button>
-                <button
-                  type="button"
-                  disabled={controlsBusy || chat.voiceActive}
-                  title={chat.voiceActive ? 'End the voice session to switch to text.' : undefined}
-                  onClick={() => chat.setInputMode('text')}
-                  className={cn(
-                    'rounded-full px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                    chat.inputMode === 'text' ? 'bg-white text-black shadow' : 'text-ink-muted hover:text-ink'
-                  )}
-                >
-                  Text
-                </button>
-              </div>
-
+              {/* The source's Voice/Text toggle is omitted — this build is
+                  voice-only (see Task 3 Step 10). */}
               <div className="flex shrink-0 rounded-full bg-slate-100 p-1 lg:hidden">
                 <button
                   type="button"
@@ -1438,11 +1280,7 @@ export default function GiChatPage() {
                   <ChatList messages={chat.messages} status={chat.status} scrollKey={chatScrollKey} />
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-                    <p className="text-sm text-ink-muted">
-                      {chat.inputMode === 'text'
-                        ? 'Type a question below to get started'
-                        : 'Start a conversation — click the mic'}
-                    </p>
+                    <p className="text-sm text-ink-muted">Start a conversation — click the mic</p>
                   </div>
                 )}
               </div>
@@ -1454,16 +1292,10 @@ export default function GiChatPage() {
                   </p>
                 )}
 
-                {chat.voiceOptions.length > 0 && (
+                {chat.activeVoiceLabel && (
                   <div className="px-4 pb-2">
                     <div className="flex flex-wrap items-center justify-center gap-3">
-                      {/* Read-only in this version — see Known Limitations. */}
-                      <VoicePicker
-                        disabled
-                        options={chat.voiceOptions}
-                        value={chat.selectedVoiceId}
-                        onChange={chat.setSelectedVoiceId}
-                      />
+                      <VoiceIndicator label={chat.activeVoiceLabel} />
                     </div>
                   </div>
                 )}
@@ -1560,8 +1392,8 @@ Run: `npm run dev:gi`, open `http://localhost:5176`, and confirm each of:
 2. The app-shell header and footer are absent (the page is full-bleed `h-screen`).
 3. Clicking the mic starts a voice session; the orb shows pulse rings; a spoken question produces a transcript bubble and a cloned-voice reply that is audible.
 4. The mute button appears while active and toggles mic input.
-5. Switching to Text mode shows the textarea; Enter sends; the reply is spoken.
-6. The voice picker lists the available profiles with the active one selected, and is disabled (read-only — see Known Limitations).
+5. There is no Voice/Text toggle and no textarea anywhere (voice-only build).
+6. The footer shows a read-only "Voice: <name>" indicator naming the active cloned voice.
 7. "New chat" empties the transcript; the empty-state prompt returns.
 8. The sidebar collapses to the 14-unit rail and reopens.
 9. At a narrow window the Chat/Avatar toggle appears and the avatar view shows the composer overlay.
@@ -1580,7 +1412,8 @@ git commit -m "feat: add gi dev and build targets"
 
 Record these; do not treat them as defects during implementation.
 
-- **The voice picker is read-only.** It shows which cloned voice is active but cannot switch. `activateVoiceProfile(profile)` posts a full profile payload assembled from the target's saved rank-1 config, after which the new weights must be loaded via `selectModels` — that is the `modelLoading` / `autoVoiceProfileSync` chain this hook deliberately does not port. Making the picker functional is scoped as follow-up work, not part of this plan.
+- **No text input.** This build is voice-only: the Voice/Text toggle and the Composer's text branch are not ported. `useLiveSpeech` has no text-submit entry point, and adding one means modifying the engine, which Global Constraint #1 forbids. Decided during pre-flight rather than shipping a Send button that silently starts a voice session.
+- **The voice indicator is read-only.** It shows which cloned voice is active but cannot switch. `activateVoiceProfile(profile)` posts a full profile payload assembled from the target's saved rank-1 config, after which the new weights must be loaded via `selectModels` — that is the `modelLoading` / `autoVoiceProfileSync` chain this hook deliberately does not port. Making the picker functional is scoped as follow-up work, not part of this plan.
 - **No conversation persistence.** `newChat` hides earlier messages by slicing on the last message id; the engine's own history is untouched and nothing is stored. This is design decision D3.
 - **No system-prompt editor.** The gi skin reads the prompt and documents at mount from whatever the Dean kiosk UI last saved. It cannot edit them.
 - **Content is not GI-specific.** This plan ports the interface only. The assistant answers using the existing `chatbotSystemPrompt`, not GI-bleeding material. Changing that is separate work.
