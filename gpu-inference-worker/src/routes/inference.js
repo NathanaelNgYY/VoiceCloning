@@ -15,6 +15,7 @@ import {
   buildAttemptVariants,
   scoreAudioCandidate,
   hasActiveInferenceSession,
+  concatWavs,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -22,7 +23,7 @@ import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { scanOovWords } from '../services/oovScan.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
-import { expandSsml } from '../services/ssml.js';
+import { expandSsml, splitOnBreaks } from '../services/ssml.js';
 import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
@@ -294,11 +295,16 @@ export async function handleLiveTtsRequest(body, {
   retryCount,
 } = {}) {
   const resolvedParams = await resolveParams(body);
-  const dictionaryText = await prepareTextWithRuntimeDictionary(resolvedParams.text);
+  const expandedText = expandSsml(
+    resolvedParams.text,
+    { protectedWords: await arpabetProtectedWords() },
+  );
+  const dictionaryText = await prepareTextWithRuntimeDictionary(expandedText);
   const emphasizedText = applyEmphasisAndSpelling(dictionaryText);
+  const normalizedText = prepareTextForSynthesis(emphasizedText);
   const normalizedParams = {
     ...resolvedParams,
-    text: prepareTextForSynthesis(emphasizedText),
+    text: normalizedText,
     // cut0 = "no forced split": feed the whole chunk in and let the model choose its
     // own pauses (natural prosody), same as Live Full. The Live Fast lambda always
     // sends cut0; this fallback only applies if a caller omits it.
@@ -309,11 +315,38 @@ export async function handleLiveTtsRequest(body, {
   const activeVerifyChunk = verifyChunk !== undefined
     ? verifyChunk
     : (verificationOptions(normalizedParams, { phonemeVerification: true }).verifyChunk || null);
-  const audioBuffer = await synthesizeLiveFastChunk(normalizedParams, {
-    synthesize,
-    verifyChunk: activeVerifyChunk,
-    retryCount,
-  });
+  const breakSegments = [];
+  for (const segment of splitOnBreaks(normalizedText)) {
+    const text = String(segment.text || '').trim();
+    if (text) {
+      breakSegments.push({ text, breakMsAfter: segment.breakMsAfter });
+    } else if (segment.breakMsAfter != null && breakSegments.length > 0) {
+      // Match Full's handling of back-to-back breaks: the latest explicit break
+      // controls the next real audio boundary instead of synthesizing an empty clip.
+      breakSegments[breakSegments.length - 1].breakMsAfter = segment.breakMsAfter;
+    }
+  }
+  if (breakSegments.length === 0) {
+    throw new Error('No text to synthesize');
+  }
+
+  const buffers = [];
+  for (const segment of breakSegments) {
+    buffers.push(await synthesizeLiveFastChunk(
+      { ...normalizedParams, text: segment.text },
+      {
+        synthesize,
+        verifyChunk: activeVerifyChunk,
+        retryCount,
+      },
+    ));
+  }
+  const audioBuffer = buffers.length === 1
+    ? buffers[0]
+    : concatWavs(
+      buffers,
+      breakSegments.slice(0, -1).map(segment => segment.breakMsAfter ?? 0),
+    );
   return { audioBuffer, resolvedParams: normalizedParams };
 }
 
@@ -583,9 +616,10 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
       ));
     }
     const result = await regenerateLongTextChunk(sessionId, index, fullInferenceQualityOptions({
+      ...(session.options || {}),
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
-    }), preparedReplacement);
+    }), preparedReplacement, replacementText);
     activityState.mark();
     return res.json(result);
   } catch (err) {

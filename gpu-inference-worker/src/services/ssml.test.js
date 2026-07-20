@@ -10,7 +10,13 @@ import {
 } from './ssml.js';
 import { applyEmphasisAndSpelling } from './emphasisAndSpelling.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
-import { splitTextIntoChunks, computeChunkPauses, concatWavs, parseWav } from './longTextInference.js';
+import {
+  splitTextIntoChunks,
+  computeChunkPauses,
+  concatWavs,
+  parseWav,
+  synthesizeBreakAwareFullChunk,
+} from './longTextInference.js';
 
 // Build a PCM16 mono WAV: leadMs of silence, toneMs of 220Hz tone, trailMs of silence.
 function makeWav({ toneMs, leadMs = 0, trailMs = 0, sr = 32000 }) {
@@ -111,6 +117,27 @@ test('a break forces a chunk boundary and sets the inter-chunk pause', () => {
   assert.deepEqual(computeChunkPauses(chunks, 0), [600]);
   // Spoken text never contains the sentinel.
   assert.equal(stripBreakSentinels(chunks[0]), 'First sentence here today.');
+});
+
+test('targeted Full regeneration uses the same break-aware chunk and join pipeline', async () => {
+  const expanded = expandSsml('hello <break time="7000ms"/> hello');
+  const synthesizedTexts = [];
+  const result = await synthesizeBreakAwareFullChunk(
+    expanded,
+    { text: expanded },
+    { chunkJoinPauseMs: 0 },
+    {
+      synthesizeChunk: async (text) => {
+        synthesizedTexts.push(stripBreakSentinels(text));
+        return { audioBuffer: makeWav({ toneMs: 300 }), attempts: 1 };
+      },
+    },
+  );
+
+  assert.deepEqual(synthesizedTexts, ['hello', 'hello']);
+  assert.equal(result.attempts, 2);
+  const total = durationMs(result.audioBuffer);
+  assert.ok(total >= 7550 && total <= 7650, `unexpected regenerated duration: ${total}ms`);
 });
 
 test('text with no breaks chunks exactly as before', () => {

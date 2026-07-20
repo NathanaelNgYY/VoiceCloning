@@ -85,6 +85,18 @@ const MIN_CHUNK_LENGTH = 24;
 // produce rushed or near-silent audio. When the configured sentence ceiling is
 // reached below this total word count, permit exactly one neighbouring sentence.
 const MIN_CONTEXT_WORDS = 8;
+const SESSION_OPTION_KEYS = [
+  'maxChunkLength',
+  'maxChunkWords',
+  'maxSentencesPerChunk',
+  'chunkJoinPauseMs',
+  'retryCount',
+  'initialTakeCount',
+  'selectBestVerifiedCandidate',
+  'isolateRiskySentences',
+  'allowBestEffortFallback',
+  'commaPauseMs',
+];
 
 function clampNumber(value, fallback) {
   const num = Number(value);
@@ -1670,7 +1682,55 @@ export function getLongTextSessionMetadata(sessionId) {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 }
 
-export async function regenerateLongTextChunk(sessionId, index, options = {}, replacementText = '') {
+export async function synthesizeBreakAwareFullChunk(
+  chunkText,
+  baseParams,
+  options = {},
+  { synthesizeChunk = synthesizeChunkResilient } = {},
+) {
+  const synthesisChunks = splitTextIntoChunks(chunkText, options);
+  if (synthesisChunks.length === 0) throw new Error('No text to synthesize');
+
+  const buffers = [];
+  let attempts = 0;
+  for (const synthesisChunk of synthesisChunks) {
+    const result = await synthesizeChunk(
+      synthesisChunk,
+      { ...baseParams, text: synthesisChunk },
+      options,
+    );
+    buffers.push(result.audioBuffer);
+    attempts += result.attempts;
+  }
+
+  return {
+    audioBuffer: buffers.length === 1
+      ? buffers[0]
+      : concatWavs(
+        buffers,
+        computeChunkPauses(synthesisChunks, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs)),
+        computeChunkFades(synthesisChunks),
+      ),
+    attempts,
+    synthesisChunks,
+  };
+}
+
+export function serializableSessionOptions(options = {}) {
+  return Object.fromEntries(
+    SESSION_OPTION_KEYS
+      .filter(key => ['number', 'boolean'].includes(typeof options[key]))
+      .map(key => [key, options[key]]),
+  );
+}
+
+export async function regenerateLongTextChunk(
+  sessionId,
+  index,
+  options = {},
+  replacementText = '',
+  replacementDisplayText = '',
+) {
   const manifest = getLongTextSessionMetadata(sessionId);
   const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
   const chunkIndex = Number(index);
@@ -1678,10 +1738,12 @@ export async function regenerateLongTextChunk(sessionId, index, options = {}, re
     throw new Error('Invalid chunk index');
   }
 
-  const editedText = stripBreakSentinels(String(replacementText || '')).trim();
+  // Keep SSML break sentinels in the stored synthesis text. They are routing metadata
+  // for the shared Full chunk/pause pipeline and are stripped only before model/ASR.
+  const editedText = String(replacementText || '').trim();
   const chunkText = editedText || chunks[chunkIndex];
   const params = manifest.params || {};
-  const result = await synthesizeChunkResilient(
+  const result = await synthesizeBreakAwareFullChunk(
     chunkText,
     { ...params, text: chunkText },
     options,
@@ -1713,7 +1775,7 @@ export async function regenerateLongTextChunk(sessionId, index, options = {}, re
 
   return {
     index: chunkIndex,
-    text: stripBreakSentinels(chunkText),
+    text: String(replacementDisplayText || '').trim() || stripBreakSentinels(chunkText),
     attempts: result.attempts,
     revision: Date.now(),
   };
@@ -1729,7 +1791,11 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   const sessionDir = getSessionDir(sessionId);
   fs.mkdirSync(sessionDir, { recursive: true });
-  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify({ params, chunks }, null, 2));
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify({
+    params,
+    chunks,
+    options: serializableSessionOptions(options),
+  }, null, 2));
 
   const session = { cancelled: false };
   activeSessions.set(sessionId, session);

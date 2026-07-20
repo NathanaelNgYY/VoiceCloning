@@ -12,6 +12,7 @@ import {
   insertCommaPauses,
   parseWav,
   scoreAudioCandidate,
+  serializableSessionOptions,
 } from './longTextInference.js';
 import { inferenceServer } from './inferenceServer.js';
 
@@ -71,6 +72,22 @@ function makeSparseQuietWav(durationSec, sampleRate = 32000) {
   }
   return buf;
 }
+
+test('Full session manifests retain regeneration-relevant synthesis settings only', () => {
+  assert.deepEqual(serializableSessionOptions({
+    maxChunkWords: 24,
+    maxSentencesPerChunk: 2,
+    retryCount: 4,
+    allowBestEffortFallback: true,
+    verifyChunk: () => true,
+    unrelated: 'not persisted',
+  }), {
+    maxChunkWords: 24,
+    maxSentencesPerChunk: 2,
+    retryCount: 4,
+    allowBestEffortFallback: true,
+  });
+});
 
 // A hyphen used as a dash with spaces around it (" - ") reaches GPT-SoVITS as a
 // bare hyphen-minus, which the English G2P verbalizes as the word "minus".

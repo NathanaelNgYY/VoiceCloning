@@ -172,6 +172,14 @@ test('splitLiveReplyChunks keeps normal sentences separate by default', () => {
   assert.deepEqual(splitLiveReplyChunks(`${first} ${second}`), [first, second]);
 });
 
+test('splitLiveReplyChunks keeps an SSML break with speech on both sides', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  const chunks = splitLiveReplyChunks(`${first} <break time="7000ms"/> ${second}`);
+  assert.deepEqual(chunks, [`${first} <break time="7000ms"/> ${second}`]);
+  assert.deepEqual(shortenFirstFastPhrase(chunks), chunks);
+});
+
 test('splitLiveReplyChunks gives an explicit sentence limit priority over the default', () => {
   const first = 'This complete sentence contains enough useful words for stable synthesis.';
   const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
