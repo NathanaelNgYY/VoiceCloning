@@ -316,7 +316,7 @@ test('full inference quality keeps comma splicing off by default (opt-in via env
   assert.equal(options.isolateRiskySentences, true);
 });
 
-test('full inference quality adds one sentence when a two-sentence chunk is still too short', () => {
+test('full inference quality keeps two sentences when they provide enough context', () => {
   const options = fullInferenceQualityOptions();
   const chunks = splitTextIntoChunks(
     'First, cells grow. Next, their DNA is copied. Finally, the cell divides.',
@@ -325,7 +325,8 @@ test('full inference quality adds one sentence when a two-sentence chunk is stil
 
   assert.equal(options.maxSentencesPerChunk, 2);
   assert.deepEqual(chunks, [
-    'First, cells grow. Next, their DNA is copied. Finally, the cell divides.',
+    'First, cells grow. Next, their DNA is copied.',
+    'Finally, the cell divides.',
   ]);
 });
 
@@ -442,6 +443,28 @@ test('full inference never emits a tiny standalone chunk (silent-buffer trigger)
   for (const chunk of chunks) {
     assert.ok(chunk.trim().length >= 24, `chunk too short, will render silent: ${JSON.stringify(chunks)}`);
   }
+});
+
+test('normal numbers and acronyms respect two-unit grouping and the hard character limit', () => {
+  const chunks = splitTextIntoChunks(
+    `Deep reasoning, criticism and architecture
+
+Opus 4.8 Low > Sol Low > Terra Low
+
+Opus is preferable when you need the model to challenge your approach, detect conceptual weaknesses and reason through unfamiliar problems.
+
+Implementing and debugging code
+
+Sol Low is probably the best choice.`,
+    fullInferenceQualityOptions(),
+  );
+
+  assert.deepEqual(chunks, [
+    'Deep reasoning, criticism and architecture Opus 4.8 Low greater than Sol Low greater than Terra Low',
+    'Opus is preferable when you need the model to challenge your approach, detect conceptual weaknesses and reason through unfamiliar problems.',
+    'Implementing and debugging code Sol Low is probably the best choice.',
+  ]);
+  assert.ok(chunks.every((chunk) => chunk.length <= 170), JSON.stringify(chunks));
 });
 
 test('a short trailing clause is folded back instead of stranded as a tiny chunk', () => {

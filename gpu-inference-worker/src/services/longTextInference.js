@@ -178,9 +178,10 @@ function containsRiskySynthesisContent(sentence, options = {}) {
       .filter(Boolean),
   );
   const hasGuardedTerm = tokens.some((token) => guardedWords.has(token));
-  const hasNumberOrAcronym = /\d/u.test(text) || /\b[A-Z]{2,}\b/u.test(text);
   const clauseBreaks = (text.match(/[,;:—]/gu) || []).length;
-  return hasGuardedTerm || hasNumberOrAcronym || tokens.length >= 28 || clauseBreaks >= 3;
+  // Ordinary numbers and acronyms are common prose, not a reason to defeat the
+  // configured sentence grouping. Reviewed dictionary terms retain isolation.
+  return hasGuardedTerm || tokens.length >= 28 || clauseBreaks >= 3;
 }
 
 function wordLimitCutIndex(text, maxWords) {
