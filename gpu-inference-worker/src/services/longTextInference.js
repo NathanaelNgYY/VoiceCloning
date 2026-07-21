@@ -154,9 +154,11 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    // Colons, semicolons, and em dashes do not end grammatical sentences.
-    // Newlines remain layout units so short headings can be paired with a neighbour.
-    .split(/(?<=[.!?。！？…])\s+|\n+/u)
+    // Only terminal punctuation ends a sentence. Newlines are layout, not speech
+    // boundaries, so headings and wrapped textarea lines stay with the prose that
+    // follows. Colons, semicolons, and em dashes also remain inside the sentence.
+    .replace(/\n+/gu, ' ')
+    .split(/(?<=[.!?。！？…])\s+/u)
     .map(part => part.trim())
     .filter(Boolean);
 

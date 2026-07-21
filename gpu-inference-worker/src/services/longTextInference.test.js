@@ -445,7 +445,7 @@ test('full inference never emits a tiny standalone chunk (silent-buffer trigger)
   }
 });
 
-test('normal numbers and acronyms respect two-unit grouping and the hard character limit', () => {
+test('newlines do not create heading-only chunks and the hard character limit still applies', () => {
   const chunks = splitTextIntoChunks(
     `Deep reasoning, criticism and architecture
 
@@ -460,11 +460,12 @@ Sol Low is probably the best choice.`,
   );
 
   assert.deepEqual(chunks, [
-    'Deep reasoning, criticism and architecture Opus 4.8 Low greater than Sol Low greater than Terra Low',
-    'Opus is preferable when you need the model to challenge your approach, detect conceptual weaknesses and reason through unfamiliar problems.',
-    'Implementing and debugging code Sol Low is probably the best choice.',
+    'Deep reasoning, criticism and architecture Opus 4.8 Low greater than Sol Low greater than Terra Low Opus is preferable when you need the model to challenge your approach,',
+    'detect conceptual weaknesses and reason through unfamiliar problems. Implementing and debugging code Sol Low is probably the best choice.',
   ]);
   assert.ok(chunks.every((chunk) => chunk.length <= 170), JSON.stringify(chunks));
+  assert.ok(!chunks.includes('Deep reasoning, criticism and architecture'));
+  assert.ok(!chunks.includes('Implementing and debugging code'));
 });
 
 test('colons and semicolons do not create sentence fragments', () => {
@@ -474,8 +475,7 @@ test('colons and semicolons do not create sentence fragments', () => {
   );
 
   assert.deepEqual(chunks, [
-    'Final verdict Opus 4.8 Low: better thinker and critic.',
-    'Sol Low: better coding executor; stronger all rounder.',
+    'Final verdict Opus 4.8 Low: better thinker and critic. Sol Low: better coding executor; stronger all rounder.',
   ]);
 });
 
