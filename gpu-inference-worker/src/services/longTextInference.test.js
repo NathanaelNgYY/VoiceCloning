@@ -316,7 +316,7 @@ test('full inference quality keeps comma splicing off by default (opt-in via env
   assert.equal(options.isolateRiskySentences, true);
 });
 
-test('full inference quality groups at most two short sentences', () => {
+test('full inference quality adds one sentence when a two-sentence chunk is still too short', () => {
   const options = fullInferenceQualityOptions();
   const chunks = splitTextIntoChunks(
     'First, cells grow. Next, their DNA is copied. Finally, the cell divides.',
@@ -325,8 +325,7 @@ test('full inference quality groups at most two short sentences', () => {
 
   assert.equal(options.maxSentencesPerChunk, 2);
   assert.deepEqual(chunks, [
-    'First, cells grow. Next, their DNA is copied.',
-    'Finally, the cell divides.',
+    'First, cells grow. Next, their DNA is copied. Finally, the cell divides.',
   ]);
 });
 
@@ -365,7 +364,7 @@ test('the short-context exception never absorbs more than one extra sentence', (
   ]);
 });
 
-test('full inference isolates a sentence containing a guarded technical term', () => {
+test('full inference starts guarded content in a fresh chunk but adds following context', () => {
   const chunks = splitTextIntoChunks(
     'Cells continue growing steadily today. The biopsy confirmed metastasis. Recovery continued normally.',
     {
@@ -378,8 +377,7 @@ test('full inference isolates a sentence containing a guarded technical term', (
 
   assert.deepEqual(chunks, [
     'Cells continue growing steadily today.',
-    'The biopsy confirmed metastasis.',
-    'Recovery continued normally.',
+    'The biopsy confirmed metastasis. Recovery continued normally.',
   ]);
 });
 
@@ -438,10 +436,6 @@ test('retry takes are voice-faithful: ONLY the seed changes', () => {
   assert.notEqual(third.seed, second.seed);
 });
 
-// In full-inference mode (maxSentencesPerChunk: 1) the chunker used to strand a
-// short complete sentence ("Yes.") as its own tiny chunk. GPT-SoVITS renders
-// such a fragment as a near-silent buffer, and a long passage contains enough of
-// them that one eventually defeats every retry and aborts the whole job.
 test('full inference never emits a tiny standalone chunk (silent-buffer trigger)', () => {
   const text = "Yes. The mitochondria produce most of the cell's usable chemical energy through respiration.";
   const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });

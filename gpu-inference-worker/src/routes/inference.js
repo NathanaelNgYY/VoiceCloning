@@ -7,6 +7,7 @@ import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
   regenerateLongTextChunk,
+  deleteLongTextChunk,
   getLongTextSessionMetadata,
   cancelSession,
   applyFullInferenceQualityPreset,
@@ -620,6 +621,28 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
     }), preparedReplacement, replacementText);
+    activityState.mark();
+    return res.json(result);
+  } catch (err) {
+    const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
+    return res.status(status).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+  }
+});
+
+router.post('/inference/delete-chunk', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '');
+  const index = Number(req.body?.index);
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
+  if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
+  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
+
+  activeLiveTtsRequests += 1;
+  try {
+    activityState.mark();
+    const session = getLongTextSessionMetadata(sessionId);
+    const result = await deleteLongTextChunk(sessionId, index, session.options || {});
     activityState.mark();
     return res.json(result);
   } catch (err) {

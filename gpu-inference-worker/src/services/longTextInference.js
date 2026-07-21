@@ -300,9 +300,10 @@ function chunkSegment(text, options = {}) {
   for (const sentence of rawSentences) {
     if (containsRiskySynthesisContent(sentence, options)) {
       if (current.trim()) chunks.push(current.trim());
-      chunks.push(sentence.trim());
-      current = '';
-      sentenceCount = 0;
+      // Start a fresh chunk for guarded content, but leave it open so a short
+      // technical sentence can gain context from the sentence that follows.
+      current = sentence.trim();
+      sentenceCount = 1;
       continue;
     }
     const candidate = current ? `${current} ${sentence}` : sentence;
@@ -1813,6 +1814,43 @@ export async function regenerateLongTextChunk(
     index: chunkIndex,
     text: String(replacementDisplayText || '').trim() || renderBreakSentinels(chunkText),
     attempts: result.attempts,
+    revision: Date.now(),
+  };
+}
+
+export async function deleteLongTextChunk(sessionId, index, options = {}) {
+  const manifest = getLongTextSessionMetadata(sessionId);
+  const chunks = Array.isArray(manifest.chunks) ? [...manifest.chunks] : [];
+  const chunkIndex = Number(index);
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= chunks.length) {
+    throw new Error('Invalid chunk index');
+  }
+  if (chunks.length <= 1) throw new Error('Cannot delete the only audio chunk');
+
+  fs.unlinkSync(getSessionChunkPath(sessionId, chunkIndex));
+  for (let currentIndex = chunkIndex + 1; currentIndex < chunks.length; currentIndex += 1) {
+    fs.renameSync(getSessionChunkPath(sessionId, currentIndex), getSessionChunkPath(sessionId, currentIndex - 1));
+  }
+  chunks.splice(chunkIndex, 1);
+
+  const chunkBuffers = chunks.map((_, currentIndex) => fs.readFileSync(getSessionChunkPath(sessionId, currentIndex)));
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const finalBuffer = concatWavs(
+    chunkBuffers,
+    computeChunkPauses(chunks, basePause),
+    computeChunkFades(chunks),
+  );
+  writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+  const obsoletePreview = getSessionChunkPreviewPath(sessionId, chunks.length);
+  if (fs.existsSync(obsoletePreview)) fs.unlinkSync(obsoletePreview);
+  fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
+  manifest.chunks = chunks;
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
+  await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
+
+  return {
+    deletedIndex: chunkIndex,
+    chunks: chunks.map((text, currentIndex) => ({ index: currentIndex, text: renderBreakSentinels(text) })),
     revision: Date.now(),
   };
 }

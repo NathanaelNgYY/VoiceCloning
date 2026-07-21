@@ -17,6 +17,7 @@ import {
   getInferenceChunk,
   getInferenceChunkPreviewUrl,
   regenerateInferenceChunk,
+  deleteInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
   scanOovWords,
@@ -2208,6 +2209,38 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
+  async function deleteFullChunk(historyItem, chunk) {
+    if (!historyItem?.sessionId || !Number.isInteger(chunk?.index) || historyItem.chunks?.length <= 1) return;
+    const busyKey = `${historyItem.id}:${chunk.index}`;
+    setRegeneratingFullChunk(busyKey);
+    setTtsError('');
+    try {
+      const res = await deleteInferenceChunk(historyItem.sessionId, chunk.index);
+      const revision = res.data?.revision || Date.now();
+      const chunks = Array.isArray(res.data?.chunks) ? res.data.chunks : [];
+      const source = await getGenerationResultSource(historyItem.sessionId);
+      const separator = source.url.includes('?') ? '&' : '?';
+      const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      if (String(historyItem.url || '').startsWith('blob:') && historyItem.url !== playableUrl) {
+        URL.revokeObjectURL(historyItem.url);
+      }
+      setTtsHistory((current) => {
+        const next = current.map((item) => item.id === historyItem.id
+          ? { ...item, url: playableUrl, revision, chunks }
+          : item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+      setFullChunkDrafts((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${historyItem.id}:`)),
+      ));
+    } catch (err) {
+      setTtsError(friendlyTtsError(err, 'Could not delete this audio chunk.'));
+    } finally {
+      setRegeneratingFullChunk('');
+    }
+  }
+
   async function loadPronunciationEntries(category = pronunciationCategory) {
     setPronunciationBusy(true);
     setPronunciationMessage('');
@@ -3986,9 +4019,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         {item.title === 'Full inference output' && result.sessionId && result.chunks?.length > 0 && (
                           <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
                             <div>
-                              <p className="text-xs font-semibold text-slate-700">Review sentences</p>
+                              <p className="text-xs font-semibold text-slate-700">Review audio chunks</p>
                               <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
-                                These previews use the same shared loudness normalization as the full WAV. Regenerating replaces only that sentence and rebuilds the full audio.
+                                Chunks target {liveFullSettings.maxSentencesPerChunk} sentences; a very short chunk may take one more for context. Regenerating replaces one chunk; deleting it removes its audio and stitches the rest together.
                               </p>
                             </div>
                             {result.chunks.map((chunk) => {
@@ -4004,19 +4037,32 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                         htmlFor={`full-chunk-${result.id}-${chunk.index}`}
                                         className="block text-[11px] font-semibold text-slate-500"
                                       >
-                                        Sentence {chunk.index + 1}
+                                        Chunk {chunk.index + 1}
                                       </Label>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => regenerateFullChunk(result, chunk)}
-                                        disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
-                                        className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
-                                      >
-                                        {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                        {busy ? 'Rebuilding' : 'Regenerate'}
-                                      </Button>
+                                      <div className="flex shrink-0 items-center gap-1.5">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => regenerateFullChunk(result, chunk)}
+                                          disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
+                                          className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
+                                        >
+                                          {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                          {busy ? 'Rebuilding' : 'Regenerate'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="icon"
+                                          variant="outline"
+                                          onClick={() => deleteFullChunk(result, chunk)}
+                                          disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || result.chunks.length <= 1}
+                                          className="h-8 w-8 shrink-0 rounded-md border-red-100 text-red-500 hover:bg-red-50 hover:text-red-600 active:scale-[0.98]"
+                                          title={result.chunks.length <= 1 ? 'The only remaining chunk cannot be deleted' : 'Delete this chunk and rebuild the full audio'}
+                                        >
+                                          <Trash2 size={12} />
+                                        </Button>
+                                      </div>
                                     </div>
                                       <Textarea
                                         id={`full-chunk-${result.id}-${chunk.index}`}
@@ -4034,7 +4080,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                         id={`full-chunk-help-${result.id}-${chunk.index}`}
                                         className="mt-1 text-[10px] leading-4 text-slate-400"
                                       >
-                                        Edit the text, then regenerate to replace only this audio chunk.
+                                        Edit the text, then regenerate to replace this chunk. Clearing text does not delete its existing audio.
                                       </p>
                                   </div>
                                   <audio
