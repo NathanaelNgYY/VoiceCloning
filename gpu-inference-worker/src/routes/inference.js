@@ -8,6 +8,7 @@ import {
   synthesizeLongTextStreaming,
   regenerateLongTextChunk,
   deleteLongTextChunk,
+  insertLongTextChunk,
   getLongTextSessionMetadata,
   cancelSession,
   applyFullInferenceQualityPreset,
@@ -643,6 +644,37 @@ router.post('/inference/delete-chunk', async (req, res) => {
     activityState.mark();
     const session = getLongTextSessionMetadata(sessionId);
     const result = await deleteLongTextChunk(sessionId, index, session.options || {});
+    activityState.mark();
+    return res.json(result);
+  } catch (err) {
+    const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
+    return res.status(status).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+  }
+});
+
+router.post('/inference/insert-chunk', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '');
+  const index = Number(req.body?.index);
+  const displayText = String(req.body?.text || '').trim();
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
+  if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
+  if (!displayText) return res.status(400).json({ error: 'Chunk text is required' });
+  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
+
+  activeLiveTtsRequests += 1;
+  try {
+    activityState.mark();
+    const session = getLongTextSessionMetadata(sessionId);
+    const preparedText = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
+      expandSsml(displayText, { protectedWords: await arpabetProtectedWords() }),
+    ));
+    const result = await insertLongTextChunk(sessionId, index, fullInferenceQualityOptions({
+      ...(session.options || {}),
+      ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
+      avoidChunkFinalWords: await chunkingDictionaryWords(),
+    }), preparedText, displayText);
     activityState.mark();
     return res.json(result);
   } catch (err) {

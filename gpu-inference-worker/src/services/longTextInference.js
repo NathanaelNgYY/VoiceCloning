@@ -1860,6 +1860,61 @@ export async function deleteLongTextChunk(sessionId, index, options = {}) {
   };
 }
 
+export async function insertLongTextChunk(
+  sessionId,
+  index,
+  options = {},
+  insertedText = '',
+  insertedDisplayText = '',
+) {
+  const manifest = getLongTextSessionMetadata(sessionId);
+  const chunks = Array.isArray(manifest.chunks) ? [...manifest.chunks] : [];
+  const chunkIndex = Number(index);
+  const chunkText = String(insertedText || '').trim();
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > chunks.length) {
+    throw new Error('Invalid chunk index');
+  }
+  if (!chunkText) throw new Error('Chunk text is required');
+
+  // Generate and verify before mutating the saved session. This is the same Full
+  // synthesis path used by targeted regeneration, including SSML breaks, retries,
+  // ASR/phoneme verification, best effort, and quality checks.
+  const params = manifest.params || {};
+  const result = await synthesizeBreakAwareFullChunk(
+    chunkText,
+    { ...params, text: chunkText },
+    options,
+  );
+
+  // Shift from the tail so every existing chunk remains intact while its index moves.
+  for (let currentIndex = chunks.length - 1; currentIndex >= chunkIndex; currentIndex -= 1) {
+    fs.renameSync(getSessionChunkPath(sessionId, currentIndex), getSessionChunkPath(sessionId, currentIndex + 1));
+  }
+  fs.writeFileSync(getSessionChunkPath(sessionId, chunkIndex), result.audioBuffer);
+  chunks.splice(chunkIndex, 0, chunkText);
+
+  const chunkBuffers = chunks.map((_, currentIndex) => fs.readFileSync(getSessionChunkPath(sessionId, currentIndex)));
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const finalBuffer = concatWavs(
+    chunkBuffers,
+    computeChunkPauses(chunks, basePause),
+    computeChunkFades(chunks),
+  );
+  writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+  fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
+  manifest.chunks = chunks;
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
+  await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
+
+  return {
+    insertedIndex: chunkIndex,
+    insertedText: String(insertedDisplayText || '').trim() || renderBreakSentinels(chunkText),
+    attempts: result.attempts,
+    chunks: chunks.map((text, currentIndex) => ({ index: currentIndex, text: renderBreakSentinels(text) })),
+    revision: Date.now(),
+  };
+}
+
 export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
   const chunks = splitTextIntoReviewChunks(params.text, options);
   if (chunks.length === 0) {

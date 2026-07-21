@@ -18,6 +18,7 @@ import {
   getInferenceChunkPreviewUrl,
   regenerateInferenceChunk,
   deleteInferenceChunk,
+  insertInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
   scanOovWords,
@@ -118,6 +119,7 @@ import {
   MicOff,
   Pencil,
   PlayCircle,
+  Plus,
   RefreshCw,
   ScanSearch,
   Sparkles,
@@ -339,6 +341,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsHistory, setTtsHistory] = useState([]);
   const [regeneratingFullChunk, setRegeneratingFullChunk] = useState('');
   const [fullChunkDrafts, setFullChunkDrafts] = useState({});
+  const [fullChunkInsert, setFullChunkInsert] = useState({ key: '', text: '' });
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
   const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
@@ -2241,6 +2244,104 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
+  async function insertFullChunk(historyItem, index) {
+    if (!historyItem?.sessionId || !Number.isInteger(index)) return;
+    const insertKey = `${historyItem.id}:${index}`;
+    const text = String(fullChunkInsert.key === insertKey ? fullChunkInsert.text : '').trim();
+    if (!text) {
+      setTtsError('Enter text for the new chunk.');
+      return;
+    }
+    const busyKey = `insert:${insertKey}`;
+    setRegeneratingFullChunk(busyKey);
+    setTtsError('');
+    try {
+      const res = await insertInferenceChunk(historyItem.sessionId, index, text);
+      const revision = res.data?.revision || Date.now();
+      const chunks = Array.isArray(res.data?.chunks) ? res.data.chunks : [];
+      const source = await getGenerationResultSource(historyItem.sessionId);
+      const separator = source.url.includes('?') ? '&' : '?';
+      const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      if (String(historyItem.url || '').startsWith('blob:') && historyItem.url !== playableUrl) {
+        URL.revokeObjectURL(historyItem.url);
+      }
+      setTtsHistory((current) => {
+        const next = current.map((item) => item.id === historyItem.id
+          ? { ...item, url: playableUrl, revision, chunks }
+          : item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+      setFullChunkDrafts((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${historyItem.id}:`)),
+      ));
+      setFullChunkInsert({ key: '', text: '' });
+    } catch (err) {
+      setTtsError(friendlyTtsError(err, 'Could not insert this audio chunk.'));
+    } finally {
+      setRegeneratingFullChunk('');
+    }
+  }
+
+  function renderFullChunkInsert(historyItem, index) {
+    const insertKey = `${historyItem.id}:${index}`;
+    const open = fullChunkInsert.key === insertKey;
+    const busy = regeneratingFullChunk === `insert:${insertKey}`;
+    if (!open) {
+      return (
+        <Button
+          key={`insert-${insertKey}`}
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setFullChunkInsert({ key: insertKey, text: '' })}
+          disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null}
+          className="h-7 w-full rounded-md border border-dashed border-slate-200 text-[10px] text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+        >
+          <Plus size={11} /> Add chunk here
+        </Button>
+      );
+    }
+    return (
+      <div key={`insert-${insertKey}`} className="rounded-lg border border-dashed border-sky-200 bg-sky-50/40 p-2.5">
+        <Label htmlFor={`full-chunk-insert-${insertKey}`} className="text-[11px] font-semibold text-slate-600">
+          New chunk at position {index + 1}
+        </Label>
+        <Textarea
+          id={`full-chunk-insert-${insertKey}`}
+          value={fullChunkInsert.text}
+          onChange={(event) => setFullChunkInsert({ key: insertKey, text: event.target.value })}
+          disabled={busy}
+          rows={3}
+          placeholder="Enter text to synthesize with the same Full quality pipeline…"
+          className="mt-1.5 min-h-[78px] w-full resize-y rounded-md border-sky-100 bg-white px-3 py-2 text-sm leading-5 shadow-none focus-visible:ring-1"
+        />
+        <div className="mt-2 flex justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setFullChunkInsert({ key: '', text: '' })}
+            disabled={busy}
+            className="h-7 px-2 text-[10px]"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => insertFullChunk(historyItem, index)}
+            disabled={busy || Boolean(regeneratingFullChunk) || streamingRoute !== null || !fullChunkInsert.text.trim()}
+            className="h-7 px-2.5 text-[10px]"
+          >
+            {busy ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+            {busy ? 'Generating' : 'Generate and insert'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   async function loadPronunciationEntries(category = pronunciationCategory) {
     setPronunciationBusy(true);
     setPronunciationMessage('');
@@ -4024,13 +4125,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                 Chunks target {liveFullSettings.maxSentencesPerChunk} sentences; a very short chunk may take one more for context. Regenerating replaces one chunk; deleting it removes its audio and stitches the rest together.
                               </p>
                             </div>
+                            {renderFullChunkInsert(result, 0)}
                             {result.chunks.map((chunk) => {
                               const busyKey = `${result.id}:${chunk.index}`;
                               const busy = regeneratingFullChunk === busyKey;
                               const revision = result.revision || '';
                               const draftText = fullChunkDrafts[busyKey] ?? chunk.text ?? '';
                               return (
-                                <div key={chunk.index} className="rounded-lg border border-slate-200 bg-white p-2.5">
+                                <div key={`chunk-slot-${chunk.index}`} className="space-y-2">
+                                <div className="rounded-lg border border-slate-200 bg-white p-2.5">
                                   <div className="mb-2 min-w-0">
                                     <div className="mb-1.5 flex items-center justify-between gap-2">
                                       <Label
@@ -4090,6 +4193,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                     preload="metadata"
                                     src={getInferenceChunkPreviewUrl(result.sessionId, chunk.index, revision)}
                                   />
+                                </div>
+                                {renderFullChunkInsert(result, chunk.index + 1)}
                                 </div>
                               );
                             })}
