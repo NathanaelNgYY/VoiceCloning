@@ -467,6 +467,18 @@ Sol Low is probably the best choice.`,
   assert.ok(chunks.every((chunk) => chunk.length <= 170), JSON.stringify(chunks));
 });
 
+test('colons and semicolons do not create sentence fragments', () => {
+  const chunks = splitTextIntoChunks(
+    'Final verdict\nOpus 4.8 Low: better thinker and critic. Sol Low: better coding executor; stronger all rounder.',
+    { maxChunkLength: 170, maxSentencesPerChunk: 2 },
+  );
+
+  assert.deepEqual(chunks, [
+    'Final verdict Opus 4.8 Low: better thinker and critic.',
+    'Sol Low: better coding executor; stronger all rounder.',
+  ]);
+});
+
 test('a short trailing clause is folded back instead of stranded as a tiny chunk', () => {
   const text = 'The reaction releases a very large amount of usable energy almost instantly, so fast.';
   const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });

@@ -154,7 +154,9 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…:：;；])\s+|(?<=—)\s*(?=\S)|\n+/u)
+    // Colons, semicolons, and em dashes do not end grammatical sentences.
+    // Newlines remain layout units so short headings can be paired with a neighbour.
+    .split(/(?<=[.!?。！？…])\s+|\n+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
