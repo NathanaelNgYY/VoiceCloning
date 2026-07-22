@@ -357,6 +357,18 @@ test('full inference quality keeps two sentences when they provide enough contex
   ]);
 });
 
+test('an internal ARPAbet word does not force a one-sentence review chunk', () => {
+  const text = 'The Michaelis constant describes an enzyme affinity for its substrate. Researchers measure this value carefully during analysis.';
+  const chunks = splitTextIntoChunks(text, {
+    maxChunkLength: 170,
+    maxSentencesPerChunk: 2,
+    isolateRiskySentences: true,
+    avoidChunkFinalWords: ['michaelis'],
+  });
+
+  assert.deepEqual(chunks, [text]);
+});
+
 test('a dictionary-tail chunk may borrow exactly one sentence within the 15 percent ceiling', () => {
   const text = 'Cells divided today. The membrane contained glycoprotein. This added context keeps the decoder speaking naturally.';
   const chunks = splitTextIntoChunks(text, {

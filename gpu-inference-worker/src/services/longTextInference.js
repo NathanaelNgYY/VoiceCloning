@@ -179,16 +179,13 @@ function containsRiskySynthesisContent(sentence, options = {}) {
   if (!text || text.length < MIN_CHUNK_LENGTH) return false;
 
   const tokens = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
-  const guardedWords = new Set(
-    (Array.isArray(options.avoidChunkFinalWords) ? options.avoidChunkFinalWords : [])
-      .map((word) => String(word || '').toLowerCase())
-      .filter(Boolean),
-  );
-  const hasGuardedTerm = tokens.some((token) => guardedWords.has(token));
   const clauseBreaks = (text.match(/[,;:—]/gu) || []).length;
-  // Ordinary numbers and acronyms are common prose, not a reason to defeat the
-  // configured sentence grouping. Reviewed dictionary terms retain isolation.
-  return hasGuardedTerm || tokens.length >= 28 || clauseBreaks >= 3;
+  // A dictionary term inside a sentence is not itself a reason to discard useful
+  // neighbouring context. With thousands of ARPAbet entries that rule reduced most
+  // technical prose to one sentence per card. Dictionary protection is positional:
+  // keepDictionaryWordsOffChunkTails handles a term only when it would actually land
+  // at the risky decoder edge. Isolation remains for genuinely long/clause-dense text.
+  return tokens.length >= 28 || clauseBreaks >= 3;
 }
 
 function wordLimitCutIndex(text, maxWords) {
