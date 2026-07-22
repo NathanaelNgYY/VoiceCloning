@@ -59,7 +59,7 @@ def build_model(model_size=None):
 
 ARPABET_TO_IPA = {
     "AA": "ɑ", "AE": "æ", "AH": "ʌ", "AO": "ɔ", "AW": "aʊ", "AY": "aɪ",
-    "B": "b", "CH": "tʃ", "D": "d", "DH": "ð", "EH": "ɛ", "ER": "ɝ",
+    "B": "b", "CH": "tʃ", "D": "d", "DH": "ð", "EH": "ɛ",
     "EY": "eɪ", "F": "f", "G": "ɡ", "HH": "h", "IH": "ɪ", "IY": "i",
     "JH": "dʒ", "K": "k", "L": "l", "M": "m", "N": "n", "NG": "ŋ",
     "OW": "oʊ", "OY": "ɔɪ", "P": "p", "R": "ɹ", "S": "s", "SH": "ʃ",
@@ -72,7 +72,17 @@ def arpabet_to_ipa(arpabet):
     phones = []
     for raw in str(arpabet or "").upper().split():
         phone = re.sub(r"[012]$", "", raw)
-        ipa = ARPABET_TO_IPA.get(phone)
+        stress = raw[-1] if raw and raw[-1] in "012" else ""
+        # Preserve the stress distinctions that materially change the IPA token.
+        # The wav2vec2-espeak vocabulary does not contain American /ɝ/ at all:
+        # eSpeak emits /ɚ/ for unstressed ER0 and /ɜː/ for stressed ER1/ER2.
+        # Likewise, unstressed AH0 is schwa rather than the stressed STRUT vowel.
+        if phone == "ER":
+            ipa = "ɚ" if stress == "0" else "ɜː"
+        elif phone == "AH":
+            ipa = "ə" if stress == "0" else "ʌ"
+        else:
+            ipa = ARPABET_TO_IPA.get(phone)
         if not ipa:
             raise ValueError(f"unsupported ARPAbet phone: {raw}")
         phones.append(ipa)

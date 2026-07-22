@@ -176,6 +176,52 @@ export function splitOnBreaks(text) {
   return segments;
 }
 
+// Separate silence requested before/after all spoken text from internal breaks.
+// Boundary silence cannot be represented by an inter-chunk gap, so callers prepend
+// or append it directly to the finished WAV. Consecutive breaks are additive, with
+// the same 10-second safety cap used for a single break.
+export function partitionBreaks(text) {
+  const segments = splitOnBreaks(text);
+  const spokenIndexes = segments
+    .map((segment, index) => (String(segment.text || '').trim() ? index : -1))
+    .filter(index => index >= 0);
+  if (spokenIndexes.length === 0) {
+    const total = segments.reduce((sum, segment) => sum + (segment.breakMsAfter || 0), 0);
+    return {
+      speechText: '',
+      leadingBreakMs: Math.min(MAX_BREAK_MS, total),
+      trailingBreakMs: 0,
+    };
+  }
+
+  const first = spokenIndexes[0];
+  const last = spokenIndexes[spokenIndexes.length - 1];
+  const sumBreaks = (from, to) => Math.min(
+    MAX_BREAK_MS,
+    segments.slice(from, to).reduce((sum, segment) => sum + (segment.breakMsAfter || 0), 0),
+  );
+  const leadingBreakMs = sumBreaks(0, first);
+  const trailingBreakMs = sumBreaks(last, segments.length);
+
+  let speechText = '';
+  for (let index = first; index <= last;) {
+    const currentText = String(segments[index].text || '').trim();
+    if (currentText) speechText = `${speechText} ${currentText}`.trim();
+    let breakMs = segments[index].breakMsAfter || 0;
+    let next = index + 1;
+    while (next <= last && !String(segments[next].text || '').trim()) {
+      breakMs += segments[next].breakMsAfter || 0;
+      next += 1;
+    }
+    if (next <= last && breakMs > 0) {
+      speechText = appendBreakSentinel(speechText, Math.min(MAX_BREAK_MS, breakMs));
+    }
+    index = next;
+  }
+
+  return { speechText, leadingBreakMs, trailingBreakMs };
+}
+
 // Re-attach a trailing break sentinel to a chunk so the concatenation stage inserts
 // the requested silence after it.
 export function appendBreakSentinel(text, ms) {

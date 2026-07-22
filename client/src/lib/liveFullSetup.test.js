@@ -46,6 +46,7 @@ test('buildLiveFullRefParams uses full settings and selected references', () => 
     top_p: 0.8,
     temperature: 0.55,
     repetition_penalty: 1.4,
+    output_gain_db: 0,
     max_chunk_words: 40,
     max_sentences_per_chunk: 3,
   });

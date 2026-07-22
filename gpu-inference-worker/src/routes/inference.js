@@ -18,6 +18,8 @@ import {
   scoreAudioCandidate,
   hasActiveInferenceSession,
   concatWavs,
+  padWavBoundaries,
+  applyWavOutputGain,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -25,7 +27,7 @@ import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { scanOovWords } from '../services/oovScan.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
-import { expandSsml, splitOnBreaks } from '../services/ssml.js';
+import { expandSsml, splitOnBreaks, partitionBreaks } from '../services/ssml.js';
 import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
@@ -179,10 +181,14 @@ function readInferenceParams(body) {
 function readFullChunkingOptions(body = {}) {
   const maxChunkWords = Number(body.max_chunk_words);
   const maxSentencesPerChunk = Number(body.max_sentences_per_chunk);
+  const outputGainDb = Number(body.output_gain_db);
   return {
     ...(Number.isInteger(maxChunkWords) && maxChunkWords >= 10 && maxChunkWords <= 100 ? { maxChunkWords } : {}),
     ...(Number.isInteger(maxSentencesPerChunk) && maxSentencesPerChunk >= 1 && maxSentencesPerChunk <= 5
       ? { maxSentencesPerChunk }
+      : {}),
+    ...(Number.isFinite(outputGainDb) && outputGainDb >= -6 && outputGainDb <= 6
+      ? { outputGainDb }
       : {}),
   };
 }
@@ -317,8 +323,9 @@ export async function handleLiveTtsRequest(body, {
   const activeVerifyChunk = verifyChunk !== undefined
     ? verifyChunk
     : (verificationOptions(normalizedParams, { phonemeVerification: true }).verifyChunk || null);
+  const { speechText, leadingBreakMs, trailingBreakMs } = partitionBreaks(normalizedText);
   const breakSegments = [];
-  for (const segment of splitOnBreaks(normalizedText)) {
+  for (const segment of splitOnBreaks(speechText)) {
     const text = String(segment.text || '').trim();
     if (text) {
       breakSegments.push({ text, breakMsAfter: segment.breakMsAfter });
@@ -343,12 +350,18 @@ export async function handleLiveTtsRequest(body, {
       },
     ));
   }
-  const audioBuffer = buffers.length === 1
+  const joined = buffers.length === 1
     ? buffers[0]
     : concatWavs(
       buffers,
       breakSegments.slice(0, -1).map(segment => segment.breakMsAfter ?? 0),
     );
+  // Gain is deliberately post-verification: it changes only delivered PCM level,
+  // never synthesis, retry selection, ASR, or phoneme decisions.
+  const audioBuffer = applyWavOutputGain(
+    padWavBoundaries(joined, leadingBreakMs, trailingBreakMs),
+    body.output_gain_db,
+  );
   return { audioBuffer, resolvedParams: normalizedParams };
 }
 

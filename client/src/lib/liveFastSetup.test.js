@@ -18,6 +18,7 @@ test('normalizeLiveFastSettings bounds user-editable inference controls', () => 
     topP: 2,
     temperature: -1,
     repPenalty: 5,
+    outputGainDb: 7,
     maxChunkWords: 9,
     maxSentencesPerChunk: 6,
   }), DEFAULT_LIVE_FAST_SETTINGS);
@@ -43,6 +44,7 @@ test('buildLiveFastRefParams uses trained primary, five aux clips, and inference
       topP: 0.8,
       temperature: 0.6,
       repPenalty: 1.25,
+      outputGainDb: 3,
     },
   });
 
@@ -62,6 +64,7 @@ test('buildLiveFastRefParams uses trained primary, five aux clips, and inference
     top_p: 0.8,
     temperature: 0.6,
     repetition_penalty: 1.25,
+    output_gain_db: 3,
   });
 });
 

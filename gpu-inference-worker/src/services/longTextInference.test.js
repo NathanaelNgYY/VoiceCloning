@@ -13,6 +13,8 @@ import {
   parseWav,
   scoreAudioCandidate,
   serializableSessionOptions,
+  applyWavOutputGain,
+  synthesizeBreakAwareFullChunk,
 } from './longTextInference.js';
 import { inferenceServer } from './inferenceServer.js';
 
@@ -87,6 +89,31 @@ test('Full session manifests retain regeneration-relevant synthesis settings onl
     retryCount: 4,
     allowBestEffortFallback: true,
   });
+});
+
+test('admin regeneration preserves edited review text as one synthesis unit', async () => {
+  const text = 'The membrane organization is structural. These proteins provide context.';
+  const seen = [];
+  const result = await synthesizeBreakAwareFullChunk(
+    text,
+    { text },
+    {
+      preserveReviewUnit: true,
+      maxSentencesPerChunk: 1,
+      maxChunkWords: 5,
+      avoidChunkFinalWords: ['structural'],
+    },
+    {
+      synthesizeChunk: async (chunk) => {
+        seen.push(chunk);
+        return { audioBuffer: makeNoiseWav(1), attempts: 3, fallback: false };
+      },
+    },
+  );
+
+  assert.deepEqual(seen, [text]);
+  assert.deepEqual(result.synthesisChunks, [text]);
+  assert.equal(result.attempts, 3);
 });
 
 // A hyphen used as a dash with spaces around it (" - ") reaches GPT-SoVITS as a
@@ -328,6 +355,26 @@ test('full inference quality keeps two sentences when they provide enough contex
     'First, cells grow. Next, their DNA is copied.',
     'Finally, the cell divides.',
   ]);
+});
+
+test('a dictionary-tail chunk may borrow exactly one sentence within the 15 percent ceiling', () => {
+  const text = 'Cells divided today. The membrane contained glycoprotein. This added context keeps the decoder speaking naturally.';
+  const chunks = splitTextIntoChunks(text, {
+    maxChunkLength: 100,
+    maxSentencesPerChunk: 2,
+    avoidChunkFinalWords: ['glycoprotein'],
+  });
+  assert.equal(chunks[0], text);
+  assert.equal(chunks.length, 1);
+});
+
+test('saved output gain raises PCM level but respects the minus-one dBFS ceiling', () => {
+  const source = makeNoiseWav(1);
+  const before = analyzeAudioQuality(source, 'normal test audio').metrics.absPeak;
+  const gained = applyWavOutputGain(source, 6);
+  const after = analyzeAudioQuality(gained, 'normal test audio').metrics.absPeak;
+  assert.ok(after > before, `${before} -> ${after}`);
+  assert.ok(after <= 0.892, `peak exceeded ceiling: ${after}`);
 });
 
 test('two fitting sentences are not split by the old percentage-full heuristic', () => {

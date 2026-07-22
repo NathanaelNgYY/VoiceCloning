@@ -320,6 +320,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [topP, setTopP] = useState(DEFAULT_LIVE_FAST_SETTINGS.topP);
   const [temperature, setTemperature] = useState(DEFAULT_LIVE_FAST_SETTINGS.temperature);
   const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+  const [liveFastOutputGainDb, setLiveFastOutputGainDb] = useState(DEFAULT_LIVE_FAST_SETTINGS.outputGainDb);
   const [liveFastMaxChunkWords, setLiveFastMaxChunkWords] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords);
   const [liveFastMaxSentences, setLiveFastMaxSentences] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk);
   const [liveFullRefAudioPath, setLiveFullRefAudioPath] = useState('');
@@ -331,6 +332,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [liveFullTopP, setLiveFullTopP] = useState(DEFAULT_LIVE_FULL_SETTINGS.topP);
   const [liveFullTemperature, setLiveFullTemperature] = useState(DEFAULT_LIVE_FULL_SETTINGS.temperature);
   const [liveFullRepPenalty, setLiveFullRepPenalty] = useState(DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
+  const [liveFullOutputGainDb, setLiveFullOutputGainDb] = useState(DEFAULT_LIVE_FULL_SETTINGS.outputGainDb);
   const [liveFullMaxChunkWords, setLiveFullMaxChunkWords] = useState(DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords);
   const [liveFullMaxSentences, setLiveFullMaxSentences] = useState(DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk);
 
@@ -430,9 +432,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     topP,
     temperature,
     repPenalty,
+    outputGainDb: liveFastOutputGainDb,
     maxChunkWords: liveFastMaxChunkWords,
     maxSentencesPerChunk: liveFastMaxSentences,
-  }), [speed, topK, topP, temperature, repPenalty, liveFastMaxChunkWords, liveFastMaxSentences]);
+  }), [speed, topK, topP, temperature, repPenalty, liveFastOutputGainDb, liveFastMaxChunkWords, liveFastMaxSentences]);
   const liveRefParams = useMemo(() => buildLiveFastRefParams({
     primaryPath: refAudioPath, promptText, promptLang, auxRefAudios,
     settings: liveFastSettings,
@@ -443,9 +446,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     topP: liveFullTopP,
     temperature: liveFullTemperature,
     repPenalty: liveFullRepPenalty,
+    outputGainDb: liveFullOutputGainDb,
     maxChunkWords: liveFullMaxChunkWords,
     maxSentencesPerChunk: liveFullMaxSentences,
-  }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty, liveFullMaxChunkWords, liveFullMaxSentences]);
+  }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty, liveFullOutputGainDb, liveFullMaxChunkWords, liveFullMaxSentences]);
   const liveFastRankOneReferenceSummary = useMemo(() => {
     const rankOneConfig = voiceConfigs[0] || null;
     const { primaryPath, auxPaths } = getConfigReferencePaths(rankOneConfig);
@@ -475,6 +479,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      output_gain_db: liveFastOutputGainDb,
       max_chunk_words: liveFastMaxChunkWords,
       max_sentences_per_chunk: liveFastMaxSentences,
     },
@@ -492,6 +497,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     temperature,
     repPenalty,
     speed,
+    liveFastOutputGainDb,
     liveFastMaxChunkWords,
     liveFastMaxSentences,
   ]);
@@ -559,10 +565,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      output_gain_db: liveFastOutputGainDb,
       max_chunk_words: liveFastMaxChunkWords,
       max_sentences_per_chunk: liveFastMaxSentences,
     },
-  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastMaxChunkWords, liveFastMaxSentences]);
+  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastOutputGainDb, liveFastMaxChunkWords, liveFastMaxSentences]);
 
   const liveSpeech = useLiveSpeech({
     refParams: liveRefParams,
@@ -830,6 +837,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature: defaults.temperature ?? temperature,
         repetition_penalty: defaults.repetition_penalty ?? repPenalty,
         speed_factor: defaults.speed_factor ?? speed,
+        output_gain_db: defaults.output_gain_db ?? DEFAULT_LIVE_FAST_SETTINGS.outputGainDb,
         max_chunk_words: defaults.max_chunk_words ?? DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords,
         max_sentences_per_chunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk,
       },
@@ -957,6 +965,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : topP);
     setTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : temperature);
     setRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : repPenalty);
+    setLiveFastOutputGainDb(Number.isFinite(defaults.output_gain_db) ? defaults.output_gain_db : DEFAULT_LIVE_FAST_SETTINGS.outputGainDb);
     const chunkSettings = normalizeLiveFastSettings({
       maxChunkWords: defaults.max_chunk_words,
       maxSentencesPerChunk: defaults.max_sentences_per_chunk,
@@ -1008,6 +1017,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           temperature,
           repetition_penalty: repPenalty,
           speed_factor: speed,
+          output_gain_db: liveFastOutputGainDb,
           max_chunk_words: liveFastMaxChunkWords,
           max_sentences_per_chunk: liveFastMaxSentences,
         },
@@ -1029,6 +1039,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        output_gain_db: liveFastOutputGainDb,
         max_chunk_words: liveFastMaxChunkWords,
         max_sentences_per_chunk: liveFastMaxSentences,
       },
@@ -1233,6 +1244,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        output_gain_db: liveFastOutputGainDb,
         max_chunk_words: liveFastMaxChunkWords,
         max_sentences_per_chunk: liveFastMaxSentences,
       },
@@ -1395,6 +1407,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setLiveFullTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : DEFAULT_LIVE_FULL_SETTINGS.topP);
     setLiveFullTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : DEFAULT_LIVE_FULL_SETTINGS.temperature);
     setLiveFullRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
+    setLiveFullOutputGainDb(Number.isFinite(defaults.output_gain_db) ? defaults.output_gain_db : DEFAULT_LIVE_FULL_SETTINGS.outputGainDb);
     setLiveFullMaxChunkWords(Number.isInteger(defaults.max_chunk_words) ? defaults.max_chunk_words : DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords);
     setLiveFullMaxSentences(Number.isInteger(defaults.max_sentences_per_chunk) ? defaults.max_sentences_per_chunk : DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk);
     setLoadedLiveFullConfigId(config?.configId || '');
@@ -1522,6 +1535,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       topP: defaults.top_p ?? DEFAULT_LIVE_FULL_SETTINGS.topP,
       temperature: defaults.temperature ?? DEFAULT_LIVE_FULL_SETTINGS.temperature,
       repPenalty: defaults.repetition_penalty ?? DEFAULT_LIVE_FULL_SETTINGS.repPenalty,
+      outputGainDb: defaults.output_gain_db ?? DEFAULT_LIVE_FULL_SETTINGS.outputGainDb,
       maxChunkWords: defaults.max_chunk_words ?? DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords,
       maxSentencesPerChunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk,
     });
@@ -1782,7 +1796,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       prompt_text: prompt,
       prompt_lang: referencePromptLang(reference.primary, primaryFile, promptLang),
       aux_ref_audio_paths: auxPaths,
-      speed_factor: defaults.speed_factor ?? speed,
+        speed_factor: defaults.speed_factor ?? speed,
+        output_gain_db: defaults.output_gain_db ?? DEFAULT_LIVE_FAST_SETTINGS.outputGainDb,
       top_k: defaults.top_k ?? topK,
       top_p: defaults.top_p ?? topP,
       temperature: defaults.temperature ?? temperature,
@@ -1863,6 +1878,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      output_gain_db: liveFastOutputGainDb,
     };
     const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
     const languageLabel = liveLanguageConfig.label;
@@ -2198,7 +2214,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           url: playableUrl,
           revision,
           chunks: item.chunks.map((itemChunk) => itemChunk.index === chunk.index
-            ? { ...itemChunk, text: savedText }
+            ? {
+              ...itemChunk,
+              text: savedText,
+              attempts: res.data?.attempts,
+              fallback: res.data?.fallback === true,
+              fallbackReason: res.data?.fallbackReason || '',
+            }
             : itemChunk),
         } : item);
         ttsHistoryRef.current = next;
@@ -3255,6 +3277,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(activeVoiceProfile?.defaults?.top_p) ? activeVoiceProfile.defaults.top_p : DEFAULT_LIVE_FAST_SETTINGS.topP);
     setTemperature(Number.isFinite(activeVoiceProfile?.defaults?.temperature) ? activeVoiceProfile.defaults.temperature : DEFAULT_LIVE_FAST_SETTINGS.temperature);
     setRepPenalty(Number.isFinite(activeVoiceProfile?.defaults?.repetition_penalty) ? activeVoiceProfile.defaults.repetition_penalty : DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+    setLiveFastOutputGainDb(Number.isFinite(activeVoiceProfile?.defaults?.output_gain_db) ? activeVoiceProfile.defaults.output_gain_db : DEFAULT_LIVE_FAST_SETTINGS.outputGainDb);
     const chunkSettings = normalizeLiveFastSettings({
       maxChunkWords: activeVoiceProfile?.defaults?.max_chunk_words,
       maxSentencesPerChunk: activeVoiceProfile?.defaults?.max_sentences_per_chunk,
@@ -4185,6 +4208,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                       >
                                         Edit the text, then regenerate to replace this chunk. Clearing text does not delete its existing audio.
                                       </p>
+                                      {chunk.fallback && (
+                                        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800">
+                                          <span className="font-semibold">Best effort — verification did not pass.</span>
+                                          {chunk.fallbackReason && <span className="ml-1">{chunk.fallbackReason}</span>}
+                                        </div>
+                                      )}
                                   </div>
                                   <audio
                                     key={`${result.sessionId}:${chunk.index}:${revision}`}
@@ -4705,6 +4734,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 </div>
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
                   <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Saved output gain</Label>
+                    <span className="font-mono text-sm font-semibold text-slate-700">{liveFastOutputGainDb > 0 ? '+' : ''}{liveFastOutputGainDb.toFixed(1)} dB</span>
+                  </div>
+                  <Slider min={-6} max={6} step={0.5} value={[liveFastOutputGainDb]} onValueChange={([v]) => setLiveFastOutputGainDb(v)} disabled={isConversationActive} />
+                  <p className="text-xs leading-5 text-slate-400">Changes delivered Fast TTS volume after verification; pronunciation and retry behavior stay unchanged.</p>
+                </div>
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                  <div className="flex items-center justify-between">
                     <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Max chunk words</Label>
                     <span className="font-mono text-sm font-semibold text-slate-700">
                       {liveFastSettings.maxChunkWords === 0 ? 'Auto · 280 chars' : liveFastSettings.maxChunkWords}
@@ -4957,6 +4994,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
                     { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                     { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
+                    { label: 'Saved output gain', display: `${liveFullOutputGainDb > 0 ? '+' : ''}${liveFullOutputGainDb.toFixed(1)} dB`, min: -6, max: 6, step: 0.5, val: liveFullOutputGainDb, set: setLiveFullOutputGainDb },
                     { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
                     { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                   ].map(({ label, display, min, max, step, val, set }) => (
@@ -4985,7 +5023,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     Refs from Live Fast #1: {liveFastRankOneReferenceSummary.primaryName} - speed {liveFullSettings.speed.toFixed(1)} - temp {liveFullSettings.temperature.toFixed(2)}
                   </p>
                   <p className="mt-1 truncate">
-                    top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
+                    top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)} · gain {liveFullSettings.outputGainDb > 0 ? '+' : ''}{liveFullSettings.outputGainDb.toFixed(1)} dB
                   </p>
                   <p className="mt-1 truncate">
                     chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}

@@ -8,6 +8,7 @@ import {
   stripBreakSentinels,
   renderBreakSentinels,
   appendBreakSentinel,
+  partitionBreaks,
 } from './ssml.js';
 import { applyEmphasisAndSpelling } from './emphasisAndSpelling.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
@@ -122,6 +123,14 @@ test('a break forces a chunk boundary and sets the inter-chunk pause', () => {
   assert.equal(stripBreakSentinels(chunks[0]), 'First sentence here today.');
 });
 
+test('leading and trailing breaks are separated from spoken text and consecutive breaks add', () => {
+  const expanded = expandSsml('<break time="200ms"/><break time="300ms"/> hello <break time="400ms"/><break time="500ms"/>');
+  const partitioned = partitionBreaks(expanded);
+  assert.equal(partitioned.speechText, 'hello');
+  assert.equal(partitioned.leadingBreakMs, 500);
+  assert.equal(partitioned.trailingBreakMs, 900);
+});
+
 test('a break stays inside one review chunk and does not bypass short-context grouping', () => {
   const expanded = expandSsml('hello <break time="7000ms"/> hello');
   const chunks = splitTextIntoReviewChunks(expanded, { maxSentencesPerChunk: 2 });
@@ -159,6 +168,22 @@ test('targeted Full regeneration uses the same break-aware chunk and join pipeli
   assert.equal(result.attempts, 2);
   const total = durationMs(result.audioBuffer);
   assert.ok(total >= 7550 && total <= 7650, `unexpected regenerated duration: ${total}ms`);
+});
+
+test('Full synthesis prepends and appends boundary break silence', async () => {
+  const expanded = expandSsml('<break time="500ms"/> hello <break time="700ms"/>');
+  const result = await synthesizeBreakAwareFullChunk(
+    expanded,
+    { text: expanded },
+    {},
+    {
+      synthesizeChunk: async (text) => {
+        assert.equal(stripBreakSentinels(text), 'hello');
+        return { audioBuffer: makeWav({ toneMs: 300 }), attempts: 1 };
+      },
+    },
+  );
+  assert.equal(durationMs(result.audioBuffer), 1500);
 });
 
 test('text with no breaks chunks exactly as before', () => {

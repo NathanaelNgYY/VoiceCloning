@@ -14,6 +14,7 @@ import {
   stripBreakSentinels,
   renderBreakSentinels,
   BREAK_SENTINEL_RE,
+  partitionBreaks,
 } from './ssml.js';
 
 const TEMP_DIR = LOCAL_TEMP_ROOT;
@@ -73,6 +74,7 @@ const FULL_QUALITY_OPTIONS = {
   // After whole-chunk and sentence-level 3→5 recovery, keep the strongest audio-usable
   // full-sentence candidate rather than failing the entire user request.
   allowBestEffortFallback: true,
+  outputGainDb: 0,
   // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
   // in practice (drift lands the cut too close to speech), so the breath is opt-in via
   // COMMA_PAUSE_MS rather than on by default.
@@ -98,6 +100,7 @@ const SESSION_OPTION_KEYS = [
   'isolateRiskySentences',
   'allowBestEffortFallback',
   'commaPauseMs',
+  'outputGainDb',
 ];
 
 function clampNumber(value, fallback) {
@@ -344,7 +347,19 @@ function chunkSegment(text, options = {}) {
 
   if (current.trim()) chunks.push(current.trim());
   const merged = mergeShortChunks(chunks, MIN_CHUNK_LENGTH, maxChunkWords);
-  return keepDictionaryWordsOffChunkTails(merged, options.avoidChunkFinalWords, maxChunkLength, maxChunkWords);
+  const regrouped = keepDictionaryWordsOffChunkTails(
+    merged,
+    options.avoidChunkFinalWords,
+    maxChunkLength,
+    maxChunkWords,
+  );
+  return borrowOneSentenceAfterDictionaryTail(
+    regrouped,
+    options.avoidChunkFinalWords,
+    maxChunkLength,
+    maxChunkWords,
+    maxSentencesPerChunk,
+  );
 }
 
 // Last spoken word of a chunk, lowercased and stripped of punctuation.
@@ -380,6 +395,48 @@ function keepDictionaryWordsOffChunkTails(chunks, avoidWords, maxChunkLength, ma
     if (movedNext.length > maxChunkLength || (maxChunkWords > 0 && countChunkWords(movedNext) > maxChunkWords) || remainder.length < MIN_CHUNK_LENGTH) continue;
     out[i] = remainder;
     out[i + 1] = movedNext;
+  }
+  return out;
+}
+
+function borrowOneSentenceAfterDictionaryTail(
+  chunks,
+  avoidWords,
+  maxChunkLength,
+  maxChunkWords,
+  maxSentencesPerChunk,
+) {
+  const words = new Set(
+    (Array.isArray(avoidWords) ? avoidWords : []).map(chunkFinalWord).filter(Boolean),
+  );
+  if (words.size === 0 || chunks.length < 2) return chunks;
+
+  const out = chunks.slice();
+  const charCeiling = Number.isFinite(maxChunkLength) && maxChunkLength < Number.MAX_SAFE_INTEGER
+    ? Math.ceil(maxChunkLength * 1.15)
+    : Number.MAX_SAFE_INTEGER;
+  const wordCeiling = maxChunkWords > 0
+    ? Math.min(maxChunkWords + 15, Math.ceil(maxChunkWords * 1.15))
+    : Number.MAX_SAFE_INTEGER;
+
+  for (let index = 0; index < out.length - 1; index += 1) {
+    const currentSentences = splitIntoSentences(out[index]);
+    if (!words.has(chunkFinalWord(out[index])) || currentSentences.length < maxSentencesPerChunk) continue;
+    const nextSentences = splitIntoSentences(out[index + 1]);
+    if (nextSentences.length === 0) continue;
+    const borrowed = nextSentences[0];
+    const candidate = `${out[index]} ${borrowed}`.trim();
+    const remainder = nextSentences.slice(1).join(' ').trim();
+    if (candidate.length > charCeiling || countChunkWords(candidate) > wordCeiling) continue;
+    if (remainder && remainder.length < MIN_CHUNK_LENGTH) continue;
+
+    console.log(
+      `[chunking] borrowed context sentence reason=dictionary-tail word=${JSON.stringify(chunkFinalWord(out[index]))} `
+      + `sentences=${currentSentences.length + 1} chars=${candidate.length} words=${countChunkWords(candidate)}`,
+    );
+    out[index] = candidate;
+    if (remainder) out[index + 1] = remainder;
+    else out.splice(index + 1, 1);
   }
   return out;
 }
@@ -1073,6 +1130,39 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
   return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
 }
 
+export function padWavBoundaries(buffer, leadingMs = 0, trailingMs = 0) {
+  const before = Math.max(0, Math.min(10000, Math.round(clampNumber(leadingMs, 0))));
+  const after = Math.max(0, Math.min(10000, Math.round(clampNumber(trailingMs, 0))));
+  if (before === 0 && after === 0) return buffer;
+  const wav = parseWav(buffer);
+  return buildWav(wav.fmtChunk, Buffer.concat([
+    createSilenceBytes(before, wav),
+    wav.dataChunk,
+    createSilenceBytes(after, wav),
+  ]));
+}
+
+// Full-only caller option. Gain is applied after synthesis/verification and is capped
+// at -1 dBFS, so it cannot change pronunciation decisions or clip the saved PCM.
+export function applyWavOutputGain(buffer, gainDb = 0, ceilingPeak = 0.891) {
+  const requestedDb = Math.max(-6, Math.min(6, clampNumber(gainDb, 0)));
+  if (Math.abs(requestedDb) < 0.001) return buffer;
+  const wav = parseWav(buffer);
+  if (wav.audioFormat !== 1 || wav.bitsPerSample !== 16) return buffer;
+  const data = Buffer.from(wav.dataChunk);
+  const currentPeak = getChunkAbsPeak(data);
+  if (currentPeak <= 0) return buffer;
+  const requestedScale = 10 ** (requestedDb / 20);
+  const protectedScale = requestedScale > 1
+    ? Math.min(requestedScale, ceilingPeak / currentPeak)
+    : requestedScale;
+  for (let offset = 0; offset + 1 < data.length; offset += 2) {
+    const sample = data.readInt16LE(offset);
+    data.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sample * protectedScale))), offset);
+  }
+  return buildWav(wav.fmtChunk, data);
+}
+
 export function normalizeWavChunksForPreview(buffers) {
   if (!Array.isArray(buffers) || buffers.length === 0) return [];
   const parsed = buffers.map(parseWav);
@@ -1470,6 +1560,18 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
         const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
         const doubled = (verification.repeatedPhrases || []).slice(0, 6).join(' | ');
+        const phonemeRejected = (verification.phonemeAssessments || [])
+          .filter(assessment => assessment?.decision === 'reject')
+          .map(assessment => assessment.word)
+          .filter(Boolean)
+          .slice(0, 6)
+          .join(', ');
+        const phonemeUncertain = (verification.phonemeAssessments || [])
+          .filter(assessment => assessment?.decision === 'uncertain')
+          .map(assessment => assessment.word)
+          .filter(Boolean)
+          .slice(0, 6)
+          .join(', ');
         const voiceDrift = verification.similarityOk === false
           ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
           : '';
@@ -1483,6 +1585,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
           missing ? `missing: ${missing}` : '',
           clipped ? `clipped: ${clipped}` : '',
           doubled ? `doubled: ${doubled}` : '',
+          phonemeRejected ? `phoneme mismatch: ${phonemeRejected}` : '',
+          phonemeUncertain ? `phoneme uncertain: ${phonemeUncertain}` : '',
           voiceDrift,
           unavailable,
           speakerUnavailable,
@@ -1718,7 +1822,14 @@ export async function synthesizeBreakAwareFullChunk(
   options = {},
   { synthesizeChunk = synthesizeChunkResilient, onSplit = null } = {},
 ) {
-  const synthesisChunks = splitTextIntoChunks(chunkText, options);
+  const { speechText, leadingBreakMs, trailingBreakMs } = partitionBreaks(chunkText);
+  // Admin regeneration is an explicit request to replace exactly one review card.
+  // Keep that edited text as one synthesis unit instead of reapplying initial-run
+  // chunk sizing or dictionary-tail context rules. The resilient synthesizer below
+  // still provides Full's normal verification, 3→5 retry ladder, and final fallback.
+  const synthesisChunks = options.preserveReviewUnit
+    ? [speechText.trim()].filter(Boolean)
+    : splitTextIntoChunks(speechText, options);
   if (synthesisChunks.length === 0) throw new Error('No text to synthesize');
 
   const buffers = [];
@@ -1742,14 +1853,16 @@ export async function synthesizeBreakAwareFullChunk(
     }
   }
 
-  return {
-    audioBuffer: buffers.length === 1
+  const joined = buffers.length === 1
       ? buffers[0]
       : concatWavs(
         buffers,
         computeChunkPauses(synthesisChunks, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs)),
         computeChunkFades(synthesisChunks),
-      ),
+      );
+  const padded = padWavBoundaries(joined, leadingBreakMs, trailingBreakMs);
+  return {
+    audioBuffer: applyWavOutputGain(padded, options.outputGainDb),
     attempts,
     synthesisChunks,
     analysis: singleAnalysis,
@@ -1819,6 +1932,8 @@ export async function regenerateLongTextChunk(
     index: chunkIndex,
     text: String(replacementDisplayText || '').trim() || renderBreakSentinels(chunkText),
     attempts: result.attempts,
+    fallback: result.fallback,
+    fallbackReason: result.fallbackReason,
     revision: Date.now(),
   };
 }
@@ -1883,7 +1998,7 @@ export async function insertLongTextChunk(
   const result = await synthesizeBreakAwareFullChunk(
     chunkText,
     { ...params, text: chunkText },
-    options,
+    { ...options, preserveReviewUnit: true },
   );
 
   // Shift from the tail so every existing chunk remains intact while its index moves.
@@ -1985,6 +2100,8 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
         totalChunks: chunks.length,
         attempts: totalAttempts,
         durationSec: parseFloat(chunkDuration.toFixed(2)),
+        fallback: result.fallback,
+        fallbackReason: result.fallbackReason,
       });
       inferenceState.setChunkComplete({
         index,

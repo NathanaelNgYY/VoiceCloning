@@ -99,6 +99,49 @@ test('Live Fast expands a break into separate verified clips and exact joined si
   assert.ok(durationMs >= 7550 && durationMs <= 7650, `unexpected joined duration: ${durationMs}ms`);
 });
 
+test('Live Fast preserves leading and trailing break silence without changing synthesis text', async () => {
+  const module = await loadInferenceRouteModule();
+  const result = await module.handleLiveTtsRequest({
+    text: '<break time="500ms"/> hello <break time="700ms"/>',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async (params) => {
+      assert.equal(params.text.trim(), 'hello');
+      return makeToneWav(300);
+    },
+    verifyChunk: async () => ({ ok: true, coverage: 1, missingWords: [], suspectWords: [] }),
+  });
+  const durationMs = Math.round((result.audioBuffer.readUInt32LE(40) / 2 / 32000) * 1000);
+  assert.ok(durationMs >= 1490 && durationMs <= 1510, `unexpected boundary-padded duration: ${durationMs}ms`);
+});
+
+test('Live Fast applies requested output gain only after verification', async () => {
+  const module = await loadInferenceRouteModule();
+  const source = makeToneWav(300);
+  let verifiedPeak = 0;
+  const result = await module.handleLiveTtsRequest({
+    text: 'clear output',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+    output_gain_db: 6,
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async () => source,
+    verifyChunk: async (audio) => {
+      for (let offset = 44; offset + 1 < audio.length; offset += 2) {
+        verifiedPeak = Math.max(verifiedPeak, Math.abs(audio.readInt16LE(offset)));
+      }
+      return { ok: true, coverage: 1, missingWords: [], suspectWords: [] };
+    },
+  });
+  let deliveredPeak = 0;
+  for (let offset = 44; offset + 1 < result.audioBuffer.length; offset += 2) {
+    deliveredPeak = Math.max(deliveredPeak, Math.abs(result.audioBuffer.readInt16LE(offset)));
+  }
+  assert.ok(deliveredPeak > verifiedPeak * 1.8, `${deliveredPeak} should exceed verified ${verifiedPeak}`);
+  assert.ok(deliveredPeak <= Math.round(32767 * 0.891));
+});
+
 test('Live Full keeps ASR validation when speaker verification is unavailable', async () => {
   const module = await loadInferenceRouteModule();
   mock.method(transcriptionVerifier, 'verifyChunk', async () => ({
