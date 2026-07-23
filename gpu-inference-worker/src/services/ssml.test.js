@@ -6,11 +6,20 @@ import {
   splitOnBreaks,
   extractBreakMs,
   stripBreakSentinels,
+  renderBreakSentinels,
   appendBreakSentinel,
+  partitionBreaks,
 } from './ssml.js';
 import { applyEmphasisAndSpelling } from './emphasisAndSpelling.js';
 import { prepareTextForSynthesis } from './textPronunciation.js';
-import { splitTextIntoChunks, computeChunkPauses, concatWavs, parseWav } from './longTextInference.js';
+import {
+  splitTextIntoChunks,
+  splitTextIntoReviewChunks,
+  computeChunkPauses,
+  concatWavs,
+  parseWav,
+  synthesizeBreakAwareFullChunk,
+} from './longTextInference.js';
 
 // Build a PCM16 mono WAV: leadMs of silence, toneMs of 220Hz tone, trailMs of silence.
 function makeWav({ toneMs, leadMs = 0, trailMs = 0, sr = 32000 }) {
@@ -81,6 +90,7 @@ test('containsSsml only fires on supported tags', () => {
 
 test('appendBreakSentinel round-trips through extractBreakMs', () => {
   assert.equal(extractBreakMs(appendBreakSentinel('after meals.', 500)), 500);
+  assert.equal(renderBreakSentinels(appendBreakSentinel('after meals.', 500)), 'after meals. <break time="500ms"/>');
 });
 
 test('<break time> parses ms and seconds; bare/strength map to defaults', () => {
@@ -111,6 +121,69 @@ test('a break forces a chunk boundary and sets the inter-chunk pause', () => {
   assert.deepEqual(computeChunkPauses(chunks, 0), [600]);
   // Spoken text never contains the sentinel.
   assert.equal(stripBreakSentinels(chunks[0]), 'First sentence here today.');
+});
+
+test('leading and trailing breaks are separated from spoken text and consecutive breaks add', () => {
+  const expanded = expandSsml('<break time="200ms"/><break time="300ms"/> hello <break time="400ms"/><break time="500ms"/>');
+  const partitioned = partitionBreaks(expanded);
+  assert.equal(partitioned.speechText, 'hello');
+  assert.equal(partitioned.leadingBreakMs, 500);
+  assert.equal(partitioned.trailingBreakMs, 900);
+});
+
+test('a break stays inside one review chunk and does not bypass short-context grouping', () => {
+  const expanded = expandSsml('hello <break time="7000ms"/> hello');
+  const chunks = splitTextIntoReviewChunks(expanded, { maxSentencesPerChunk: 2 });
+  assert.equal(chunks.length, 1);
+  assert.equal(renderBreakSentinels(chunks[0]), 'hello <break time="7000ms"/> hello');
+});
+
+test('ordinary sentence limits still split review chunks and preserve a boundary break', () => {
+  const first = 'This complete sentence contains enough useful words for stable synthesis.';
+  const second = 'Another complete sentence also contains enough useful words for stable synthesis.';
+  const expanded = expandSsml(`${first} <break time="7000ms"/> ${second}`);
+  const chunks = splitTextIntoReviewChunks(expanded, { maxSentencesPerChunk: 1 });
+  assert.equal(chunks.length, 2);
+  assert.equal(renderBreakSentinels(chunks[0]), `${first} <break time="7000ms"/>`);
+  assert.equal(renderBreakSentinels(chunks[1]), second);
+  assert.deepEqual(computeChunkPauses(chunks, 0), [7000]);
+});
+
+test('targeted Full regeneration uses the same break-aware chunk and join pipeline', async () => {
+  const expanded = expandSsml('hello <break time="7000ms"/> hello');
+  const synthesizedTexts = [];
+  const result = await synthesizeBreakAwareFullChunk(
+    expanded,
+    { text: expanded },
+    { chunkJoinPauseMs: 0 },
+    {
+      synthesizeChunk: async (text) => {
+        synthesizedTexts.push(stripBreakSentinels(text));
+        return { audioBuffer: makeWav({ toneMs: 300 }), attempts: 1 };
+      },
+    },
+  );
+
+  assert.deepEqual(synthesizedTexts, ['hello', 'hello']);
+  assert.equal(result.attempts, 2);
+  const total = durationMs(result.audioBuffer);
+  assert.ok(total >= 7550 && total <= 7650, `unexpected regenerated duration: ${total}ms`);
+});
+
+test('Full synthesis prepends and appends boundary break silence', async () => {
+  const expanded = expandSsml('<break time="500ms"/> hello <break time="700ms"/>');
+  const result = await synthesizeBreakAwareFullChunk(
+    expanded,
+    { text: expanded },
+    {},
+    {
+      synthesizeChunk: async (text) => {
+        assert.equal(stripBreakSentinels(text), 'hello');
+        return { audioBuffer: makeWav({ toneMs: 300 }), attempts: 1 };
+      },
+    },
+  );
+  assert.equal(durationMs(result.audioBuffer), 1500);
 });
 
 test('text with no breaks chunks exactly as before', () => {

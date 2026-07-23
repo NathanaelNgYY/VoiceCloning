@@ -7,6 +7,8 @@ import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
   regenerateLongTextChunk,
+  deleteLongTextChunk,
+  insertLongTextChunk,
   getLongTextSessionMetadata,
   cancelSession,
   applyFullInferenceQualityPreset,
@@ -15,6 +17,9 @@ import {
   buildAttemptVariants,
   scoreAudioCandidate,
   hasActiveInferenceSession,
+  concatWavs,
+  padWavBoundaries,
+  applyWavOutputGain,
 } from '../services/longTextInference.js';
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
@@ -22,7 +27,7 @@ import { resolveRefAudioParams } from '../services/refAudioCache.js';
 import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { scanOovWords } from '../services/oovScan.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
-import { expandSsml } from '../services/ssml.js';
+import { expandSsml, splitOnBreaks, partitionBreaks } from '../services/ssml.js';
 import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
@@ -176,10 +181,14 @@ function readInferenceParams(body) {
 function readFullChunkingOptions(body = {}) {
   const maxChunkWords = Number(body.max_chunk_words);
   const maxSentencesPerChunk = Number(body.max_sentences_per_chunk);
+  const outputGainDb = Number(body.output_gain_db);
   return {
     ...(Number.isInteger(maxChunkWords) && maxChunkWords >= 10 && maxChunkWords <= 100 ? { maxChunkWords } : {}),
     ...(Number.isInteger(maxSentencesPerChunk) && maxSentencesPerChunk >= 1 && maxSentencesPerChunk <= 5
       ? { maxSentencesPerChunk }
+      : {}),
+    ...(Number.isFinite(outputGainDb) && outputGainDb >= -6 && outputGainDb <= 6
+      ? { outputGainDb }
       : {}),
   };
 }
@@ -294,11 +303,16 @@ export async function handleLiveTtsRequest(body, {
   retryCount,
 } = {}) {
   const resolvedParams = await resolveParams(body);
-  const dictionaryText = await prepareTextWithRuntimeDictionary(resolvedParams.text);
+  const expandedText = expandSsml(
+    resolvedParams.text,
+    { protectedWords: await arpabetProtectedWords() },
+  );
+  const dictionaryText = await prepareTextWithRuntimeDictionary(expandedText);
   const emphasizedText = applyEmphasisAndSpelling(dictionaryText);
+  const normalizedText = prepareTextForSynthesis(emphasizedText);
   const normalizedParams = {
     ...resolvedParams,
-    text: prepareTextForSynthesis(emphasizedText),
+    text: normalizedText,
     // cut0 = "no forced split": feed the whole chunk in and let the model choose its
     // own pauses (natural prosody), same as Live Full. The Live Fast lambda always
     // sends cut0; this fallback only applies if a caller omits it.
@@ -309,11 +323,45 @@ export async function handleLiveTtsRequest(body, {
   const activeVerifyChunk = verifyChunk !== undefined
     ? verifyChunk
     : (verificationOptions(normalizedParams, { phonemeVerification: true }).verifyChunk || null);
-  const audioBuffer = await synthesizeLiveFastChunk(normalizedParams, {
-    synthesize,
-    verifyChunk: activeVerifyChunk,
-    retryCount,
-  });
+  const { speechText, leadingBreakMs, trailingBreakMs } = partitionBreaks(normalizedText);
+  const breakSegments = [];
+  for (const segment of splitOnBreaks(speechText)) {
+    const text = String(segment.text || '').trim();
+    if (text) {
+      breakSegments.push({ text, breakMsAfter: segment.breakMsAfter });
+    } else if (segment.breakMsAfter != null && breakSegments.length > 0) {
+      // Match Full's handling of back-to-back breaks: the latest explicit break
+      // controls the next real audio boundary instead of synthesizing an empty clip.
+      breakSegments[breakSegments.length - 1].breakMsAfter = segment.breakMsAfter;
+    }
+  }
+  if (breakSegments.length === 0) {
+    throw new Error('No text to synthesize');
+  }
+
+  const buffers = [];
+  for (const segment of breakSegments) {
+    buffers.push(await synthesizeLiveFastChunk(
+      { ...normalizedParams, text: segment.text },
+      {
+        synthesize,
+        verifyChunk: activeVerifyChunk,
+        retryCount,
+      },
+    ));
+  }
+  const joined = buffers.length === 1
+    ? buffers[0]
+    : concatWavs(
+      buffers,
+      breakSegments.slice(0, -1).map(segment => segment.breakMsAfter ?? 0),
+    );
+  // Gain is deliberately post-verification: it changes only delivered PCM level,
+  // never synthesis, retry selection, ASR, or phoneme decisions.
+  const audioBuffer = applyWavOutputGain(
+    padWavBoundaries(joined, leadingBreakMs, trailingBreakMs),
+    body.output_gain_db,
+  );
   return { audioBuffer, resolvedParams: normalizedParams };
 }
 
@@ -583,9 +631,63 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
       ));
     }
     const result = await regenerateLongTextChunk(sessionId, index, fullInferenceQualityOptions({
+      ...(session.options || {}),
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
-    }), preparedReplacement);
+    }), preparedReplacement, replacementText);
+    activityState.mark();
+    return res.json(result);
+  } catch (err) {
+    const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
+    return res.status(status).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+  }
+});
+
+router.post('/inference/delete-chunk', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '');
+  const index = Number(req.body?.index);
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
+  if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
+  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
+
+  activeLiveTtsRequests += 1;
+  try {
+    activityState.mark();
+    const session = getLongTextSessionMetadata(sessionId);
+    const result = await deleteLongTextChunk(sessionId, index, session.options || {});
+    activityState.mark();
+    return res.json(result);
+  } catch (err) {
+    const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
+    return res.status(status).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+  }
+});
+
+router.post('/inference/insert-chunk', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '');
+  const index = Number(req.body?.index);
+  const displayText = String(req.body?.text || '').trim();
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
+  if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
+  if (!displayText) return res.status(400).json({ error: 'Chunk text is required' });
+  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
+
+  activeLiveTtsRequests += 1;
+  try {
+    activityState.mark();
+    const session = getLongTextSessionMetadata(sessionId);
+    const preparedText = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
+      expandSsml(displayText, { protectedWords: await arpabetProtectedWords() }),
+    ));
+    const result = await insertLongTextChunk(sessionId, index, fullInferenceQualityOptions({
+      ...(session.options || {}),
+      ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
+      avoidChunkFinalWords: await chunkingDictionaryWords(),
+    }), preparedText, displayText);
     activityState.mark();
     return res.json(result);
   } catch (err) {

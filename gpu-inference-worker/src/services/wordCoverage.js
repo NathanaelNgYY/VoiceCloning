@@ -137,7 +137,23 @@ export function computeWordCoverage(expectedText, transcript, opts = {}) {
     return { coverage: 1, missingWords: [], expectedCount: 0, matchedCount: 0 };
   }
 
-  const actual = tokenize(transcript).map(canonicalize);
+  let actual = tokenize(transcript).map(canonicalize);
+  // The synthesis normalizer deliberately separates some compounds to make the
+  // voice pronounce them clearly ("through out"), while Whisper normally joins
+  // the spoken result back into one token ("throughout"). Re-expand only when an
+  // actual token is the exact concatenation of adjacent expected tokens. This is
+  // narrower than lowering the generic absorbed-fragment length and cannot turn
+  // an unrelated substring into coverage for a missing short word.
+  const expectedKeysInOrder = expected.map((entry) => entry.key);
+  actual = actual.flatMap((actualToken) => {
+    for (let width = Math.min(4, expectedKeysInOrder.length); width >= 2; width -= 1) {
+      for (let start = 0; start + width <= expectedKeysInOrder.length; start += 1) {
+        const fragments = expectedKeysInOrder.slice(start, start + width);
+        if (fragments.join('') === actualToken) return fragments;
+      }
+    }
+    return [actualToken];
+  });
   const consumed = new Array(actual.length).fill(false);
   const missingWords = [];
   let matchedCount = 0;

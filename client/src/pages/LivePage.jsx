@@ -17,6 +17,8 @@ import {
   getInferenceChunk,
   getInferenceChunkPreviewUrl,
   regenerateInferenceChunk,
+  deleteInferenceChunk,
+  insertInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
   scanOovWords,
@@ -117,6 +119,7 @@ import {
   MicOff,
   Pencil,
   PlayCircle,
+  Plus,
   RefreshCw,
   ScanSearch,
   Sparkles,
@@ -317,6 +320,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [topP, setTopP] = useState(DEFAULT_LIVE_FAST_SETTINGS.topP);
   const [temperature, setTemperature] = useState(DEFAULT_LIVE_FAST_SETTINGS.temperature);
   const [repPenalty, setRepPenalty] = useState(DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+  const [liveFastOutputGainDb, setLiveFastOutputGainDb] = useState(DEFAULT_LIVE_FAST_SETTINGS.outputGainDb);
   const [liveFastMaxChunkWords, setLiveFastMaxChunkWords] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords);
   const [liveFastMaxSentences, setLiveFastMaxSentences] = useState(DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk);
   const [liveFullRefAudioPath, setLiveFullRefAudioPath] = useState('');
@@ -328,6 +332,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [liveFullTopP, setLiveFullTopP] = useState(DEFAULT_LIVE_FULL_SETTINGS.topP);
   const [liveFullTemperature, setLiveFullTemperature] = useState(DEFAULT_LIVE_FULL_SETTINGS.temperature);
   const [liveFullRepPenalty, setLiveFullRepPenalty] = useState(DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
+  const [liveFullOutputGainDb, setLiveFullOutputGainDb] = useState(DEFAULT_LIVE_FULL_SETTINGS.outputGainDb);
   const [liveFullMaxChunkWords, setLiveFullMaxChunkWords] = useState(DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords);
   const [liveFullMaxSentences, setLiveFullMaxSentences] = useState(DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk);
 
@@ -338,6 +343,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [ttsHistory, setTtsHistory] = useState([]);
   const [regeneratingFullChunk, setRegeneratingFullChunk] = useState('');
   const [fullChunkDrafts, setFullChunkDrafts] = useState({});
+  const [fullChunkInsert, setFullChunkInsert] = useState({ key: '', text: '' });
   const [ttsFastGenerating, setTtsFastGenerating] = useState(false);
   const [ttsFastProgress, setTtsFastProgress] = useState({ total: 0, current: 0, text: '' });
   // Which button (if any) is running the async chunked flow: null | 'fast' | 'full'.
@@ -426,9 +432,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     topP,
     temperature,
     repPenalty,
+    outputGainDb: liveFastOutputGainDb,
     maxChunkWords: liveFastMaxChunkWords,
     maxSentencesPerChunk: liveFastMaxSentences,
-  }), [speed, topK, topP, temperature, repPenalty, liveFastMaxChunkWords, liveFastMaxSentences]);
+  }), [speed, topK, topP, temperature, repPenalty, liveFastOutputGainDb, liveFastMaxChunkWords, liveFastMaxSentences]);
   const liveRefParams = useMemo(() => buildLiveFastRefParams({
     primaryPath: refAudioPath, promptText, promptLang, auxRefAudios,
     settings: liveFastSettings,
@@ -439,9 +446,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     topP: liveFullTopP,
     temperature: liveFullTemperature,
     repPenalty: liveFullRepPenalty,
+    outputGainDb: liveFullOutputGainDb,
     maxChunkWords: liveFullMaxChunkWords,
     maxSentencesPerChunk: liveFullMaxSentences,
-  }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty, liveFullMaxChunkWords, liveFullMaxSentences]);
+  }), [liveFullSpeed, liveFullTopK, liveFullTopP, liveFullTemperature, liveFullRepPenalty, liveFullOutputGainDb, liveFullMaxChunkWords, liveFullMaxSentences]);
   const liveFastRankOneReferenceSummary = useMemo(() => {
     const rankOneConfig = voiceConfigs[0] || null;
     const { primaryPath, auxPaths } = getConfigReferencePaths(rankOneConfig);
@@ -471,6 +479,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      output_gain_db: liveFastOutputGainDb,
       max_chunk_words: liveFastMaxChunkWords,
       max_sentences_per_chunk: liveFastMaxSentences,
     },
@@ -488,6 +497,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     temperature,
     repPenalty,
     speed,
+    liveFastOutputGainDb,
     liveFastMaxChunkWords,
     liveFastMaxSentences,
   ]);
@@ -555,10 +565,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      output_gain_db: liveFastOutputGainDb,
       max_chunk_words: liveFastMaxChunkWords,
       max_sentences_per_chunk: liveFastMaxSentences,
     },
-  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastMaxChunkWords, liveFastMaxSentences]);
+  }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastOutputGainDb, liveFastMaxChunkWords, liveFastMaxSentences]);
 
   const liveSpeech = useLiveSpeech({
     refParams: liveRefParams,
@@ -826,6 +837,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature: defaults.temperature ?? temperature,
         repetition_penalty: defaults.repetition_penalty ?? repPenalty,
         speed_factor: defaults.speed_factor ?? speed,
+        output_gain_db: defaults.output_gain_db ?? DEFAULT_LIVE_FAST_SETTINGS.outputGainDb,
         max_chunk_words: defaults.max_chunk_words ?? DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords,
         max_sentences_per_chunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FAST_SETTINGS.maxSentencesPerChunk,
       },
@@ -953,6 +965,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : topP);
     setTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : temperature);
     setRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : repPenalty);
+    setLiveFastOutputGainDb(Number.isFinite(defaults.output_gain_db) ? defaults.output_gain_db : DEFAULT_LIVE_FAST_SETTINGS.outputGainDb);
     const chunkSettings = normalizeLiveFastSettings({
       maxChunkWords: defaults.max_chunk_words,
       maxSentencesPerChunk: defaults.max_sentences_per_chunk,
@@ -1004,6 +1017,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           temperature,
           repetition_penalty: repPenalty,
           speed_factor: speed,
+          output_gain_db: liveFastOutputGainDb,
           max_chunk_words: liveFastMaxChunkWords,
           max_sentences_per_chunk: liveFastMaxSentences,
         },
@@ -1025,6 +1039,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        output_gain_db: liveFastOutputGainDb,
         max_chunk_words: liveFastMaxChunkWords,
         max_sentences_per_chunk: liveFastMaxSentences,
       },
@@ -1229,6 +1244,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         temperature,
         repetition_penalty: repPenalty,
         speed_factor: speed,
+        output_gain_db: liveFastOutputGainDb,
         max_chunk_words: liveFastMaxChunkWords,
         max_sentences_per_chunk: liveFastMaxSentences,
       },
@@ -1391,6 +1407,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setLiveFullTopP(Number.isFinite(defaults.top_p) ? defaults.top_p : DEFAULT_LIVE_FULL_SETTINGS.topP);
     setLiveFullTemperature(Number.isFinite(defaults.temperature) ? defaults.temperature : DEFAULT_LIVE_FULL_SETTINGS.temperature);
     setLiveFullRepPenalty(Number.isFinite(defaults.repetition_penalty) ? defaults.repetition_penalty : DEFAULT_LIVE_FULL_SETTINGS.repPenalty);
+    setLiveFullOutputGainDb(Number.isFinite(defaults.output_gain_db) ? defaults.output_gain_db : DEFAULT_LIVE_FULL_SETTINGS.outputGainDb);
     setLiveFullMaxChunkWords(Number.isInteger(defaults.max_chunk_words) ? defaults.max_chunk_words : DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords);
     setLiveFullMaxSentences(Number.isInteger(defaults.max_sentences_per_chunk) ? defaults.max_sentences_per_chunk : DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk);
     setLoadedLiveFullConfigId(config?.configId || '');
@@ -1518,6 +1535,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       topP: defaults.top_p ?? DEFAULT_LIVE_FULL_SETTINGS.topP,
       temperature: defaults.temperature ?? DEFAULT_LIVE_FULL_SETTINGS.temperature,
       repPenalty: defaults.repetition_penalty ?? DEFAULT_LIVE_FULL_SETTINGS.repPenalty,
+      outputGainDb: defaults.output_gain_db ?? DEFAULT_LIVE_FULL_SETTINGS.outputGainDb,
       maxChunkWords: defaults.max_chunk_words ?? DEFAULT_LIVE_FULL_SETTINGS.maxChunkWords,
       maxSentencesPerChunk: defaults.max_sentences_per_chunk ?? DEFAULT_LIVE_FULL_SETTINGS.maxSentencesPerChunk,
     });
@@ -1778,7 +1796,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       prompt_text: prompt,
       prompt_lang: referencePromptLang(reference.primary, primaryFile, promptLang),
       aux_ref_audio_paths: auxPaths,
-      speed_factor: defaults.speed_factor ?? speed,
+        speed_factor: defaults.speed_factor ?? speed,
+        output_gain_db: defaults.output_gain_db ?? DEFAULT_LIVE_FAST_SETTINGS.outputGainDb,
       top_k: defaults.top_k ?? topK,
       top_p: defaults.top_p ?? topP,
       temperature: defaults.temperature ?? temperature,
@@ -1859,6 +1878,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       temperature,
       repetition_penalty: repPenalty,
       speed_factor: speed,
+      output_gain_db: liveFastOutputGainDb,
     };
     const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
     const languageLabel = liveLanguageConfig.label;
@@ -2194,7 +2214,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           url: playableUrl,
           revision,
           chunks: item.chunks.map((itemChunk) => itemChunk.index === chunk.index
-            ? { ...itemChunk, text: savedText }
+            ? {
+              ...itemChunk,
+              text: savedText,
+              attempts: res.data?.attempts,
+              fallback: res.data?.fallback === true,
+              fallbackReason: res.data?.fallbackReason || '',
+            }
             : itemChunk),
         } : item);
         ttsHistoryRef.current = next;
@@ -2206,6 +2232,136 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     } finally {
       setRegeneratingFullChunk('');
     }
+  }
+
+  async function deleteFullChunk(historyItem, chunk) {
+    if (!historyItem?.sessionId || !Number.isInteger(chunk?.index) || historyItem.chunks?.length <= 1) return;
+    const busyKey = `${historyItem.id}:${chunk.index}`;
+    setRegeneratingFullChunk(busyKey);
+    setTtsError('');
+    try {
+      const res = await deleteInferenceChunk(historyItem.sessionId, chunk.index);
+      const revision = res.data?.revision || Date.now();
+      const chunks = Array.isArray(res.data?.chunks) ? res.data.chunks : [];
+      const source = await getGenerationResultSource(historyItem.sessionId);
+      const separator = source.url.includes('?') ? '&' : '?';
+      const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      if (String(historyItem.url || '').startsWith('blob:') && historyItem.url !== playableUrl) {
+        URL.revokeObjectURL(historyItem.url);
+      }
+      setTtsHistory((current) => {
+        const next = current.map((item) => item.id === historyItem.id
+          ? { ...item, url: playableUrl, revision, chunks }
+          : item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+      setFullChunkDrafts((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${historyItem.id}:`)),
+      ));
+    } catch (err) {
+      setTtsError(friendlyTtsError(err, 'Could not delete this audio chunk.'));
+    } finally {
+      setRegeneratingFullChunk('');
+    }
+  }
+
+  async function insertFullChunk(historyItem, index) {
+    if (!historyItem?.sessionId || !Number.isInteger(index)) return;
+    const insertKey = `${historyItem.id}:${index}`;
+    const text = String(fullChunkInsert.key === insertKey ? fullChunkInsert.text : '').trim();
+    if (!text) {
+      setTtsError('Enter text for the new chunk.');
+      return;
+    }
+    const busyKey = `insert:${insertKey}`;
+    setRegeneratingFullChunk(busyKey);
+    setTtsError('');
+    try {
+      const res = await insertInferenceChunk(historyItem.sessionId, index, text);
+      const revision = res.data?.revision || Date.now();
+      const chunks = Array.isArray(res.data?.chunks) ? res.data.chunks : [];
+      const source = await getGenerationResultSource(historyItem.sessionId);
+      const separator = source.url.includes('?') ? '&' : '?';
+      const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      if (String(historyItem.url || '').startsWith('blob:') && historyItem.url !== playableUrl) {
+        URL.revokeObjectURL(historyItem.url);
+      }
+      setTtsHistory((current) => {
+        const next = current.map((item) => item.id === historyItem.id
+          ? { ...item, url: playableUrl, revision, chunks }
+          : item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+      setFullChunkDrafts((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${historyItem.id}:`)),
+      ));
+      setFullChunkInsert({ key: '', text: '' });
+    } catch (err) {
+      setTtsError(friendlyTtsError(err, 'Could not insert this audio chunk.'));
+    } finally {
+      setRegeneratingFullChunk('');
+    }
+  }
+
+  function renderFullChunkInsert(historyItem, index) {
+    const insertKey = `${historyItem.id}:${index}`;
+    const open = fullChunkInsert.key === insertKey;
+    const busy = regeneratingFullChunk === `insert:${insertKey}`;
+    if (!open) {
+      return (
+        <Button
+          key={`insert-${insertKey}`}
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setFullChunkInsert({ key: insertKey, text: '' })}
+          disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null}
+          className="h-7 w-full rounded-md border border-dashed border-slate-200 text-[10px] text-slate-400 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-600"
+        >
+          <Plus size={11} /> Add chunk here
+        </Button>
+      );
+    }
+    return (
+      <div key={`insert-${insertKey}`} className="rounded-lg border border-dashed border-sky-200 bg-sky-50/40 p-2.5">
+        <Label htmlFor={`full-chunk-insert-${insertKey}`} className="text-[11px] font-semibold text-slate-600">
+          New chunk at position {index + 1}
+        </Label>
+        <Textarea
+          id={`full-chunk-insert-${insertKey}`}
+          value={fullChunkInsert.text}
+          onChange={(event) => setFullChunkInsert({ key: insertKey, text: event.target.value })}
+          disabled={busy}
+          rows={3}
+          placeholder="Enter text to synthesize with the same Full quality pipeline…"
+          className="mt-1.5 min-h-[78px] w-full resize-y rounded-md border-sky-100 bg-white px-3 py-2 text-sm leading-5 shadow-none focus-visible:ring-1"
+        />
+        <div className="mt-2 flex justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setFullChunkInsert({ key: '', text: '' })}
+            disabled={busy}
+            className="h-7 px-2 text-[10px]"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => insertFullChunk(historyItem, index)}
+            disabled={busy || Boolean(regeneratingFullChunk) || streamingRoute !== null || !fullChunkInsert.text.trim()}
+            className="h-7 px-2.5 text-[10px]"
+          >
+            {busy ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+            {busy ? 'Generating' : 'Generate and insert'}
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   async function loadPronunciationEntries(category = pronunciationCategory) {
@@ -3121,6 +3277,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setTopP(Number.isFinite(activeVoiceProfile?.defaults?.top_p) ? activeVoiceProfile.defaults.top_p : DEFAULT_LIVE_FAST_SETTINGS.topP);
     setTemperature(Number.isFinite(activeVoiceProfile?.defaults?.temperature) ? activeVoiceProfile.defaults.temperature : DEFAULT_LIVE_FAST_SETTINGS.temperature);
     setRepPenalty(Number.isFinite(activeVoiceProfile?.defaults?.repetition_penalty) ? activeVoiceProfile.defaults.repetition_penalty : DEFAULT_LIVE_FAST_SETTINGS.repPenalty);
+    setLiveFastOutputGainDb(Number.isFinite(activeVoiceProfile?.defaults?.output_gain_db) ? activeVoiceProfile.defaults.output_gain_db : DEFAULT_LIVE_FAST_SETTINGS.outputGainDb);
     const chunkSettings = normalizeLiveFastSettings({
       maxChunkWords: activeVoiceProfile?.defaults?.max_chunk_words,
       maxSentencesPerChunk: activeVoiceProfile?.defaults?.max_sentences_per_chunk,
@@ -3986,37 +4143,52 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         {item.title === 'Full inference output' && result.sessionId && result.chunks?.length > 0 && (
                           <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
                             <div>
-                              <p className="text-xs font-semibold text-slate-700">Review sentences</p>
+                              <p className="text-xs font-semibold text-slate-700">Review audio chunks</p>
                               <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
-                                These previews use the same shared loudness normalization as the full WAV. Regenerating replaces only that sentence and rebuilds the full audio.
+                                Chunks target {liveFullSettings.maxSentencesPerChunk} sentences; a very short chunk may take one more for context. Regenerating replaces one chunk; deleting it removes its audio and stitches the rest together.
                               </p>
                             </div>
+                            {renderFullChunkInsert(result, 0)}
                             {result.chunks.map((chunk) => {
                               const busyKey = `${result.id}:${chunk.index}`;
                               const busy = regeneratingFullChunk === busyKey;
                               const revision = result.revision || '';
                               const draftText = fullChunkDrafts[busyKey] ?? chunk.text ?? '';
                               return (
-                                <div key={chunk.index} className="rounded-lg border border-slate-200 bg-white p-2.5">
+                                <div key={`chunk-slot-${chunk.index}`} className="space-y-2">
+                                <div className="rounded-lg border border-slate-200 bg-white p-2.5">
                                   <div className="mb-2 min-w-0">
                                     <div className="mb-1.5 flex items-center justify-between gap-2">
                                       <Label
                                         htmlFor={`full-chunk-${result.id}-${chunk.index}`}
                                         className="block text-[11px] font-semibold text-slate-500"
                                       >
-                                        Sentence {chunk.index + 1}
+                                        Chunk {chunk.index + 1}
                                       </Label>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => regenerateFullChunk(result, chunk)}
-                                        disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
-                                        className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
-                                      >
-                                        {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                        {busy ? 'Rebuilding' : 'Regenerate'}
-                                      </Button>
+                                      <div className="flex shrink-0 items-center gap-1.5">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => regenerateFullChunk(result, chunk)}
+                                          disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || !draftText.trim()}
+                                          className="h-8 shrink-0 rounded-md px-2.5 text-[11px] active:scale-[0.98]"
+                                        >
+                                          {busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                          {busy ? 'Rebuilding' : 'Regenerate'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="icon"
+                                          variant="outline"
+                                          onClick={() => deleteFullChunk(result, chunk)}
+                                          disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null || result.chunks.length <= 1}
+                                          className="h-8 w-8 shrink-0 rounded-md border-red-100 text-red-500 hover:bg-red-50 hover:text-red-600 active:scale-[0.98]"
+                                          title={result.chunks.length <= 1 ? 'The only remaining chunk cannot be deleted' : 'Delete this chunk and rebuild the full audio'}
+                                        >
+                                          <Trash2 size={12} />
+                                        </Button>
+                                      </div>
                                     </div>
                                       <Textarea
                                         id={`full-chunk-${result.id}-${chunk.index}`}
@@ -4034,8 +4206,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                         id={`full-chunk-help-${result.id}-${chunk.index}`}
                                         className="mt-1 text-[10px] leading-4 text-slate-400"
                                       >
-                                        Edit the text, then regenerate to replace only this audio chunk.
+                                        Edit the text, then regenerate to replace this chunk. Clearing text does not delete its existing audio.
                                       </p>
+                                      {chunk.fallback && (
+                                        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800">
+                                          <span className="font-semibold">Best effort — verification did not pass.</span>
+                                          {chunk.fallbackReason && <span className="ml-1">{chunk.fallbackReason}</span>}
+                                        </div>
+                                      )}
                                   </div>
                                   <audio
                                     key={`${result.sessionId}:${chunk.index}:${revision}`}
@@ -4044,6 +4222,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                     preload="metadata"
                                     src={getInferenceChunkPreviewUrl(result.sessionId, chunk.index, revision)}
                                   />
+                                </div>
+                                {renderFullChunkInsert(result, chunk.index + 1)}
                                 </div>
                               );
                             })}
@@ -4554,6 +4734,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 </div>
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
                   <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Saved output gain</Label>
+                    <span className="font-mono text-sm font-semibold text-slate-700">{liveFastOutputGainDb > 0 ? '+' : ''}{liveFastOutputGainDb.toFixed(1)} dB</span>
+                  </div>
+                  <Slider min={-6} max={6} step={0.5} value={[liveFastOutputGainDb]} onValueChange={([v]) => setLiveFastOutputGainDb(v)} disabled={isConversationActive} />
+                  <p className="text-xs leading-5 text-slate-400">Changes delivered Fast TTS volume after verification; pronunciation and retry behavior stay unchanged.</p>
+                </div>
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                  <div className="flex items-center justify-between">
                     <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Max chunk words</Label>
                     <span className="font-mono text-sm font-semibold text-slate-700">
                       {liveFastSettings.maxChunkWords === 0 ? 'Auto · 280 chars' : liveFastSettings.maxChunkWords}
@@ -4806,6 +4994,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
                     { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                     { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
+                    { label: 'Saved output gain', display: `${liveFullOutputGainDb > 0 ? '+' : ''}${liveFullOutputGainDb.toFixed(1)} dB`, min: -6, max: 6, step: 0.5, val: liveFullOutputGainDb, set: setLiveFullOutputGainDb },
                     { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
                     { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                   ].map(({ label, display, min, max, step, val, set }) => (
@@ -4834,7 +5023,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     Refs from Live Fast #1: {liveFastRankOneReferenceSummary.primaryName} - speed {liveFullSettings.speed.toFixed(1)} - temp {liveFullSettings.temperature.toFixed(2)}
                   </p>
                   <p className="mt-1 truncate">
-                    top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
+                    top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)} · gain {liveFullSettings.outputGainDb > 0 ? '+' : ''}{liveFullSettings.outputGainDb.toFixed(1)} dB
                   </p>
                   <p className="mt-1 truncate">
                     chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}

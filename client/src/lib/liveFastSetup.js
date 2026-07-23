@@ -4,6 +4,7 @@ export const DEFAULT_LIVE_FAST_SETTINGS = {
   topP: 0.85,
   temperature: 0.7,
   repPenalty: 1.35,
+  outputGainDb: 0,
   maxChunkWords: 0,
   maxSentencesPerChunk: 1,
 };
@@ -25,6 +26,7 @@ export function normalizeLiveFastSettings(settings = {}) {
     topP: numberInRange(settings.topP, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.topP),
     temperature: numberInRange(settings.temperature, 0, 1, DEFAULT_LIVE_FAST_SETTINGS.temperature),
     repPenalty: numberInRange(settings.repPenalty, 1.0, 2.0, DEFAULT_LIVE_FAST_SETTINGS.repPenalty),
+    outputGainDb: numberInRange(settings.outputGainDb, -6, 6, DEFAULT_LIVE_FAST_SETTINGS.outputGainDb),
     maxChunkWords: settings.maxChunkWords === 0
       ? 0
       : integerInRange(settings.maxChunkWords, 10, 100, DEFAULT_LIVE_FAST_SETTINGS.maxChunkWords),
@@ -60,6 +62,7 @@ export function buildLiveFastRefParams({
     top_p: normalized.topP,
     temperature: normalized.temperature,
     repetition_penalty: normalized.repPenalty,
+    output_gain_db: normalized.outputGainDb,
   };
 }
 

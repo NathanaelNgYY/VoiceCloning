@@ -12,6 +12,9 @@ import {
   insertCommaPauses,
   parseWav,
   scoreAudioCandidate,
+  serializableSessionOptions,
+  applyWavOutputGain,
+  synthesizeBreakAwareFullChunk,
 } from './longTextInference.js';
 import { inferenceServer } from './inferenceServer.js';
 
@@ -71,6 +74,47 @@ function makeSparseQuietWav(durationSec, sampleRate = 32000) {
   }
   return buf;
 }
+
+test('Full session manifests retain regeneration-relevant synthesis settings only', () => {
+  assert.deepEqual(serializableSessionOptions({
+    maxChunkWords: 24,
+    maxSentencesPerChunk: 2,
+    retryCount: 4,
+    allowBestEffortFallback: true,
+    verifyChunk: () => true,
+    unrelated: 'not persisted',
+  }), {
+    maxChunkWords: 24,
+    maxSentencesPerChunk: 2,
+    retryCount: 4,
+    allowBestEffortFallback: true,
+  });
+});
+
+test('admin regeneration preserves edited review text as one synthesis unit', async () => {
+  const text = 'The membrane organization is structural. These proteins provide context.';
+  const seen = [];
+  const result = await synthesizeBreakAwareFullChunk(
+    text,
+    { text },
+    {
+      preserveReviewUnit: true,
+      maxSentencesPerChunk: 1,
+      maxChunkWords: 5,
+      avoidChunkFinalWords: ['structural'],
+    },
+    {
+      synthesizeChunk: async (chunk) => {
+        seen.push(chunk);
+        return { audioBuffer: makeNoiseWav(1), attempts: 3, fallback: false };
+      },
+    },
+  );
+
+  assert.deepEqual(seen, [text]);
+  assert.deepEqual(result.synthesisChunks, [text]);
+  assert.equal(result.attempts, 3);
+});
 
 // A hyphen used as a dash with spaces around it (" - ") reaches GPT-SoVITS as a
 // bare hyphen-minus, which the English G2P verbalizes as the word "minus".
@@ -299,7 +343,7 @@ test('full inference quality keeps comma splicing off by default (opt-in via env
   assert.equal(options.isolateRiskySentences, true);
 });
 
-test('full inference quality groups at most two short sentences', () => {
+test('full inference quality keeps two sentences when they provide enough context', () => {
   const options = fullInferenceQualityOptions();
   const chunks = splitTextIntoChunks(
     'First, cells grow. Next, their DNA is copied. Finally, the cell divides.',
@@ -311,6 +355,38 @@ test('full inference quality groups at most two short sentences', () => {
     'First, cells grow. Next, their DNA is copied.',
     'Finally, the cell divides.',
   ]);
+});
+
+test('an internal ARPAbet word does not force a one-sentence review chunk', () => {
+  const text = 'The Michaelis constant describes an enzyme affinity for its substrate. Researchers measure this value carefully during analysis.';
+  const chunks = splitTextIntoChunks(text, {
+    maxChunkLength: 170,
+    maxSentencesPerChunk: 2,
+    isolateRiskySentences: true,
+    avoidChunkFinalWords: ['michaelis'],
+  });
+
+  assert.deepEqual(chunks, [text]);
+});
+
+test('a dictionary-tail chunk may borrow exactly one sentence within the 15 percent ceiling', () => {
+  const text = 'Cells divided today. The membrane contained glycoprotein. This added context keeps the decoder speaking naturally.';
+  const chunks = splitTextIntoChunks(text, {
+    maxChunkLength: 100,
+    maxSentencesPerChunk: 2,
+    avoidChunkFinalWords: ['glycoprotein'],
+  });
+  assert.equal(chunks[0], text);
+  assert.equal(chunks.length, 1);
+});
+
+test('saved output gain raises PCM level but respects the minus-one dBFS ceiling', () => {
+  const source = makeNoiseWav(1);
+  const before = analyzeAudioQuality(source, 'normal test audio').metrics.absPeak;
+  const gained = applyWavOutputGain(source, 6);
+  const after = analyzeAudioQuality(gained, 'normal test audio').metrics.absPeak;
+  assert.ok(after > before, `${before} -> ${after}`);
+  assert.ok(after <= 0.892, `peak exceeded ceiling: ${after}`);
 });
 
 test('two fitting sentences are not split by the old percentage-full heuristic', () => {
@@ -348,7 +424,7 @@ test('the short-context exception never absorbs more than one extra sentence', (
   ]);
 });
 
-test('full inference isolates a sentence containing a guarded technical term', () => {
+test('full inference starts guarded content in a fresh chunk but adds following context', () => {
   const chunks = splitTextIntoChunks(
     'Cells continue growing steadily today. The biopsy confirmed metastasis. Recovery continued normally.',
     {
@@ -361,8 +437,7 @@ test('full inference isolates a sentence containing a guarded technical term', (
 
   assert.deepEqual(chunks, [
     'Cells continue growing steadily today.',
-    'The biopsy confirmed metastasis.',
-    'Recovery continued normally.',
+    'The biopsy confirmed metastasis. Recovery continued normally.',
   ]);
 });
 
@@ -421,16 +496,46 @@ test('retry takes are voice-faithful: ONLY the seed changes', () => {
   assert.notEqual(third.seed, second.seed);
 });
 
-// In full-inference mode (maxSentencesPerChunk: 1) the chunker used to strand a
-// short complete sentence ("Yes.") as its own tiny chunk. GPT-SoVITS renders
-// such a fragment as a near-silent buffer, and a long passage contains enough of
-// them that one eventually defeats every retry and aborts the whole job.
 test('full inference never emits a tiny standalone chunk (silent-buffer trigger)', () => {
   const text = "Yes. The mitochondria produce most of the cell's usable chemical energy through respiration.";
   const chunks = splitTextIntoChunks(text, { maxChunkLength: 220, maxSentencesPerChunk: 1 });
   for (const chunk of chunks) {
     assert.ok(chunk.trim().length >= 24, `chunk too short, will render silent: ${JSON.stringify(chunks)}`);
   }
+});
+
+test('newlines do not create heading-only chunks and the hard character limit still applies', () => {
+  const chunks = splitTextIntoChunks(
+    `Deep reasoning, criticism and architecture
+
+Opus 4.8 Low > Sol Low > Terra Low
+
+Opus is preferable when you need the model to challenge your approach, detect conceptual weaknesses and reason through unfamiliar problems.
+
+Implementing and debugging code
+
+Sol Low is probably the best choice.`,
+    fullInferenceQualityOptions(),
+  );
+
+  assert.deepEqual(chunks, [
+    'Deep reasoning, criticism and architecture Opus 4.8 Low greater than Sol Low greater than Terra Low Opus is preferable when you need the model to challenge your approach,',
+    'detect conceptual weaknesses and reason through unfamiliar problems. Implementing and debugging code Sol Low is probably the best choice.',
+  ]);
+  assert.ok(chunks.every((chunk) => chunk.length <= 170), JSON.stringify(chunks));
+  assert.ok(!chunks.includes('Deep reasoning, criticism and architecture'));
+  assert.ok(!chunks.includes('Implementing and debugging code'));
+});
+
+test('colons and semicolons do not create sentence fragments', () => {
+  const chunks = splitTextIntoChunks(
+    'Final verdict\nOpus 4.8 Low: better thinker and critic. Sol Low: better coding executor; stronger all rounder.',
+    { maxChunkLength: 170, maxSentencesPerChunk: 2 },
+  );
+
+  assert.deepEqual(chunks, [
+    'Final verdict Opus 4.8 Low: better thinker and critic. Sol Low: better coding executor; stronger all rounder.',
+  ]);
 });
 
 test('a short trailing clause is folded back instead of stranded as a tiny chunk', () => {

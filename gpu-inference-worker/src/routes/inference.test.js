@@ -12,6 +12,32 @@ async function loadInferenceRouteModule() {
   }
 }
 
+function makeToneWav(durationMs, sampleRate = 32000) {
+  const frameCount = Math.round((durationMs / 1000) * sampleRate);
+  const dataSize = frameCount * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    buffer.writeInt16LE(
+      Math.round(4000 * Math.sin((2 * Math.PI * 220 * frame) / sampleRate)),
+      44 + frame * 2,
+    );
+  }
+  return buffer;
+}
+
 test('handleLiveTtsRequest synthesizes immediately without a readiness probe', async () => {
   const module = await loadInferenceRouteModule();
   assert.equal(typeof module.handleLiveTtsRequest, 'function');
@@ -44,6 +70,76 @@ test('handleLiveTtsRequest synthesizes immediately without a readiness probe', a
   assert.equal(resolveCalls, 1);
   assert.equal(synthesizeCalls, 1);
   assert.equal(result.audioBuffer.toString('utf-8'), 'RIFFdemo');
+});
+
+test('Live Fast expands a break into separate verified clips and exact joined silence', async () => {
+  const module = await loadInferenceRouteModule();
+  const synthesizedTexts = [];
+  const verifiedTexts = [];
+
+  const result = await module.handleLiveTtsRequest({
+    text: 'hello <break time="7000ms"/> hello',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+    aux_ref_audio_paths: [],
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async (params) => {
+      synthesizedTexts.push(params.text);
+      return makeToneWav(300);
+    },
+    verifyChunk: async (_audio, text) => {
+      verifiedTexts.push(text);
+      return { ok: true, coverage: 1, missingWords: [], suspectWords: [] };
+    },
+  });
+
+  assert.deepEqual(synthesizedTexts.map(text => text.trim()), ['hello', 'hello']);
+  assert.deepEqual(verifiedTexts, ['hello', 'hello']);
+  const durationMs = Math.round((result.audioBuffer.readUInt32LE(40) / 2 / 32000) * 1000);
+  assert.ok(durationMs >= 7550 && durationMs <= 7650, `unexpected joined duration: ${durationMs}ms`);
+});
+
+test('Live Fast preserves leading and trailing break silence without changing synthesis text', async () => {
+  const module = await loadInferenceRouteModule();
+  const result = await module.handleLiveTtsRequest({
+    text: '<break time="500ms"/> hello <break time="700ms"/>',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async (params) => {
+      assert.equal(params.text.trim(), 'hello');
+      return makeToneWav(300);
+    },
+    verifyChunk: async () => ({ ok: true, coverage: 1, missingWords: [], suspectWords: [] }),
+  });
+  const durationMs = Math.round((result.audioBuffer.readUInt32LE(40) / 2 / 32000) * 1000);
+  assert.ok(durationMs >= 1490 && durationMs <= 1510, `unexpected boundary-padded duration: ${durationMs}ms`);
+});
+
+test('Live Fast applies requested output gain only after verification', async () => {
+  const module = await loadInferenceRouteModule();
+  const source = makeToneWav(300);
+  let verifiedPeak = 0;
+  const result = await module.handleLiveTtsRequest({
+    text: 'clear output',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+    output_gain_db: 6,
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async () => source,
+    verifyChunk: async (audio) => {
+      for (let offset = 44; offset + 1 < audio.length; offset += 2) {
+        verifiedPeak = Math.max(verifiedPeak, Math.abs(audio.readInt16LE(offset)));
+      }
+      return { ok: true, coverage: 1, missingWords: [], suspectWords: [] };
+    },
+  });
+  let deliveredPeak = 0;
+  for (let offset = 44; offset + 1 < result.audioBuffer.length; offset += 2) {
+    deliveredPeak = Math.max(deliveredPeak, Math.abs(result.audioBuffer.readInt16LE(offset)));
+  }
+  assert.ok(deliveredPeak > verifiedPeak * 1.8, `${deliveredPeak} should exceed verified ${verifiedPeak}`);
+  assert.ok(deliveredPeak <= Math.round(32767 * 0.891));
 });
 
 test('Live Full keeps ASR validation when speaker verification is unavailable', async () => {

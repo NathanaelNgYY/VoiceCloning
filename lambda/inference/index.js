@@ -92,6 +92,26 @@ export function createHandler({
         }));
       }
 
+      if (method === 'POST' && routePath.endsWith('/inference/delete-chunk')) {
+        if (!body.sessionId) return err(400, 'sessionId is required');
+        if (!Number.isInteger(Number(body.index)) || Number(body.index) < 0) return err(400, 'Invalid chunk index');
+        return ok(await postJson('/inference/delete-chunk', {
+          sessionId: body.sessionId,
+          index: Number(body.index),
+        }));
+      }
+
+      if (method === 'POST' && routePath.endsWith('/inference/insert-chunk')) {
+        if (!body.sessionId) return err(400, 'sessionId is required');
+        if (!Number.isInteger(Number(body.index)) || Number(body.index) < 0) return err(400, 'Invalid chunk index');
+        if (!String(body.text || '').trim()) return err(400, 'Chunk text is required');
+        return ok(await postJson('/inference/insert-chunk', {
+          sessionId: body.sessionId,
+          index: Number(body.index),
+          text: String(body.text).trim(),
+        }));
+      }
+
       // Read-only pronunciation pre-check: flags words the engine would pronounce by
       // neural guess. No ref audio / synthesis — just forward the text to the worker.
       if (method === 'POST' && routePath.endsWith('/inference/scan-oov')) {

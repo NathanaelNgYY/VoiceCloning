@@ -66,6 +66,15 @@ test('dictionary-split words match the single word Whisper actually wrote', () =
   assert.deepEqual(result.missingWords, []);
 });
 
+test('normalized compound fragments match the joined word Whisper writes', () => {
+  const result = computeWordCoverage(
+    'These molecules remain stable through out the experiment.',
+    'These molecules remain stable throughout the experiment.',
+  );
+  assert.equal(result.coverage, 1, JSON.stringify(result));
+  assert.deepEqual(result.missingWords, []);
+});
+
 test('codes and numbers are not held against the read', () => {
   // "ClinicalTrials.gov number NCT01675856" — Whisper can't transcribe the code;
   // only the real words "clinical"/"trials"/"number" should be required.

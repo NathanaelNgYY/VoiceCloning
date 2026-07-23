@@ -54,6 +54,16 @@ export function useInferenceSSE() {
       },
       onChunkComplete(data) {
         setCompletedChunks(data.index + 1);
+        setChunks((current) => current.map((chunk) => (
+          chunk.index === data.index
+            ? {
+              ...chunk,
+              attempts: data.attempts,
+              fallback: data.fallback === true,
+              fallbackReason: data.fallbackReason || '',
+            }
+            : chunk
+        )));
       },
       onComplete() {
         setStatus('complete');

@@ -179,6 +179,46 @@ test('inference targeted regeneration forwards edited sentence text', async () =
   }]);
 });
 
+test('inference chunk deletion forwards the session and numeric index', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    postJson: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { revision: 43, chunks: [] };
+    },
+  });
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/delete-chunk',
+    body: JSON.stringify({ sessionId: 'abc-123', index: 2 }),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{
+    routePath: '/inference/delete-chunk',
+    payload: { sessionId: 'abc-123', index: 2 },
+  }]);
+});
+
+test('inference chunk insertion forwards text and insertion index', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    postJson: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { revision: 44, chunks: [] };
+    },
+  });
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/insert-chunk',
+    body: JSON.stringify({ sessionId: 'abc-123', index: 2, text: 'Inserted sentence.' }),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{
+    routePath: '/inference/insert-chunk',
+    payload: { sessionId: 'abc-123', index: 2, text: 'Inserted sentence.' },
+  }]);
+});
+
 test('inference preserves worker busy status for multi-user feedback', async () => {
   const localHandler = createHandler({
     resolveSynthesisBody: async (body) => ({ ...body, ref_audio_path: 'ref.wav' }),

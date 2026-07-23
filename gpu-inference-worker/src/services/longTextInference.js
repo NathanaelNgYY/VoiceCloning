@@ -12,6 +12,9 @@ import {
   appendBreakSentinel,
   extractBreakMs,
   stripBreakSentinels,
+  renderBreakSentinels,
+  BREAK_SENTINEL_RE,
+  partitionBreaks,
 } from './ssml.js';
 
 const TEMP_DIR = LOCAL_TEMP_ROOT;
@@ -71,6 +74,7 @@ const FULL_QUALITY_OPTIONS = {
   // After whole-chunk and sentence-level 3→5 recovery, keep the strongest audio-usable
   // full-sentence candidate rather than failing the entire user request.
   allowBestEffortFallback: true,
+  outputGainDb: 0,
   // Default cut0-only (COMMA_PAUSE_MS=0). Timestamp-spliced comma breaths still glitch
   // in practice (drift lands the cut too close to speech), so the breath is opt-in via
   // COMMA_PAUSE_MS rather than on by default.
@@ -85,6 +89,19 @@ const MIN_CHUNK_LENGTH = 24;
 // produce rushed or near-silent audio. When the configured sentence ceiling is
 // reached below this total word count, permit exactly one neighbouring sentence.
 const MIN_CONTEXT_WORDS = 8;
+const SESSION_OPTION_KEYS = [
+  'maxChunkLength',
+  'maxChunkWords',
+  'maxSentencesPerChunk',
+  'chunkJoinPauseMs',
+  'retryCount',
+  'initialTakeCount',
+  'selectBestVerifiedCandidate',
+  'isolateRiskySentences',
+  'allowBestEffortFallback',
+  'commaPauseMs',
+  'outputGainDb',
+];
 
 function clampNumber(value, fallback) {
   const num = Number(value);
@@ -140,7 +157,11 @@ function splitIntoSentences(text) {
   if (!normalized) return [];
 
   const sentences = normalized
-    .split(/(?<=[.!?。！？…:：;；])\s+|(?<=—)\s*(?=\S)|\n+/u)
+    // Only terminal punctuation ends a sentence. Newlines are layout, not speech
+    // boundaries, so headings and wrapped textarea lines stay with the prose that
+    // follows. Colons, semicolons, and em dashes also remain inside the sentence.
+    .replace(/\n+/gu, ' ')
+    .split(/(?<=[.!?。！？…])\s+/u)
     .map(part => part.trim())
     .filter(Boolean);
 
@@ -158,15 +179,13 @@ function containsRiskySynthesisContent(sentence, options = {}) {
   if (!text || text.length < MIN_CHUNK_LENGTH) return false;
 
   const tokens = text.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
-  const guardedWords = new Set(
-    (Array.isArray(options.avoidChunkFinalWords) ? options.avoidChunkFinalWords : [])
-      .map((word) => String(word || '').toLowerCase())
-      .filter(Boolean),
-  );
-  const hasGuardedTerm = tokens.some((token) => guardedWords.has(token));
-  const hasNumberOrAcronym = /\d/u.test(text) || /\b[A-Z]{2,}\b/u.test(text);
   const clauseBreaks = (text.match(/[,;:—]/gu) || []).length;
-  return hasGuardedTerm || hasNumberOrAcronym || tokens.length >= 28 || clauseBreaks >= 3;
+  // A dictionary term inside a sentence is not itself a reason to discard useful
+  // neighbouring context. With thousands of ARPAbet entries that rule reduced most
+  // technical prose to one sentence per card. Dictionary protection is positional:
+  // keepDictionaryWordsOffChunkTails handles a term only when it would actually land
+  // at the risky decoder edge. Isolation remains for genuinely long/clause-dense text.
+  return tokens.length >= 28 || clauseBreaks >= 3;
 }
 
 function wordLimitCutIndex(text, maxWords) {
@@ -248,6 +267,28 @@ export function splitTextIntoChunks(text, options = {}) {
   return out;
 }
 
+// Review/output chunks follow the ordinary Full sentence/word/context rules. An
+// explicit break is retained inside that parent chunk and only split later by
+// synthesizeBreakAwareFullChunk. This keeps `hello <break/> hello` as one editable
+// review card while still generating two internal clips around deterministic silence.
+export function splitTextIntoReviewChunks(text, options = {}) {
+  const chunks = chunkSegment(text, options);
+
+  // If ordinary sentence limits put a break sentinel at the start of a later parent
+  // chunk, move it to the previous tail so the final top-level join retains the pause.
+  for (let index = 1; index < chunks.length; index += 1) {
+    let current = chunks[index].trimStart();
+    while (current) {
+      const match = BREAK_SENTINEL_RE.exec(current);
+      if (!match || match.index !== 0) break;
+      chunks[index - 1] = appendBreakSentinel(chunks[index - 1], Number.parseInt(match[1], 10));
+      current = current.slice(match[0].length).trimStart();
+    }
+    chunks[index] = current;
+  }
+  return chunks.filter(Boolean);
+}
+
 function chunkSegment(text, options = {}) {
   const maxChunkWords = Math.max(0, clampNumber(options.maxChunkWords, 0));
   // An explicit word override takes priority over the default character heuristic.
@@ -264,9 +305,10 @@ function chunkSegment(text, options = {}) {
   for (const sentence of rawSentences) {
     if (containsRiskySynthesisContent(sentence, options)) {
       if (current.trim()) chunks.push(current.trim());
-      chunks.push(sentence.trim());
-      current = '';
-      sentenceCount = 0;
+      // Start a fresh chunk for guarded content, but leave it open so a short
+      // technical sentence can gain context from the sentence that follows.
+      current = sentence.trim();
+      sentenceCount = 1;
       continue;
     }
     const candidate = current ? `${current} ${sentence}` : sentence;
@@ -302,7 +344,19 @@ function chunkSegment(text, options = {}) {
 
   if (current.trim()) chunks.push(current.trim());
   const merged = mergeShortChunks(chunks, MIN_CHUNK_LENGTH, maxChunkWords);
-  return keepDictionaryWordsOffChunkTails(merged, options.avoidChunkFinalWords, maxChunkLength, maxChunkWords);
+  const regrouped = keepDictionaryWordsOffChunkTails(
+    merged,
+    options.avoidChunkFinalWords,
+    maxChunkLength,
+    maxChunkWords,
+  );
+  return borrowOneSentenceAfterDictionaryTail(
+    regrouped,
+    options.avoidChunkFinalWords,
+    maxChunkLength,
+    maxChunkWords,
+    maxSentencesPerChunk,
+  );
 }
 
 // Last spoken word of a chunk, lowercased and stripped of punctuation.
@@ -338,6 +392,48 @@ function keepDictionaryWordsOffChunkTails(chunks, avoidWords, maxChunkLength, ma
     if (movedNext.length > maxChunkLength || (maxChunkWords > 0 && countChunkWords(movedNext) > maxChunkWords) || remainder.length < MIN_CHUNK_LENGTH) continue;
     out[i] = remainder;
     out[i + 1] = movedNext;
+  }
+  return out;
+}
+
+function borrowOneSentenceAfterDictionaryTail(
+  chunks,
+  avoidWords,
+  maxChunkLength,
+  maxChunkWords,
+  maxSentencesPerChunk,
+) {
+  const words = new Set(
+    (Array.isArray(avoidWords) ? avoidWords : []).map(chunkFinalWord).filter(Boolean),
+  );
+  if (words.size === 0 || chunks.length < 2) return chunks;
+
+  const out = chunks.slice();
+  const charCeiling = Number.isFinite(maxChunkLength) && maxChunkLength < Number.MAX_SAFE_INTEGER
+    ? Math.ceil(maxChunkLength * 1.15)
+    : Number.MAX_SAFE_INTEGER;
+  const wordCeiling = maxChunkWords > 0
+    ? Math.min(maxChunkWords + 15, Math.ceil(maxChunkWords * 1.15))
+    : Number.MAX_SAFE_INTEGER;
+
+  for (let index = 0; index < out.length - 1; index += 1) {
+    const currentSentences = splitIntoSentences(out[index]);
+    if (!words.has(chunkFinalWord(out[index])) || currentSentences.length < maxSentencesPerChunk) continue;
+    const nextSentences = splitIntoSentences(out[index + 1]);
+    if (nextSentences.length === 0) continue;
+    const borrowed = nextSentences[0];
+    const candidate = `${out[index]} ${borrowed}`.trim();
+    const remainder = nextSentences.slice(1).join(' ').trim();
+    if (candidate.length > charCeiling || countChunkWords(candidate) > wordCeiling) continue;
+    if (remainder && remainder.length < MIN_CHUNK_LENGTH) continue;
+
+    console.log(
+      `[chunking] borrowed context sentence reason=dictionary-tail word=${JSON.stringify(chunkFinalWord(out[index]))} `
+      + `sentences=${currentSentences.length + 1} chars=${candidate.length} words=${countChunkWords(candidate)}`,
+    );
+    out[index] = candidate;
+    if (remainder) out[index + 1] = remainder;
+    else out.splice(index + 1, 1);
   }
   return out;
 }
@@ -1031,6 +1127,39 @@ export function concatWavs(buffers, pauseMs = DEFAULTS.chunkJoinPauseMs, fadeDur
   return buildWav(first.fmtChunk, Buffer.concat(joinedChunks));
 }
 
+export function padWavBoundaries(buffer, leadingMs = 0, trailingMs = 0) {
+  const before = Math.max(0, Math.min(10000, Math.round(clampNumber(leadingMs, 0))));
+  const after = Math.max(0, Math.min(10000, Math.round(clampNumber(trailingMs, 0))));
+  if (before === 0 && after === 0) return buffer;
+  const wav = parseWav(buffer);
+  return buildWav(wav.fmtChunk, Buffer.concat([
+    createSilenceBytes(before, wav),
+    wav.dataChunk,
+    createSilenceBytes(after, wav),
+  ]));
+}
+
+// Full-only caller option. Gain is applied after synthesis/verification and is capped
+// at -1 dBFS, so it cannot change pronunciation decisions or clip the saved PCM.
+export function applyWavOutputGain(buffer, gainDb = 0, ceilingPeak = 0.891) {
+  const requestedDb = Math.max(-6, Math.min(6, clampNumber(gainDb, 0)));
+  if (Math.abs(requestedDb) < 0.001) return buffer;
+  const wav = parseWav(buffer);
+  if (wav.audioFormat !== 1 || wav.bitsPerSample !== 16) return buffer;
+  const data = Buffer.from(wav.dataChunk);
+  const currentPeak = getChunkAbsPeak(data);
+  if (currentPeak <= 0) return buffer;
+  const requestedScale = 10 ** (requestedDb / 20);
+  const protectedScale = requestedScale > 1
+    ? Math.min(requestedScale, ceilingPeak / currentPeak)
+    : requestedScale;
+  for (let offset = 0; offset + 1 < data.length; offset += 2) {
+    const sample = data.readInt16LE(offset);
+    data.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sample * protectedScale))), offset);
+  }
+  return buildWav(wav.fmtChunk, data);
+}
+
 export function normalizeWavChunksForPreview(buffers) {
   if (!Array.isArray(buffers) || buffers.length === 0) return [];
   const parsed = buffers.map(parseWav);
@@ -1428,6 +1557,18 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
         const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
         const doubled = (verification.repeatedPhrases || []).slice(0, 6).join(' | ');
+        const phonemeRejected = (verification.phonemeAssessments || [])
+          .filter(assessment => assessment?.decision === 'reject')
+          .map(assessment => assessment.word)
+          .filter(Boolean)
+          .slice(0, 6)
+          .join(', ');
+        const phonemeUncertain = (verification.phonemeAssessments || [])
+          .filter(assessment => assessment?.decision === 'uncertain')
+          .map(assessment => assessment.word)
+          .filter(Boolean)
+          .slice(0, 6)
+          .join(', ');
         const voiceDrift = verification.similarityOk === false
           ? `voice drift (similarity ${(clampNumber(verification.similarity, 0) * 100).toFixed(0)}%)`
           : '';
@@ -1441,6 +1582,8 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
           missing ? `missing: ${missing}` : '',
           clipped ? `clipped: ${clipped}` : '',
           doubled ? `doubled: ${doubled}` : '',
+          phonemeRejected ? `phoneme mismatch: ${phonemeRejected}` : '',
+          phonemeUncertain ? `phoneme uncertain: ${phonemeUncertain}` : '',
           voiceDrift,
           unavailable,
           speakerUnavailable,
@@ -1670,7 +1813,76 @@ export function getLongTextSessionMetadata(sessionId) {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 }
 
-export async function regenerateLongTextChunk(sessionId, index, options = {}, replacementText = '') {
+export async function synthesizeBreakAwareFullChunk(
+  chunkText,
+  baseParams,
+  options = {},
+  { synthesizeChunk = synthesizeChunkResilient, onSplit = null } = {},
+) {
+  const { speechText, leadingBreakMs, trailingBreakMs } = partitionBreaks(chunkText);
+  // Admin regeneration is an explicit request to replace exactly one review card.
+  // Keep that edited text as one synthesis unit instead of reapplying initial-run
+  // chunk sizing or dictionary-tail context rules. The resilient synthesizer below
+  // still provides Full's normal verification, 3→5 retry ladder, and final fallback.
+  const synthesisChunks = options.preserveReviewUnit
+    ? [speechText.trim()].filter(Boolean)
+    : splitTextIntoChunks(speechText, options);
+  if (synthesisChunks.length === 0) throw new Error('No text to synthesize');
+
+  const buffers = [];
+  let attempts = 0;
+  let usedFallback = false;
+  const fallbackReasons = [];
+  let singleAnalysis = null;
+  for (const synthesisChunk of synthesisChunks) {
+    const result = await synthesizeChunk(
+      synthesisChunk,
+      { ...baseParams, text: synthesisChunk },
+      options,
+      { onSplit },
+    );
+    buffers.push(result.audioBuffer);
+    attempts += result.attempts;
+    singleAnalysis = synthesisChunks.length === 1 ? result.analysis : null;
+    if (result.fallback) {
+      usedFallback = true;
+      if (result.fallbackReason) fallbackReasons.push(result.fallbackReason);
+    }
+  }
+
+  const joined = buffers.length === 1
+      ? buffers[0]
+      : concatWavs(
+        buffers,
+        computeChunkPauses(synthesisChunks, clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs)),
+        computeChunkFades(synthesisChunks),
+      );
+  const padded = padWavBoundaries(joined, leadingBreakMs, trailingBreakMs);
+  return {
+    audioBuffer: applyWavOutputGain(padded, options.outputGainDb),
+    attempts,
+    synthesisChunks,
+    analysis: singleAnalysis,
+    fallback: usedFallback,
+    fallbackReason: usedFallback ? fallbackReasons.join(' | ') : undefined,
+  };
+}
+
+export function serializableSessionOptions(options = {}) {
+  return Object.fromEntries(
+    SESSION_OPTION_KEYS
+      .filter(key => ['number', 'boolean'].includes(typeof options[key]))
+      .map(key => [key, options[key]]),
+  );
+}
+
+export async function regenerateLongTextChunk(
+  sessionId,
+  index,
+  options = {},
+  replacementText = '',
+  replacementDisplayText = '',
+) {
   const manifest = getLongTextSessionMetadata(sessionId);
   const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
   const chunkIndex = Number(index);
@@ -1678,10 +1890,12 @@ export async function regenerateLongTextChunk(sessionId, index, options = {}, re
     throw new Error('Invalid chunk index');
   }
 
-  const editedText = stripBreakSentinels(String(replacementText || '')).trim();
+  // Keep SSML break sentinels in the stored synthesis text. They are routing metadata
+  // for the shared Full chunk/pause pipeline and are stripped only before model/ASR.
+  const editedText = String(replacementText || '').trim();
   const chunkText = editedText || chunks[chunkIndex];
   const params = manifest.params || {};
-  const result = await synthesizeChunkResilient(
+  const result = await synthesizeBreakAwareFullChunk(
     chunkText,
     { ...params, text: chunkText },
     options,
@@ -1713,14 +1927,108 @@ export async function regenerateLongTextChunk(sessionId, index, options = {}, re
 
   return {
     index: chunkIndex,
-    text: stripBreakSentinels(chunkText),
+    text: String(replacementDisplayText || '').trim() || renderBreakSentinels(chunkText),
     attempts: result.attempts,
+    fallback: result.fallback,
+    fallbackReason: result.fallbackReason,
+    revision: Date.now(),
+  };
+}
+
+export async function deleteLongTextChunk(sessionId, index, options = {}) {
+  const manifest = getLongTextSessionMetadata(sessionId);
+  const chunks = Array.isArray(manifest.chunks) ? [...manifest.chunks] : [];
+  const chunkIndex = Number(index);
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= chunks.length) {
+    throw new Error('Invalid chunk index');
+  }
+  if (chunks.length <= 1) throw new Error('Cannot delete the only audio chunk');
+
+  fs.unlinkSync(getSessionChunkPath(sessionId, chunkIndex));
+  for (let currentIndex = chunkIndex + 1; currentIndex < chunks.length; currentIndex += 1) {
+    fs.renameSync(getSessionChunkPath(sessionId, currentIndex), getSessionChunkPath(sessionId, currentIndex - 1));
+  }
+  chunks.splice(chunkIndex, 1);
+
+  const chunkBuffers = chunks.map((_, currentIndex) => fs.readFileSync(getSessionChunkPath(sessionId, currentIndex)));
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const finalBuffer = concatWavs(
+    chunkBuffers,
+    computeChunkPauses(chunks, basePause),
+    computeChunkFades(chunks),
+  );
+  writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+  const obsoletePreview = getSessionChunkPreviewPath(sessionId, chunks.length);
+  if (fs.existsSync(obsoletePreview)) fs.unlinkSync(obsoletePreview);
+  fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
+  manifest.chunks = chunks;
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
+  await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
+
+  return {
+    deletedIndex: chunkIndex,
+    chunks: chunks.map((text, currentIndex) => ({ index: currentIndex, text: renderBreakSentinels(text) })),
+    revision: Date.now(),
+  };
+}
+
+export async function insertLongTextChunk(
+  sessionId,
+  index,
+  options = {},
+  insertedText = '',
+  insertedDisplayText = '',
+) {
+  const manifest = getLongTextSessionMetadata(sessionId);
+  const chunks = Array.isArray(manifest.chunks) ? [...manifest.chunks] : [];
+  const chunkIndex = Number(index);
+  const chunkText = String(insertedText || '').trim();
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > chunks.length) {
+    throw new Error('Invalid chunk index');
+  }
+  if (!chunkText) throw new Error('Chunk text is required');
+
+  // Generate and verify before mutating the saved session. This is the same Full
+  // synthesis path used by targeted regeneration, including SSML breaks, retries,
+  // ASR/phoneme verification, best effort, and quality checks.
+  const params = manifest.params || {};
+  const result = await synthesizeBreakAwareFullChunk(
+    chunkText,
+    { ...params, text: chunkText },
+    { ...options, preserveReviewUnit: true },
+  );
+
+  // Shift from the tail so every existing chunk remains intact while its index moves.
+  for (let currentIndex = chunks.length - 1; currentIndex >= chunkIndex; currentIndex -= 1) {
+    fs.renameSync(getSessionChunkPath(sessionId, currentIndex), getSessionChunkPath(sessionId, currentIndex + 1));
+  }
+  fs.writeFileSync(getSessionChunkPath(sessionId, chunkIndex), result.audioBuffer);
+  chunks.splice(chunkIndex, 0, chunkText);
+
+  const chunkBuffers = chunks.map((_, currentIndex) => fs.readFileSync(getSessionChunkPath(sessionId, currentIndex)));
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const finalBuffer = concatWavs(
+    chunkBuffers,
+    computeChunkPauses(chunks, basePause),
+    computeChunkFades(chunks),
+  );
+  writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+  fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
+  manifest.chunks = chunks;
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
+  await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
+
+  return {
+    insertedIndex: chunkIndex,
+    insertedText: String(insertedDisplayText || '').trim() || renderBreakSentinels(chunkText),
+    attempts: result.attempts,
+    chunks: chunks.map((text, currentIndex) => ({ index: currentIndex, text: renderBreakSentinels(text) })),
     revision: Date.now(),
   };
 }
 
 export async function synthesizeLongTextStreaming(sessionId, params, options = {}) {
-  const chunks = splitTextIntoChunks(params.text, options);
+  const chunks = splitTextIntoReviewChunks(params.text, options);
   if (chunks.length === 0) {
     inferenceState.setError('No text to synthesize');
     sseManager.send(sessionId, 'error', { message: 'No text to synthesize' });
@@ -1729,7 +2037,11 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   const sessionDir = getSessionDir(sessionId);
   fs.mkdirSync(sessionDir, { recursive: true });
-  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify({ params, chunks }, null, 2));
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify({
+    params,
+    chunks,
+    options: serializableSessionOptions(options),
+  }, null, 2));
 
   const session = { cancelled: false };
   activeSessions.set(sessionId, session);
@@ -1737,7 +2049,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   sseManager.send(sessionId, 'inference-start', {
     totalChunks: chunks.length,
-    chunks: chunks.map((text, index) => ({ index, text: stripBreakSentinels(text) })),
+    chunks: chunks.map((text, index) => ({ index, text: renderBreakSentinels(text) })),
   });
   inferenceState.setGenerating({ totalChunks: chunks.length });
 
@@ -1750,7 +2062,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       }
 
       const chunkText = chunks[index];
-      const displayText = stripBreakSentinels(chunkText);
+      const displayText = renderBreakSentinels(chunkText);
       sseManager.send(sessionId, 'chunk-start', {
         index,
         text: displayText,
@@ -1763,7 +2075,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       });
 
       const chunkStart = Date.now();
-      const result = await synthesizeChunkResilient(
+      const result = await synthesizeBreakAwareFullChunk(
         chunkText,
         { ...params, text: chunkText },
         options,
@@ -1785,6 +2097,8 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
         totalChunks: chunks.length,
         attempts: totalAttempts,
         durationSec: parseFloat(chunkDuration.toFixed(2)),
+        fallback: result.fallback,
+        fallbackReason: result.fallbackReason,
       });
       inferenceState.setChunkComplete({
         index,
@@ -1826,7 +2140,7 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 }
 
 export async function synthesizeLongText(params, options = {}) {
-  const chunks = splitTextIntoChunks(params.text, options);
+  const chunks = splitTextIntoReviewChunks(params.text, options);
   if (chunks.length === 0) {
     throw new Error('No text to synthesize');
   }
@@ -1835,11 +2149,11 @@ export async function synthesizeLongText(params, options = {}) {
   const metadata = [];
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    const result = await synthesizeChunkResilient(chunk, { ...params, text: chunk }, options);
+    const result = await synthesizeBreakAwareFullChunk(chunk, { ...params, text: chunk }, options);
     buffers.push(result.audioBuffer);
     metadata.push({
       index,
-      text: stripBreakSentinels(chunk),
+      text: renderBreakSentinels(chunk),
       attempts: result.attempts,
       durationSec: result.analysis?.durationSec ?? 0,
       metrics: result.analysis?.metrics ?? {},

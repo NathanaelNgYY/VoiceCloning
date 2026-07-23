@@ -395,6 +395,14 @@ export function regenerateInferenceChunk(sessionId, index, text = '') {
   });
 }
 
+export function deleteInferenceChunk(sessionId, index) {
+  return api.post('/inference/delete-chunk', { sessionId, index });
+}
+
+export function insertInferenceChunk(sessionId, index, text) {
+  return api.post('/inference/insert-chunk', { sessionId, index, text: String(text || '').trim() });
+}
+
 export function getCurrentInference() {
   return api.get('/inference/current');
 }

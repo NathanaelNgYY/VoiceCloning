@@ -104,9 +104,45 @@ const QUESTION_START_RE =
 const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
 const PHRASE_SPLIT_RE = /[^.!?;:。！？；：]+[.!?;:。！？；：]+|[^.!?;:。！？；：]+$/gu;
 const DOTTED_INITIALISM_DOT = '\uE000';
+const SSML_BREAK_OPEN = '\uE010';
+const SSML_BREAK_CLOSE = '\uE011';
+const SSML_BREAK_TAG_RE = /<\s*break\b[^>]*\/?\s*>/giu;
 
 export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function protectSsmlBreakTags(text) {
+  const tags = [];
+  return {
+    text: String(text || '').replace(SSML_BREAK_TAG_RE, (tag) => {
+      const index = tags.push(tag) - 1;
+      return `${SSML_BREAK_OPEN}${index}${SSML_BREAK_CLOSE}`;
+    }),
+    tags,
+  };
+}
+
+function restoreSsmlBreakTags(text, tags) {
+  return String(text || '').replace(
+    new RegExp(`${SSML_BREAK_OPEN}(\\d+)${SSML_BREAK_CLOSE}`, 'gu'),
+    (_match, index) => tags[Number(index)] || '',
+  );
+}
+
+function mergeChunksAcrossSsmlBreaks(chunks) {
+  const merged = [];
+  for (const chunk of chunks) {
+    const previous = merged[merged.length - 1] || '';
+    const beginsWithBreak = /^\s*<\s*break\b[^>]*\/?\s*>/iu.test(chunk);
+    const previousEndsWithBreak = /<\s*break\b[^>]*\/?\s*>\s*$/iu.test(previous);
+    if (merged.length > 0 && (beginsWithBreak || previousEndsWithBreak)) {
+      merged[merged.length - 1] = `${previous} ${chunk}`.trim();
+    } else {
+      merged.push(chunk);
+    }
+  }
+  return merged;
 }
 
 function englishNumberWordsToDigits(match) {
@@ -226,6 +262,9 @@ export function shortenFirstFastPhrase(phrases, {
   if (!Array.isArray(phrases) || phrases.length === 0) return phrases;
   const first = phrases[0];
   if (!first || first.length <= maxFirstChars) return phrases;
+  // The break-aware chunker intentionally keeps both sides of an explicit pause in
+  // one backend request. Do not undo that here for the queued first-clip shortcut.
+  if (/<\s*break\b[^>]*\/?\s*>/iu.test(first)) return phrases;
 
   for (let i = 0; i < first.length; i += 1) {
     if (!CLAUSE_BREAK_RE.test(first[i])) continue;
@@ -382,7 +421,8 @@ export function splitLiveReplyChunks(text, {
   maxChunkWords = 0,
   maxSentencesPerChunk = CHUNK_MAX_SENTENCES,
 } = {}) {
-  const clean = protectDottedInitialisms(cleanLiveText(text));
+  const protectedBreaks = protectSsmlBreakTags(cleanLiveText(text));
+  const clean = protectDottedInitialisms(protectedBreaks.text);
   if (!clean) return [];
 
   // An explicit word override takes priority over the default 280-character cap.
@@ -426,13 +466,17 @@ export function splitLiveReplyChunks(text, {
   }
 
   if (current.trim()) chunks.push(current.trim());
-  return mergeShortChunks(chunks, CHUNK_MIN_LENGTH, {
+  const boundedChunks = mergeShortChunks(chunks, CHUNK_MIN_LENGTH, {
     maxChunkLength: activeMaxChunkLength,
     maxChunkWords,
     maxSentencesPerChunk,
   })
-    .map((chunk) => restoreDottedInitialisms(chunk))
+    .map((chunk) => restoreSsmlBreakTags(restoreDottedInitialisms(chunk), protectedBreaks.tags))
     .filter(Boolean);
+  // A break must reach one backend request with real speech on both sides. Otherwise
+  // the browser's sentence queue would strand it at the start/end of a separate WAV
+  // and the explicit pause would disappear when those WAVs are joined.
+  return mergeChunksAcrossSsmlBreaks(boundedChunks);
 }
 
 export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
