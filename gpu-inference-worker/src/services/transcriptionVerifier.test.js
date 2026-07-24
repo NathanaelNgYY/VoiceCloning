@@ -234,6 +234,41 @@ test('Live Full does not phoneme-gate an ordinary dictionary word that Whisper t
   }
 });
 
+test('terminal strict-word verification requests independent endpoint crops', async () => {
+  let receivedOptions = null;
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'The structure is structural',
+    words: [
+      { w: 'The', start: 0, end: 0.2, p: 0.95 },
+      { w: 'structure', start: 0.25, end: 0.7, p: 0.95 },
+      { w: 'is', start: 0.75, end: 0.9, p: 0.95 },
+      { w: 'structural', start: 0.95, end: 1.5, p: 0.95 },
+    ],
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async (_audio, options) => {
+    receivedOptions = options;
+    return { decision: 'pass', ok: true, ctcScore: -1, similarity: 0.9 };
+  });
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(2),
+      'The structure is structural.',
+      {
+        dictionaryEntries: [{
+          word: 'structural',
+          arpabet: 'S T R AH K CH ER AH L',
+          verifyPhonemes: true,
+        }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(receivedOptions?.terminal, true);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('an uncertain phoneme result cannot forgive a Whisper-mismatched technical word', async () => {
   const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
   mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({

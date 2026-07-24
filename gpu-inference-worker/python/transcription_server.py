@@ -139,11 +139,27 @@ def ctc_viterbi_score(log_probs, target_ids, blank_id):
     return float(final.item() / max(1, log_probs.shape[0]))
 
 
-def classify_phoneme_scores(crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity):
+def crop_passes(score, min_ctc, min_similarity):
+    return score["ctcScore"] >= min_ctc and score["similarity"] >= min_similarity
+
+
+def classify_phoneme_scores(crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity, terminal=False):
     """Return pass/reject/uncertain using agreement across nearby word crops."""
     if not crop_scores:
         return "uncertain"
-    passing = [score for score in crop_scores if score["ctcScore"] >= min_ctc and score["similarity"] >= min_similarity]
+    passing = [score for score in crop_scores if crop_passes(score, min_ctc, min_similarity)]
+    if terminal:
+        # Timestamp paddings share one Whisper alignment and are correlated evidence.
+        # A terminal approval also needs an independently speech-end-anchored crop.
+        timestamp_pass = any(score.get("family") == "timestamp" for score in passing)
+        endpoint_pass = any(score.get("family") == "speech_end" for score in passing)
+        if timestamp_pass and endpoint_pass:
+            return "pass"
+        if all(score["ctcScore"] <= reject_ctc for score in crop_scores) and all(
+            score["similarity"] <= reject_similarity for score in crop_scores
+        ):
+            return "reject"
+        return "uncertain"
     required_passes = 2 if len(crop_scores) >= 3 else len(crop_scores)
     if len(passing) >= required_passes:
         return "pass"
@@ -178,7 +194,23 @@ def build_phoneme_verifier():
     return {"processor": processor, "model": model, "device": device, "name": model_name}
 
 
-def verify_phonemes(path, start, end, arpabet, state):
+def detect_speech_end(waveform, sample_rate):
+    """Estimate the final voiced frame independently of ASR word timestamps."""
+    frame_size = max(1, int(sample_rate * 0.02))
+    usable = (waveform.numel() // frame_size) * frame_size
+    if usable == 0:
+        return waveform.shape[-1] / sample_rate
+    frames = waveform[:usable].reshape(-1, frame_size)
+    rms = frames.square().mean(dim=1).sqrt()
+    peak = float(rms.max().item()) if rms.numel() else 0.0
+    threshold = max(0.003, peak * 0.08)
+    voiced = (rms >= threshold).nonzero(as_tuple=False).flatten()
+    if voiced.numel() == 0:
+        return waveform.shape[-1] / sample_rate
+    return min(waveform.shape[-1] / sample_rate, (int(voiced[-1].item()) + 1) * frame_size / sample_rate)
+
+
+def verify_phonemes(path, start, end, arpabet, state, terminal=False):
     import torch
     import torchaudio
 
@@ -235,12 +267,33 @@ def verify_phonemes(path, start, end, arpabet, state):
         paddings = [0.05]
 
     duration = waveform.shape[-1] / sample_rate
+    crop_specs = [
+        ("timestamp", padding, max(0.0, float(start) - padding), min(duration, float(end) + padding))
+        for padding in paddings
+    ]
+    if terminal:
+        speech_end = detect_speech_end(waveform, sample_rate)
+        timestamp_duration = min(1.5, max(0.18, float(end) - float(start)))
+        endpoint_paddings = sorted({0.0, paddings[len(paddings) // 2], paddings[-1]})
+        crop_specs.extend([
+            (
+                "speech_end",
+                padding,
+                max(0.0, speech_end - timestamp_duration - padding),
+                min(duration, speech_end + min(0.02, padding)),
+            )
+            for padding in endpoint_paddings
+        ])
+
     crop_scores = []
-    for padding in paddings:
-        clip_start = max(0.0, float(start) - padding)
-        clip_end = min(duration, float(end) + padding)
+    seen_spans = set()
+    for family, padding, clip_start, clip_end in crop_specs:
         if clip_end <= clip_start:
             continue
+        span_key = (family, round(clip_start, 4), round(clip_end, 4))
+        if span_key in seen_spans:
+            continue
+        seen_spans.add(span_key)
         clip = waveform[int(clip_start * sample_rate):math.ceil(clip_end * sample_rate)]
         inputs = processor(clip.numpy(), sampling_rate=16000, return_tensors="pt")
         input_values = inputs.input_values.to(device)
@@ -250,6 +303,7 @@ def verify_phonemes(path, start, end, arpabet, state):
         predicted_ids = torch.argmax(logits, dim=-1)
         observed_ipa = processor.batch_decode(predicted_ids.unsqueeze(0))[0]
         crop_scores.append({
+            "family": family,
             "paddingSec": round(padding, 3),
             "start": round(clip_start, 4),
             "end": round(clip_end, 4),
@@ -265,7 +319,9 @@ def verify_phonemes(path, start, end, arpabet, state):
     min_similarity = float(os.environ.get("PHONEME_MIN_SIMILARITY", "0.5"))
     reject_ctc = float(os.environ.get("PHONEME_REJECT_MAX_CTC_LOG_PROB", "-5.5"))
     reject_similarity = float(os.environ.get("PHONEME_REJECT_MAX_SIMILARITY", "0.25"))
-    decision = classify_phoneme_scores(crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity)
+    decision = classify_phoneme_scores(
+        crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity, terminal=terminal
+    )
     best = max(
         crop_scores,
         key=lambda score: (
@@ -343,6 +399,7 @@ def main():
                     request.get("end"),
                     request.get("arpabet"),
                     phoneme_state,
+                    terminal=request.get("terminal") is True,
                 )
                 print(json.dumps({"id": request_id, **result}), flush=True)
                 continue

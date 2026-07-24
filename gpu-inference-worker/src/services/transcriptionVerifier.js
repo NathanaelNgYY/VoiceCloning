@@ -247,12 +247,15 @@ class TranscriptionVerifier {
     };
   }
 
-  async verifyPhonemeBuffer(audioBuffer, { start, end, arpabet } = {}) {
+  async verifyPhonemeBuffer(audioBuffer, {
+    start, end, arpabet, terminal = false,
+  } = {}) {
     return this.requestSidecar(audioBuffer, {
       operation: 'phoneme_verify',
       start,
       end,
       arpabet,
+      terminal,
     });
   }
 
@@ -418,11 +421,16 @@ class TranscriptionVerifier {
           for (const { word, timing, needsForgiveness, strict } of presenceCandidates) {
             const dictionaryEntry = dictionaryEntryByWord.get(word.toLowerCase());
             if (!dictionaryEntry?.arpabet) continue;
+            const countableExpectedWords = String(expectedText)
+              .toLowerCase()
+              .match(/[\p{L}\p{N}']+/gu) || [];
+            const terminal = countableExpectedWords.at(-1) === word.toLowerCase();
             try {
               const assessment = await this.verifyPhonemeBuffer(audioBuffer, {
                 start: timing.start,
                 end: timing.end,
                 arpabet: dictionaryEntry.arpabet,
+                terminal,
               });
               const decision = assessment?.decision
                 || (assessment?.ok === true ? 'pass' : (assessment?.inconclusive ? 'uncertain' : 'reject'));

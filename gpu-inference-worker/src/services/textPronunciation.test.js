@@ -98,6 +98,12 @@ test('Live Full recognizes element-symbol casing without treating normal capital
   assert.match(result, /\bNASA\b/u);
 });
 
+test('Live Full does not spell ordinary standalone element-symbol words as letters', () => {
+  const result = prepareTextForFullSynthesis('In this case, As expected, At noon He arrived.');
+
+  assert.equal(result, 'In this case, As expected, At noon He arrived.');
+});
+
 test('Live Full speaks larger subscripts and numeric group counts without changing invalid symbols', () => {
   const result = prepareTextForFullSynthesis('C20H101O1000 and (CH2O)6 are formulas; Xx2 is not.');
 

@@ -238,9 +238,11 @@ function parseFormulaCore(core) {
 function isUnambiguousFormula(core, parts, { grouped = false } = {}) {
   if (!parts || parts.length === 0) return false;
   if (grouped || /\d/u.test(core)) return true;
-  // Mixed-case element symbols (NaCl) and longer all-cap element sequences (COOH)
-  // are strong enough evidence. Reject short all-cap English such as NO/IN.
-  return /[a-z]/u.test(core) || (core.length >= 3 && parts.length >= 2);
+  // A single alphabetic element symbol is not enough evidence on its own: ordinary
+  // sentence words such as "In", "As", "At", and "He" otherwise become spoken
+  // letter names. Multi-symbol compounds (NaCl) and longer all-cap element
+  // sequences (COOH) remain unambiguous without nearby chemistry prose.
+  return parts.length >= 2 && (/[a-z]/u.test(core) || core.length >= 3);
 }
 
 function renderFormulaParts(parts) {
