@@ -400,6 +400,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const ttsHistoryRef = useRef([]);
   const queuedTtsAudioRef = useRef(null);
   const queuedTtsRef = useRef({ clips: [], playingIndex: -1, active: false, paused: false });
+  const pronunciationWordInputRef = useRef(null);
   const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
@@ -2394,11 +2395,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationMessage('');
     try {
       const res = await searchPronunciationDictionary(search);
+      const entries = res.data.entries || [];
       setPronunciationSearchResults({
-        entries: res.data.entries || [],
+        entries,
         totalMatches: res.data.totalMatches || 0,
         truncated: res.data.truncated === true,
       });
+      const exactMatch = entries.find((entry) => (
+        String(entry.word || '').toLowerCase() === search.toLowerCase()
+      ));
+      if (exactMatch) editPronunciation(exactMatch);
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not search pronunciation dictionary.');
     } finally {
@@ -2476,6 +2482,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setPronunciationSynthesisAlias(entry.synthesisAlias || '');
     setPronunciationVerifyPhonemes(entry.verifyPhonemes === true);
     setPronunciationMessage(`Editing ${entry.word}.`);
+    window.requestAnimationFrame(() => {
+      pronunciationWordInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      pronunciationWordInputRef.current?.focus({ preventScroll: true });
+    });
   }
 
   async function handleScanOovWords() {
@@ -4060,7 +4070,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 </p>
               )}
               <div className="mt-3">
-                <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
+                <Input ref={pronunciationWordInputRef} value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
               <Input
