@@ -87,8 +87,25 @@ export function createHandler({
         if (!Number.isInteger(Number(body.index)) || Number(body.index) < 0) return err(400, 'Invalid chunk index');
         return ok(await postJson('/inference/regenerate-chunk', {
           sessionId: body.sessionId,
+            index: Number(body.index),
+            ...(String(body.text || '').trim() ? { text: String(body.text).trim() } : {}),
+            ...(String(body.previousText || '').trim() ? { previousText: String(body.previousText).trim() } : {}),
+            previousFallback: body.previousFallback === true,
+            previousFallbackReason: String(body.previousFallbackReason || ''),
+          }));
+      }
+
+      if (method === 'POST' && routePath.endsWith('/inference/restore-chunk')) {
+        if (!body.sessionId) return err(400, 'sessionId is required');
+        if (!Number.isInteger(Number(body.index)) || Number(body.index) < 0) return err(400, 'Invalid chunk index');
+        if (!/^[A-Za-z0-9-]+$/u.test(String(body.versionId || ''))) return err(400, 'Invalid versionId');
+        return ok(await postJson('/inference/restore-chunk', {
+          sessionId: body.sessionId,
           index: Number(body.index),
-          ...(String(body.text || '').trim() ? { text: String(body.text).trim() } : {}),
+          versionId: body.versionId,
+          currentText: String(body.currentText || ''),
+          currentFallback: body.currentFallback === true,
+          currentFallbackReason: String(body.currentFallbackReason || ''),
         }));
       }
 
@@ -123,6 +140,7 @@ export function createHandler({
         if (!sessionId || !/^[A-Za-z0-9-]+$/u.test(sessionId)) {
           return err(400, 'Invalid sessionId');
         }
+
         if (shouldUseGpuWorkerArtifacts()) {
           const url = buildInferencePublicUrl(`/inference/result/${encodeURIComponent(sessionId)}`);
           return event.queryStringParameters?.audio === '1' ? redirect(url) : ok({ url });
@@ -137,6 +155,16 @@ export function createHandler({
         const [, sessionId, index] = match;
         const { buffer, contentType } = await getBinary(
           `/inference/chunk-preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`,
+        );
+        return binaryWav(buffer, contentType);
+      }
+
+      if (method === 'GET' && routePath.includes('/inference/chunk-version/')) {
+        const match = routePath.match(/\/inference\/chunk-version\/([A-Za-z0-9-]+)\/(\d+)\/([A-Za-z0-9-]+)\/?$/u);
+        if (!match) return err(400, 'Invalid inference chunk version path');
+        const [, sessionId, index, versionId] = match;
+        const { buffer, contentType } = await getBinary(
+          `/inference/chunk-version/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}/${encodeURIComponent(versionId)}`,
         );
         return binaryWav(buffer, contentType);
       }

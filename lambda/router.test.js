@@ -92,7 +92,7 @@ test('router resolves generated inference chunk route', () => {
     {
       name: 'InferenceFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/inference(?:\/(?:generate|regenerate-chunk|insert-chunk|delete-chunk|scan-oov|result\/[A-Za-z0-9-]+|chunk\/[A-Za-z0-9-]+\/\d+|chunk-preview\/[A-Za-z0-9-]+\/\d+|cancel|current|status|start|stop))?\/?$/u,
+      pattern: /^\/api\/inference(?:\/(?:generate|regenerate-chunk|restore-chunk|insert-chunk|delete-chunk|scan-oov|result\/[A-Za-z0-9-]+|chunk\/[A-Za-z0-9-]+\/\d+|chunk-preview\/[A-Za-z0-9-]+\/\d+|chunk-version\/[A-Za-z0-9-]+\/\d+\/[A-Za-z0-9-]+|cancel|current|status|start|stop))?\/?$/u,
       modulePath: './inference/index.js',
       lambdaPath: '/api/inference/chunk/abc-123/2',
     },
@@ -102,6 +102,8 @@ test('router resolves generated inference chunk route', () => {
 test('router resolves normalized chunk previews and targeted regeneration', () => {
   assert.equal(findRoute('GET', '/api/inference/chunk-preview/abc-123/2')?.name, 'InferenceFunction');
   assert.equal(findRoute('POST', '/api/inference/regenerate-chunk')?.name, 'InferenceFunction');
+  assert.equal(findRoute('POST', '/api/inference/restore-chunk')?.name, 'InferenceFunction');
+  assert.equal(findRoute('GET', '/api/inference/chunk-version/abc-123/2/version-456')?.name, 'InferenceFunction');
   assert.equal(findRoute('POST', '/api/inference/delete-chunk')?.name, 'InferenceFunction');
   assert.equal(findRoute('POST', '/api/inference/insert-chunk')?.name, 'InferenceFunction');
 });

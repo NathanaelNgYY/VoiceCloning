@@ -3,7 +3,11 @@ import path from 'path';
 import { Router } from 'express';
 import { GPT_SOVITS_ROOT, LOCAL_TEMP_ROOT } from '../config.js';
 import { isPathInside } from '../utils/paths.js';
-import { getSessionChunkPath, getSessionChunkPreviewPath } from '../services/longTextInference.js';
+import {
+  getSessionChunkPath,
+  getSessionChunkPreviewPath,
+  getSessionChunkVersionPath,
+} from '../services/longTextInference.js';
 
 const router = Router();
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.ogg', '.flac', '.m4a', '.webm', '.mp4']);
@@ -77,6 +81,18 @@ router.get('/inference/chunk-preview/:sessionId/:index', (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+});
+
+router.get('/inference/chunk-version/:sessionId/:index/:versionId', (req, res) => {
+  const { sessionId, index, versionId } = req.params;
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId) || !/^\d+$/u.test(index) || !/^[A-Za-z0-9-]+$/u.test(versionId)) {
+    return res.status(400).json({ error: 'Invalid chunk version path' });
+  }
+  const filePath = getSessionChunkVersionPath(sessionId, Number(index), versionId);
+  if (!isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) || !fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Chunk version not found' });
+  }
+  return sendAudioFile(res, filePath);
 });
 
 router.get('/ref-audio', (req, res) => {

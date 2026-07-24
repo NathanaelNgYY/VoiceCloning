@@ -16,7 +16,9 @@ import {
   getGenerationResultSource,
   getInferenceChunk,
   getInferenceChunkPreviewUrl,
+  getInferenceChunkVersionUrl,
   regenerateInferenceChunk,
+  restoreInferenceChunk,
   deleteInferenceChunk,
   insertInferenceChunk,
   synthesizeSentence,
@@ -122,6 +124,7 @@ import {
   PlayCircle,
   Plus,
   RefreshCw,
+  Undo2,
   Search,
   ScanSearch,
   Sparkles,
@@ -2206,7 +2209,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setRegeneratingFullChunk(busyKey);
     setTtsError('');
     try {
-      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index, editedText);
+      const res = await regenerateInferenceChunk(historyItem.sessionId, chunk.index, editedText, chunk);
       const revision = res.data?.revision || Date.now();
       const savedText = res.data?.text || editedText;
       const source = await getGenerationResultSource(historyItem.sessionId);
@@ -2220,13 +2223,59 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           ...item,
           url: playableUrl,
           revision,
+          chunks: item.chunks.map((itemChunk) => ({
+              ...itemChunk,
+              ...(itemChunk.index === chunk.index ? {
+                text: savedText,
+                attempts: res.data?.attempts,
+                fallback: res.data?.fallback === true,
+                fallbackReason: res.data?.fallbackReason || '',
+              } : {}),
+              versions: itemChunk.index === chunk.index
+                ? (Array.isArray(res.data?.versions) ? res.data.versions : [])
+                : itemChunk.versions,
+            })),
+        } : item);
+        ttsHistoryRef.current = next;
+        return next;
+      });
+      setFullChunkDrafts((current) => ({ ...current, [busyKey]: savedText }));
+    } catch (err) {
+      setTtsError(friendlyTtsError(err, 'Could not regenerate this sentence.'));
+    } finally {
+      setRegeneratingFullChunk('');
+    }
+  }
+
+  async function restoreFullChunk(historyItem, chunk, version) {
+    if (!historyItem?.sessionId || !Number.isInteger(chunk?.index)) return;
+    const busyKey = `${historyItem.id}:${chunk.index}`;
+    setRegeneratingFullChunk(busyKey);
+    setTtsError('');
+    try {
+      const res = await restoreInferenceChunk(
+        historyItem.sessionId,
+        chunk.index,
+        version.id,
+        chunk,
+      );
+      const revision = res.data?.revision || Date.now();
+      const savedText = res.data?.text || chunk.text || '';
+      const source = await getGenerationResultSource(historyItem.sessionId);
+      const separator = source.url.includes('?') ? '&' : '?';
+      const playableUrl = await waitForPlayableAudioSource(`${source.url}${separator}v=${revision}`);
+      setTtsHistory((current) => {
+        const next = current.map((item) => item.id === historyItem.id ? {
+          ...item,
+          url: playableUrl,
+          revision,
           chunks: item.chunks.map((itemChunk) => itemChunk.index === chunk.index
             ? {
               ...itemChunk,
               text: savedText,
-              attempts: res.data?.attempts,
-              fallback: res.data?.fallback === true,
               fallbackReason: res.data?.fallbackReason || '',
+              fallback: res.data?.fallback === true,
+              versions: Array.isArray(res.data?.versions) ? res.data.versions : [],
             }
             : itemChunk),
         } : item);
@@ -2235,7 +2284,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       });
       setFullChunkDrafts((current) => ({ ...current, [busyKey]: savedText }));
     } catch (err) {
-      setTtsError(friendlyTtsError(err, 'Could not regenerate this sentence.'));
+      setTtsError(friendlyTtsError(err, 'Could not restore the previous generation.'));
     } finally {
       setRegeneratingFullChunk('');
     }
@@ -4331,6 +4380,47 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                                     preload="metadata"
                                     src={getInferenceChunkPreviewUrl(result.sessionId, chunk.index, revision)}
                                   />
+                                  {Array.isArray(chunk.versions) && chunk.versions.length > 0 && (
+                                    <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                                      <p className="mb-1.5 text-[11px] font-semibold text-slate-600">
+                                        Previous generations ({chunk.versions.length})
+                                      </p>
+                                      <div className="space-y-2">
+                                        {chunk.versions.map((version, versionIndex) => (
+                                          <div key={version.id} className="rounded-md border border-slate-200 bg-white p-2">
+                                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                                              <span className="min-w-0 truncate text-[10px] text-slate-500">
+                                                Version {chunk.versions.length - versionIndex}
+                                                {version.createdAt ? ` · ${new Date(version.createdAt).toLocaleTimeString()}` : ''}
+                                              </span>
+                                              <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => restoreFullChunk(result, chunk, version)}
+                                                disabled={Boolean(regeneratingFullChunk) || streamingRoute !== null}
+                                                className="h-7 shrink-0 rounded-md px-2 text-[10px] active:scale-[0.98]"
+                                              >
+                                                <Undo2 size={11} />
+                                                Restore
+                                              </Button>
+                                            </div>
+                                            <audio
+                                              className="h-8 w-full"
+                                              controls
+                                              preload="metadata"
+                                              src={getInferenceChunkVersionUrl(result.sessionId, chunk.index, version.id)}
+                                            />
+                                            {version.fallback && (
+                                              <p className="mt-1 text-[10px] text-amber-700">
+                                                Best effort{version.fallbackReason ? ` — ${version.fallbackReason}` : ''}
+                                              </p>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                                 {renderFullChunkInsert(result, chunk.index + 1)}
                                 </div>

@@ -387,11 +387,25 @@ export function startGeneration(params) {
   return api.post('/inference/generate', params);
 }
 
-export function regenerateInferenceChunk(sessionId, index, text = '') {
+export function regenerateInferenceChunk(sessionId, index, text = '', previous = {}) {
   return api.post('/inference/regenerate-chunk', {
     sessionId,
     index,
     ...(String(text || '').trim() ? { text: String(text).trim() } : {}),
+    ...(String(previous.text || '').trim() ? { previousText: String(previous.text).trim() } : {}),
+    previousFallback: previous.fallback === true,
+    previousFallbackReason: String(previous.fallbackReason || ''),
+  });
+}
+
+export function restoreInferenceChunk(sessionId, index, versionId, current = {}) {
+  return api.post('/inference/restore-chunk', {
+    sessionId,
+    index,
+    versionId,
+    currentText: String(current.text || ''),
+    currentFallback: current.fallback === true,
+    currentFallbackReason: String(current.fallbackReason || ''),
   });
 }
 
@@ -524,6 +538,10 @@ export async function getInferenceChunk(sessionId, index) {
 export function getInferenceChunkPreviewUrl(sessionId, index, revision = '') {
   const base = resolveApiPath(`/api/inference/chunk-preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}`);
   return revision ? `${base}?v=${encodeURIComponent(revision)}` : base;
+}
+
+export function getInferenceChunkVersionUrl(sessionId, index, versionId) {
+  return resolveApiPath(`/api/inference/chunk-version/${encodeURIComponent(sessionId)}/${encodeURIComponent(index)}/${encodeURIComponent(versionId)}`);
 }
 
 export function cancelGeneration(sessionId) {

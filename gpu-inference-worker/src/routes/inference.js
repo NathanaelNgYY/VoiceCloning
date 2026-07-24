@@ -7,6 +7,7 @@ import {
   synthesizeLongText,
   synthesizeLongTextStreaming,
   regenerateLongTextChunk,
+  restoreLongTextChunkVersion,
   deleteLongTextChunk,
   insertLongTextChunk,
   getLongTextSessionMetadata,
@@ -617,6 +618,9 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
   const sessionId = String(req.body?.sessionId || '');
   const index = Number(req.body?.index);
   const replacementText = String(req.body?.text || '').trim();
+  const previousDisplayText = String(req.body?.previousText || '').trim();
+  const previousFallback = req.body?.previousFallback === true;
+  const previousFallbackReason = String(req.body?.previousFallbackReason || '');
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
   if (synthesisBusy()) {
@@ -637,7 +641,44 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
       ...(session.options || {}),
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
-    }), preparedReplacement, replacementText);
+    }),
+    preparedReplacement,
+    replacementText,
+    previousDisplayText,
+    previousFallback,
+    previousFallbackReason);
+    activityState.mark();
+    return res.json(result);
+  } catch (err) {
+    const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
+    return res.status(status).json({ error: err.message });
+  } finally {
+    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+  }
+});
+
+router.post('/inference/restore-chunk', async (req, res) => {
+  const sessionId = String(req.body?.sessionId || '');
+  const index = Number(req.body?.index);
+  const versionId = String(req.body?.versionId || '');
+  if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
+  if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
+  if (!/^[A-Za-z0-9-]+$/u.test(versionId)) return res.status(400).json({ error: 'Invalid versionId' });
+  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
+
+  activeLiveTtsRequests += 1;
+  try {
+    activityState.mark();
+    const session = getLongTextSessionMetadata(sessionId);
+    const result = await restoreLongTextChunkVersion(
+      sessionId,
+      index,
+      versionId,
+      session.options || {},
+      String(req.body?.currentText || ''),
+      req.body?.currentFallback === true,
+      String(req.body?.currentFallbackReason || ''),
+    );
     activityState.mark();
     return res.json(result);
   } catch (err) {

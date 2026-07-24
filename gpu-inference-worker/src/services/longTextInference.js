@@ -1797,6 +1797,52 @@ export function getSessionChunkPreviewPath(sessionId, index) {
   return path.join(getSessionDir(sessionId), `chunk_preview_${String(index).padStart(3, '0')}.wav`);
 }
 
+function getSessionChunkVersionDir(sessionId, index) {
+  return path.join(getSessionDir(sessionId), 'chunk_versions', String(index));
+}
+
+export function getSessionChunkVersionPath(sessionId, index, versionId) {
+  return path.join(getSessionChunkVersionDir(sessionId, index), `${versionId}.wav`);
+}
+
+function archiveChunkVersion(sessionId, index, audioBuffer, {
+  text = '',
+  displayText = '',
+  fallback = false,
+  fallbackReason = '',
+} = {}) {
+  const versionId = crypto.randomUUID();
+  const versionDir = getSessionChunkVersionDir(sessionId, index);
+  fs.mkdirSync(versionDir, { recursive: true });
+  fs.writeFileSync(getSessionChunkVersionPath(sessionId, index, versionId), audioBuffer);
+  return {
+    id: versionId,
+    text,
+    displayText: displayText || renderBreakSentinels(text),
+    fallback,
+    fallbackReason,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function publicChunkVersions(manifest, index) {
+  return Array.isArray(manifest.chunkVersions?.[index])
+    ? manifest.chunkVersions[index].map(({ id, displayText, fallback, fallbackReason, createdAt }) => ({
+      id,
+      text: displayText,
+      fallback: fallback === true,
+      fallbackReason: fallbackReason || '',
+      createdAt,
+    }))
+    : [];
+}
+
+function clearChunkVersions(sessionId, manifest) {
+  const versionsDir = path.join(getSessionDir(sessionId), 'chunk_versions');
+  if (fs.existsSync(versionsDir)) fs.rmSync(versionsDir, { recursive: true, force: true });
+  delete manifest.chunkVersions;
+}
+
 function writeNormalizedChunkPreviews(sessionId, chunkBuffers) {
   normalizeWavChunksForPreview(chunkBuffers).forEach((buffer, index) => {
     fs.writeFileSync(getSessionChunkPreviewPath(sessionId, index), buffer);
@@ -1882,6 +1928,9 @@ export async function regenerateLongTextChunk(
   options = {},
   replacementText = '',
   replacementDisplayText = '',
+  previousDisplayText = '',
+  previousFallback = false,
+  previousFallbackReason = '',
 ) {
   const manifest = getLongTextSessionMetadata(sessionId);
   const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
@@ -1900,15 +1949,26 @@ export async function regenerateLongTextChunk(
     { ...params, text: chunkText },
     options,
   );
-  fs.writeFileSync(getSessionChunkPath(sessionId, chunkIndex), result.audioBuffer);
+  const chunkPath = getSessionChunkPath(sessionId, chunkIndex);
+  if (!fs.existsSync(chunkPath)) throw new Error(`Chunk ${chunkIndex + 1} is unavailable`);
+  const previousVersion = archiveChunkVersion(sessionId, chunkIndex, fs.readFileSync(chunkPath), {
+    text: chunks[chunkIndex],
+    displayText: String(previousDisplayText || '').trim() || renderBreakSentinels(chunks[chunkIndex]),
+    fallback: previousFallback,
+    fallbackReason: previousFallbackReason,
+  });
+  manifest.chunkVersions ||= {};
+  manifest.chunkVersions[chunkIndex] ||= [];
+  manifest.chunkVersions[chunkIndex].unshift(previousVersion);
+  fs.writeFileSync(chunkPath, result.audioBuffer);
 
   // Commit edited text only after synthesis succeeds. A failed repair leaves the
   // prior manifest and the prior playable audio intact.
   if (editedText) {
     chunks[chunkIndex] = editedText;
     manifest.chunks = chunks;
-    fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
   }
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
 
   const chunkBuffers = chunks.map((_, currentIndex) => {
     const chunkPath = getSessionChunkPath(sessionId, currentIndex);
@@ -1931,6 +1991,67 @@ export async function regenerateLongTextChunk(
     attempts: result.attempts,
     fallback: result.fallback,
     fallbackReason: result.fallbackReason,
+    versions: publicChunkVersions(manifest, chunkIndex),
+    revision: Date.now(),
+  };
+}
+
+export async function restoreLongTextChunkVersion(
+  sessionId,
+  index,
+  versionId,
+  options = {},
+  currentDisplayText = '',
+  currentFallback = false,
+  currentFallbackReason = '',
+) {
+  const manifest = getLongTextSessionMetadata(sessionId);
+  const chunks = Array.isArray(manifest.chunks) ? [...manifest.chunks] : [];
+  const chunkIndex = Number(index);
+  const versions = Array.isArray(manifest.chunkVersions?.[chunkIndex])
+    ? [...manifest.chunkVersions[chunkIndex]]
+    : [];
+  const versionIndex = versions.findIndex(version => version.id === versionId);
+  if (versionIndex < 0) throw new Error('Chunk version is no longer available');
+  const selectedVersion = versions[versionIndex];
+  const selectedPath = getSessionChunkVersionPath(sessionId, chunkIndex, versionId);
+  if (!fs.existsSync(selectedPath)) throw new Error('Chunk version is no longer available');
+
+  const chunkPath = getSessionChunkPath(sessionId, chunkIndex);
+  if (!fs.existsSync(chunkPath)) throw new Error(`Chunk ${chunkIndex + 1} is unavailable`);
+  const displacedVersion = archiveChunkVersion(sessionId, chunkIndex, fs.readFileSync(chunkPath), {
+    text: chunks[chunkIndex],
+    displayText: currentDisplayText,
+    fallback: currentFallback,
+    fallbackReason: currentFallbackReason,
+  });
+  fs.writeFileSync(chunkPath, fs.readFileSync(selectedPath));
+  fs.unlinkSync(selectedPath);
+
+  chunks[chunkIndex] = selectedVersion.text;
+  versions.splice(versionIndex, 1);
+  versions.unshift(displacedVersion);
+  manifest.chunks = chunks;
+  manifest.chunkVersions[chunkIndex] = versions;
+  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
+
+  const chunkBuffers = chunks.map((_, currentIndex) => fs.readFileSync(getSessionChunkPath(sessionId, currentIndex)));
+  const basePause = clampNumber(options.chunkJoinPauseMs, DEFAULTS.chunkJoinPauseMs);
+  const finalBuffer = concatWavs(
+    chunkBuffers,
+    computeChunkPauses(chunks, basePause),
+    computeChunkFades(chunks),
+  );
+  writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+  fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
+  await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
+
+  return {
+    index: chunkIndex,
+    text: selectedVersion.displayText || renderBreakSentinels(chunks[chunkIndex]),
+    fallback: selectedVersion.fallback === true,
+    fallbackReason: selectedVersion.fallbackReason || '',
+    versions: publicChunkVersions(manifest, chunkIndex),
     revision: Date.now(),
   };
 }
@@ -1962,6 +2083,7 @@ export async function deleteLongTextChunk(sessionId, index, options = {}) {
   if (fs.existsSync(obsoletePreview)) fs.unlinkSync(obsoletePreview);
   fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
   manifest.chunks = chunks;
+  clearChunkVersions(sessionId, manifest);
   fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
   await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
 
@@ -2015,6 +2137,7 @@ export async function insertLongTextChunk(
   writeNormalizedChunkPreviews(sessionId, chunkBuffers);
   fs.writeFileSync(getSessionFinalPath(sessionId), finalBuffer);
   manifest.chunks = chunks;
+  clearChunkVersions(sessionId, manifest);
   fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify(manifest, null, 2));
   await uploadBuffer(`audio/output/${sessionId}/final.wav`, finalBuffer, 'audio/wav');
 

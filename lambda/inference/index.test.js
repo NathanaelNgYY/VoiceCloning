@@ -170,12 +170,59 @@ test('inference targeted regeneration forwards edited sentence text', async () =
   const response = await localHandler({
     requestContext: { http: { method: 'POST' } },
     rawPath: '/api/inference/regenerate-chunk',
-    body: JSON.stringify({ sessionId: 'abc-123', index: 2, text: 'Edited sentence text.' }),
+    body: JSON.stringify({
+      sessionId: 'abc-123',
+      index: 2,
+      text: 'Edited sentence text.',
+      previousText: 'Original sentence text.',
+      previousFallback: true,
+      previousFallbackReason: 'verification failed',
+    }),
   });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(calls, [{
     routePath: '/inference/regenerate-chunk',
-    payload: { sessionId: 'abc-123', index: 2, text: 'Edited sentence text.' },
+    payload: {
+      sessionId: 'abc-123',
+      index: 2,
+      text: 'Edited sentence text.',
+      previousText: 'Original sentence text.',
+      previousFallback: true,
+      previousFallbackReason: 'verification failed',
+    },
+  }]);
+});
+
+test('inference chunk restore forwards the session and numeric index', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    postJson: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { revision: 44, text: 'Original sentence text.' };
+    },
+  });
+  const response = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/restore-chunk',
+    body: JSON.stringify({
+      sessionId: 'abc-123',
+      index: 2,
+      versionId: 'version-456',
+      currentText: 'Current sentence.',
+      currentFallback: false,
+    }),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{
+    routePath: '/inference/restore-chunk',
+    payload: {
+      sessionId: 'abc-123',
+      index: 2,
+      versionId: 'version-456',
+      currentText: 'Current sentence.',
+      currentFallback: false,
+      currentFallbackReason: '',
+    },
   }]);
 });
 
