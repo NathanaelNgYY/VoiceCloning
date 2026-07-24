@@ -18,6 +18,7 @@ import {
   findRepeatedPhrases,
   countWords,
   findWordTimingEvidence,
+  findPhraseTimingEvidence,
   isTruncatedDictWord,
 } from './wordCoverage.js';
 
@@ -327,6 +328,7 @@ class TranscriptionVerifier {
       .map((entry) => ({
         word: String(entry?.word || '').trim().toLowerCase(),
         arpabet: String(entry?.arpabet || '').trim().toUpperCase(),
+        synthesisAlias: String(entry?.synthesisAlias || '').trim().toLowerCase().replace(/\s+/gu, ' '),
         verifyPhonemes: entry?.verifyPhonemes === true,
       }))
       .filter((entry) => entry.word);
@@ -371,9 +373,13 @@ class TranscriptionVerifier {
         // so it would be wrongly forgiven and shipped half-said. Reject any dict word whose
         // heard token is a strict prefix of it. Gated on finalWordTailCheck so only the
         // heavy-safeguard paths pay for the extra scrutiny; Live Fast is unaffected.
-        const rejectTruncated = (w) => finalWordTailCheck && isTruncatedDictWord(w, text);
-        const timingAndEnergyEvidence = (w) => {
-          const timing = findWordTimingEvidence(expectedText, w, words, { minWordLength });
+        const rejectTruncated = (w, lookupText = w) => (
+          finalWordTailCheck && lookupText === w && isTruncatedDictWord(w, text)
+        );
+        const timingAndEnergyEvidence = (w, lookupText = w) => {
+          const timing = lookupText.includes(' ')
+            ? findPhraseTimingEvidence(expectedText, lookupText, words, { minWordLength })
+            : findWordTimingEvidence(expectedText, lookupText, words, { minWordLength });
           if (!timing) return null;
           // Phoneme-gated paths must confirm waveform activity inside Whisper's aligned slot;
           // a hallucinated timestamp over silence is not evidence that the word spoke.
@@ -390,15 +396,24 @@ class TranscriptionVerifier {
         const candidateByWord = new Map();
         for (const word of missingWords) {
           if (dictSet.has(word.toLowerCase())) {
-            candidateByWord.set(word.toLowerCase(), { word, needsForgiveness: true, strict: false });
+            candidateByWord.set(word.toLowerCase(), {
+              word, lookupText: word, needsForgiveness: true, strict: false,
+            });
           }
         }
         if (phonemeVerification) {
           for (const entry of normalizedDictionaryEntries) {
-            if (!entry.verifyPhonemes || !expectedWordSet.has(entry.word)) continue;
+            const lookupText = entry.synthesisAlias || entry.word;
+            const lookupTokens = lookupText.match(/[\p{L}\p{N}']+/gu) || [];
+            const expectedTokens = String(expectedText).toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
+            const aliasPresent = lookupTokens.length > 1 && expectedTokens.some((_, index) => (
+              lookupTokens.every((token, offset) => expectedTokens[index + offset] === token)
+            ));
+            if (!entry.verifyPhonemes || (!expectedWordSet.has(entry.word) && !aliasPresent)) continue;
             const current = candidateByWord.get(entry.word);
             candidateByWord.set(entry.word, {
               word: current?.word || entry.word,
+              lookupText,
               needsForgiveness: current?.needsForgiveness || false,
               strict: true,
             });
@@ -406,10 +421,10 @@ class TranscriptionVerifier {
         }
         const presenceCandidates = [...candidateByWord.values()].map((candidate) => ({
           ...candidate,
-          timing: hasTimings ? timingAndEnergyEvidence(candidate.word) : null,
-        })).filter(({ word, timing }) => (
+          timing: hasTimings ? timingAndEnergyEvidence(candidate.word, candidate.lookupText) : null,
+        })).filter(({ word, lookupText, timing }) => (
           dictSet.has(word.toLowerCase())
-          && !rejectTruncated(word)
+          && !rejectTruncated(word, lookupText)
           && ((!hasTimings && !phonemeVerification) || timing)
         ));
 
@@ -418,13 +433,17 @@ class TranscriptionVerifier {
         } else {
           // Full and Live Fast require an independent phone recognizer after presence is proven.
           // A forced timestamp cannot establish that the expected phones were spoken.
-          for (const { word, timing, needsForgiveness, strict } of presenceCandidates) {
+          for (const {
+            word, lookupText, timing, needsForgiveness, strict,
+          } of presenceCandidates) {
             const dictionaryEntry = dictionaryEntryByWord.get(word.toLowerCase());
             if (!dictionaryEntry?.arpabet) continue;
             const countableExpectedWords = String(expectedText)
               .toLowerCase()
               .match(/[\p{L}\p{N}']+/gu) || [];
-            const terminal = countableExpectedWords.at(-1) === word.toLowerCase();
+            const lookupWords = String(lookupText || word).toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
+            const terminal = lookupWords.length > 0
+              && countableExpectedWords.slice(-lookupWords.length).join(' ') === lookupWords.join(' ');
             try {
               const assessment = await this.verifyPhonemeBuffer(audioBuffer, {
                 start: timing.start,

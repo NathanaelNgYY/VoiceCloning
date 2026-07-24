@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeWordCoverage, findClippedWords, isWordSpokenByTiming, isTruncatedDictWord } from './wordCoverage.js';
+import {
+  computeWordCoverage,
+  findClippedWords,
+  findPhraseTimingEvidence,
+  isWordSpokenByTiming,
+  isTruncatedDictWord,
+} from './wordCoverage.js';
 
 // Helper: build a Whisper-style word entry.
 function word(w, durationSec, probability = 0.95) {
@@ -323,6 +329,24 @@ test('isWordSpokenByTiming confirms a word backed by real audio at its position'
     .split(' ')
     .map((wd, i) => ({ w: wd, start: i, end: i + (i === 5 ? 0.3 : 0.25) }));
   assert.equal(isWordSpokenByTiming(text, 'centriole', words), true);
+});
+
+test('findPhraseTimingEvidence returns the complete synthesis-alias span', () => {
+  const timing = findPhraseTimingEvidence(
+    'Study stereo chemistry today',
+    'stereo chemistry',
+    [
+      { w: 'Study', start: 0, end: 0.3, p: 0.9 },
+      { w: 'stereo', start: 0.35, end: 0.8, p: 0.9 },
+      { w: 'chemistry', start: 0.82, end: 1.4, p: 0.9 },
+      { w: 'today', start: 1.45, end: 1.8, p: 0.9 },
+    ],
+  );
+  assert.equal(timing.start, 0.35);
+  assert.equal(timing.end, 1.4);
+  assert.ok(Math.abs(timing.duration - 1.05) < 0.0001);
+  assert.equal(timing.probability, 0.9);
+  assert.equal(timing.token, 'stereo chemistry');
 });
 
 test('isWordSpokenByTiming rejects a word whose position has only near-zero spans', () => {

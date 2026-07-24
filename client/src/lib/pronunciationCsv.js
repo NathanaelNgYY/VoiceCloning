@@ -1,7 +1,8 @@
-const CSV_COLUMNS = ['word', 'category', 'arpabet', 'verifyPhonemes', 'notes'];
+const CSV_COLUMNS = ['word', 'category', 'arpabet', 'synthesisAlias', 'verifyPhonemes', 'notes'];
 const LEGACY_CSV_COLUMNS = ['word', 'category', 'readable', 'arpabet', 'notes'];
 const LEGACY_STRICT_CSV_COLUMNS = ['word', 'category', 'readable', 'arpabet', 'verifyPhonemes', 'notes'];
 const IMPORT_COLUMNS = new Set([...CSV_COLUMNS, 'readable']);
+const CANONICAL_COLUMNS = new Map([...IMPORT_COLUMNS].map((column) => [column.toLowerCase(), column]));
 
 function csvEscape(value) {
   const text = String(value ?? '');
@@ -67,7 +68,9 @@ export function parsePronunciationCsv(text, defaultCategory = 'general') {
   const rows = parseCsvRows(String(text || '').trim());
   if (rows.length === 0) return [];
 
-  const headers = rows[0].map((header) => header.trim().toLowerCase());
+  const headers = rows[0].map((header) => (
+    CANONICAL_COLUMNS.get(header.trim().toLowerCase()) || header.trim().toLowerCase()
+  ));
   const hasHeader = headers.includes('word');
   const dataRows = hasHeader ? rows.slice(1) : rows;
   const columns = hasHeader ? headers : (dataRows.some((row) => row.length >= LEGACY_STRICT_CSV_COLUMNS.length)
@@ -86,6 +89,7 @@ export function parsePronunciationCsv(text, defaultCategory = 'general') {
         word: entry.word || '',
         category: entry.category || defaultCategory,
         arpabet: entry.arpabet || '',
+        synthesisAlias: entry.synthesisAlias || '',
         verifyPhonemes: /^(?:true|1|yes)$/iu.test(entry.verifyPhonemes || ''),
         notes: entry.notes || '',
       };

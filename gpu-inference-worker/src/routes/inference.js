@@ -55,7 +55,10 @@ export function synthesisBusy() {
 async function chunkingDictionaryWords() {
   try {
     const entries = await loadRuntimePronunciationEntries();
-    return entries.map((e) => e.word).filter(Boolean);
+    return entries.flatMap((entry) => {
+      const aliasWords = String(entry.synthesisAlias || '').match(/[A-Za-z']+/gu) || [];
+      return [entry.word, aliasWords.at(-1)].filter(Boolean);
+    });
   } catch {
     return [];
   }

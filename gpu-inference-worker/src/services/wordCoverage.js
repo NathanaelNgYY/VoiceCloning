@@ -404,6 +404,57 @@ export function findWordTimingEvidence(expectedText, targetWord, words = [], opt
     : null;
 }
 
+export function findPhraseTimingEvidence(expectedText, targetPhrase, words = [], opts = {}) {
+  const minDuration = Number.isFinite(opts.minDuration) ? opts.minDuration : 0.12;
+  const minProbability = Number.isFinite(opts.minProbability) ? opts.minProbability : 0.35;
+  const expected = tokenize(expectedText).map(canonicalize).filter(Boolean);
+  const phrase = tokenize(targetPhrase).map(canonicalize).filter(Boolean);
+  if (phrase.length < 2 || expected.length === 0 || !Array.isArray(words) || words.length === 0) return null;
+
+  const phraseStart = expected.findIndex((_, index) => (
+    phrase.every((token, offset) => expected[index + offset] === token)
+  ));
+  if (phraseStart < 0) return null;
+  const phraseEnd = phraseStart + phrase.length;
+  const actual = words.map((entry) => ({
+    token: canonicalize(tokenize(entry.w)[0] || ''),
+    start: Number(entry.start),
+    end: Number(entry.end),
+    probability: Number.isFinite(entry.p) ? entry.p : 1,
+  })).filter((entry) => entry.token && Number.isFinite(entry.start) && Number.isFinite(entry.end));
+  if (actual.length === 0) return null;
+
+  const tokensMatch = (a, b) => a === b || isFuzzyMatch(a, b);
+  let beforeActual = -1;
+  if (phraseStart > 0) {
+    for (let index = actual.length - 1; index >= 0; index -= 1) {
+      if (tokensMatch(expected[phraseStart - 1], actual[index].token)) {
+        beforeActual = index;
+        break;
+      }
+    }
+    if (beforeActual < 0) return null;
+  }
+
+  let afterActual = actual.length;
+  if (phraseEnd < expected.length) {
+    const found = actual.findIndex((entry, index) => (
+      index > beforeActual && tokensMatch(expected[phraseEnd], entry.token)
+    ));
+    if (found < 0) return null;
+    afterActual = found;
+  }
+
+  const candidates = actual.slice(beforeActual + 1, afterActual);
+  if (candidates.length === 0) return null;
+  const start = candidates[0].start;
+  const end = candidates[candidates.length - 1].end;
+  const probability = Math.min(...candidates.map((entry) => entry.probability));
+  return end - start >= minDuration && probability >= minProbability
+    ? { start, end, duration: end - start, probability, token: candidates.map((entry) => entry.token).join(' ') }
+    : null;
+}
+
 export function isWordSpokenByTiming(expectedText, targetWord, words = [], opts = {}) {
   return Boolean(findWordTimingEvidence(expectedText, targetWord, words, opts));
 }

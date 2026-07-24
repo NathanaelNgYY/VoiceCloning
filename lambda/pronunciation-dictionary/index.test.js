@@ -30,6 +30,7 @@ test('pronunciation dictionary saves reviewed English entries by category', asyn
     word: 'hydrolysis',
     category: 'biology',
     arpabet: 'HH AY0 D R AA1 L AH0 S IH0 S',
+    synthesisAlias: 'hydro lysis',
     verifyPhonemes: true,
   }));
   assert.equal(save.statusCode, 200);
@@ -39,6 +40,18 @@ test('pronunciation dictionary saves reviewed English entries by category', asyn
   assert.equal(body.entries[0].word, 'hydrolysis');
   assert.equal(body.entries[0].category, 'biology');
   assert.equal(body.entries[0].verifyPhonemes, true);
+  assert.equal(body.entries[0].synthesisAlias, 'hydro lysis');
+});
+
+test('pronunciation dictionary rejects unsafe synthesis aliases', async () => {
+  const handler = createHandler();
+  const response = await handler(event('POST', '/api/pronunciation-dictionary', {
+    word: 'stereochemistry',
+    arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0',
+    synthesisAlias: 'stereo <break> chemistry',
+  }));
+  assert.equal(response.statusCode, 400);
+  assert.match(JSON.parse(response.body).error, /synthesisAlias/u);
 });
 
 test('pronunciation dictionary moves a saved word between categories without duplicates', async () => {

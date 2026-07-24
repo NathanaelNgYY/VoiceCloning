@@ -22,11 +22,26 @@ function normalizeArpabet(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/gu, ' ');
 }
 
+function normalizeSynthesisAlias(value, { strict = false } = {}) {
+  const alias = String(value || '').trim().replace(/\s+/gu, ' ');
+  if (!alias) return '';
+  if (alias.length > 80) {
+    if (!strict) return '';
+    throw new Error('synthesisAlias must be 80 characters or fewer');
+  }
+  if (!/^[A-Za-z]+(?:[ '-][A-Za-z]+)+$/u.test(alias)) {
+    if (!strict) return '';
+    throw new Error('synthesisAlias must contain at least two English word parts using only letters, spaces, apostrophes, or hyphens');
+  }
+  return alias;
+}
+
 function normalizeEntry(body, now) {
   const word = normalizeWord(body.word);
   if (!word) throw new Error('word is required');
   const category = normalizeCategory(body.category);
   const arpabet = normalizeArpabet(body.arpabet);
+  const synthesisAlias = normalizeSynthesisAlias(body.synthesisAlias, { strict: true });
   if (!arpabet) throw new Error('arpabet is required; readable pronunciations are no longer supported');
   return {
     id: word.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '') || `entry-${Date.now()}`,
@@ -34,6 +49,7 @@ function normalizeEntry(body, now) {
     category,
     word,
     arpabet,
+    ...(synthesisAlias ? { synthesisAlias } : {}),
     // Opt-in only: the runtime dictionary contains thousands of general entries,
     // so ARPAbet presence alone must never make a word a strict phoneme gate.
     verifyPhonemes: body.verifyPhonemes === true,
@@ -52,11 +68,16 @@ async function readDictionary(readObject, category) {
       language: 'en',
       category: normalizeCategory(category),
       entries: (Array.isArray(parsed.entries) ? parsed.entries : [])
-        .map((entry) => ({
-          ...entry,
-          category: normalizeCategory(entry.category || category),
-          arpabet: normalizeArpabet(entry.arpabet),
-        }))
+        .map((entry) => {
+          const synthesisAlias = normalizeSynthesisAlias(entry.synthesisAlias);
+          const { synthesisAlias: _storedAlias, ...rest } = entry;
+          return {
+            ...rest,
+            category: normalizeCategory(entry.category || category),
+            arpabet: normalizeArpabet(entry.arpabet),
+            ...(synthesisAlias ? { synthesisAlias } : {}),
+          };
+        })
         .filter((entry) => normalizeWord(entry.word) && entry.arpabet)
         .map(({ readable: _readable, ...entry }) => entry),
       updatedAt: parsed.updatedAt || '',
@@ -142,6 +163,11 @@ export function createHandler({
         }
         if (!normalizeArpabet(body.arpabet)) {
           return err(400, 'arpabet is required; readable pronunciations are no longer supported', event);
+        }
+        try {
+          normalizeSynthesisAlias(body.synthesisAlias, { strict: true });
+        } catch (error) {
+          return err(400, error.message, event);
         }
         const entry = normalizeEntry(body, now);
         const dictionaries = await readAllDictionaries(readObject, { dedupe: false });

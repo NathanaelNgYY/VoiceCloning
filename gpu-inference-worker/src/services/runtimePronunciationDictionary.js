@@ -19,6 +19,11 @@ function normalizeArpabet(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/gu, ' ');
 }
 
+function normalizeSynthesisAlias(value) {
+  const alias = String(value || '').trim().replace(/\s+/gu, ' ');
+  return alias.length <= 80 && /^[A-Za-z]+(?:[ '-][A-Za-z]+)+$/u.test(alias) ? alias : '';
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
@@ -28,6 +33,18 @@ export function applyReadableOverrides(text) {
   // example, "iron" -> "eye urn") and could reject correctly spoken audio.
   // Pronunciation overrides are ARPAbet-only now, so synthesis text stays exact.
   return String(text || '');
+}
+
+export function applySynthesisAliases(text, entries = []) {
+  let result = String(text || '');
+  const aliases = dedupePronunciationEntries(entries)
+    .filter((entry) => entry.synthesisAlias)
+    .sort((a, b) => b.word.length - a.word.length);
+  for (const entry of aliases) {
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}'])${escapeRegExp(entry.word)}(?![\\p{L}\\p{N}'])`, 'giu');
+    result = result.replace(pattern, entry.synthesisAlias);
+  }
+  return result;
 }
 
 function updatedAtValue(entry) {
@@ -43,6 +60,8 @@ export function dedupePronunciationEntries(entries = []) {
     if (!word || !arpabet) continue;
     const candidate = { ...rawEntry, word, arpabet };
     delete candidate.readable;
+    candidate.synthesisAlias = normalizeSynthesisAlias(candidate.synthesisAlias);
+    if (!candidate.synthesisAlias) delete candidate.synthesisAlias;
     const key = word.toLowerCase();
     const current = byWord.get(key);
     const candidateTime = updatedAtValue(candidate);
@@ -198,7 +217,7 @@ export async function loadRuntimePronunciationEntries({
 
 export async function prepareTextWithRuntimeDictionary(text, options = {}) {
   const entries = await loadRuntimePronunciationEntries(options);
-  return applyReadableOverrides(text, entries);
+  return applySynthesisAliases(text, entries);
 }
 
 export async function syncHotDictionaryOverrides(options = {}) {

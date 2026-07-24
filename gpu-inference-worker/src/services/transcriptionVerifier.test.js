@@ -269,6 +269,113 @@ test('terminal strict-word verification requests independent endpoint crops', as
   }
 });
 
+test('strict synthesis aliases verify phonemes across the full rewritten phrase', async () => {
+  let receivedOptions = null;
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'Study stereo chemistry today',
+    words: [
+      { w: 'Study', start: 0, end: 0.3, p: 0.95 },
+      { w: 'stereo', start: 0.35, end: 0.8, p: 0.95 },
+      { w: 'chemistry', start: 0.82, end: 1.4, p: 0.95 },
+      { w: 'today', start: 1.45, end: 1.8, p: 0.95 },
+    ],
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async (_audio, options) => {
+    receivedOptions = options;
+    return { decision: 'pass', ok: true, ctcScore: -1, similarity: 0.9 };
+  });
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(2),
+      'Study stereo chemistry today',
+      {
+        dictionaryEntries: [{
+          word: 'stereochemistry',
+          synthesisAlias: 'stereo chemistry',
+          arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0',
+          verifyPhonemes: true,
+        }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(receivedOptions?.start, 0.35);
+    assert.equal(receivedOptions?.end, 1.4);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('strict synthesis aliases still reject a conclusive phoneme mismatch', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'Study stereo chemistry today',
+    words: [
+      { w: 'Study', start: 0, end: 0.3, p: 0.95 },
+      { w: 'stereo', start: 0.35, end: 0.8, p: 0.95 },
+      { w: 'chemistry', start: 0.82, end: 1.4, p: 0.95 },
+      { w: 'today', start: 1.45, end: 1.8, p: 0.95 },
+    ],
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => ({
+    decision: 'reject', ok: false, ctcScore: -6, similarity: 0.1,
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(2),
+      'Study stereo chemistry today',
+      {
+        dictionaryEntries: [{
+          word: 'stereochemistry',
+          synthesisAlias: 'stereo chemistry',
+          arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0',
+          verifyPhonemes: true,
+        }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.equal(res.phonemeAssessments[0].decision, 'reject');
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('non-strict synthesis aliases keep ASR verification without adding a phoneme gate', async () => {
+  let phonemeCalls = 0;
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'Study stereo chemistry today',
+    words: [
+      { w: 'Study', start: 0, end: 0.3, p: 0.95 },
+      { w: 'stereo', start: 0.35, end: 0.8, p: 0.95 },
+      { w: 'chemistry', start: 0.82, end: 1.4, p: 0.95 },
+      { w: 'today', start: 1.45, end: 1.8, p: 0.95 },
+    ],
+  }));
+  mock.method(transcriptionVerifier, 'verifyPhonemeBuffer', async () => {
+    phonemeCalls += 1;
+    return { decision: 'reject', ok: false };
+  });
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      makePcm16Wav(2),
+      'Study stereo chemistry today',
+      {
+        dictionaryEntries: [{
+          word: 'stereochemistry',
+          synthesisAlias: 'stereo chemistry',
+          arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0',
+          verifyPhonemes: false,
+        }],
+        finalWordTailCheck: true,
+      },
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(phonemeCalls, 0);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
 test('an uncertain phoneme result cannot forgive a Whisper-mismatched technical word', async () => {
   const heard = 'Km or the mccallus constant describes enzyme kinetics'.split(' ');
   mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({

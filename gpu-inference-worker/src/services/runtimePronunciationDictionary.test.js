@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import {
   applyReadableOverrides,
+  applySynthesisAliases,
   buildHotDictionaryLines,
   dedupePronunciationEntries,
   writeHotDictionaryOverrides,
@@ -17,6 +18,26 @@ test('applyReadableOverrides never changes synthesis text', () => {
   ]);
 
   assert.equal(text, 'Enzyme activity helps Foozyme work.');
+});
+
+test('applySynthesisAliases changes only exact reviewed words', () => {
+  const entries = [{
+    word: 'stereochemistry',
+    arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0',
+    synthesisAlias: 'stereo chemistry',
+  }];
+  assert.equal(
+    applySynthesisAliases('Stereochemistry helps, but stereochemistrylike is unrelated.', entries),
+    'stereo chemistry helps, but stereochemistrylike is unrelated.',
+  );
+});
+
+test('applySynthesisAliases ignores legacy readable and unsafe aliases', () => {
+  const entries = [
+    { word: 'iron', arpabet: 'AY1 ER0 N', readable: 'eye urn' },
+    { word: 'enzyme', arpabet: 'EH1 N Z AY0 M', synthesisAlias: 'en <break> zyme' },
+  ];
+  assert.equal(applySynthesisAliases('iron enzyme', entries), 'iron enzyme');
 });
 
 test('dedupePronunciationEntries removes readable-only records and keeps the newest global word', () => {

@@ -355,6 +355,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationCategory, setPronunciationCategory] = useState('general');
   const [pronunciationWord, setPronunciationWord] = useState('');
   const [pronunciationArpabet, setPronunciationArpabet] = useState('');
+  const [pronunciationSynthesisAlias, setPronunciationSynthesisAlias] = useState('');
   const [pronunciationVerifyPhonemes, setPronunciationVerifyPhonemes] = useState(false);
   const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
@@ -2418,6 +2419,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         word,
         category: pronunciationCategory,
         arpabet: pronunciationArpabet,
+        synthesisAlias: pronunciationSynthesisAlias.trim(),
         verifyPhonemes: pronunciationVerifyPhonemes,
         source: 'admin-arpabet',
       });
@@ -2436,6 +2438,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setEditingPronunciationWord(entry.word || '');
     setPronunciationWord(entry.word || '');
     setPronunciationArpabet(entry.arpabet || '');
+    setPronunciationSynthesisAlias(entry.synthesisAlias || '');
     setPronunciationVerifyPhonemes(entry.verifyPhonemes === true);
     setPronunciationMessage(`Editing ${entry.word}.`);
   }
@@ -2468,6 +2471,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setEditingPronunciationWord('');
     setPronunciationWord(word);
     setPronunciationArpabet('');
+    setPronunciationSynthesisAlias('');
     setPronunciationVerifyPhonemes(false);
     setPronunciationMessage(`Add an override for "${word}", then Generate or type the ARPAbet and Save entry.`);
   }
@@ -2476,6 +2480,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setEditingPronunciationWord('');
     setPronunciationWord('');
     setPronunciationArpabet('');
+    setPronunciationSynthesisAlias('');
     setPronunciationVerifyPhonemes(false);
     setPronunciationMessage('');
   }
@@ -2577,6 +2582,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       for (const row of rows) {
         await savePronunciationEntry({
           ...row,
+          synthesisAlias: row.synthesisAlias || '',
           verifyPhonemes: row.verifyPhonemes === true,
           source: 'csv-arpabet',
         });
@@ -3984,6 +3990,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
               </div>
               <Input value={pronunciationArpabet} onChange={(event) => setPronunciationArpabet(event.target.value)} placeholder="ARPAbet, e.g. EH1 N Z AY0 M" className="mt-2 h-9 rounded-lg bg-white font-mono text-xs" />
+              <Input
+                value={pronunciationSynthesisAlias}
+                onChange={(event) => setPronunciationSynthesisAlias(event.target.value)}
+                placeholder="Synthesis spelling (optional), e.g. stereo chemistry"
+                className="mt-2 h-9 rounded-lg bg-white text-xs"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                Only this exact saved word is rewritten for speech and verification. Use a reviewed multi-part English spelling.
+              </p>
               <label className="mt-2 flex items-start gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
                 <Checkbox
                   checked={pronunciationVerifyPhonemes}
@@ -4068,6 +4083,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         <span className="block truncate font-mono text-slate-400">
                           {entry.arpabet}{entry.verifyPhonemes ? ' · strict phoneme' : ''}
                         </span>
+                        {entry.synthesisAlias && (
+                          <span className="block truncate text-slate-400">speaks as: {entry.synthesisAlias}</span>
+                        )}
                       </button>
                       <div className="flex items-center gap-1">
                         <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady} className="h-7 w-7 rounded-lg text-blue-500">
