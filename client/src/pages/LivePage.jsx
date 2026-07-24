@@ -21,6 +21,7 @@ import {
   insertInferenceChunk,
   synthesizeSentence,
   getPronunciationDictionary,
+  searchPronunciationDictionary,
   scanOovWords,
   savePronunciationEntry,
   deletePronunciationEntry,
@@ -121,6 +122,7 @@ import {
   PlayCircle,
   Plus,
   RefreshCw,
+  Search,
   ScanSearch,
   Sparkles,
   Square,
@@ -359,6 +361,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [pronunciationVerifyPhonemes, setPronunciationVerifyPhonemes] = useState(false);
   const [editingPronunciationWord, setEditingPronunciationWord] = useState('');
   const [pronunciationEntries, setPronunciationEntries] = useState([]);
+  const [pronunciationSearch, setPronunciationSearch] = useState('');
+  const [pronunciationSearchResults, setPronunciationSearchResults] = useState(null);
+  const [pronunciationSearching, setPronunciationSearching] = useState(false);
   const [pronunciationMessage, setPronunciationMessage] = useState('');
   const [pronunciationBusy, setPronunciationBusy] = useState(false);
   const [pronunciationGenerating, setPronunciationGenerating] = useState(false);
@@ -2378,6 +2383,34 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
+  async function searchPronunciationEntries(event) {
+    event?.preventDefault();
+    const search = pronunciationSearch.trim();
+    if (!search) {
+      setPronunciationSearchResults(null);
+      return;
+    }
+    setPronunciationSearching(true);
+    setPronunciationMessage('');
+    try {
+      const res = await searchPronunciationDictionary(search);
+      setPronunciationSearchResults({
+        entries: res.data.entries || [],
+        totalMatches: res.data.totalMatches || 0,
+        truncated: res.data.truncated === true,
+      });
+    } catch (err) {
+      setPronunciationMessage(err.response?.data?.error || err.message || 'Could not search pronunciation dictionary.');
+    } finally {
+      setPronunciationSearching(false);
+    }
+  }
+
+  function clearPronunciationSearch() {
+    setPronunciationSearch('');
+    setPronunciationSearchResults(null);
+  }
+
   async function generatePronunciation() {
     const word = pronunciationWord.trim();
     if (!word) {
@@ -2427,6 +2460,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setPronunciationReloadPending(true);
       setPronunciationMessage(`Saved ${word}. Any older category entry was replaced. Click "Load changes" to apply.`);
       setEditingPronunciationWord('');
+      if (pronunciationSearchResults) await searchPronunciationEntries();
     } catch (err) {
       setPronunciationMessage(err.response?.data?.error || err.message || 'Could not save pronunciation entry.');
     } finally {
@@ -2435,6 +2469,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   function editPronunciation(entry) {
+    if (entry.category) setPronunciationCategory(entry.category);
     setEditingPronunciationWord(entry.word || '');
     setPronunciationWord(entry.word || '');
     setPronunciationArpabet(entry.arpabet || '');
@@ -2488,11 +2523,21 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   async function deletePronunciation(entry) {
     const word = String(entry.word || '').trim();
     if (!word) return;
+    const category = entry.category || pronunciationCategory;
     setPronunciationBusy(true);
     setPronunciationMessage('');
     try {
-      const res = await deletePronunciationEntry({ word, category: pronunciationCategory });
-      setPronunciationEntries(res.data.dictionary?.entries || []);
+      const res = await deletePronunciationEntry({ word, category });
+      if (category === pronunciationCategory) {
+        setPronunciationEntries(res.data.dictionary?.entries || []);
+      } else {
+        await loadPronunciationEntries(pronunciationCategory);
+      }
+      setPronunciationSearchResults((current) => (
+        current
+          ? { ...current, entries: current.entries.filter((item) => item.word.toLowerCase() !== word.toLowerCase()), totalMatches: Math.max(0, current.totalMatches - 1) }
+          : null
+      ));
       if (editingPronunciationWord.toLowerCase() === word.toLowerCase()) clearPronunciationForm();
       setPronunciationReloadPending(true);
       setPronunciationMessage(`Deleted ${word} from every category. Click "Load changes" to apply.`);
@@ -3986,6 +4031,34 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   </SelectContent>
                 </Select>
               </div>
+              <form onSubmit={searchPronunciationEntries} className="mt-3 flex gap-2">
+                <Input
+                  value={pronunciationSearch}
+                  onChange={(event) => {
+                    setPronunciationSearch(event.target.value);
+                    if (!event.target.value.trim()) setPronunciationSearchResults(null);
+                  }}
+                  placeholder="Search words across all categories"
+                  aria-label="Search pronunciation dictionary across all categories"
+                  className="h-9 rounded-lg bg-white"
+                />
+                {pronunciationSearchResults && (
+                  <Button type="button" size="sm" variant="ghost" onClick={clearPronunciationSearch} disabled={pronunciationSearching} className="h-9 rounded-lg px-2 text-slate-500">
+                    <X size={14} />
+                    Clear
+                  </Button>
+                )}
+                <Button type="submit" size="sm" variant="outline" disabled={pronunciationSearching || !pronunciationSearch.trim()} className="h-9 rounded-lg border-slate-200 bg-white">
+                  {pronunciationSearching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                  Search
+                </Button>
+              </form>
+              {pronunciationSearchResults && (
+                <p className="mt-1 text-xs text-slate-400">
+                  {pronunciationSearchResults.totalMatches} match{pronunciationSearchResults.totalMatches === 1 ? '' : 'es'} across all categories
+                  {pronunciationSearchResults.truncated ? ' · showing first 100' : ''}
+                </p>
+              )}
               <div className="mt-3">
                 <Input value={pronunciationWord} onChange={(event) => setPronunciationWord(event.target.value)} placeholder="Word" className="h-9 rounded-lg bg-white" />
               </div>
@@ -4069,9 +4142,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 <input ref={pronunciationImportInputRef} type="file" accept=".csv,text/csv" onChange={importPronunciationCsv} className="hidden" />
               </div>
               {pronunciationMessage && <p className="mt-2 text-xs text-slate-500">{pronunciationMessage}</p>}
-              {pronunciationEntries.length > 0 && (
+              {(pronunciationSearchResults ? pronunciationSearchResults.entries : pronunciationEntries).length > 0 && (
                 <div className="mt-3 max-h-40 overflow-auto rounded-lg border border-slate-100 bg-white">
-                  {pronunciationEntries.map((entry) => (
+                  {(pronunciationSearchResults ? pronunciationSearchResults.entries : pronunciationEntries).map((entry) => (
                     <div key={entry.id || entry.word} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-50 px-2 py-1.5 text-xs last:border-b-0">
                       <button
                         type="button"
@@ -4079,7 +4152,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         className="min-w-0 text-left"
                         disabled={pronunciationBusy}
                       >
-                        <span className="block truncate font-medium text-slate-700">{entry.word}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-medium text-slate-700">{entry.word}</span>
+                          {pronunciationSearchResults && (
+                            <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{entry.category}</span>
+                          )}
+                        </span>
                         <span className="block truncate font-mono text-slate-400">
                           {entry.arpabet}{entry.verifyPhonemes ? ' · strict phoneme' : ''}
                         </span>
@@ -4101,6 +4179,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     </div>
                   ))}
                 </div>
+              )}
+              {pronunciationSearchResults && pronunciationSearchResults.entries.length === 0 && (
+                <p className="mt-3 rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-400">No matching dictionary words.</p>
               )}
             </div>
           </section>

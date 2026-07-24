@@ -18,6 +18,10 @@ function normalizeWord(value) {
   return String(value || '').trim().replace(/\s+/gu, ' ');
 }
 
+function normalizeSearch(value) {
+  return normalizeWord(value).toLowerCase().slice(0, 80);
+}
+
 function normalizeArpabet(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/gu, ' ');
 }
@@ -137,7 +141,26 @@ export function createHandler({
     try {
       if (method === 'GET' && DICTIONARY_PATH.test(routePath)) {
         const category = normalizeCategory(event.queryStringParameters?.category);
+        const search = normalizeSearch(event.queryStringParameters?.search);
         const dictionaries = await readAllDictionaries(readObject);
+        if (search) {
+          const entries = [...dictionaries.values()]
+            .flatMap((dictionary) => dictionary.entries)
+            .filter((entry) => normalizeWord(entry.word).toLowerCase().includes(search))
+            .sort((a, b) => (
+              normalizeWord(a.word).toLowerCase().indexOf(search)
+              - normalizeWord(b.word).toLowerCase().indexOf(search)
+              || String(a.word).localeCompare(String(b.word))
+            ));
+          return ok({
+            schemaVersion: 1,
+            language: 'en',
+            search,
+            entries: entries.slice(0, 100),
+            totalMatches: entries.length,
+            truncated: entries.length > 100,
+          }, {}, event);
+        }
         return ok(dictionaries.get(category), {}, event);
       }
 

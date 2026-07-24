@@ -489,6 +489,10 @@ export function getPronunciationDictionary(category = 'general') {
   return api.get('/pronunciation-dictionary', { params: { category } });
 }
 
+export function searchPronunciationDictionary(search) {
+  return api.get('/pronunciation-dictionary', { params: { search } });
+}
+
 export function savePronunciationEntry(entry) {
   return api.post('/pronunciation-dictionary', entry);
 }

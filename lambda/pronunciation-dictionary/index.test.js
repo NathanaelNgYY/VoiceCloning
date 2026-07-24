@@ -134,6 +134,44 @@ test('pronunciation dictionary hides legacy cross-category duplicates before cle
   assert.equal(chemistry.entries[0].arpabet, 'AY1 ER0 N');
 });
 
+test('pronunciation dictionary searches words across every category', async () => {
+  const objects = new Map([
+    ['pronunciation-dictionary/english/general.json', Buffer.from(JSON.stringify({
+      category: 'general',
+      entries: [
+        { word: 'stereoscopic', category: 'general', arpabet: 'S T EH2 R IY0 AH0 S K AA1 P IH0 K' },
+        { word: 'enzyme', category: 'general', arpabet: 'EH1 N Z AY0 M' },
+      ],
+    }))],
+    ['pronunciation-dictionary/english/chemistry.json', Buffer.from(JSON.stringify({
+      category: 'chemistry',
+      entries: [
+        { word: 'stereochemistry', category: 'chemistry', arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0' },
+      ],
+    }))],
+  ]);
+  const handler = createHandler({
+    readObject: async (key) => {
+      if (objects.has(key)) return objects.get(key);
+      const error = new Error('missing');
+      error.$metadata = { httpStatusCode: 404 };
+      throw error;
+    },
+  });
+
+  const response = await handler(event(
+    'GET', '/api/pronunciation-dictionary', null, { search: 'STEREO' },
+  ));
+  const body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.search, 'stereo');
+  assert.equal(body.totalMatches, 2);
+  assert.deepEqual(body.entries.map(({ word, category }) => ({ word, category })), [
+    { word: 'stereochemistry', category: 'chemistry' },
+    { word: 'stereoscopic', category: 'general' },
+  ]);
+});
+
 test('pronunciation dictionary deletes legacy duplicates from every category', async () => {
   const objects = new Map();
   objects.set('pronunciation-dictionary/english/general.json', Buffer.from(JSON.stringify({
