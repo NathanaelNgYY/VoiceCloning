@@ -336,8 +336,12 @@ export function LessonPage() {
                   </div>
 
                   <div className="flex flex-1 min-h-0 flex-col">
-                    {activeTab === "transcript" ? (
-                      <div className="flex-1 space-y-4 overflow-y-auto p-5">
+                    <div
+                      className={cn(
+                        "flex-1 space-y-4 overflow-y-auto p-5",
+                        activeTab !== "transcript" && "hidden",
+                      )}
+                    >
                         {transcriptSegments.map((segment, index) => {
                           const isActive = activeTranscriptIndex === index;
                           return (
@@ -388,10 +392,18 @@ export function LessonPage() {
                             </div>
                           );
                         })}
-                      </div>
-                    ) : (
+                    </div>
+
+                    {/* Kept mounted across tab switches. Unmounting tears down the
+                        live voice session and cuts reply audio mid-sentence. */}
+                    <div
+                      className={cn(
+                        "flex min-h-0 flex-1 flex-col",
+                        activeTab === "transcript" && "hidden",
+                      )}
+                    >
                       <GiChatPanel emptyHint="Ask about this lesson — click the mic to start" />
-                    )}
+                    </div>
                   </div>
                 </div>
               </>

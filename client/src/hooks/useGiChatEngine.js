@@ -12,6 +12,7 @@ import {
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
+import { matchesPinnedVoice, resolvePinnedVoiceKey } from '@/lib/giVoicePin';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
@@ -68,6 +69,22 @@ export function useGiChatEngine() {
   // payload directly (lambda/voice-profile/index.js:197), which carries
   // displayName — no separate model-list lookup needed.
   const activeVoiceLabel = String(activeProfile?.displayName || '').trim();
+
+  // The cloned voice this build expects. The active profile is a single shared
+  // backend setting, so without a pin the gi app would speak in whatever voice
+  // someone else activated last.
+  const pinnedVoiceKey = useMemo(
+    () =>
+      resolvePinnedVoiceKey({
+        search: typeof window === 'undefined' ? '' : window.location.search,
+        env: import.meta.env,
+      }),
+    []
+  );
+
+  // Only true once a profile has actually loaded and turned out to be the wrong
+  // one — a not-yet-loaded profile must not read as a mismatch.
+  const voiceMismatch = Boolean(activeProfile) && !matchesPinnedVoice(activeProfile, pinnedVoiceKey);
 
   const refParams = useMemo(() => {
     if (!activeProfile) return null;
@@ -137,11 +154,16 @@ export function useGiChatEngine() {
     // params — gates the mic button so a fresh deployment with no cloned
     // voice can't reach useLiveSpeech's "Go to the Inference page first"
     // dead end (gi mode has no Inference page to go to).
-    voiceReady: refParams !== null,
+    voiceReady: refParams !== null && !voiceMismatch,
+    // The pinned voice is not the one the backend has active. Surfaced so the
+    // UI can say so specifically instead of the generic "no voice set up".
+    voiceMismatch,
     // Mic-permission / unsupported-browser advisories from useLiveSpeech —
     // surfaced separately from `error` so GiChatPage can render them on the
     // amber advisory channel instead of the red error channel.
-    notice: liveSpeech.notice,
+    notice: voiceMismatch
+      ? `This build is pinned to the "${pinnedVoiceKey}" cloned voice, but "${activeVoiceLabel}" is currently active on the backend. Activate the pinned voice profile to continue.`
+      : liveSpeech.notice,
     speechApiAvailable: liveSpeech.speechApiAvailable,
     // Playback plumbing — GiChatPage drives a hidden <audio> element from these.
     phase: liveSpeech.phase,

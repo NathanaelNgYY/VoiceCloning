@@ -1,16 +1,20 @@
 # Deploy the GI-bleeding kiosk build to S3 + CloudFront so it reaches ALL users immediately.
 # Usage: pwsh client/scripts/deploy-gi.ps1 [-SkipBuild]
 #
-# NOTE: this targets the SAME bucket prefix and CloudFront distribution as
-# deploy-chatbot.ps1 (echolect/dist-chatbot behind d2o0cbe2zunqkr). Running it
-# REPLACES the Dean demo kiosk at https://d2o0cbe2zunqkr.cloudfront.net/.
-# To roll back, re-run: pwsh client/scripts/deploy-chatbot.ps1
+# NOTE: this prefix must match the ORIGIN PATH of the default behaviour's S3
+# origin on distribution d2o0cbe2zunqkr (currently /echolect/dist-gi). If the two
+# drift apart the sync succeeds and the invalidation succeeds, but CloudFront
+# keeps serving the old build from the prefix it actually points at — a silent
+# no-op deploy. Check the origin path before changing this.
+#
+# The Dean kiosk lives at its own prefix (echolect/dist-chatbot) and is no longer
+# overwritten by this script.
 param([switch]$SkipBuild)
 
 $ErrorActionPreference = 'Stop'
 
 $Bucket = 'interns2026-small-projects-bucket-shared'
-$Prefix = 'echolect/dist-chatbot'
+$Prefix = 'echolect/dist-gi'
 $Region = 'ap-southeast-1'
 $CloudFrontDomain = 'd2o0cbe2zunqkr'
 

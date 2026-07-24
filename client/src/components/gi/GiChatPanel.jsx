@@ -38,7 +38,7 @@ export function GiChatPanel({ emptyHint = EMPTY_HINT }) {
         </p>
       )}
 
-      {!chat.connecting && !chat.voiceReady && (
+      {!chat.connecting && !chat.voiceReady && !chat.voiceMismatch && (
         <p className="px-4 pt-2 text-center text-xs text-amber-600">
           No cloned voice is set up yet. Activate a voice profile before starting a conversation.
         </p>

@@ -8,6 +8,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const proxyTarget = env.PROXY_TARGET || 'http://localhost:3000';
+  // Lesson media lives behind the app's own CloudFront distribution, not the
+  // API backend, so it needs its own target. Proxying (rather than pointing the
+  // app at the absolute URL) keeps /videos same-origin in dev too — the video
+  // player and thumbnail canvas both require that.
+  const mediaProxyTarget = env.MEDIA_PROXY_TARGET || 'https://d2o0cbe2zunqkr.cloudfront.net';
 
   return {
     plugins: [react()],
@@ -34,6 +39,12 @@ export default defineConfig(({ mode }) => {
               res.end();
             });
           },
+        },
+        '/videos': {
+          target: mediaProxyTarget,
+          changeOrigin: true,
+          timeout: 0,
+          proxyTimeout: 0,
         },
         '/inference/progress': {
           target: proxyTarget,

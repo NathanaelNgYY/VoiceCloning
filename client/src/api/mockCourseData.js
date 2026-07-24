@@ -1,4 +1,12 @@
-const BIG_BUCK_BUNNY_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+// Served same-origin so the player and the Content Outline thumbnails work
+// without CORS — both set crossOrigin="anonymous", and the thumbnail hook reads
+// pixels back off a canvas, which a cross-origin source would taint.
+//
+// In production CloudFront maps /videos/* to s3://interns2026-small-projects-
+// bucket-shared/gi-bleeding/videos/. Locally, vite.config.js proxies /videos to
+// the same distribution. Deliberately NOT under the app's deploy prefix — both
+// deploy scripts run `s3 sync --delete` there and would wipe it each deploy.
+const GI_BLEEDING_VIDEO_URL = "/videos/gi-bleeding.mp4";
 
 const courses = [
     {
@@ -6,7 +14,7 @@ const courses = [
         title: "Gastrointestinal Bleeding 101",
         description: "Clinical overview of upper and lower GI bleeding, presentation, stabilization, and core management principles.",
         matchSummary: "Exact title match",
-        videoUrl: BIG_BUCK_BUNNY_URL,
+        videoUrl: GI_BLEEDING_VIDEO_URL,
         topics: [
             { time: 0, label: "Introduction to GI Bleeding", thumbnailTime: 8 },
             { time: 90, label: "Upper vs. Lower GI Bleeding" },
