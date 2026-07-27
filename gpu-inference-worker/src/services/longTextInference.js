@@ -1947,7 +1947,7 @@ export async function regenerateLongTextChunk(
   const result = await synthesizeBreakAwareFullChunk(
     chunkText,
     { ...params, text: chunkText },
-    options,
+    { ...options, preserveReviewUnit: true },
   );
   const chunkPath = getSessionChunkPath(sessionId, chunkIndex);
   if (!fs.existsSync(chunkPath)) throw new Error(`Chunk ${chunkIndex + 1} is unavailable`);

@@ -29,6 +29,11 @@ function sendAudioFile(res, filePath) {
   res.set({
     'Content-Type': audioContentType(filePath),
     'Content-Length': stat.size,
+    // Session result and chunk files are overwritten by regeneration/restore.
+    // Do not let browsers or intermediary caches reuse an older take at the same URL.
+    'Cache-Control': 'no-store, max-age=0',
+    Pragma: 'no-cache',
+    Expires: '0',
   });
   res.sendFile(filePath);
 }
