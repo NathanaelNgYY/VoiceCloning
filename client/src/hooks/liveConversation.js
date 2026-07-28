@@ -9,6 +9,7 @@ export function createLiveSynthesisSnapshot({
   refParams = null,
   fullRefParams = null,
   voiceProfileId = '',
+  voiceModel = null,
 } = {}) {
   const activeEngine = engine === 'full' ? 'full' : 'fast';
   const activeRefParams = activeEngine === 'full' ? (fullRefParams || refParams) : refParams;
@@ -18,6 +19,9 @@ export function createLiveSynthesisSnapshot({
       ? {
           ...activeRefParams,
           ...(voiceProfileId ? { voiceProfileId } : {}),
+          ...(voiceModel?.gptRef && voiceModel?.sovitsRef
+            ? { voice_model: { ...voiceModel } }
+            : {}),
         }
       : activeRefParams,
   };
@@ -487,6 +491,7 @@ export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_
     prompt_text: refParams.prompt_text || '',
     prompt_lang: refParams.prompt_lang || 'en',
     aux_ref_audio_paths: refParams.aux_ref_audio_paths || [],
+    ...(refParams.voice_model ? { voice_model: { ...refParams.voice_model } } : {}),
     ...(refParams.top_k !== undefined ? { top_k: refParams.top_k } : {}),
     ...(refParams.top_p !== undefined ? { top_p: refParams.top_p } : {}),
     ...(refParams.temperature !== undefined ? { temperature: refParams.temperature } : {}),

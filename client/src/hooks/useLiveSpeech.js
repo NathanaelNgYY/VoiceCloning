@@ -117,6 +117,7 @@ export function useLiveSpeech({
   replyMode = LIVE_REPLY_MODES.full,
   language = 'en',
   voiceProfileId = '',
+  voiceModel = null,
   fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
 } = {}) {
@@ -168,12 +169,14 @@ export function useLiveSpeech({
   const fullRefParamsRef = useRef(fullRefParams);
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
+  const voiceModelRef = useRef(voiceModel);
   const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
   const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
+  useEffect(() => { voiceModelRef.current = voiceModel; }, [voiceModel]);
   useEffect(() => {
     fastMaxChunkWordsRef.current = fastMaxChunkWords;
   }, [fastMaxChunkWords]);
@@ -189,6 +192,7 @@ export function useLiveSpeech({
       refParams: refParamsRef.current,
       fullRefParams: fullRefParamsRef.current,
       voiceProfileId: voiceProfileIdRef.current,
+      voiceModel: voiceModelRef.current,
     });
   }
 
@@ -1061,6 +1065,7 @@ export function useLiveSpeech({
       refParams: refParamsRef.current,
       fullRefParams: fullRefParamsRef.current,
       voiceProfileId: voiceProfileIdRef.current,
+      voiceModel: voiceModelRef.current,
     });
     if (!conversationSynthesis.refParams) {
       setError('No reference audio configured. Go to the Inference page first.');

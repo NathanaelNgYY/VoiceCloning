@@ -176,6 +176,33 @@ test('voice profile resolver rejects unknown voiceProfileId values', async () =>
   );
 });
 
+test('voice profile resolver preserves a pinned conversation snapshot without rereading a changed profile', async () => {
+  let reads = 0;
+  const resolve = createVoiceProfileResolver({
+    readObject: async () => {
+      reads += 1;
+      throw new Error('pinned conversation must not reread mutable profile state');
+    },
+  });
+  const pinned = {
+    text: 'Continue the same conversation.',
+    voiceProfileId: 'lecturer-a-v1',
+    ref_audio_path: 'training/datasets/lecturer-a/original.wav',
+    prompt_text: 'Original reference',
+    prompt_lang: 'en',
+    aux_ref_audio_paths: ['training/datasets/lecturer-a/aux.wav'],
+    voice_model: {
+      voiceProfileId: 'lecturer-a-v1',
+      gptRef: 'models/gpt/lecturer-a-v3.ckpt',
+      sovitsRef: 'models/sovits/lecturer-a-v3.pth',
+      revision: 'revision-3',
+    },
+  };
+
+  assert.deepEqual(await resolve(pinned), pinned);
+  assert.equal(reads, 0);
+});
+
 test('voice profile resolver auto-selects primary and aux when the saved profile has fewer than five auxiliary references', async () => {
   const loadedProfiles = [];
   const listedExpNames = [];

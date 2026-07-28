@@ -473,6 +473,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const liveFullRefParams = useMemo(() => (
     buildLiveFullRefParamsFromLiveFastRankOne(voiceConfigs[0], liveFullSettings)
   ), [voiceConfigs, trainingAudioFiles, liveFullSettings]);
+  const liveVoiceModel = useMemo(() => ({
+    voiceProfileId: selectedVoiceProfileId,
+    gptRef: selectedGPT,
+    sovitsRef: selectedSoVITS,
+    revision: String(activeVoiceProfile?.updatedAt || selectedProfile?.updatedAt || ''),
+  }), [
+    selectedVoiceProfileId,
+    selectedGPT,
+    selectedSoVITS,
+    activeVoiceProfile?.updatedAt,
+    selectedProfile?.updatedAt,
+  ]);
   const currentAutoSyncFingerprint = useMemo(() => createAutoVoiceProfileSyncFingerprint({
     sourceKey: selectedExpName,
     selectedGPT,
@@ -588,6 +600,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     replyMode,
     language: liveLanguage,
     voiceProfileId: selectedVoiceProfileId,
+    voiceModel: liveVoiceModel,
     fastMaxChunkWords: liveFastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
   });

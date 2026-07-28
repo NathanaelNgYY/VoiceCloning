@@ -119,10 +119,30 @@ export function createVoiceProfileResolver({
 } = {}) {
   return async function resolveVoiceProfile(body = {}) {
     const voiceProfileId = String(body.voiceProfileId || '').trim();
-    const needsSavedProfile = Boolean(voiceProfileId || !body.ref_audio_path);
+    const pinnedModel = body.voice_model && typeof body.voice_model === 'object'
+      ? body.voice_model
+      : null;
+    const hasPinnedConversationSnapshot = Boolean(
+      body.ref_audio_path
+      && String(pinnedModel?.gptRef || '').trim()
+      && String(pinnedModel?.sovitsRef || '').trim()
+    );
+    const needsSavedProfile = !hasPinnedConversationSnapshot && Boolean(
+      voiceProfileId || !body.ref_audio_path
+    );
 
     if (!needsSavedProfile) {
-      return body;
+      return {
+        ...body,
+        ...(pinnedModel ? {
+          voice_model: {
+            voiceProfileId: String(pinnedModel.voiceProfileId || voiceProfileId).trim(),
+            gptRef: String(pinnedModel.gptRef).trim(),
+            sovitsRef: String(pinnedModel.sovitsRef).trim(),
+            revision: String(pinnedModel.revision || '').trim(),
+          },
+        } : {}),
+      };
     }
 
     const storageKey = voiceProfileId ? getProfileStorageKey(voiceProfileId) : ACTIVE_PROFILE_KEY;
