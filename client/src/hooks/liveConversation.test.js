@@ -118,6 +118,29 @@ test('buildLiveReplyParams preserves full inference voice identity', () => {
   assert.equal(params.voiceProfileId, 'alexv1');
 });
 
+test('conversation snapshot preserves the exact model revision across Live Fast chunks', () => {
+  const voiceModel = {
+    voiceProfileId: 'alexv1',
+    gptRef: 'models/gpt/alex-v3.ckpt',
+    sovitsRef: 'models/sovits/alex-v3.pth',
+    revision: '2026-07-28T12:00:00.000Z',
+  };
+  const snapshot = createLiveSynthesisSnapshot({
+    engine: 'fast',
+    refParams: {
+      ref_audio_path: 'refs/alex-v3.wav',
+      prompt_text: 'Pinned prompt',
+      prompt_lang: 'en',
+    },
+    voiceProfileId: 'alexv1',
+    voiceModel,
+  });
+
+  const params = buildLiveReplyParams('Next chunk.', snapshot.refParams);
+  assert.deepEqual(params.voice_model, voiceModel);
+  assert.equal(params.ref_audio_path, 'refs/alex-v3.wav');
+});
+
 test('shortenFirstFastPhrase splits a long first phrase at its first clause boundary', () => {
   const phrases = [
     'After the model finishes loading the weights, it starts generating audio right away.',

@@ -141,6 +141,7 @@ export function useLiveSpeech({
   language = 'en',
   voiceProfileId = '',
   systemPrompt = '',
+  voiceModel = null,
   fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
   getVideoPosition = null,
@@ -189,6 +190,7 @@ export function useLiveSpeech({
   const pendingInputAudioRef = useRef(false);
   const inferenceEventSourceRef = useRef(null);
   const activeInferenceSessionIdRef = useRef('');
+  const conversationSynthesisRef = useRef(null);
   const bargeInArmedRef = useRef(false);
   const bargeInFramesRef = useRef(0);
   const lastBargeInAtRef = useRef(0);
@@ -200,6 +202,7 @@ export function useLiveSpeech({
   const fullRefParamsRef = useRef(fullRefParams);
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
+  const voiceModelRef = useRef(voiceModel);
   const systemPromptRef = useRef(systemPrompt);
   const getVideoPositionRef = useRef(getVideoPosition);
   const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
@@ -208,6 +211,7 @@ export function useLiveSpeech({
   useEffect(() => { fullRefParamsRef.current = fullRefParams; }, [fullRefParams]);
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
+  useEffect(() => { voiceModelRef.current = voiceModel; }, [voiceModel]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
   useEffect(() => { getVideoPositionRef.current = getVideoPosition; }, [getVideoPosition]);
   useEffect(() => { fastMaxChunkWordsRef.current = fastMaxChunkWords; }, [fastMaxChunkWords]);
@@ -218,11 +222,12 @@ export function useLiveSpeech({
   // Live Full uses the accurate /inference route with its own ref params; it falls
   // back to the Live Fast reference set when no dedicated Live Full set is ready.
   function getActiveSynthesisSnapshot() {
-    return createLiveSynthesisSnapshot({
+    return conversationSynthesisRef.current || createLiveSynthesisSnapshot({
       engine: engineRef.current,
       refParams: refParamsRef.current,
       fullRefParams: fullRefParamsRef.current,
       voiceProfileId: voiceProfileIdRef.current,
+      voiceModel: voiceModelRef.current,
     });
   }
 
@@ -326,6 +331,7 @@ export function useLiveSpeech({
   }
 
   function cleanupConversation() {
+    conversationSynthesisRef.current = null;
     if (inferenceEventSourceRef.current) {
       inferenceEventSourceRef.current.close();
       inferenceEventSourceRef.current = null;
@@ -1351,7 +1357,14 @@ export function useLiveSpeech({
 
   async function start() {
     if (phaseRef.current !== 'idle') return;
-    if (!getActiveRefParams()) {
+    const conversationSynthesis = createLiveSynthesisSnapshot({
+      engine: engineRef.current,
+      refParams: refParamsRef.current,
+      fullRefParams: fullRefParamsRef.current,
+      voiceProfileId: voiceProfileIdRef.current,
+      voiceModel: voiceModelRef.current,
+    });
+    if (!conversationSynthesis.refParams) {
       setError('No reference audio configured. Go to the Inference page first.');
       return;
     }
@@ -1361,6 +1374,8 @@ export function useLiveSpeech({
     messageSeqRef.current = 0;
     assistantTextRef.current = '';
     cleanupConversation();
+    // Freeze the exact model revision and references until this socket closes.
+    conversationSynthesisRef.current = conversationSynthesis;
 
     setError(null);
     setNotice('');
