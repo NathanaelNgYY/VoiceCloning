@@ -42,7 +42,10 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 | Environment | GPU EC2 | Lambda | Training | Live TTS | Chatbot | S3 application prefix |
 |---|---|---|---|---|---|---|
 | staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
-| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d3fwx6qxeaxfmo.cloudfront.net | `echolect/` |
+| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
+
+`d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot, not the dev
+Dean chatbot.
 
 On 2026-07-28, the staging chatbot was rebuilt from `chatbot-live-full` commit
 `9821dd5` and deployed as `assets/index-Dnjl1fjR.js`. Its fixed staging profile is
