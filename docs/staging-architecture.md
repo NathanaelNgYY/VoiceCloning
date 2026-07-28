@@ -204,6 +204,13 @@ The staging application is no longer event- or Dean-specific at the code layer:
 - Lambda retries capacity responses (`429`/`503`) for a bounded configurable budget
   (`INFERENCE_CAPACITY_RETRY_MS=30000` live on staging).
 
+The stronger cross-chunk lock that pins the exact GPT/SoVITS references and profile
+revision is committed on `codex/staging-multi-user-scaling` (`b86748c`) and the Dean
+client branch `codex/chatbot-conversation-snapshot` (`4058357`). It still requires a
+staging Lambda + chatbot deployment. Until that deployment, loading another profile
+cannot alter an in-progress chunk, but overwriting the same saved profile ID between
+separate Live Fast chunks remains a gap.
+
 Staging `g6.xlarge` testing supports `SYNTHESIS_MAX_CONCURRENCY=2` for one loaded voice:
 four simultaneous verified requests all returned distinct valid WAVs in 10.8 seconds;
 ten simultaneous verified requests all returned valid WAVs in 32.7 seconds. No worker
