@@ -79,3 +79,66 @@ test('session.update uses an overridden systemPrompt set before connect', () => 
     'instructions should include the overridden prompt',
   );
 });
+
+test('setVideoPosition rejects readings that are not a usable time', () => {
+  const { bridge } = createBridgeWithOpenSocket();
+
+  assert.equal(bridge.setVideoPosition({ seconds: 'soon' }), false);
+  assert.equal(bridge.setVideoPosition({ seconds: -3 }), false);
+  assert.equal(bridge.setVideoPosition({}), false);
+  assert.equal(bridge.videoPositionSeconds, null);
+
+  assert.equal(bridge.setVideoPosition({ seconds: 512.4, paused: true }), true);
+  assert.equal(bridge.videoPositionSeconds, 512.4);
+  assert.equal(bridge.videoPaused, true);
+});
+
+test('injectVideoPosition sends nothing until a position is known', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+
+  assert.equal(bridge.injectVideoPosition(), false);
+  assert.deepEqual(sent, []);
+});
+
+test('speech_started injects the video position as a hidden system note', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+  bridge.setVideoPosition({ seconds: 512.4, paused: true });
+
+  bridge.handleMessage(JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+
+  const item = sent.find((message) => message.type === 'conversation.item.create');
+  assert.ok(item, 'expected a conversation item to be injected');
+  assert.equal(item.item.role, 'system');
+  assert.match(item.item.content[0].text, /paused at 8:32/);
+});
+
+test('the position note is not re-injected while the video has barely moved', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+  const speak = () => bridge.handleMessage(
+    JSON.stringify({ type: 'input_audio_buffer.speech_started' }),
+  );
+
+  bridge.setVideoPosition({ seconds: 100, paused: true });
+  speak();
+  bridge.setVideoPosition({ seconds: 101, paused: true });
+  speak();
+  assert.equal(sent.filter((m) => m.type === 'conversation.item.create').length, 1);
+
+  bridge.setVideoPosition({ seconds: 140, paused: false });
+  speak();
+  const notes = sent.filter((m) => m.type === 'conversation.item.create');
+  assert.equal(notes.length, 2);
+  assert.match(notes[1].item.content[0].text, /playing at 2:20/);
+});
+
+test('a video position never turns into a visible chat message', () => {
+  const { bridge } = createBridgeWithOpenSocket();
+  const appEvents = [];
+  bridge.on('app-event', (event) => appEvents.push(event.type));
+
+  bridge.setVideoPosition({ seconds: 512.4, paused: true });
+  bridge.handleMessage(JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+  bridge.handleMessage(JSON.stringify({ type: 'conversation.item.created', item: {} }));
+
+  assert.deepEqual(appEvents, ['user.speech.started']);
+});

@@ -62,6 +62,36 @@ function languageOnlyPrompt(systemPrompt, language) {
   return `${basePrompt} ${languageInstruction} ${PROSODY_GUIDANCE}`;
 }
 
+// Mid-session note telling the model where the student's lesson video is, so
+// "what does she mean here?" resolves without the student naming a timestamp.
+// The label is derived from the number the browser sent rather than from any
+// string it sent, so nothing client-authored is spliced into the conversation.
+// (Client counterpart: client/src/lib/lessonVideoContext.js — duplicated
+// because the gateway is a separate deployable with no shared package.)
+export function formatVideoPositionLabel(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+export function buildVideoPositionItem(seconds, { paused = false } = {}) {
+  const label = formatVideoPositionLabel(seconds);
+  const state = paused ? 'paused at' : 'playing at';
+  return {
+    type: 'conversation.item.create',
+    item: {
+      type: 'message',
+      role: 'system',
+      content: [{
+        type: 'input_text',
+        text: `Lesson video position update: the student's video player is now ${state} ${label}. `
+          + 'If they ask about "this part", "here", or "what she just said" without naming a time, '
+          + 'answer about this point in the video. Never read this note aloud or mention that you can see their player.',
+      }],
+    },
+  };
+}
+
 function responseKey(event) {
   return event.response_id || event.item_id || event.event_id || 'default';
 }

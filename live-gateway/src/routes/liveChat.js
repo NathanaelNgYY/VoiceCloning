@@ -81,6 +81,14 @@ export function handleBrowserMessage(bridge, data) {
     return;
   }
 
+  // Where the student's lesson video is right now. Unknown message types are
+  // ignored above and below, so a client that sends this to an older gateway —
+  // or a client that never sends it — both stay working.
+  if (message.type === 'video.position') {
+    bridge.setVideoPosition({ seconds: message.seconds, paused: message.paused });
+    return;
+  }
+
   if (message.type === 'input.pause') {
     bridge.pauseInput();
     return;

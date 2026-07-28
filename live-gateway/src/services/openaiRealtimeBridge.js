@@ -10,10 +10,17 @@ import {
   RealtimeEventMapper,
   buildClientEvent,
   buildRealtimeSessionUpdate,
+  buildVideoPositionItem,
   getMissingOpenAiConfigMessage,
 } from './openaiRealtimeEvents.js';
 
 export const REALTIME_URL = 'wss://api.openai.com/v1/realtime';
+
+// The browser reports the lesson video's position every few seconds, but the
+// note is only injected when the student actually starts a turn, and only when
+// the video has moved far enough to matter. Without this the conversation would
+// accumulate a position note every few seconds for the whole session.
+export const VIDEO_POSITION_MIN_DELTA_SECONDS = 2;
 
 function buildRealtimeUrl(model) {
   return `${REALTIME_URL}?model=${encodeURIComponent(model)}`;
@@ -47,6 +54,9 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.closed = false;
     this.inputPaused = false;
     this.hasPendingAudio = false;
+    this.videoPositionSeconds = null;
+    this.videoPaused = false;
+    this.injectedVideoPositionSeconds = null;
   }
 
   connect() {
@@ -125,9 +135,50 @@ export class OpenAiRealtimeBridge extends EventEmitter {
       return;
     }
 
+    // The student has begun a turn — this is the last moment their video
+    // position can still reach the model before it answers.
+    if (event.type === 'input_audio_buffer.speech_started') {
+      this.injectVideoPosition();
+    }
+
     for (const appEvent of this.mapper.map(event)) {
       this.emit('app-event', buildClientEvent(appEvent.type, appEvent));
     }
+  }
+
+  setVideoPosition({ seconds, paused = false } = {}) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value < 0) {
+      return false;
+    }
+
+    this.videoPositionSeconds = value;
+    this.videoPaused = Boolean(paused);
+    return true;
+  }
+
+  // Returns true when a note was actually sent, so tests and callers can tell
+  // an injection from a deliberate skip.
+  injectVideoPosition() {
+    if (this.closed || this.videoPositionSeconds === null) {
+      return false;
+    }
+
+    const previous = this.injectedVideoPositionSeconds;
+    if (
+      previous !== null
+      && Math.abs(this.videoPositionSeconds - previous) < VIDEO_POSITION_MIN_DELTA_SECONDS
+    ) {
+      return false;
+    }
+
+    const sent = this.sendOpenAi(buildVideoPositionItem(this.videoPositionSeconds, {
+      paused: this.videoPaused,
+    }));
+    if (sent) {
+      this.injectedVideoPositionSeconds = this.videoPositionSeconds;
+    }
+    return sent;
   }
 
   handleClose(socket = this.socket) {
