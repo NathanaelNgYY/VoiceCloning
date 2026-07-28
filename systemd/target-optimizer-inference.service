@@ -11,7 +11,7 @@ RestartSec=5
 Environment=SYNTHESIS_MAX_CONCURRENCY=1
 EnvironmentFile=-/home/ubuntu/VoiceCloning/gpu-inference-worker/.env
 ExecStartPre=-/usr/bin/docker rm -f vcs-target-optimizer-inference
-ExecStartPre=/usr/bin/docker pull public.ecr.aws/aws-elb/target-optimizer/target-control-agent:latest
+ExecStartPre=/usr/bin/docker pull public.ecr.aws/aws-elb/target-optimizer/target-control-agent@sha256:46e7c7ab0133598f40f241d5570ccde9394d39e588006ed9c379f507e62b87b7
 ExecStart=/usr/bin/docker run --rm --name vcs-target-optimizer-inference --network host \
   -e TARGET_CONTROL_DATA_ADDRESS=0.0.0.0:3103 \
   -e TARGET_CONTROL_CONTROL_ADDRESS=0.0.0.0:3004 \
@@ -19,7 +19,7 @@ ExecStart=/usr/bin/docker run --rm --name vcs-target-optimizer-inference --netwo
   -e TARGET_CONTROL_MAX_CONCURRENCY=${SYNTHESIS_MAX_CONCURRENCY} \
   -e TARGET_CONTROL_PROTOCOL_VERSION=HTTP1 \
   -e RUST_LOG=info \
-  public.ecr.aws/aws-elb/target-optimizer/target-control-agent:latest
+  public.ecr.aws/aws-elb/target-optimizer/target-control-agent@sha256:46e7c7ab0133598f40f241d5570ccde9394d39e588006ed9c379f507e62b87b7
 ExecStop=/usr/bin/docker stop -t 120 vcs-target-optimizer-inference
 TimeoutStopSec=130
 
