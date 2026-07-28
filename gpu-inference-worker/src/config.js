@@ -115,6 +115,24 @@ export const SPEAKER_MIN_SIMILARITY = Math.min(1, Math.max(0, parseFloatEnv(read
 // since it force-starts the python server at boot (allocates GPU immediately).
 export const WARM_ON_BOOT = parseBooleanEnv(readEnv('WARM_ON_BOOT'), false);
 
+// All synthesis enters one bounded FIFO scheduler. GPT-SoVITS and the selected
+// weights are process-global, so physical concurrency stays at one until a real-GPU
+// load test proves that same-model parallel calls are safe on the deployed image.
+// Raising this value only permits parallel jobs that carry the same immutable model
+// snapshot; a different voice waits until every active job has released the GPU.
+export const SYNTHESIS_MAX_CONCURRENCY = Math.min(
+  4,
+  Math.max(1, parseIntegerEnv(readEnv('SYNTHESIS_MAX_CONCURRENCY'), 1)),
+);
+export const SYNTHESIS_MAX_QUEUE_DEPTH = Math.min(
+  500,
+  Math.max(1, parseIntegerEnv(readEnv('SYNTHESIS_MAX_QUEUE_DEPTH'), 100)),
+);
+export const SYNTHESIS_MAX_QUEUE_WAIT_MS = Math.min(
+  60_000,
+  Math.max(1_000, parseIntegerEnv(readEnv('SYNTHESIS_MAX_QUEUE_WAIT_MS'), 25_000)),
+);
+
 const runtimeDir = path.join(GPT_SOVITS_ROOT, 'runtime');
 const pythonCandidates = [
   process.env.PYTHON_EXEC || '',

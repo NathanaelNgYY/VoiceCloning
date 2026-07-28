@@ -1,6 +1,5 @@
 import { getObject, headObject, uploadBuffer } from './s3.js';
 import {
-  ensureProfileModelsLoaded,
   persistSavedProfileReferenceSelection,
   resolveSavedProfileReferenceSelection,
   writeDefaultVoiceProfileConfig,
@@ -70,6 +69,8 @@ async function defaultReadObject(key) {
 
 function mergeSynthesisBody(body, profile) {
   const defaults = profile.defaults || {};
+  const gptRef = String(profile.gptKey || profile.gptPath || '').trim();
+  const sovitsRef = String(profile.sovitsKey || profile.sovitsPath || '').trim();
   return {
     ...body,
     voiceProfileId: String(body.voiceProfileId || '').trim() || profile.voiceProfileId,
@@ -78,6 +79,16 @@ function mergeSynthesisBody(body, profile) {
     prompt_lang: profile.prompt_lang || 'en',
     text_lang: body.text_lang || profile.text_lang || profile.prompt_lang || 'en',
     aux_ref_audio_paths: profile.aux_ref_audio_paths || [],
+    // The worker consumes this immutable snapshot only while holding its synthesis
+    // scheduler lease. Model selection must not happen here in Lambda: concurrent
+    // invocations could otherwise switch process-global weights between another
+    // request's profile resolution and synthesis.
+    voice_model: {
+      voiceProfileId: profile.voiceProfileId || '',
+      gptRef,
+      sovitsRef,
+      revision: String(profile.updatedAt || profile.revision || ''),
+    },
     ...(body.top_k !== undefined ? { top_k: body.top_k } : defaults.top_k !== undefined ? { top_k: defaults.top_k } : {}),
     ...(body.top_p !== undefined ? { top_p: body.top_p } : defaults.top_p !== undefined ? { top_p: defaults.top_p } : {}),
     ...(body.temperature !== undefined ? { temperature: body.temperature } : defaults.temperature !== undefined ? { temperature: defaults.temperature } : {}),
@@ -103,7 +114,6 @@ function mergeSynthesisBody(body, profile) {
 export function createVoiceProfileResolver({
   readObject = defaultReadObject,
   writeObject = uploadBuffer,
-  ensureModelsLoaded = ensureProfileModelsLoaded,
   listTrainingAudioFiles,
   now = () => new Date().toISOString(),
 } = {}) {
@@ -165,7 +175,6 @@ export function createVoiceProfileResolver({
       }
     }
 
-    await ensureModelsLoaded(enrichedProfile);
     return mergeSynthesisBody(body, enrichedProfile);
   };
 }

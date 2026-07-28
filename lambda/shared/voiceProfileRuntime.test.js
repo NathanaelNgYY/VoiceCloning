@@ -56,7 +56,7 @@ test('voice profile resolver loads a saved profile by voiceProfileId for synthes
     voiceProfileId: 'lecturer-a-v1',
   });
 
-  assert.deepEqual(loadedProfiles, ['lecturer-a-v1']);
+  assert.deepEqual(loadedProfiles, []);
   assert.deepEqual(resolved, {
     text: 'Hello from the clinical chatbot.',
     voiceProfileId: 'lecturer-a-v1',
@@ -71,6 +71,12 @@ test('voice profile resolver loads a saved profile by voiceProfileId for synthes
       'training/datasets/lecturer-a/aux4.wav',
       'training/datasets/lecturer-a/aux5.wav',
     ],
+    voice_model: {
+      voiceProfileId: 'lecturer-a-v1',
+      gptRef: 'models/user-models/gpt/lecturer-a.ckpt',
+      sovitsRef: 'models/user-models/sovits/lecturer-a.pth',
+      revision: '',
+    },
     top_k: 7,
     top_p: 0.9,
     temperature: 0.65,
@@ -121,7 +127,7 @@ test('voice profile resolver falls back to the active saved profile when no voic
     text: 'Use the active saved voice.',
   });
 
-  assert.deepEqual(loadedProfiles, ['obama-v1']);
+  assert.deepEqual(loadedProfiles, []);
   assert.deepEqual(resolved, {
     text: 'Use the active saved voice.',
     voiceProfileId: 'obama-v1',
@@ -136,6 +142,12 @@ test('voice profile resolver falls back to the active saved profile when no voic
       'training/datasets/obama/aux4.wav',
       'training/datasets/obama/aux5.wav',
     ],
+    voice_model: {
+      voiceProfileId: 'obama-v1',
+      gptRef: 'models/user-models/gpt/obama.ckpt',
+      sovitsRef: 'models/user-models/sovits/obama.pth',
+      revision: '',
+    },
     top_k: 5,
     top_p: 0.85,
     temperature: 0.7,
@@ -304,9 +316,7 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
   assert.equal(writes[2].body.rank, 1);
   assert.equal(writes[2].body.referenceMetadata.selectedPaths.primary, 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav');
   assert.deepEqual(writes[2].body.referenceMetadata.selectedPaths.aux, ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav']);
-  assert.equal(loadedProfiles.length, 1);
-  assert.deepEqual(loadedProfiles[0].aux_ref_audio_paths, ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav']);
-  assert.equal(loadedProfiles[0].ref_audio_path, 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav');
+  assert.equal(loadedProfiles.length, 0);
   assert.deepEqual(resolved, {
     text: 'Use the strengthened saved profile behavior.',
     voiceProfileId: 'lecturer-a-v1',
@@ -315,6 +325,12 @@ test('voice profile resolver auto-selects primary and aux when the saved profile
     prompt_lang: 'en',
     text_lang: 'en',
     aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
+    voice_model: {
+      voiceProfileId: 'lecturer-a-v1',
+      gptRef: 'models/user-models/gpt/lecturer-a-e25.ckpt',
+      sovitsRef: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
+      revision: '',
+    },
     top_k: 7,
     top_p: 0.9,
     temperature: 0.65,

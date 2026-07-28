@@ -157,6 +157,7 @@ export function useLiveSpeech({
   const pendingInputAudioRef = useRef(false);
   const inferenceEventSourceRef = useRef(null);
   const activeInferenceSessionIdRef = useRef('');
+  const conversationSynthesisRef = useRef(null);
   const bargeInArmedRef = useRef(false);
   const bargeInFramesRef = useRef(0);
   const lastBargeInAtRef = useRef(0);
@@ -183,7 +184,7 @@ export function useLiveSpeech({
   // Live Full uses the accurate /inference route with its own ref params; it falls
   // back to the Live Fast reference set when no dedicated Live Full set is ready.
   function getActiveSynthesisSnapshot() {
-    return createLiveSynthesisSnapshot({
+    return conversationSynthesisRef.current || createLiveSynthesisSnapshot({
       engine: engineRef.current,
       refParams: refParamsRef.current,
       fullRefParams: fullRefParamsRef.current,
@@ -729,6 +730,7 @@ export function useLiveSpeech({
   function endConversationFromSocket() {
     socketRef.current = null;
     stopMicCapture();
+    conversationSynthesisRef.current = null;
     setInterimTranscript('');
     setPhase('idle');
   }
@@ -1054,7 +1056,13 @@ export function useLiveSpeech({
 
   async function start() {
     if (phaseRef.current !== 'idle') return;
-    if (!getActiveRefParams()) {
+    const conversationSynthesis = createLiveSynthesisSnapshot({
+      engine: engineRef.current,
+      refParams: refParamsRef.current,
+      fullRefParams: fullRefParamsRef.current,
+      voiceProfileId: voiceProfileIdRef.current,
+    });
+    if (!conversationSynthesis.refParams) {
       setError('No reference audio configured. Go to the Inference page first.');
       return;
     }
@@ -1064,6 +1072,9 @@ export function useLiveSpeech({
     messageSeqRef.current = 0;
     assistantTextRef.current = '';
     cleanupConversation();
+    // Freeze voice, references, model profile id, and engine for this socket
+    // conversation. UI/profile changes take effect only after the user ends it.
+    conversationSynthesisRef.current = conversationSynthesis;
 
     setError(null);
     setNotice('');
@@ -1074,6 +1085,7 @@ export function useLiveSpeech({
     try {
       stream = await requestMicStream();
     } catch (err) {
+      conversationSynthesisRef.current = null;
       setPhase('idle');
       setError(err.message === 'This browser does not support live microphone recording.'
         ? err.message
@@ -1085,6 +1097,7 @@ export function useLiveSpeech({
       streamRef.current = stream;
       startMicCapture(stream);
     } catch (err) {
+      conversationSynthesisRef.current = null;
       stopMicCapture();
       setPhase('idle');
       setError(err.message);
@@ -1123,6 +1136,7 @@ export function useLiveSpeech({
     setInterimTranscript('');
     closeSocket();
     stopMicCapture();
+    conversationSynthesisRef.current = null;
     setPhase('idle');
   }
 
@@ -1192,6 +1206,7 @@ export function useLiveSpeech({
       closeSocket();
       stopMicCapture();
       cleanupConversation();
+      conversationSynthesisRef.current = null;
       if (noticeTimeoutRef.current) {
         window.clearTimeout(noticeTimeoutRef.current);
       }

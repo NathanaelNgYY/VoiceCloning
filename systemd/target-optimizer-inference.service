@@ -1,0 +1,25 @@
+[Unit]
+Description=AWS ALB Target Optimizer proxy for GPU inference
+Requires=docker.service gpu-inference-worker.service
+After=docker.service gpu-inference-worker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStartPre=-/usr/bin/docker rm -f vcs-target-optimizer-inference
+ExecStartPre=/usr/bin/docker pull public.ecr.aws/aws-elb/target-optimizer/target-control-agent:latest
+ExecStart=/usr/bin/docker run --rm --name vcs-target-optimizer-inference --network host \
+  -e TARGET_CONTROL_DATA_ADDRESS=0.0.0.0:3103 \
+  -e TARGET_CONTROL_CONTROL_ADDRESS=0.0.0.0:3004 \
+  -e TARGET_CONTROL_DESTINATION_ADDRESS=127.0.0.1:3003 \
+  -e TARGET_CONTROL_MAX_CONCURRENCY=1 \
+  -e TARGET_CONTROL_PROTOCOL_VERSION=HTTP1 \
+  -e RUST_LOG=info \
+  public.ecr.aws/aws-elb/target-optimizer/target-control-agent:latest
+ExecStop=/usr/bin/docker stop -t 120 vcs-target-optimizer-inference
+TimeoutStopSec=130
+
+[Install]
+WantedBy=multi-user.target

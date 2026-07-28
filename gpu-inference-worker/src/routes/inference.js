@@ -43,7 +43,8 @@ import {
 } from '../services/runtimePronunciationDictionary.js';
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
-import { isDemoRequest, preemptActiveGeneration } from '../services/demoPreempt.js';
+import { SynthesisQueueError, synthesisScheduler } from '../services/synthesisScheduler.js';
+import { ensureRequestVoiceModel, voiceModelKey } from '../services/requestVoiceModel.js';
 
 const router = Router();
 let activeLiveTtsRequests = 0;
@@ -52,7 +53,42 @@ export function synthesisBusy() {
   // `inferenceState` is progress/history and can remain waiting/generating after a
   // browser disconnect or old process error. Ownership comes only from a live Fast
   // request, regeneration lock, or an active long-text session.
-  return activeLiveTtsRequests > 0 || hasActiveInferenceSession();
+  return synthesisScheduler.getStats().active > 0
+    || activeLiveTtsRequests > 0
+    || hasActiveInferenceSession();
+}
+
+async function acquireSynthesisLease(req, res) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  let lease = null;
+  req.once('aborted', abort);
+  try {
+    lease = await synthesisScheduler.acquire({
+      modelKey: voiceModelKey(req.body),
+      signal: controller.signal,
+    });
+    req.off('aborted', abort);
+    res.set('X-Synthesis-Queue-Wait-Ms', String(lease.queueWaitMs));
+    await ensureRequestVoiceModel(req.body);
+    return lease;
+  } catch (error) {
+    req.off('aborted', abort);
+    lease?.release();
+    throw error;
+  }
+}
+
+function sendSynthesisError(res, error) {
+  if (error instanceof SynthesisQueueError) {
+    if ([429, 503].includes(error.statusCode)) res.set('Retry-After', '2');
+    return res.status(error.statusCode).json({
+      error: error.message,
+      code: error.code,
+      queue: synthesisScheduler.getStats(),
+    });
+  }
+  return res.status(500).json({ error: error.message });
 }
 
 // Pronunciation-dictionary words for the chunker, so a medical dictionary term is
@@ -487,19 +523,13 @@ router.post('/inference/weights/sovits', async (req, res) => {
 });
 
 router.post('/inference/tts', async (req, res) => {
-  const demoRequest = isDemoRequest(req);
-  if (!demoRequest && synthesisBusy()) {
-    return res.status(409).json({ error: 'Another generation is already running on this instance' });
-  }
-  activeLiveTtsRequests += 1;
+  let lease = null;
   try {
+    lease = await acquireSynthesisLease(req, res);
     activityState.mark();
     // Demo Live Fast requests take GPU priority: cancel any in-flight Live Full session
     // so this phrase runs next. (No-op if nothing is running. The in-flight Live Fast
     // phrase, if any, is not tracked/cancellable and simply finishes — see demoPreempt.)
-    if (demoRequest) {
-      preemptActiveGeneration();
-    }
     const { audioBuffer } = await handleLiveTtsRequest(req.body);
     activityState.mark();
 
@@ -509,9 +539,9 @@ router.post('/inference/tts', async (req, res) => {
     });
     res.send(audioBuffer);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSynthesisError(res, err);
   } finally {
-    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    lease?.release();
   }
 });
 
@@ -532,6 +562,7 @@ router.post('/inference/scan-oov', (req, res) => {
 
 router.post('/inference', async (req, res) => {
   const params = readInferenceParams(req.body);
+  let lease = null;
 
   if (!params.text) {
     return res.status(400).json({ error: 'text is required' });
@@ -541,6 +572,7 @@ router.post('/inference', async (req, res) => {
   }
 
   try {
+    lease = await acquireSynthesisLease(req, res);
     const status = await inferenceServer.getStatus();
     if (!status.ready) {
       return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
@@ -567,13 +599,15 @@ router.post('/inference', async (req, res) => {
     });
     res.send(audioBuffer);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSynthesisError(res, err);
+  } finally {
+    lease?.release();
   }
 });
 
 router.post('/inference/generate', async (req, res) => {
   const params = readInferenceParams(req.body);
-  let requestLockAcquired = false;
+  let lease = null;
 
   if (!params.text) {
     return res.status(400).json({ error: 'text is required' });
@@ -583,24 +617,11 @@ router.post('/inference/generate', async (req, res) => {
   }
 
   try {
+    lease = await acquireSynthesisLease(req, res);
     const status = await inferenceServer.getStatus();
     if (!status.ready) {
       return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
     }
-    if (synthesisBusy()) {
-      // Demo requests (X-Demo-Request from the demo CloudFront) jump the queue: cancel
-      // the in-flight generation and take over. All other traffic keeps the 409.
-      if (isDemoRequest(req)) {
-        preemptActiveGeneration();
-      } else {
-        return res.status(409).json({ error: 'Another generation is already running on this instance' });
-      }
-    }
-    // Hold the shared synthesis lock while resolving references/dictionaries. Without
-    // this, two requests can both pass the busy check before either resets state.
-    activeLiveTtsRequests += 1;
-    requestLockAcquired = true;
-
     const resolvedParams = await resolveRefAudioParams(params);
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
       expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
@@ -611,6 +632,7 @@ router.post('/inference/generate', async (req, res) => {
     sseManager.prepareSession(sessionId);
     res.json({ sessionId });
 
+    const streamingLease = lease;
     synthesizeLongTextStreaming(sessionId, qualityParams, fullInferenceQualityOptions({
       ...readFullChunkingOptions(req.body),
       ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
@@ -619,14 +641,21 @@ router.post('/inference/generate', async (req, res) => {
       console.error(`[inference/generate] failed for ${sessionId}:`, err.message);
       inferenceState.setError(err.message);
       sseManager.send(sessionId, 'error', { message: err.message });
+    }).finally(() => {
+      streamingLease.release();
     });
+    lease = null;
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSynthesisError(res, err);
   } finally {
-    if (requestLockAcquired) {
-      activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    if (lease) {
+      lease.release();
     }
   }
+});
+
+router.get('/inference/queue', (_req, res) => {
+  res.json(synthesisScheduler.getStats());
 });
 
 router.post('/inference/regenerate-chunk', async (req, res) => {

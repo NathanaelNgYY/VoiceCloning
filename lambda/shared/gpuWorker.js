@@ -50,6 +50,42 @@ function upstreamError(message, statusCode) {
   return error;
 }
 
+function capacityRetryBudgetMs() {
+  const parsed = Number.parseInt(process.env.INFERENCE_CAPACITY_RETRY_MS || '30000', 10);
+  return Number.isFinite(parsed) ? Math.min(60_000, Math.max(0, parsed)) : 30_000;
+}
+
+function isCapacityStatus(status) {
+  return status === 429 || status === 503;
+}
+
+async function wait(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchInferenceWithCapacityRetry(routePath, options) {
+  const startedAt = Date.now();
+  const budgetMs = capacityRetryBudgetMs();
+  let attempt = 0;
+  while (true) {
+    const response = await fetch(`${inferenceBaseUrl()}${routePath}`, options);
+    if (!isCapacityStatus(response.status)) return response;
+
+    const elapsed = Date.now() - startedAt;
+    const retryAfterSeconds = Number(response.headers.get('retry-after'));
+    const exponentialMs = Math.min(2_000, 250 * (2 ** attempt));
+    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? Math.min(5_000, retryAfterSeconds * 1_000)
+      : exponentialMs;
+    if (elapsed + delayMs > budgetMs) return response;
+
+    // Consume the response before retrying so Node can reuse the ALB connection.
+    await response.arrayBuffer();
+    await wait(delayMs);
+    attempt += 1;
+  }
+}
+
 export async function gpuPost(routePath, body = {}) {
   const response = await fetch(`${baseUrl()}${routePath}`, {
     method: 'POST',
@@ -121,7 +157,7 @@ export function inferencePublicUrl(routePath) {
 }
 
 export async function inferencePostBinary(routePath, body = {}, extraHeaders = {}) {
-  const response = await fetch(`${inferenceBaseUrl()}${routePath}`, {
+  const response = await fetchInferenceWithCapacityRetry(routePath, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),

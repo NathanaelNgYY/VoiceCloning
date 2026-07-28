@@ -14,7 +14,7 @@ export function createLiveSynthesisSnapshot({
   const activeRefParams = activeEngine === 'full' ? (fullRefParams || refParams) : refParams;
   return {
     engine: activeEngine,
-    refParams: activeEngine === 'full' && activeRefParams
+    refParams: activeRefParams
       ? {
           ...activeRefParams,
           ...(voiceProfileId ? { voiceProfileId } : {}),
