@@ -18,27 +18,39 @@ if ($DesiredCapacity -lt 0) { $DesiredCapacity = [int]$cfg.desiredCapacity }
 if ($PreWarmCapacity -lt 0) { $PreWarmCapacity = [int]$cfg.defaultPreWarmCapacity }
 
 function Invoke-AwsJson {
-  param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
+  param(
+    [switch]$AllowNotFound,
+    [switch]$AllowDuplicate,
+    [Parameter(ValueFromRemainingArguments)][string[]]$Args
+  )
   if (-not $Apply) {
     Write-Host ('[dry-run] aws ' + ($Args -join ' '))
     return $null
   }
-  $raw = & aws @Args --output json
-  if ($LASTEXITCODE -ne 0) { throw "aws $($Args -join ' ') failed" }
+  $raw = & aws @Args --output json 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    $errorText = $raw -join [Environment]::NewLine
+    if ($AllowNotFound -and $errorText -match 'NotFound|does not exist') { return $null }
+    if ($AllowDuplicate -and $errorText -match 'InvalidPermission\.Duplicate') { return $null }
+    throw "aws $($Args -join ' ') failed: $errorText"
+  }
   if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
   return $raw | ConvertFrom-Json
 }
 
 $userData = @'
 #cloud-config
+bootcmd:
+  - [systemctl, disable, gpu-worker.service]
 runcmd:
+  - [systemctl, disable, --now, gpu-worker.service]
   - [systemctl, daemon-reload]
   - [systemctl, enable, --now, gpu-inference-worker.service]
   - [systemctl, enable, --now, target-optimizer-inference.service]
 '@
 $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
 
-$tg = Invoke-AwsJson elbv2 describe-target-groups --region $cfg.region --names $cfg.targetGroupName
+$tg = Invoke-AwsJson -AllowNotFound elbv2 describe-target-groups --region $cfg.region --names $cfg.targetGroupName
 if (-not $tg) {
   $tg = Invoke-AwsJson elbv2 create-target-group --region $cfg.region `
     --name $cfg.targetGroupName --protocol HTTP --port $cfg.targetDataPort `
@@ -49,7 +61,13 @@ if (-not $tg) {
     --unhealthy-threshold-count 2 `
     --tags "Key=Environment,Value=staging" "Key=ManagedBy,Value=VoiceCloningRepo"
 }
-$targetGroupArn = $tg.TargetGroups[0].TargetGroupArn
+$targetGroupArn = if ($tg) {
+  $tg.TargetGroups[0].TargetGroupArn
+} elseif (-not $Apply) {
+  "arn:aws:elasticloadbalancing:$($cfg.region):000000000000:targetgroup/$($cfg.targetGroupName)/dryrun"
+} else {
+  throw 'Target group creation returned no target group ARN.'
+}
 if ($targetGroupArn) {
   Invoke-AwsJson elbv2 modify-target-group-attributes --region $cfg.region `
     --target-group-arn $targetGroupArn `
@@ -74,9 +92,13 @@ $launchData = @{
   )
 } | ConvertTo-Json -Depth 8 -Compress
 $launchDataPath = Join-Path $env:TEMP 'vcs-staging-launch-template.json'
-Set-Content -LiteralPath $launchDataPath -Value $launchData -Encoding utf8NoBOM
+[IO.File]::WriteAllText(
+  $launchDataPath,
+  $launchData,
+  (New-Object Text.UTF8Encoding($false))
+)
 
-$lt = Invoke-AwsJson ec2 describe-launch-templates --region $cfg.region `
+$lt = Invoke-AwsJson -AllowNotFound ec2 describe-launch-templates --region $cfg.region `
   --launch-template-names $cfg.launchTemplateName
 if (-not $lt) {
   $lt = Invoke-AwsJson ec2 create-launch-template --region $cfg.region `
@@ -118,10 +140,30 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
     --default-instance-warmup $cfg.healthCheckGracePeriodSeconds
 }
 
-Invoke-AwsJson ec2 authorize-security-group-ingress --region $cfg.region `
+$albResource = ($cfg.albArn -split ':loadbalancer/')[1]
+$targetGroupResource = ($targetGroupArn -split ':')[5]
+if ($albResource -and $targetGroupResource) {
+  Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
+    --auto-scaling-group-name $cfg.autoScalingGroupName `
+    --policy-name vcs-staging-inference-request-rate `
+    --policy-type TargetTrackingScaling `
+    --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --target-tracking-configuration (
+      @{
+        PredefinedMetricSpecification = @{
+          PredefinedMetricType = 'ALBRequestCountPerTarget'
+          ResourceLabel = "$albResource/$targetGroupResource"
+        }
+        TargetValue = 6
+        DisableScaleIn = $false
+      } | ConvertTo-Json -Depth 4 -Compress
+    )
+}
+
+Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
   --group-id $cfg.securityGroupId --protocol tcp `
   --port $cfg.targetDataPort --source-group $cfg.albSecurityGroupId
-Invoke-AwsJson ec2 authorize-security-group-ingress --region $cfg.region `
+Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
   --group-id $cfg.securityGroupId --protocol tcp `
   --port $cfg.targetControlPort --source-group $cfg.albSecurityGroupId
 

@@ -44,10 +44,13 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 | staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
 | dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d3fwx6qxeaxfmo.cloudfront.net | `echolect/` |
 
-On 2026-07-28, the staging chatbot domain still served the older chatbot client. Its
-backend routes use the current staging Lambda/ALB/GPU stack. The dev chatbot domain is
-the current `chatbot-live-full` client-only deployment. UI replacement is not part of
-the 2026-08-03 capacity work unless a load-test failure proves it necessary.
+On 2026-07-28, the staging chatbot was rebuilt from `chatbot-live-full` commit
+`9821dd5` and deployed as `assets/index-Dnjl1fjR.js`. Its fixed staging profile is
+`deanvoice-v1`; it uses the staging Lambda/ALB/GPU stack. All three staging
+distributions now use CloudFront Function `vcs-staging-spa-route-rewrite` on the
+default static behavior instead of global 403/404-to-200 error mappings. Deep frontend
+routes still serve `index.html`, while real `/api/*` errors retain their HTTP status
+and JSON content type.
 
 ## 3. Load balancer
 
@@ -88,13 +91,15 @@ the 2026-08-03 capacity work unless a load-test failure proves it necessary.
 | Security group | `sg-03a2f3dddf4eff21c` (`vcs-staging-gpu-sg`) |
 | First-boot config | user-data = `docs/aws-snapshots/staging-userdata.sh`; log `/var/log/staging-bootstrap.log`; marker `/home/ubuntu/STAGING_BOOTSTRAP_DONE` |
 
-**Services on the box** (systemd, code at `/home/ubuntu/VoiceCloning`, branch `separate-containers-new` on disk):
+**Services on the box** (systemd, code at `/home/ubuntu/VoiceCloning`, branch
+`codex/staging-multi-user-scaling` at commit `1c945b9` on disk):
 
 | Port | systemd unit | Role | Env file |
 |---|---|---|---|
 | 3001 | `gpu-worker` | training/cloning worker | `gpu-worker/.env` (`S3_PREFIX=echolect-staging/`, staging CORS) |
 | 3002 | `voice-live-gateway` | realtime live-chat gateway (OpenAI realtime API) | `live-gateway/.env` (holds `OPENAI_API_KEY`, `PORT=3002`, `OPENAI_REALTIME_MODEL=gpt-realtime`, `OPENAI_REALTIME_VAD=semantic_vad`, staging CORS) |
 | 3003 | `gpu-inference-worker` | TTS inference worker | `gpu-inference-worker/.env` (same S3/CORS changes) |
+| 3103 / 3004 | `target-optimizer-inference` | ALB Target Optimizer data/control proxy to 3003 | reads inference `.env`; advertises `SYNTHESIS_MAX_CONCURRENCY=2` |
 
 All three expose `GET /healthz` for the ALB health checks. Direct-to-worker endpoints return 403 to plain curl (origin/internal-auth checks) — same behavior as dev; not a bug.
 
@@ -140,6 +145,7 @@ All three expose `GET /healthz` for the ALB health checks. Direct-to-worker endp
 | GPU_INSTANCE_REGION | ap-northeast-2 |
 | GPU_IDLE_STOP_MINUTES | 90 |
 | GPU_SCHEDULE_ENABLED / START / END / TZ | false / 7 / 19 / Singapore |
+| INFERENCE_CAPACITY_RETRY_MS | 30000 |
 | GPU_WORKER_URL, INFERENCE_WORKER_URL | `http://voice-gpu-alb-staging-1031778835.ap-northeast-2.elb.amazonaws.com` |
 | GPU_WORKER_PUBLIC_URL | `https://dfzrfr93t2ruf.cloudfront.net` |
 | CORS_ORIGIN | the 3 staging CloudFront domains (comma-separated) |
@@ -173,55 +179,59 @@ Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-
 
 ## 10. Multi-user readiness and 2026-08-03 event
 
-### Current limit
+### Implemented multi-user behavior
 
-The public staging paths were healthy on 2026-07-28: the GPU was running and ready,
-DeanVoice was loaded, and training/inference state was idle. This does **not** mean the
-system supports concurrent synthesis.
+The staging application is no longer event- or Dean-specific at the code layer:
 
-- Staging has one `g6.xlarge` target.
-- `gpu-inference-worker` has one process-global model pair, one global inference state,
-  and an explicit one-synthesis-at-a-time lock.
-- Ordinary overlapping synthesis receives HTTP 409. The chatbot demo path can preempt
-  a long generation, and overlapping demo Live Fast calls can reach the same underlying
-  inference server concurrently. That behavior is unsafe under a burst.
-- Long inference progress/session files are instance-local. Horizontal scaling needs
-  session affinity or external session state. Dean's Live Fast one-shot sentence route
-  is substantially easier to scale because every request can be independent.
-- Lambda and CloudFront capacity are not the bottleneck at 50-100 users; GPU synthesis
-  throughput and request isolation are.
+- Every request carries an immutable `voice_model` snapshot. A browser conversation
+  also freezes its engine, profile, and references until that conversation stops, so
+  another user changing the active UI/profile cannot switch its voice mid-reply.
+- The inference worker has a bounded FIFO scheduler (`SYNTHESIS_MAX_QUEUE_DEPTH=100`,
+  `SYNTHESIS_MAX_QUEUE_WAIT_MS=25000`). Same-model work may use the tested physical
+  concurrency; different-model work waits for the active model batch to drain before
+  the atomic GPT/SoVITS pair is changed.
+- Live Fast, direct inference, Live Full generation/regeneration, and model mutations
+  all use the same scheduler. Demo preemption/bypass was removed.
+- Live Full manifests, ordered SSE events, chunks, previews, finals, cancellation
+  markers, and mutable session state are persisted in S3. Any inference target can
+  hydrate/relay the session, so horizontal routing does not depend on instance-local
+  ownership.
+- Training has its own bounded serial FIFO queue on the fixed training worker. It is
+  deliberately not sent to the inference ASG.
+- Lambda retries capacity responses (`429`/`503`) for a bounded configurable budget
+  (`INFERENCE_CAPACITY_RETRY_MS=30000` live on staging).
 
-### Recommended staging-only event design
+Staging `g6.xlarge` testing supports `SYNTHESIS_MAX_CONCURRENCY=2` for one loaded voice:
+four simultaneous verified requests all returned distinct valid WAVs in 10.8 seconds;
+ten simultaneous verified requests all returned valid WAVs in 32.7 seconds. No worker
+warning/OOM was recorded, and post-test GPU memory was about 2.95 GiB of 23 GiB. This
+means one GPU supports multiple users, but it does **not** meet a 50-request burst
+latency target by itself.
 
-Do not use a SageMaker **training job**; it is batch model training, not online
-inference. Do not migrate this application to a SageMaker endpoint immediately before
-the event: the custom container contract, routing, session state, model loading, and
-observability would all need new integration and load testing.
+### Staging scaling design
 
-For 2026-08-03:
+Do not use a SageMaker **training job**; it is batch model training, not an online
+inference server. Migrating to a SageMaker real-time endpoint would require a new
+serving contract and is higher risk than scaling the already-tested EC2 worker.
 
-1. Freeze the event path to DeanVoice + Live Fast one-shot sentence synthesis. Disable
-   training, model switching, Full inference, and demo preemption for the event window.
-2. Bake an immutable staging AMI/launch template with the tested commit, dependencies,
-   DeanVoice artifacts, health checks, and startup pre-warm. Fetch secrets at boot from
-   Secrets Manager or Parameter Store; never bake them into the AMI.
-3. Put inference instances in a staging Auto Scaling Group attached to a new
-   target-optimized inference target group. Run the AWS ALB Target Optimizer agent as
-   an inline proxy with maximum concurrency `1` per GPU. Keep the existing CloudFront,
-   Lambda, and ALB hostnames.
-4. Use On-Demand instances, at least two Availability Zones where `g6.xlarge` is
-   available, and reserve/confirm capacity before the event. Do not rely on Spot.
-5. Size the fleet from a representative load test. Pre-scale and pre-warm the measured
-   fleet by 07:15 SGT on 2026-08-03; reactive GPU auto scaling is only a safety net
-   because boot/model warm-up is too slow for an 08:00 burst.
-6. Keep a small bounded retry/backoff path for ALB 503/worker busy responses, but do not
-   hold a large synchronous queue behind CloudFront's origin timeout. If measured demand
-   exceeds affordable GPU capacity, the product must expose an asynchronous job/queue
-   flow; that is a larger UI/API change.
+The implemented staging design keeps the public hostnames and separates roles:
 
-Target Optimizer requires new target groups and an agent on every target; it cannot be
-enabled on the existing target group. Apply it to inference only. WebSocket connections
-on port 3002 and training on port 3001 have different concurrency semantics.
+1. The existing instance remains the training/live-gateway control target.
+2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
+   Optimizer proxy. Each target advertises physical concurrency `2`.
+3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
+   port 3004. The source image is `ami-07ecb50a65a104ef1`, built from commit `1c945b9`.
+4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
+   ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
+   by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`, and
+   `VCS_STAGING_SCALE_DOWN_AT`, not hardcoded into application behavior.
+5. For a 50-request near-simultaneous burst, the measured one-GPU throughput supports
+   an initial event plan of 16 prewarmed GPUs (32 immediate physical slots, then one
+   short queued wave). This must be confirmed with the complete fleet before declaring
+   the 50-user acceptance test passed.
+
+Target Optimizer requires a new target group and its agent on every inference target.
+Do not apply it to the WebSocket gateway on port 3002 or the training worker on 3001.
 
 ### Load-test acceptance plan
 
@@ -254,6 +264,21 @@ Capacity formula after measurement:
 Use a target utilization no higher than `0.7` for the event. Also test the true
 simultaneous burst: the formula describes sustained throughput, not the wait experienced
 when 50 students all submit at once.
+
+**Results recorded 2026-07-28 through the real staging Lambda URL:**
+
+| Probe | Result |
+|---|---|
+| Cold correct-profile request | 200 valid WAV, 48.8 s |
+| 2 concurrent, scheduler concurrency 1 | both 200; 4.3 s wall; correctly serialized |
+| 2 concurrent, concurrency 2, verification enabled | both 200; 9.7 s wall |
+| 4 concurrent, concurrency 2, verification disabled | 4/4 valid WAV; 7.1 s wall |
+| 4 concurrent, concurrency 2, verification enabled | 4/4 valid WAV; 10.8 s wall |
+| 10 concurrent, concurrency 2, verification enabled | 10/10 valid WAV; 32.7 s wall |
+
+The 25/50/60-user and 60-minute fleet tests remain blocked until the launch-template/
+ASG permissions below are granted. Do not claim the 2026-08-03 capacity goal is met
+from the one-GPU probes.
 
 ### AWS permissions needed
 
@@ -292,8 +317,28 @@ Staging implementation:
 
 CloudFront changes are not expected for the preferred design because its ALB origin DNS
 stays stable. Load-test runners need no AWS write permission when run externally; an
-AWS-hosted distributed runner additionally needs its own CloudFormation/ECS/Fargate,
-ECR, S3, CloudWatch Logs, and `iam:PassRole` permissions.
+  AWS-hosted distributed runner additionally needs its own CloudFormation/ECS/Fargate,
+  ECR, S3, CloudWatch Logs, and `iam:PassRole` permissions.
+
+**Permissions actually denied during the 2026-07-28 rollout:**
+
+- `ec2:CreateLaunchTemplate` (hard blocker; scope to launch templates named
+  `vcs-staging-gpu-inference*`)
+- `autoscaling:CreateLaunchConfiguration` (fallback also denied; granting the launch
+  template path is preferred)
+- `elasticloadbalancing:ModifyTargetGroupAttributes`
+- `servicequotas:ListServiceQuotas`
+- `sqs:ListQueues`, `dynamodb:ListTables` (not required by the selected S3-backed
+  session design)
+- `ssm:SendCommand`, `ssm:GetCommandInvocation` (interactive `ssm:StartSession` works)
+
+The launch-template path also needs `ec2:CreateLaunchTemplateVersion`,
+`ec2:ModifyLaunchTemplate`, `ec2:RunInstances`, `ec2:CreateTags`, and
+`iam:PassRole` limited to `VoiClo_GPU`. Auto Scaling needs
+`autoscaling:CreateAutoScalingGroup`, `UpdateAutoScalingGroup`,
+`PutScalingPolicy`, `PutScheduledUpdateGroupAction`, and describe actions. The listener
+cutover needs `elasticloadbalancing:ModifyRule`. Confirm the Seoul On-Demand G/VT quota
+is at least 64 vCPUs for the proposed 16 x `g6.xlarge` event fleet.
 
 ## 11. Known gaps / pending admin work (updated 2026-07-28)
 
@@ -309,9 +354,12 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The 2026-08-03 fleet size is unknown until representative DeanVoice throughput is
-   measured. Confirm the Seoul On-Demand G/VT vCPU quota and `g6.xlarge` capacity before
-   building the Auto Scaling Group.
-8. Live AWS control-plane drift after 2026-07-07 still needs a fresh read-only inventory.
-   The local AWS CLI executable is blocked by Windows Application Control; use an
-   approved AWS SDK/CLI environment with short-lived credentials and do not persist them.
+7. The target-optimized target group `vcs-stg-opt-3103` and AMI
+   `ami-07ecb50a65a104ef1` have been created. ASG/launch template/listener cutover and
+   the 07:15 scheduled prewarm are **not created** because the current role denied
+   `ec2:CreateLaunchTemplate` and the legacy launch-configuration fallback. Grant the
+   scoped permissions in §10, run `scripts/provision-staging-autoscaling.ps1`, launch
+   one target, verify health, then use `-SwitchListener`.
+8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
+   production-resilient fleet should add another private subnet/AZ before relying on
+   multi-AZ capacity. Route edits are admin-only for this role.
