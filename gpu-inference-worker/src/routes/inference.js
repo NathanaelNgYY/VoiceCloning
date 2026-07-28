@@ -29,7 +29,12 @@ import { prepareTextForSynthesis } from '../services/textPronunciation.js';
 import { scanOovWords } from '../services/oovScan.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
 import { expandSsml, splitOnBreaks, partitionBreaks } from '../services/ssml.js';
-import { COMMA_PAUSE_SECONDS, TRANSCRIPTION_VERIFY_ENABLED, SPEAKER_VERIFY_ENABLED } from '../config.js';
+import {
+  COMMA_PAUSE_SECONDS,
+  TRANSCRIPTION_VERIFY_ENABLED,
+  LIVE_TRANSCRIPTION_VERIFY_ENABLED,
+  SPEAKER_VERIFY_ENABLED,
+} from '../config.js';
 import {
   prepareTextWithRuntimeDictionary,
   syncHotDictionaryOverrides,
@@ -139,6 +144,7 @@ export function verificationOptions(params = {}, {
         extraWords: asr?.extraWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
         skippedWords: asr?.skippedWords ?? [],
+        duplicatedWords: asr?.duplicatedWords ?? [],
         words: asr?.words ?? [],
         transcript: asr?.transcript,
         phonemeAssessments: asr?.phonemeAssessments ?? [],
@@ -307,6 +313,10 @@ export async function handleLiveTtsRequest(body, {
   retryCount,
 } = {}) {
   const resolvedParams = await resolveParams(body);
+  // Client-only flag: the first clip of a reply gates time-to-first-audio, so the
+  // client asks to skip its verification. Never forwarded to the engine.
+  const skipVerify = Boolean(resolvedParams.skip_verify);
+  delete resolvedParams.skip_verify;
   const expandedText = expandSsml(
     resolvedParams.text,
     { protectedWords: await arpabetProtectedWords() },
@@ -324,9 +334,14 @@ export async function handleLiveTtsRequest(body, {
     // Comma/clause pause length (GPT-SoVITS fragment_interval), tunable via COMMA_PAUSE_SECONDS.
     fragment_interval: resolvedParams.fragment_interval ?? COMMA_PAUSE_SECONDS,
   };
+  // skip_verify (first clip of a reply) and LIVE_TRANSCRIPTION_VERIFY_ENABLED both
+  // switch verification off for the live path without touching Full/Queue.
+  const liveVerifyAllowed = LIVE_TRANSCRIPTION_VERIFY_ENABLED && !skipVerify;
   const activeVerifyChunk = verifyChunk !== undefined
     ? verifyChunk
-    : (verificationOptions(normalizedParams, { phonemeVerification: true }).verifyChunk || null);
+    : (liveVerifyAllowed
+      ? (verificationOptions(normalizedParams, { phonemeVerification: true }).verifyChunk || null)
+      : null);
   const { speechText, leadingBreakMs, trailingBreakMs } = partitionBreaks(normalizedText);
   const breakSegments = [];
   for (const segment of splitOnBreaks(speechText)) {

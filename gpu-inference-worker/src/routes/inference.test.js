@@ -308,4 +308,29 @@ test('handleLiveTtsRequest leaves compact chemical formulas unchanged on Live Fa
     },
     verifyChunk: null,
   });
+
+// skip_verify is a client-only flag (the first clip of a reply gates
+// time-to-first-audio). The retry/verification behaviour it disables now lives in
+// synthesizeLiveFastChunk; what must never regress is the flag reaching the engine.
+test('handleLiveTtsRequest never forwards skip_verify to the engine', async () => {
+  const module = await loadInferenceRouteModule();
+
+  let synthesizeCalls = 0;
+  await module.handleLiveTtsRequest({
+    text: 'Hello there.',
+    skip_verify: true,
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+    aux_ref_audio_paths: [],
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async (params) => {
+      synthesizeCalls += 1;
+      assert.equal('skip_verify' in params, false, 'engine params must not carry skip_verify');
+      return Buffer.from('RIFFdemo');
+    },
+    verifyChunk: null,
+  });
+
+  assert.equal(synthesizeCalls, 1);
+});
 });

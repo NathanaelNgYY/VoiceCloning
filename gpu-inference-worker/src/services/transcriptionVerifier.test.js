@@ -839,3 +839,45 @@ test('a genuinely skipped word (near-zero audio span) still forces a re-roll', a
     mock.restoreAll();
   }
 });
+
+// ── stutter detection (findDuplicatedWords) ──────────────────────────────────
+// GPT-SoVITS re-emits a word it already said, or false-starts a long one. Coverage
+// cannot catch these — every EXPECTED word is present — and findRepeatedPhrases
+// covers the phrase case, so the single-word case needs its own gate.
+
+test('a stuttered word echo forces a re-roll even at full coverage', async () => {
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'timing of treatment and treatment and proper',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'timing of treatment, and proper',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.duplicatedWords, ['treatment and'], JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test('a false-start prefix forces a re-roll', async () => {
+  // Real case: "gastrointestinal" spoken as "gastro gastrointestinal".
+  mock.method(transcriptionVerifier, 'transcribeBuffer', async () => ({
+    text: 'the gastro gastrointestinal tract',
+    words: [],
+  }));
+  try {
+    const res = await transcriptionVerifier.verifyChunk(
+      Buffer.alloc(0),
+      'the gastrointestinal tract',
+      {},
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.deepEqual(res.duplicatedWords, ['gastro'], JSON.stringify(res));
+  } finally {
+    mock.restoreAll();
+  }
+});

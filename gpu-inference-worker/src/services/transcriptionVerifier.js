@@ -15,6 +15,7 @@ import {
 import {
   computeWordCoverage,
   findClippedWords,
+  findDuplicatedWords,
   findRepeatedPhrases,
   countWords,
   findWordTimingEvidence,
@@ -480,10 +481,18 @@ class TranscriptionVerifier {
       }
     }
 
+    // Stutters (echoed words, false starts) leave coverage at 100% — the
+    // transcript has EXTRA words, not missing ones — so they need their own gate.
+    const duplicatedWords = findDuplicatedWords(expectedText, text);
+
     const ok = adjustedCoverage >= minCoverage
       && skippedWords.length === 0
       && substantialMissing.length === 0
       && repeatedPhrases.length === 0
+      // Word-level echoes ("treatment and treatment") and false starts ("gastro
+      // gastrointestinal"). findRepeatedPhrases above catches phrase-level repeats;
+      // this catches the single-word case it does not.
+      && duplicatedWords.length === 0
       && !phonemeAssessments.some((assessment) => assessment.strict && assessment.decision === 'reject')
       // Low-confidence/short Whisper spans remain advisory for Live Fast. Full/Queue
       // have five candidates to choose from, so that Whisper uncertainty is a hard
@@ -493,6 +502,7 @@ class TranscriptionVerifier {
       console.log(
         `[transcription] chunk REJECTED coverage=${(adjustedCoverage * 100).toFixed(0)}% `
         + `missing=[${missingWords.join(', ')}] skipped/cut=[${skippedWords.join(', ')}] `
+        + `duplicated=[${duplicatedWords.join(', ')}] `
         + `clipped(advisory)=[${suspectWords.join(', ')}] substantialMissing=[${substantialMissing.join(', ')}] `
         + `doubled=[${repeatedPhrases.join(' | ')}] `
         + `${forgivenDict.length ? `dictForgiven=[${forgivenDict.join(', ')}] ` : ''}`
@@ -507,6 +517,7 @@ class TranscriptionVerifier {
       phonemeAssessments,
       extraWords,
       repeatedPhrases,
+      duplicatedWords,
       suspectWords,
       skippedWords,
       transcript: text,

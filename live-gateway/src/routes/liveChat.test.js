@@ -119,3 +119,25 @@ test('applyLiveChatInitToBridge overrides systemPrompt only when non-empty', () 
   applyLiveChatInitToBridge(bridge, { systemPrompt: 'Be a GI tutor.' });
   assert.equal(bridge.systemPrompt, 'Be a GI tutor.');
 });
+
+test('handleBrowserMessage forwards a video position to the bridge', () => {
+  const calls = [];
+  const bridge = { setVideoPosition: (payload) => calls.push(payload) };
+
+  handleBrowserMessage(bridge, Buffer.from(JSON.stringify({
+    type: 'video.position',
+    seconds: 512.4,
+    paused: true,
+  })));
+
+  assert.deepEqual(calls, [{ seconds: 512.4, paused: true }]);
+});
+
+test('handleBrowserMessage ignores message types it does not know', () => {
+  const bridge = {
+    setVideoPosition: () => assert.fail('should not be called'),
+    sendAudio: () => assert.fail('should not be called'),
+  };
+
+  handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'keepalive' })));
+});
