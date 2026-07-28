@@ -8,13 +8,15 @@ Wants=network-online.target
 Type=simple
 Restart=always
 RestartSec=5
+Environment=SYNTHESIS_MAX_CONCURRENCY=1
+EnvironmentFile=-/home/ubuntu/VoiceCloning/gpu-inference-worker/.env
 ExecStartPre=-/usr/bin/docker rm -f vcs-target-optimizer-inference
 ExecStartPre=/usr/bin/docker pull public.ecr.aws/aws-elb/target-optimizer/target-control-agent:latest
 ExecStart=/usr/bin/docker run --rm --name vcs-target-optimizer-inference --network host \
   -e TARGET_CONTROL_DATA_ADDRESS=0.0.0.0:3103 \
   -e TARGET_CONTROL_CONTROL_ADDRESS=0.0.0.0:3004 \
   -e TARGET_CONTROL_DESTINATION_ADDRESS=127.0.0.1:3003 \
-  -e TARGET_CONTROL_MAX_CONCURRENCY=1 \
+  -e TARGET_CONTROL_MAX_CONCURRENCY=${SYNTHESIS_MAX_CONCURRENCY} \
   -e TARGET_CONTROL_PROTOCOL_VERSION=HTTP1 \
   -e RUST_LOG=info \
   public.ecr.aws/aws-elb/target-optimizer/target-control-agent:latest
