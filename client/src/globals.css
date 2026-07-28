@@ -4,6 +4,28 @@
 @tailwind components;
 @tailwind utilities;
 
+.gi-root .lesson-transcript-scrollbar {
+  scrollbar-color: rgb(148 163 184 / 0.7) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar-thumb {
+  border: 0.125rem solid transparent;
+  border-radius: 9999px;
+  background: rgb(148 163 184 / 0.7);
+  background-clip: padding-box;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 @layer base {
   :root {
     --background: 220 40% 99%;

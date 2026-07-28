@@ -84,7 +84,7 @@ export function SearchPage() {
             transcript, and embedded AI support.
           </p>
 
-          <form onSubmit={handleSearch} className="relative group">
+          <form onSubmit={handleSearch} className="group relative mt-6 sm:mt-8">
             <div className="relative flex items-center">
               <Search className="absolute left-5 h-5 w-5 text-slate-400 group-focus-within:text-primary transition-colors duration-200" />
               <input

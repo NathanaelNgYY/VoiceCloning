@@ -219,7 +219,7 @@ export function LessonPage() {
               </div>
 
               <div className="w-full shrink-0 p-4">
-                <h2 className="truncate text-sm font-bold text-slate-800">
+                <h2 className="truncate text-lg font-bold text-slate-800">
                   Content Outline
                 </h2>
               </div>
@@ -276,7 +276,7 @@ export function LessonPage() {
                           </p>
                           <h4
                             className={cn(
-                              "mt-1 line-clamp-2 text-sm font-semibold leading-tight",
+                              "mt-1 line-clamp-2 text-xs font-semibold leading-snug",
                               isActive ? "text-primary" : "text-slate-700",
                             )}
                           >
@@ -316,19 +316,20 @@ export function LessonPage() {
                     src={course.videoUrl}
                     crossOrigin="anonymous"
                     controls
+                    playsInline
                     onTimeUpdate={handleTimeUpdate}
                     className="h-full w-full object-contain"
                   />
                 </div>
 
-                <div className="flex min-h-[460px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:min-h-[500px]">
+                <div className="flex h-[clamp(20rem,45dvh,34rem)] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
                   <div className="flex shrink-0 border-b border-slate-100 bg-slate-50/50 p-2">
-                    <div className="flex rounded-lg bg-slate-100 p-1">
+                    <div className="grid w-full grid-cols-2 rounded-lg bg-slate-100 p-1 sm:flex sm:w-auto">
                       <button
                         type="button"
                         onClick={() => setActiveTab("transcript")}
                         className={cn(
-                          "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition cursor-pointer",
+                          "flex items-center justify-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition cursor-pointer",
                           activeTab === "transcript"
                             ? "bg-white text-primary shadow"
                             : "text-slate-500 hover:text-slate-800",
@@ -341,7 +342,7 @@ export function LessonPage() {
                         type="button"
                         onClick={() => setActiveTab("chatbot")}
                         className={cn(
-                          "flex items-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition cursor-pointer",
+                          "flex items-center justify-center gap-1.5 rounded-md px-4 py-1.5 text-xs font-semibold transition cursor-pointer",
                           activeTab === "chatbot"
                             ? "bg-white text-primary shadow"
                             : "text-slate-500 hover:text-slate-800",
@@ -356,18 +357,20 @@ export function LessonPage() {
                   <div className="flex flex-1 min-h-0 flex-col">
                     <div
                       className={cn(
-                        "flex-1 space-y-4 overflow-y-auto p-5",
+                        "lesson-transcript-scrollbar flex-1 space-y-4 overscroll-contain overflow-y-auto p-3 sm:p-5",
                         activeTab !== "transcript" && "hidden",
                       )}
                     >
                         {transcriptSegments.map((segment, index) => {
                           const isActive = activeTranscriptIndex === index;
                           return (
-                            <div
+                            <button
                               key={`${segment.time}-${segment.title}`}
+                              type="button"
                               onClick={() => seekTo(segment.time)}
+                              aria-label={`Play video from ${formatTimestamp(segment.time)}: ${segment.title}`}
                               className={cn(
-                                "group cursor-pointer rounded-xl border border-transparent p-3 transition-all duration-200",
+                                "group block w-full cursor-pointer rounded-xl border border-transparent p-3 text-left transition-all duration-200",
                                 isActive
                                   ? "border-slate-100 bg-slate-50 shadow-sm"
                                   : "hover:bg-slate-50/50",
@@ -407,7 +410,7 @@ export function LessonPage() {
                                   </p>
                                 </div>
                               </div>
-                            </div>
+                            </button>
                           );
                         })}
                     </div>
