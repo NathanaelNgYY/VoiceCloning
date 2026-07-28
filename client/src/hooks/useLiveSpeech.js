@@ -10,6 +10,10 @@ import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import { connectInferenceSSE } from '../services/sse.js';
 import { sanitizeBackendError } from '../lib/backendErrors.js';
 import {
+  VIDEO_POSITION_SYNC_INTERVAL_MS,
+  shouldSendVideoPosition,
+} from '../lib/lessonVideoContext.js';
+import {
   LIVE_REPLY_MODES,
   MIN_COMMIT_VOICE_FRAMES,
   USER_TRANSCRIPT_TIMEOUT_MS,
@@ -139,6 +143,7 @@ export function useLiveSpeech({
   systemPrompt = '',
   fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
+  getVideoPosition = null,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -158,6 +163,8 @@ export function useLiveSpeech({
   const phaseRef = useRef('idle');
   const socketRef = useRef(null);
   const keepAliveTimerRef = useRef(null);
+  const videoPositionTimerRef = useRef(null);
+  const lastSentVideoPositionRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
@@ -194,6 +201,7 @@ export function useLiveSpeech({
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
   const systemPromptRef = useRef(systemPrompt);
+  const getVideoPositionRef = useRef(getVideoPosition);
   const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
   const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
@@ -201,6 +209,7 @@ export function useLiveSpeech({
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
   useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
+  useEffect(() => { getVideoPositionRef.current = getVideoPosition; }, [getVideoPosition]);
   useEffect(() => { fastMaxChunkWordsRef.current = fastMaxChunkWords; }, [fastMaxChunkWords]);
   useEffect(() => {
     fastMaxSentencesPerChunkRef.current = fastMaxSentencesPerChunk;
@@ -810,8 +819,49 @@ export function useLiveSpeech({
     }, KEEPALIVE_INTERVAL_MS);
   }
 
+  function stopVideoPositionSync() {
+    if (videoPositionTimerRef.current) {
+      window.clearInterval(videoPositionTimerRef.current);
+      videoPositionTimerRef.current = null;
+    }
+    lastSentVideoPositionRef.current = null;
+  }
+
+  // Polls the caller for the lesson video's position instead of taking it as a
+  // prop: a playing <video> fires timeupdate several times a second, and this
+  // hook must not re-render on every one of them.
+  function startVideoPositionSync() {
+    stopVideoPositionSync();
+    if (typeof getVideoPositionRef.current !== 'function') return;
+
+    const sync = () => {
+      const getPosition = getVideoPositionRef.current;
+      if (typeof getPosition !== 'function') return;
+
+      const position = getPosition();
+      if (!shouldSendVideoPosition(position, lastSentVideoPositionRef.current)) return;
+
+      // send() is a no-op when the socket isn't OPEN, so this is safe.
+      const sent = socketRef.current?.send({
+        type: 'video.position',
+        seconds: Number(position.seconds),
+        paused: Boolean(position.paused),
+      });
+      if (sent) {
+        lastSentVideoPositionRef.current = {
+          seconds: Number(position.seconds),
+          paused: Boolean(position.paused),
+        };
+      }
+    };
+
+    sync();
+    videoPositionTimerRef.current = window.setInterval(sync, VIDEO_POSITION_SYNC_INTERVAL_MS);
+  }
+
   function closeSocket() {
     stopKeepAlive();
+    stopVideoPositionSync();
     if (socketRef.current) {
       socketRef.current.close();
       socketRef.current = null;
@@ -1361,6 +1411,7 @@ export function useLiveSpeech({
     });
     socketRef.current = socket;
     startKeepAlive();
+    startVideoPositionSync();
   }
 
   function stop() {

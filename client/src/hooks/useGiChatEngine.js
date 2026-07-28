@@ -19,7 +19,13 @@ import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
 // cloned-voice profile, build live-fast reference params from it, assemble the
 // system prompt, and hand all of that to the shared useLiveSpeech hook.
-export function useGiChatEngine() {
+//
+// `lessonContext` is an optional prompt section describing the lesson video the
+// student is watching (see lib/lessonVideoContext.js), and `getVideoPosition` an
+// optional poll for where that video is right now, so the assistant can resolve
+// "what does she mean here?". The standalone kiosk has no video and passes
+// neither.
+export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } = {}) {
   const { workerReady, configured } = useGpuStatus();
   const backendQueryable = !configured || workerReady;
 
@@ -30,12 +36,21 @@ export function useGiChatEngine() {
   const profileRequestRef = useRef(0);
 
   // System prompt + uploaded documents are read once at mount; the gi skin has
-  // no editor for them (the Dean kiosk owns that UI).
+  // no editor for them (the Dean kiosk owns that UI). The lesson context is
+  // appended last so the video material is the most specific thing in the
+  // prompt. useLiveSpeech snapshots this when the socket opens, so a lesson
+  // that arrives after the student has already started talking only takes
+  // effect on the next conversation.
   const systemPrompt = useMemo(() => {
     const prompt = resolveChatbotSystemPrompt();
     const documents = resolveChatbotDocuments();
-    return combineSystemPromptWithDocuments(prompt, buildDocumentsContext(documents).text);
-  }, []);
+    const withDocuments = combineSystemPromptWithDocuments(
+      prompt,
+      buildDocumentsContext(documents).text
+    );
+    const lesson = String(lessonContext || '').trim();
+    return lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
+  }, [lessonContext]);
 
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;
@@ -112,6 +127,7 @@ export function useGiChatEngine() {
     systemPrompt,
     fastMaxChunkWords: fastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: fastSettings.maxSentencesPerChunk,
+    getVideoPosition,
   });
 
   // "New chat" clears the visible transcript without touching engine state

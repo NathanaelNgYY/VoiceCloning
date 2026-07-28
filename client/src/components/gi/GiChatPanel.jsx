@@ -10,9 +10,18 @@ const EMPTY_HINT = 'Start a conversation — click the mic';
 /**
  * The gi chat surface (messages + notices + voice composer), driven by the
  * cloned-voice engine. Used inside the lesson page's chatbot tab.
+ *
+ * `lessonContext` (optional) is the timestamped lesson-video prompt section, so
+ * the assistant can answer questions about moments in the video the student is
+ * watching, and `getVideoPosition` (optional) reports where that video is now.
+ * The standalone kiosk page omits both.
  */
-export function GiChatPanel({ emptyHint = EMPTY_HINT }) {
-  const chat = useGiChatEngine();
+export function GiChatPanel({
+  emptyHint = EMPTY_HINT,
+  lessonContext = '',
+  getVideoPosition = null,
+}) {
+  const chat = useGiChatEngine({ lessonContext, getVideoPosition });
   const audioProps = useGiReplyAudio(chat);
 
   const hasMessages = chat.messages.length > 0;

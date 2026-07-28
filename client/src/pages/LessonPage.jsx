@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ChevronLeft,
@@ -13,6 +13,10 @@ import { api } from "@/api/client";
 import { useAuth } from "@/auth/useAuth";
 import { cn } from "@/lib/utils";
 import { GiChatPanel } from "@/components/gi/GiChatPanel.jsx";
+import {
+  buildLessonVideoContext,
+  isVideoPositionSharingEnabled,
+} from "@/lib/lessonVideoContext";
 import { useVideoTopicThumbnails } from "@/hooks/useVideoTopicThumbnails";
 
 function formatTimestamp(totalSeconds) {
@@ -93,6 +97,20 @@ export function LessonPage() {
   const topics = course?.topics ?? [];
   const transcriptSegments = course?.transcriptSegments ?? [];
   const topicThumbnails = useVideoTopicThumbnails(course?.videoUrl ?? "", topics);
+
+  // Timestamped transcript handed to the chatbot so students can ask about
+  // moments in the video ("at 8:30, what does that mean?").
+  const lessonContext = useMemo(() => buildLessonVideoContext(course), [course]);
+
+  // Read straight off the media element rather than from the currentTime state,
+  // so the chat engine can poll on its own schedule instead of re-rendering
+  // with every timeupdate. Lets the student ask "what does she mean here?".
+  const getVideoPosition = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !Number.isFinite(video.currentTime)) return null;
+    return { seconds: video.currentTime, paused: Boolean(video.paused) };
+  }, []);
+  const videoPositionEnabled = isVideoPositionSharingEnabled(import.meta.env);
 
   let activeTopicIndex = 0;
   for (let index = topics.length - 1; index >= 0; index -= 1) {
@@ -402,7 +420,11 @@ export function LessonPage() {
                         activeTab === "transcript" && "hidden",
                       )}
                     >
-                      <GiChatPanel emptyHint="Ask about this lesson — click the mic to start" />
+                      <GiChatPanel
+                        emptyHint="Ask about this lesson — click the mic to start"
+                        lessonContext={lessonContext}
+                        getVideoPosition={videoPositionEnabled ? getVideoPosition : null}
+                      />
                     </div>
                   </div>
                 </div>
