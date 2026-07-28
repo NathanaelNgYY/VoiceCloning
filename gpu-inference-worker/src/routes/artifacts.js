@@ -8,6 +8,7 @@ import {
   getSessionChunkPreviewPath,
   getSessionChunkVersionPath,
 } from '../services/longTextInference.js';
+import { getObject } from '../services/s3Storage.js';
 
 const router = Router();
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.ogg', '.flac', '.m4a', '.webm', '.mp4']);
@@ -38,7 +39,18 @@ function sendAudioFile(res, filePath) {
   res.sendFile(filePath);
 }
 
-router.get('/inference/result/:sessionId', (req, res) => {
+function sendAudioBuffer(res, buffer, contentType = 'audio/wav') {
+  res.set({
+    'Content-Type': contentType,
+    'Content-Length': buffer.length,
+    'Cache-Control': 'no-store, max-age=0',
+    Pragma: 'no-cache',
+    Expires: '0',
+  });
+  res.send(buffer);
+}
+
+router.get('/inference/result/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) {
     return res.status(400).json({ error: 'Invalid sessionId' });
@@ -46,16 +58,17 @@ router.get('/inference/result/:sessionId', (req, res) => {
 
   try {
     const filePath = path.join(LOCAL_TEMP_ROOT, 'inference', sessionId, 'final.wav');
-    if (!isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Result not ready or session not found' });
+    if (isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) && fs.existsSync(filePath)) {
+      return sendAudioFile(res, filePath);
     }
-    sendAudioFile(res, filePath);
+    return sendAudioBuffer(res, await getObject(`audio/output/${sessionId}/final.wav`));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404 ? 404 : 500;
+    res.status(status).json({ error: status === 404 ? 'Result not ready or session not found' : err.message });
   }
 });
 
-router.get('/inference/chunk/:sessionId/:index', (req, res) => {
+router.get('/inference/chunk/:sessionId/:index', async (req, res) => {
   const { sessionId, index } = req.params;
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId) || !/^\d+$/u.test(index)) {
     return res.status(400).json({ error: 'Invalid chunk request' });
@@ -63,28 +76,36 @@ router.get('/inference/chunk/:sessionId/:index', (req, res) => {
 
   try {
     const filePath = getSessionChunkPath(sessionId, Number(index));
-    if (!isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Chunk not ready or session not found' });
+    if (isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) && fs.existsSync(filePath)) {
+      return sendAudioFile(res, filePath);
     }
-    sendAudioFile(res, filePath);
+    return sendAudioBuffer(
+      res,
+      await getObject(`audio/output/${sessionId}/chunk_${String(Number(index)).padStart(3, '0')}.wav`),
+    );
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404 ? 404 : 500;
+    res.status(status).json({ error: status === 404 ? 'Chunk not ready or session not found' : err.message });
   }
 });
 
-router.get('/inference/chunk-preview/:sessionId/:index', (req, res) => {
+router.get('/inference/chunk-preview/:sessionId/:index', async (req, res) => {
   const { sessionId, index } = req.params;
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId) || !/^\d+$/u.test(index)) {
     return res.status(400).json({ error: 'Invalid chunk preview request' });
   }
   try {
     const filePath = getSessionChunkPreviewPath(sessionId, Number(index));
-    if (!isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Chunk preview not ready or session not found' });
+    if (isPathInside(filePath, path.join(LOCAL_TEMP_ROOT, 'inference')) && fs.existsSync(filePath)) {
+      return sendAudioFile(res, filePath);
     }
-    return sendAudioFile(res, filePath);
+    return sendAudioBuffer(
+      res,
+      await getObject(`audio/output/${sessionId}/chunk_preview_${String(Number(index)).padStart(3, '0')}.wav`),
+    );
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    const status = err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404 ? 404 : 500;
+    return res.status(status).json({ error: status === 404 ? 'Chunk preview not ready or session not found' : err.message });
   }
 });
 

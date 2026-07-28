@@ -679,12 +679,10 @@ export async function loadModelPair({
 
   let lastStatus = null;
   if (useGpuWorkerModels()) {
-    if (resolvedSovitsKey) {
-      lastStatus = await postInference('/inference/weights/sovits', { weightsPath: resolvedSovitsKey });
-    }
-    if (resolvedGptKey) {
-      lastStatus = await postInference('/inference/weights/gpt', { weightsPath: resolvedGptKey });
-    }
+    lastStatus = await postInference('/inference/weights/pair', {
+      gptPath: resolvedGptKey,
+      sovitsPath: resolvedSovitsKey,
+    });
     const warmedReferences = await warmModelReferences(warmPayload, {
       postInference,
       listTrainingAudioFiles,
@@ -699,14 +697,18 @@ export async function loadModelPair({
     };
   }
 
-  if (resolvedSovitsKey) {
-    const { localPath } = await postInference('/models/download', { s3Key: resolvedSovitsKey });
-    lastStatus = await postInference('/inference/weights/sovits', { weightsPath: localPath });
-  }
-  if (resolvedGptKey) {
-    const { localPath } = await postInference('/models/download', { s3Key: resolvedGptKey });
-    lastStatus = await postInference('/inference/weights/gpt', { weightsPath: localPath });
-  }
+  const [localGpt, localSovits] = await Promise.all([
+    resolvedGptKey
+      ? postInference('/models/download', { s3Key: resolvedGptKey })
+      : null,
+    resolvedSovitsKey
+      ? postInference('/models/download', { s3Key: resolvedSovitsKey })
+      : null,
+  ]);
+  lastStatus = await postInference('/inference/weights/pair', {
+    gptPath: localGpt?.localPath || '',
+    sovitsPath: localSovits?.localPath || '',
+  });
   const warmedReferences = await warmModelReferences(warmPayload, {
     postInference,
     listTrainingAudioFiles,

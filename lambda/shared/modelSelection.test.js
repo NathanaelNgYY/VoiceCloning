@@ -44,7 +44,7 @@ test('loadModelPair prefers the saved voice profile references before training-a
         calls.push({ routePath, body });
         if (routePath.startsWith('/inference/weights/')) {
           return {
-            loaded: { gptPath: body.weightsPath, sovitsPath: body.weightsPath },
+            loaded: { gptPath: body.gptPath, sovitsPath: body.sovitsPath },
           };
         }
         return body;
@@ -77,12 +77,11 @@ test('loadModelPair prefers the saved voice profile references before training-a
     assert.deepEqual(readKeys, ['voice-profiles/lecturer-a-v1.json']);
     assert.deepEqual(calls, [
       {
-        routePath: '/inference/weights/sovits',
-        body: { weightsPath: 'models/user-models/sovits/lecturer-a-e25-s100.pth' },
-      },
-      {
-        routePath: '/inference/weights/gpt',
-        body: { weightsPath: 'models/user-models/gpt/lecturer-a-e25.ckpt' },
+        routePath: '/inference/weights/pair',
+        body: {
+          gptPath: 'models/user-models/gpt/lecturer-a-e25.ckpt',
+          sovitsPath: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
+        },
       },
       {
         routePath: '/ref-audio/warm',

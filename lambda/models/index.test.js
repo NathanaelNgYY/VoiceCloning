@@ -137,12 +137,10 @@ test('models select uses local GPU paths when MODEL_SOURCE is gpu-worker', async
 
       assert.equal(response.statusCode, 200);
       assert.deepEqual(calls.map((call) => call.url), [
-        'http://localhost:3001/inference/weights/sovits',
-        'http://localhost:3001/inference/weights/gpt',
+        'http://localhost:3001/inference/weights/pair',
       ]);
       assert.deepEqual(calls.map((call) => call.body), [
-        { weightsPath: 'C:/sovits/local.pth' },
-        { weightsPath: 'C:/gpt/local.ckpt' },
+        { gptPath: 'C:/gpt/local.ckpt', sovitsPath: 'C:/sovits/local.pth' },
       ]);
     });
   } finally {
@@ -186,12 +184,8 @@ test('models select warms reference audio after local GPU model load when refs a
       assert.equal(response.statusCode, 200);
       assert.deepEqual(calls, [
         {
-          url: 'http://localhost:3001/inference/weights/sovits',
-          body: { weightsPath: 'C:/sovits/local.pth' },
-        },
-        {
-          url: 'http://localhost:3001/inference/weights/gpt',
-          body: { weightsPath: 'C:/gpt/local.ckpt' },
+          url: 'http://localhost:3001/inference/weights/pair',
+          body: { gptPath: 'C:/gpt/local.ckpt', sovitsPath: 'C:/sovits/local.pth' },
         },
         {
           url: 'http://localhost:3001/ref-audio/warm',
@@ -274,12 +268,11 @@ test('models select auto-selects and warms references from training audio when r
       assert.equal(response.statusCode, 200);
       assert.deepEqual(calls, [
         {
-          url: 'http://localhost:3001/inference/weights/sovits',
-          body: { weightsPath: 'C:/sovits/LhlChinese_e20_s3060.pth' },
-        },
-        {
-          url: 'http://localhost:3001/inference/weights/gpt',
-          body: { weightsPath: 'C:/gpt/LhlChinese-e25.ckpt' },
+          url: 'http://localhost:3001/inference/weights/pair',
+          body: {
+            gptPath: 'C:/gpt/LhlChinese-e25.ckpt',
+            sovitsPath: 'C:/sovits/LhlChinese_e20_s3060.pth',
+          },
         },
         {
           url: 'http://localhost:3001/training-audio/LhlChinese',
@@ -346,19 +339,18 @@ test('models select downloads S3 model keys when MODEL_SOURCE is s3', async () =
       assert.deepEqual(calls, [
         {
           url: 'http://localhost:3001/models/download',
-          body: { s3Key: 'models/user-models/sovits/trump.pth' },
-        },
-        {
-          url: 'http://localhost:3001/inference/weights/sovits',
-          body: { weightsPath: '/tmp/model_cache/trump.pth' },
-        },
-        {
-          url: 'http://localhost:3001/models/download',
           body: { s3Key: 'models/user-models/gpt/trump.ckpt' },
         },
         {
-          url: 'http://localhost:3001/inference/weights/gpt',
-          body: { weightsPath: '/tmp/model_cache/trump.ckpt' },
+          url: 'http://localhost:3001/models/download',
+          body: { s3Key: 'models/user-models/sovits/trump.pth' },
+        },
+        {
+          url: 'http://localhost:3001/inference/weights/pair',
+          body: {
+            gptPath: '/tmp/model_cache/trump.ckpt',
+            sovitsPath: '/tmp/model_cache/trump.pth',
+          },
         },
       ]);
     });
@@ -416,19 +408,18 @@ test('models select warms reference audio after S3 model load when refs are prov
       assert.deepEqual(calls, [
         {
           url: 'http://localhost:3001/models/download',
-          body: { s3Key: 'models/user-models/sovits/trump.pth' },
-        },
-        {
-          url: 'http://localhost:3001/inference/weights/sovits',
-          body: { weightsPath: '/tmp/model_cache/trump.pth' },
-        },
-        {
-          url: 'http://localhost:3001/models/download',
           body: { s3Key: 'models/user-models/gpt/trump.ckpt' },
         },
         {
-          url: 'http://localhost:3001/inference/weights/gpt',
-          body: { weightsPath: '/tmp/model_cache/trump.ckpt' },
+          url: 'http://localhost:3001/models/download',
+          body: { s3Key: 'models/user-models/sovits/trump.pth' },
+        },
+        {
+          url: 'http://localhost:3001/inference/weights/pair',
+          body: {
+            gptPath: '/tmp/model_cache/trump.ckpt',
+            sovitsPath: '/tmp/model_cache/trump.pth',
+          },
         },
         {
           url: 'http://localhost:3001/ref-audio/warm',

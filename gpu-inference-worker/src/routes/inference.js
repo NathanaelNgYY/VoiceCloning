@@ -10,8 +10,10 @@ import {
   restoreLongTextChunkVersion,
   deleteLongTextChunk,
   insertLongTextChunk,
-  getLongTextSessionMetadata,
+  hydrateLongTextSession,
+  persistLongTextSession,
   cancelSession,
+  requestSessionCancellation,
   applyFullInferenceQualityPreset,
   fullInferenceQualityOptions,
   analyzeAudioQuality,
@@ -47,14 +49,11 @@ import { SynthesisQueueError, synthesisScheduler } from '../services/synthesisSc
 import { ensureRequestVoiceModel, voiceModelKey } from '../services/requestVoiceModel.js';
 
 const router = Router();
-let activeLiveTtsRequests = 0;
-
 export function synthesisBusy() {
   // `inferenceState` is progress/history and can remain waiting/generating after a
   // browser disconnect or old process error. Ownership comes only from a live Fast
   // request, regeneration lock, or an active long-text session.
   return synthesisScheduler.getStats().active > 0
-    || activeLiveTtsRequests > 0
     || hasActiveInferenceSession();
 }
 
@@ -89,6 +88,16 @@ function sendSynthesisError(res, error) {
     });
   }
   return res.status(500).json({ error: error.message });
+}
+
+async function acquireSessionLease(req, res, sessionId) {
+  const session = await hydrateLongTextSession(sessionId);
+  req.body = {
+    ...(req.body || {}),
+    ...(session.params?.voice_model ? { voice_model: session.params.voice_model } : {}),
+  };
+  const lease = await acquireSynthesisLease(req, res);
+  return { lease, session };
 }
 
 // Pronunciation-dictionary words for the chunker, so a medical dictionary term is
@@ -495,12 +504,16 @@ router.post('/inference/weights/gpt', async (req, res) => {
     return res.status(404).json({ error: `GPT weights file not found: ${weightsPath}` });
   }
 
+  let lease = null;
   try {
+    lease = await synthesisScheduler.acquire({ modelKey: `admin:gpt:${weightsPath}` });
     const status = await inferenceServer.setGPTWeights(weightsPath);
     activityState.mark();
     res.json(status);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSynthesisError(res, err);
+  } finally {
+    lease?.release();
   }
 });
 
@@ -513,12 +526,45 @@ router.post('/inference/weights/sovits', async (req, res) => {
     return res.status(404).json({ error: `SoVITS weights file not found: ${weightsPath}` });
   }
 
+  let lease = null;
   try {
+    lease = await synthesisScheduler.acquire({ modelKey: `admin:sovits:${weightsPath}` });
     const status = await inferenceServer.setSoVITSWeights(weightsPath);
     activityState.mark();
     res.json(status);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSynthesisError(res, err);
+  } finally {
+    lease?.release();
+  }
+});
+
+router.post('/inference/weights/pair', async (req, res) => {
+  const gptPath = String(req.body?.gptPath || '').trim();
+  const sovitsPath = String(req.body?.sovitsPath || '').trim();
+  if (!gptPath && !sovitsPath) {
+    return res.status(400).json({ error: 'gptPath or sovitsPath is required' });
+  }
+  if (gptPath && !fs.existsSync(gptPath)) {
+    return res.status(404).json({ error: `GPT weights file not found: ${gptPath}` });
+  }
+  if (sovitsPath && !fs.existsSync(sovitsPath)) {
+    return res.status(404).json({ error: `SoVITS weights file not found: ${sovitsPath}` });
+  }
+
+  let lease = null;
+  try {
+    lease = await synthesisScheduler.acquire({
+      modelKey: `admin:pair:${gptPath}:${sovitsPath}`,
+    });
+    if (sovitsPath) await inferenceServer.setSoVITSWeights(sovitsPath);
+    if (gptPath) await inferenceServer.setGPTWeights(gptPath);
+    activityState.mark();
+    return res.json(inferenceServer.getStatusSnapshot());
+  } catch (err) {
+    return sendSynthesisError(res, err);
+  } finally {
+    lease?.release();
   }
 });
 
@@ -583,7 +629,10 @@ router.post('/inference', async (req, res) => {
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
       expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
     ));
-    const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
+    const qualityParams = {
+      ...applyFullInferenceQualityPreset(resolvedParams),
+      ...(req.body?.voice_model ? { voice_model: { ...req.body.voice_model } } : {}),
+    };
     const { audioBuffer, chunks } = await synthesizeLongText(qualityParams, fullInferenceQualityOptions({
       ...readFullChunkingOptions(req.body),
       ...verificationOptions(qualityParams, { finalWordTailCheck: true }),
@@ -626,7 +675,10 @@ router.post('/inference/generate', async (req, res) => {
     resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
       expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
     ));
-    const qualityParams = applyFullInferenceQualityPreset(resolvedParams);
+    const qualityParams = {
+      ...applyFullInferenceQualityPreset(resolvedParams),
+      ...(req.body?.voice_model ? { voice_model: { ...req.body.voice_model } } : {}),
+    };
     const sessionId = crypto.randomUUID();
     inferenceState.resetForNewSession({ sessionId, params: qualityParams });
     sseManager.prepareSession(sessionId);
@@ -667,14 +719,12 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
   const previousFallbackReason = String(req.body?.previousFallbackReason || '');
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
-  if (synthesisBusy()) {
-    return res.status(409).json({ error: 'Another generation is already running on this instance' });
-  }
-
-  activeLiveTtsRequests += 1;
+  let lease = null;
   try {
     activityState.mark();
-    const session = getLongTextSessionMetadata(sessionId);
+    const acquired = await acquireSessionLease(req, res, sessionId);
+    lease = acquired.lease;
+    const { session } = acquired;
     let preparedReplacement = '';
     if (replacementText) {
       preparedReplacement = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
@@ -691,13 +741,15 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
     previousDisplayText,
     previousFallback,
     previousFallbackReason);
+    await persistLongTextSession(sessionId);
     activityState.mark();
     return res.json(result);
   } catch (err) {
+    if (err instanceof SynthesisQueueError) return sendSynthesisError(res, err);
     const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
     return res.status(status).json({ error: err.message });
   } finally {
-    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    lease?.release();
   }
 });
 
@@ -708,12 +760,12 @@ router.post('/inference/restore-chunk', async (req, res) => {
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
   if (!/^[A-Za-z0-9-]+$/u.test(versionId)) return res.status(400).json({ error: 'Invalid versionId' });
-  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
-
-  activeLiveTtsRequests += 1;
+  let lease = null;
   try {
     activityState.mark();
-    const session = getLongTextSessionMetadata(sessionId);
+    const acquired = await acquireSessionLease(req, res, sessionId);
+    lease = acquired.lease;
+    const { session } = acquired;
     const result = await restoreLongTextChunkVersion(
       sessionId,
       index,
@@ -723,13 +775,15 @@ router.post('/inference/restore-chunk', async (req, res) => {
       req.body?.currentFallback === true,
       String(req.body?.currentFallbackReason || ''),
     );
+    await persistLongTextSession(sessionId);
     activityState.mark();
     return res.json(result);
   } catch (err) {
+    if (err instanceof SynthesisQueueError) return sendSynthesisError(res, err);
     const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
     return res.status(status).json({ error: err.message });
   } finally {
-    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    lease?.release();
   }
 });
 
@@ -738,20 +792,22 @@ router.post('/inference/delete-chunk', async (req, res) => {
   const index = Number(req.body?.index);
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
-  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
-
-  activeLiveTtsRequests += 1;
+  let lease = null;
   try {
     activityState.mark();
-    const session = getLongTextSessionMetadata(sessionId);
+    const acquired = await acquireSessionLease(req, res, sessionId);
+    lease = acquired.lease;
+    const { session } = acquired;
     const result = await deleteLongTextChunk(sessionId, index, session.options || {});
+    await persistLongTextSession(sessionId);
     activityState.mark();
     return res.json(result);
   } catch (err) {
+    if (err instanceof SynthesisQueueError) return sendSynthesisError(res, err);
     const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
     return res.status(status).json({ error: err.message });
   } finally {
-    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    lease?.release();
   }
 });
 
@@ -762,12 +818,12 @@ router.post('/inference/insert-chunk', async (req, res) => {
   if (!/^[A-Za-z0-9-]+$/u.test(sessionId)) return res.status(400).json({ error: 'Invalid sessionId' });
   if (!Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid chunk index' });
   if (!displayText) return res.status(400).json({ error: 'Chunk text is required' });
-  if (synthesisBusy()) return res.status(409).json({ error: 'Another generation is already running on this instance' });
-
-  activeLiveTtsRequests += 1;
+  let lease = null;
   try {
     activityState.mark();
-    const session = getLongTextSessionMetadata(sessionId);
+    const acquired = await acquireSessionLease(req, res, sessionId);
+    lease = acquired.lease;
+    const { session } = acquired;
     const preparedText = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
       expandSsml(displayText, { protectedWords: await arpabetProtectedWords() }),
     ));
@@ -776,27 +832,40 @@ router.post('/inference/insert-chunk', async (req, res) => {
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),
       avoidChunkFinalWords: await chunkingDictionaryWords(),
     }), preparedText, displayText);
+    await persistLongTextSession(sessionId);
     activityState.mark();
     return res.json(result);
   } catch (err) {
+    if (err instanceof SynthesisQueueError) return sendSynthesisError(res, err);
     const status = /no longer available|unavailable/iu.test(err.message) ? 404 : 500;
     return res.status(status).json({ error: err.message });
   } finally {
-    activeLiveTtsRequests = Math.max(0, activeLiveTtsRequests - 1);
+    lease?.release();
   }
 });
 
 router.get('/inference/progress/:sessionId', (req, res) => {
-  sseManager.addClient(req.params.sessionId, res);
+  const { sessionId } = req.params;
+  if (hasActiveInferenceSession(sessionId) || sseManager.hasPreparedSession(sessionId)) {
+    sseManager.addClient(sessionId, res);
+    return;
+  }
+  sseManager.addSharedClient(sessionId, res);
 });
 
-router.post('/inference/cancel', (req, res) => {
+router.post('/inference/cancel', async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId is required' });
   }
 
-  const cancelled = cancelSession(sessionId);
+  let cancelled;
+  try {
+    cancelled = await requestSessionCancellation(sessionId);
+  } catch {
+    // S3 is best-effort for a local single-target deployment.
+    cancelled = cancelSession(sessionId);
+  }
   // Always drive state terminal so a stale non-terminal state can be cleared,
   // even if the session already ended (no active session left to signal).
   if (['waiting', 'generating'].includes(inferenceState.getState().status)) {

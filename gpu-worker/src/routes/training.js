@@ -8,6 +8,46 @@ import { activityState } from '../services/activityState.js';
 
 const router = Router();
 const sessions = new Map();
+const pendingSessions = [];
+const maxTrainingQueueDepth = Math.max(
+  1,
+  Math.min(100, Number.parseInt(process.env.TRAINING_MAX_QUEUE_DEPTH || '20', 10) || 20),
+);
+let activeSessionId = '';
+
+async function runNextTrainingSession() {
+  if (activeSessionId || pendingSessions.length === 0) return;
+  const sessionId = pendingSessions.shift();
+  const session = sessions.get(sessionId);
+  if (!session) return runNextTrainingSession();
+
+  activeSessionId = sessionId;
+  session.status = 'waiting-for-client';
+  trainingState.resetForNewSession({ sessionId, expName: session.expName });
+  sseManager.send(sessionId, 'queue-start', {
+    sessionId,
+    queuedForMs: Date.now() - session.queuedAt,
+  });
+
+  try {
+    await sseManager.waitForClient(sessionId);
+    session.status = 'running';
+    trainingState.setStatus('running');
+    await runPipelineWithS3(sessionId, session.pipeline);
+  } catch (err) {
+    if (err.message === 'SSE client did not connect in time') {
+      trainingState.clear();
+      sseManager.clearSession(sessionId);
+    } else {
+      trainingState.setError(err.message || 'Pipeline failed');
+      sseManager.send(sessionId, 'error', { message: err.message || 'Pipeline failed' });
+    }
+  } finally {
+    sessions.delete(sessionId);
+    activeSessionId = '';
+    runNextTrainingSession();
+  }
+}
 
 router.post('/train', (req, res) => {
   const { expName, email = '', config = {} } = req.body;
@@ -19,22 +59,23 @@ router.post('/train', (req, res) => {
   if (email && !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: 'Invalid email address' });
   }
-  if (sessions.size > 0 || processManager.hasRunningProcesses()) {
-    return res.status(409).json({ error: 'A training pipeline is already running' });
+  if (pendingSessions.length >= maxTrainingQueueDepth) {
+    return res.status(429).json({
+      error: 'The training queue is full. Please retry later.',
+      queueDepth: pendingSessions.length,
+    });
   }
 
   const sessionId = uuidv4();
   const s3Prefix = `training/datasets/${expName}/raw/`;
 
-  sessions.set(sessionId, { expName, email, startedAt: Date.now() });
-  trainingState.resetForNewSession({ sessionId, expName });
-  sseManager.prepareSession(sessionId);
-
-  res.json({ sessionId, steps: STEPS });
-
-  sseManager.waitForClient(sessionId).then(() => {
-    trainingState.setStatus('running');
-    return runPipelineWithS3(sessionId, {
+  const queuedAt = Date.now();
+  sessions.set(sessionId, {
+    expName,
+    email,
+    queuedAt,
+    status: 'queued',
+    pipeline: {
       expName,
       email,
       s3Prefix,
@@ -48,18 +89,19 @@ router.post('/train', (req, res) => {
       skipDenoise: config.skipDenoise,
       selectedReferences: config.selectedReferences,
       sourceDatasetStats: config.sourceDatasetStats,
-    });
-  }).catch((err) => {
-    if (err.message === 'SSE client did not connect in time') {
-      trainingState.clear();
-      sseManager.clearSession(sessionId);
-    } else {
-      trainingState.setError(err.message || 'Pipeline failed');
-      sseManager.send(sessionId, 'error', { message: err.message || 'Pipeline failed' });
-    }
-  }).finally(() => {
-    sessions.delete(sessionId);
+    },
   });
+  sseManager.prepareSession(sessionId);
+  pendingSessions.push(sessionId);
+  const queuePosition = pendingSessions.length + (activeSessionId ? 1 : 0);
+  sseManager.send(sessionId, 'queued', {
+    sessionId,
+    queuePosition,
+    queueDepth: pendingSessions.length,
+  });
+
+  res.json({ sessionId, steps: STEPS, queuePosition });
+  runNextTrainingSession();
 });
 
 router.get('/train/progress/:sessionId', (req, res) => {
@@ -71,6 +113,13 @@ router.post('/train/stop', (req, res) => {
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId is required' });
   }
+  const pendingIndex = pendingSessions.indexOf(sessionId);
+  if (pendingIndex >= 0) {
+    pendingSessions.splice(pendingIndex, 1);
+    sessions.delete(sessionId);
+    sseManager.send(sessionId, 'error', { message: 'Queued training cancelled by user' });
+    return res.json({ message: 'Queued training cancelled' });
+  }
   const killed = processManager.kill(sessionId);
   if (killed) {
     activityState.mark();
@@ -79,11 +128,27 @@ router.post('/train/stop', (req, res) => {
   trainingState.clear();
   sseManager.clearSession(sessionId);
   sessions.delete(sessionId);
+  if (activeSessionId === sessionId) activeSessionId = '';
+  runNextTrainingSession();
   res.json({ message: 'Training stopped' });
 });
 
-router.get('/train/current', (_req, res) => {
-  res.json(trainingState.getState());
+router.get('/train/current', (req, res) => {
+  const requested = String(req.query?.sessionId || '').trim();
+  const queued = requested ? sessions.get(requested) : null;
+  if (queued && requested !== activeSessionId) {
+    return res.json({
+      sessionId: requested,
+      expName: queued.expName,
+      status: 'queued',
+      queuePosition: pendingSessions.indexOf(requested) + 1,
+      queueDepth: pendingSessions.length,
+    });
+  }
+  res.json({
+    ...trainingState.getState(),
+    queueDepth: pendingSessions.length,
+  });
 });
 
 export default router;

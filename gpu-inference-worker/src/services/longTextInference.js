@@ -5,7 +5,7 @@ import { inferenceServer } from './inferenceServer.js';
 import { sseManager } from './sseManager.js';
 import { inferenceState } from './inferenceState.js';
 import { LOCAL_TEMP_ROOT, COMMA_PAUSE_SECONDS, COMMA_PAUSE_MS, FULL_MAX_CHUNK_LENGTH } from '../config.js';
-import { uploadBuffer } from './s3Storage.js';
+import { getObject, headObject, listObjects, uploadBuffer } from './s3Storage.js';
 import { prepareTextForFullSynthesis } from './textPronunciation.js';
 import {
   splitOnBreaks,
@@ -1344,7 +1344,8 @@ export function analyzeAudioQuality(buffer, expectedText = '') {
 }
 
 export function buildAttemptVariants(baseParams, attemptIndex) {
-  const synthesisBaseParams = baseParams;
+  // Scheduler/session metadata must never be forwarded to GPT-SoVITS' /tts schema.
+  const { voice_model: _voiceModel, ...synthesisBaseParams } = baseParams;
   const speed = clampNumber(baseParams.speed_factor, 1);
 
   const requestedSeed = Number(baseParams.seed);
@@ -1859,6 +1860,62 @@ export function getLongTextSessionMetadata(sessionId) {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 }
 
+export async function requestSessionCancellation(sessionId) {
+  cancelSession(sessionId);
+  await uploadBuffer(
+    `audio/output/${sessionId}/cancel.requested`,
+    Buffer.from(new Date().toISOString()),
+    'text/plain',
+  );
+  return true;
+}
+
+export async function hydrateLongTextSession(sessionId) {
+  const sessionDir = getSessionDir(sessionId);
+  const manifestPath = getSessionManifestPath(sessionId);
+  if (fs.existsSync(manifestPath)) return getLongTextSessionMetadata(sessionId);
+
+  const prefix = `audio/output/${sessionId}/`;
+  const objects = await listObjects(prefix);
+  const transferable = objects.filter((item) => {
+    const relative = item.key.slice(prefix.length);
+    return relative === 'session.json'
+      || relative === 'final.wav'
+      || /^chunk_(?:preview_)?\d+\.wav$/u.test(relative)
+      || /^chunk_versions\/\d+\/[A-Za-z0-9-]+\.wav$/u.test(relative);
+  });
+  if (!transferable.some((item) => item.key.endsWith('/session.json'))) {
+    throw new Error('Generation session is no longer available');
+  }
+
+  fs.mkdirSync(sessionDir, { recursive: true });
+  await Promise.all(transferable.map(async (item) => {
+    const relative = item.key.slice(prefix.length);
+    const localPath = path.join(sessionDir, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(localPath), { recursive: true });
+    fs.writeFileSync(localPath, await getObject(item.key));
+  }));
+  return getLongTextSessionMetadata(sessionId);
+}
+
+export async function persistLongTextSession(sessionId) {
+  const sessionDir = getSessionDir(sessionId);
+  if (!fs.existsSync(sessionDir)) return;
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    return entry.isDirectory() ? walk(entryPath) : [entryPath];
+  });
+  await Promise.all(walk(sessionDir).map((filePath) => {
+    const relative = path.relative(sessionDir, filePath).split(path.sep).join('/');
+    const contentType = relative.endsWith('.json') ? 'application/json' : 'audio/wav';
+    return uploadBuffer(
+      `audio/output/${sessionId}/${relative}`,
+      fs.readFileSync(filePath),
+      contentType,
+    );
+  }));
+}
+
 export async function synthesizeBreakAwareFullChunk(
   chunkText,
   baseParams,
@@ -2160,11 +2217,20 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   const sessionDir = getSessionDir(sessionId);
   fs.mkdirSync(sessionDir, { recursive: true });
-  fs.writeFileSync(getSessionManifestPath(sessionId), JSON.stringify({
+  const initialManifest = {
     params,
     chunks,
     options: serializableSessionOptions(options),
-  }, null, 2));
+  };
+  const initialManifestBuffer = Buffer.from(JSON.stringify(initialManifest, null, 2));
+  fs.writeFileSync(getSessionManifestPath(sessionId), initialManifestBuffer);
+  uploadBuffer(
+    `audio/output/${sessionId}/session.json`,
+    initialManifestBuffer,
+    'application/json',
+  ).catch((err) => {
+    console.error(`[inference] Failed to upload session manifest: ${err.message}`);
+  });
 
   const session = { cancelled: false };
   activeSessions.set(sessionId, session);
@@ -2180,7 +2246,10 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
 
   try {
     for (let index = 0; index < chunks.length; index++) {
-      if (session.cancelled) {
+      if (
+        session.cancelled
+        || await headObject(`audio/output/${sessionId}/cancel.requested`).catch(() => null)
+      ) {
         throw new Error('Generation cancelled by user');
       }
 
@@ -2213,6 +2282,13 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
       const chunkPath = path.join(sessionDir, `chunk_${String(index).padStart(3, '0')}.wav`);
       fs.writeFileSync(chunkPath, chunkBuffer);
       chunkPaths.push(chunkPath);
+      uploadBuffer(
+        `audio/output/${sessionId}/chunk_${String(index).padStart(3, '0')}.wav`,
+        chunkBuffer,
+        'audio/wav',
+      ).catch((err) => {
+        console.error(`[inference] Failed to upload chunk ${index}: ${err.message}`);
+      });
 
       const chunkDuration = (Date.now() - chunkStart) / 1000;
       sseManager.send(sessionId, 'chunk-complete', {
@@ -2236,6 +2312,15 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     const fades = computeChunkFades(chunks);
     const finalBuffer = concatWavs(chunkBuffers, pauses, fades);
     writeNormalizedChunkPreviews(sessionId, chunkBuffers);
+    normalizeWavChunksForPreview(chunkBuffers).forEach((buffer, index) => {
+      uploadBuffer(
+        `audio/output/${sessionId}/chunk_preview_${String(index).padStart(3, '0')}.wav`,
+        buffer,
+        'audio/wav',
+      ).catch((err) => {
+        console.error(`[inference] Failed to upload chunk preview ${index}: ${err.message}`);
+      });
+    });
 
     const finalPath = path.join(sessionDir, 'final.wav');
     fs.writeFileSync(finalPath, finalBuffer);
