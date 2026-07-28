@@ -1,7 +1,8 @@
 # Staging Environment — Complete Architecture Reference
 
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
-**Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774 · **Last verified live:** 2026-07-07
+**Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
+**Last control-plane inventory:** 2026-07-07 · **Last public-path check:** 2026-07-28
 
 > **Keep this file up to date.** Any change to staging infra (console, CLI, or script) must be reflected here in the same PR/commit. Every ID below was read from AWS on the date above — an AI session can diff this file against `aws describe-*` output to detect drift.
 >
@@ -35,6 +36,18 @@ On-demand lifecycle: the Lambda **starts** the GPU when a user needs it; an Even
 | chatbot | d25sg72wp8oj5g.cloudfront.net | `E3MLIO4CZFOPEO` | `echolect-staging/dist-chatbot` |
 
 Each distro has three origin types: S3 (static, via OAC; bucket policy on the shared bucket includes all 3 distro ARNs), the staging Lambda Function URL (API/control paths), and the staging ALB (GPU paths). Full origin/behavior JSON snapshots: `docs/aws-snapshots/cf-*-staging.json` (note: snapshots are of the *original* distros used as templates — verify against live config before relying on them).
+
+**Complete environment map (do not infer environment from a similar name):**
+
+| Environment | GPU EC2 | Lambda | Training | Live TTS | Chatbot | S3 application prefix |
+|---|---|---|---|---|---|---|
+| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
+| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d3fwx6qxeaxfmo.cloudfront.net | `echolect/` |
+
+On 2026-07-28, the staging chatbot domain still served the older chatbot client. Its
+backend routes use the current staging Lambda/ALB/GPU stack. The dev chatbot domain is
+the current `chatbot-live-full` client-only deployment. UI replacement is not part of
+the 2026-08-03 capacity work unless a load-test failure proves it necessary.
 
 ## 3. Load balancer
 
@@ -132,7 +145,7 @@ All three expose `GET /healthz` for the ALB health checks. Direct-to-worker endp
 | CORS_ORIGIN | the 3 staging CloudFront domains (comma-separated) |
 | S3_BUCKET / S3_PREFIX / S3_REGION | `interns2026-small-projects-bucket-shared` / `echolect-staging/` / ap-southeast-1 |
 | ARTIFACT_SOURCE / MODEL_SOURCE | s3 / s3 |
-| LIVE_DEMO_LOCKOUT | false |
+| LIVE_DEMO_LOCKOUT | **true on the 2026-07-28 public `/api/config` check** (the 2026-07-07 control-plane snapshot recorded false) |
 | VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME / _VALUE | `x-internal-key` / *(redacted — read from the Lambda env)* |
 
 ## 7. S3 layout
@@ -158,7 +171,131 @@ Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-
 - **Manual stop/start:** EC2 console or `aws ec2 stop-instances/start-instances --instance-ids i-0f0da8be59367f7a8`. Same-instance stop/start preserves TG registration, Lambda config, and IP-independence (everything references the instance ID or ALB DNS).
 - **Smoke test:** `https://d1qh0ebsvevhy3.cloudfront.net/api/models` → 200 JSON; `/api/instance/status` → `workerReady:true` when the box is up; TG health `describe-target-health` all `healthy`.
 
-## 10. Known gaps / pending admin work (as of 2026-07-07)
+## 10. Multi-user readiness and 2026-08-03 event
+
+### Current limit
+
+The public staging paths were healthy on 2026-07-28: the GPU was running and ready,
+DeanVoice was loaded, and training/inference state was idle. This does **not** mean the
+system supports concurrent synthesis.
+
+- Staging has one `g6.xlarge` target.
+- `gpu-inference-worker` has one process-global model pair, one global inference state,
+  and an explicit one-synthesis-at-a-time lock.
+- Ordinary overlapping synthesis receives HTTP 409. The chatbot demo path can preempt
+  a long generation, and overlapping demo Live Fast calls can reach the same underlying
+  inference server concurrently. That behavior is unsafe under a burst.
+- Long inference progress/session files are instance-local. Horizontal scaling needs
+  session affinity or external session state. Dean's Live Fast one-shot sentence route
+  is substantially easier to scale because every request can be independent.
+- Lambda and CloudFront capacity are not the bottleneck at 50-100 users; GPU synthesis
+  throughput and request isolation are.
+
+### Recommended staging-only event design
+
+Do not use a SageMaker **training job**; it is batch model training, not online
+inference. Do not migrate this application to a SageMaker endpoint immediately before
+the event: the custom container contract, routing, session state, model loading, and
+observability would all need new integration and load testing.
+
+For 2026-08-03:
+
+1. Freeze the event path to DeanVoice + Live Fast one-shot sentence synthesis. Disable
+   training, model switching, Full inference, and demo preemption for the event window.
+2. Bake an immutable staging AMI/launch template with the tested commit, dependencies,
+   DeanVoice artifacts, health checks, and startup pre-warm. Fetch secrets at boot from
+   Secrets Manager or Parameter Store; never bake them into the AMI.
+3. Put inference instances in a staging Auto Scaling Group attached to a new
+   target-optimized inference target group. Run the AWS ALB Target Optimizer agent as
+   an inline proxy with maximum concurrency `1` per GPU. Keep the existing CloudFront,
+   Lambda, and ALB hostnames.
+4. Use On-Demand instances, at least two Availability Zones where `g6.xlarge` is
+   available, and reserve/confirm capacity before the event. Do not rely on Spot.
+5. Size the fleet from a representative load test. Pre-scale and pre-warm the measured
+   fleet by 07:15 SGT on 2026-08-03; reactive GPU auto scaling is only a safety net
+   because boot/model warm-up is too slow for an 08:00 burst.
+6. Keep a small bounded retry/backoff path for ALB 503/worker busy responses, but do not
+   hold a large synchronous queue behind CloudFront's origin timeout. If measured demand
+   exceeds affordable GPU capacity, the product must expose an asynchronous job/queue
+   flow; that is a larger UI/API change.
+
+Target Optimizer requires new target groups and an agent on every target; it cannot be
+enabled on the existing target group. Apply it to inference only. WebSocket connections
+on port 3002 and training on port 3001 have different concurrency semantics.
+
+### Load-test acceptance plan
+
+Test the complete staging CloudFront route with production-shaped requests and a fixed
+DeanVoice profile. Do not benchmark only static files or `/api/instance/status`.
+
+1. Establish single-request baseline service time and real-time factor for short,
+   medium, and long chatbot sentences.
+2. Run 10, 25, 50, then 60 concurrent virtual users. Use independent clients/DNS and a
+   5-minute ramp, 15-minute hold, plus a 50-user near-simultaneous burst.
+3. Model think time from the lecture workflow; “100 logged in, 50% active” is not the
+   same as 50 synthesis requests every second.
+4. Pass only if there is no cross-user cancellation/audio mix-up, no worker crash/OOM,
+   no sustained 409/429/5xx, and agreed p95 latency is met. Record p50/p95/p99 latency,
+   request success, retries, queue/wait time, ALB response time, Lambda duration/
+   throttles, GPU utilization/memory, and per-target active requests.
+5. Repeat the accepted load for 60 minutes, then perform one target termination during
+   a lower-load resilience run and verify draining/replacement.
+6. Run a final rehearsal on 2026-08-02 at 08:00 SGT with the exact fleet size and keep
+   a rollback path to the original single instance/target group.
+
+CloudFront load testing must use multiple independent clients and DNS resolution. It is
+not permitted when Origin Shield is enabled or when the tested cache behavior has a
+Lambda@Edge viewer-request/viewer-response trigger; verify both before the run.
+
+Capacity formula after measurement:
+
+`required GPUs = ceil(peak synthesis requests/second × p95 service seconds ÷ target utilization)`
+
+Use a target utilization no higher than `0.7` for the event. Also test the true
+simultaneous burst: the formula describes sustained throughput, not the wait experienced
+when 50 students all submit at once.
+
+### AWS permissions needed
+
+Keep discovery and implementation permissions in separate, short-lived sessions. Scope
+write access to resources tagged `Environment=staging` and the staging S3 prefix wherever
+the AWS action supports resource conditions.
+
+Read-only audit:
+
+- `sts:GetCallerIdentity`, plus `sts:AssumeRole` on
+  `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
+- EC2/Auto Scaling/ELB describe actions; CloudFront get/list; Lambda get/list; S3
+  `ListBucket` for `echolect-staging/*` plus bucket configuration reads
+- CloudWatch metric/alarm reads, CloudWatch Logs describe/get/filter, Service Quotas
+  get/list, and SSM describe/list/get-command-invocation
+
+Staging implementation:
+
+- EC2 launch-template, image, security-group-rule, capacity-reservation, tag, and
+  run/terminate actions needed by the approved design
+- Auto Scaling create/update/tag/attach-target-group, policy, scheduled-action,
+  lifecycle-hook, instance-refresh, and warm-pool actions
+- ELB create/modify/tag target groups, target registration, target health, and listener
+  rule changes (Target Optimizer requires a new target group)
+- `iam:PassRole` limited to the existing staging EC2 instance profile and
+  `iam:CreateServiceLinkedRole` only if the Auto Scaling service-linked role is absent
+- SSM `SendCommand`/session access to staging instances; Secrets Manager or Parameter
+  Store read for the instance role that retrieves runtime secrets
+- CloudWatch `PutMetricData`, log delivery, dashboard/alarm writes, and SNS notification
+  writes for the staging observability resources
+- Service Quotas `RequestServiceQuotaIncrease` for the Seoul EC2 G/VT quota if the
+  applied vCPU quota is too low
+- Lambda configuration/code/concurrency writes only if retry, event-mode, or monitoring
+  changes are implemented; S3 object access restricted to
+  `arn:aws:s3:::interns2026-small-projects-bucket-shared/echolect-staging/*`
+
+CloudFront changes are not expected for the preferred design because its ALB origin DNS
+stays stable. Load-test runners need no AWS write permission when run externally; an
+AWS-hosted distributed runner additionally needs its own CloudFormation/ECS/Fargate,
+ECR, S3, CloudWatch Logs, and `iam:PassRole` permissions.
+
+## 11. Known gaps / pending admin work (updated 2026-07-28)
 
 1. **Idle-stop EventBridge rule `vcs-staging-gpu-idle-stop` does not exist yet** — GPU must be stopped manually (g6.xlarge ≈ $1/hr). Admin commands (`events:*` is denied for our role):
 ```powershell
@@ -172,3 +309,9 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
+7. The 2026-08-03 fleet size is unknown until representative DeanVoice throughput is
+   measured. Confirm the Seoul On-Demand G/VT vCPU quota and `g6.xlarge` capacity before
+   building the Auto Scaling Group.
+8. Live AWS control-plane drift after 2026-07-07 still needs a fresh read-only inventory.
+   The local AWS CLI executable is blocked by Windows Application Control; use an
+   approved AWS SDK/CLI environment with short-lived credentials and do not persist them.
