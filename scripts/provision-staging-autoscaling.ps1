@@ -243,26 +243,90 @@ if ($Apply -and $targetGroupArn) {
   )
 }
 if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
-  $trackingConfig = @{
-    PredefinedMetricSpecification = @{
-      PredefinedMetricType = 'ALBRequestCountPerTarget'
-      ResourceLabel = "$albResource/$targetGroupResource"
+  $scaleOutPolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
+    --auto-scaling-group-name $cfg.autoScalingGroupName `
+    --policy-name vcs-staging-inference-all-capacity-busy `
+    --policy-type StepScaling `
+    --adjustment-type PercentChangeInCapacity `
+    --min-adjustment-magnitude 1 `
+    --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --metric-aggregation-type Maximum `
+    --step-adjustments "MetricIntervalLowerBound=0,ScalingAdjustment=$($cfg.scaleOutPercentWhenFull)"
+
+  $scaleInPolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
+    --auto-scaling-group-name $cfg.autoScalingGroupName `
+    --policy-name vcs-staging-inference-idle-scale-in `
+    --policy-type StepScaling `
+    --adjustment-type ChangeInCapacity `
+    --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --metric-aggregation-type Maximum `
+    --step-adjustments 'MetricIntervalUpperBound=0,ScalingAdjustment=-1'
+
+  $capacityAlarmMetrics = @(
+    @{
+      Id = 'free'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'TargetControlWorkQueueLength'
+          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
+        }
+        Period = 60
+        Stat = 'Sum'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'rejected'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'TargetControlRequestRejectCount'
+          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
+        }
+        Period = 60
+        Stat = 'Sum'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'full'
+      Label = 'All Target Optimizer capacity busy with rejected traffic'
+      Expression = 'IF((FILL(free,0)<=0)*(FILL(rejected,0)>0),1,0)'
+      ReturnData = $true
     }
-    TargetValue = 6
-    DisableScaleIn = $false
-  } | ConvertTo-Json -Depth 4 -Compress
-  $trackingConfigPath = Join-Path $env:TEMP 'vcs-staging-target-tracking.json'
+  ) | ConvertTo-Json -Depth 8 -Compress
+  $capacityAlarmMetricsPath = Join-Path $env:TEMP 'vcs-staging-capacity-alarm-metrics.json'
   [IO.File]::WriteAllText(
-    $trackingConfigPath,
-    $trackingConfig,
+    $capacityAlarmMetricsPath,
+    $capacityAlarmMetrics,
     (New-Object Text.UTF8Encoding($false))
   )
-  Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
+  Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
+    --alarm-name vcs-staging-inference-all-capacity-busy-1m `
+    --alarm-description 'Scale out only when no Target Optimizer work capacity is advertised and requests are rejected for one minute.' `
+    --evaluation-periods 1 --datapoints-to-alarm 1 `
+    --threshold 1 --comparison-operator GreaterThanOrEqualToThreshold `
+    --treat-missing-data notBreaching `
+    --metrics "file://$capacityAlarmMetricsPath" `
+    --alarm-actions $scaleOutPolicy.PolicyARN
+
+  Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
+    --alarm-name vcs-staging-inference-no-traffic-15m `
+    --alarm-description 'Scale in one instance after fifteen consecutive minutes with no Target Optimizer requests.' `
+    --namespace AWS/ApplicationELB `
+    --metric-name TargetControlRequestCount `
+    --dimensions "Name=LoadBalancer,Value=$albResource" `
+    --statistic Sum --period 60 `
+    --evaluation-periods $cfg.scaleInIdleMinutes `
+    --datapoints-to-alarm $cfg.scaleInIdleMinutes `
+    --threshold 0 --comparison-operator LessThanOrEqualToThreshold `
+    --treat-missing-data breaching `
+    --alarm-actions $scaleInPolicy.PolicyARN
+
+  Invoke-AwsJson -AllowNotFound autoscaling delete-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
-    --policy-name vcs-staging-inference-request-rate `
-    --policy-type TargetTrackingScaling `
-    --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
-    --target-tracking-configuration "file://$trackingConfigPath"
+    --policy-name vcs-staging-inference-request-rate
 } elseif ($Apply) {
   Write-Host 'Scaling policy deferred until the inference listener routes to the optimized target group.'
 }

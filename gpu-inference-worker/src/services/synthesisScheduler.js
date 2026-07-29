@@ -37,6 +37,7 @@ export class SynthesisScheduler {
     return {
       active: this.active,
       queued: this.queue.length,
+      priorityQueued: this.queue.filter((entry) => entry.priority).length,
       maxConcurrency: this.maxConcurrency,
       maxQueueDepth: this.maxQueueDepth,
       activeModelKey: this.activeModelKey || null,
@@ -48,7 +49,7 @@ export class SynthesisScheduler {
     return this.active === 0 || this.activeModelKey === modelKey;
   }
 
-  acquire({ modelKey, signal } = {}) {
+  acquire({ modelKey, signal, priority = false } = {}) {
     const normalizedKey = normalizedModelKey(modelKey);
     if (signal?.aborted) {
       return Promise.reject(new SynthesisQueueError(499, 'Request was cancelled while waiting for the GPU', 'QUEUE_ABORTED'));
@@ -70,6 +71,7 @@ export class SynthesisScheduler {
     return new Promise((resolve, reject) => {
       const entry = {
         modelKey: normalizedKey,
+        priority: priority === true,
         enqueuedAt: this.now(),
         resolve,
         reject,
@@ -98,7 +100,13 @@ export class SynthesisScheduler {
         this.drain();
       };
       signal?.addEventListener('abort', entry.onAbort, { once: true });
-      this.queue.push(entry);
+      if (entry.priority) {
+        const firstNormal = this.queue.findIndex((queued) => !queued.priority);
+        if (firstNormal === -1) this.queue.push(entry);
+        else this.queue.splice(firstNormal, 0, entry);
+      } else {
+        this.queue.push(entry);
+      }
       this.drain();
     });
   }

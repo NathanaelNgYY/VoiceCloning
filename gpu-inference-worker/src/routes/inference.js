@@ -66,6 +66,7 @@ async function acquireSynthesisLease(req, res) {
     lease = await synthesisScheduler.acquire({
       modelKey: voiceModelKey(req.body),
       signal: controller.signal,
+      priority: Number.parseInt(req.get('X-VCS-Capacity-Retry') || '0', 10) > 0,
     });
     req.off('aborted', abort);
     res.set('X-Synthesis-Queue-Wait-Ms', String(lease.queueWaitMs));

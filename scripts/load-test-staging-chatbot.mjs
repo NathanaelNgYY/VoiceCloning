@@ -21,6 +21,8 @@ const audioPath = process.env.VCS_CHATBOT_AUDIO_WAV
   || new URL('../.tmp/chatbot-load-question.wav', import.meta.url);
 const timeoutMs = Number.parseInt(process.env.VCS_CHATBOT_TIMEOUT_MS || '180000', 10);
 const audioFrameMs = Number.parseInt(process.env.VCS_CHATBOT_AUDIO_FRAME_MS || '100', 10);
+const turnCount = Number.parseInt(process.env.VCS_CHATBOT_TURNS || '1', 10);
+const thinkTimeMs = Number.parseInt(process.env.VCS_CHATBOT_THINK_MS || '250', 10);
 const paceAudio = process.env.VCS_CHATBOT_PACE_AUDIO !== 'false';
 const manualCommit = process.env.VCS_CHATBOT_MANUAL_COMMIT === 'true';
 const voiceProfileId = process.env.VCS_CHATBOT_VOICE_PROFILE_ID || 'deanvoice-v1';
@@ -33,6 +35,12 @@ if (!Number.isInteger(timeoutMs) || timeoutMs < 10_000 || timeoutMs > 600_000) {
 }
 if (!Number.isInteger(audioFrameMs) || audioFrameMs < 20 || audioFrameMs > 1000) {
   throw new Error('VCS_CHATBOT_AUDIO_FRAME_MS must be from 20 to 1000.');
+}
+if (!Number.isInteger(turnCount) || turnCount < 1 || turnCount > 10) {
+  throw new Error('VCS_CHATBOT_TURNS must be from 1 to 10.');
+}
+if (!Number.isInteger(thinkTimeMs) || thinkTimeMs < 0 || thinkTimeMs > 60_000) {
+  throw new Error('VCS_CHATBOT_THINK_MS must be from 0 to 60000.');
 }
 
 function percentile(sorted, fraction) {
@@ -206,14 +214,16 @@ function splitResponseChunks(text, maxChunkLength = 280) {
 
 function makeSession(index, audio, productionPrompt) {
   const marker = markerFor(index);
-  const timings = { createdAt: performance.now() };
+  const createdAt = performance.now();
   const ready = deferred();
   const result = deferred();
   let settled = false;
   let started = false;
-  let transcript = '';
-  let assistantText = '';
-  let assistantFirstTokenAt = null;
+  let turnIndex = -1;
+  let connectedAt = null;
+  let readyAt = null;
+  let currentTurn = null;
+  const completedTurns = [];
 
   const socket = new WebSocket(wsUrl, {
     headers: { Origin: origin },
@@ -231,6 +241,7 @@ function makeSession(index, audio, productionPrompt) {
     result.resolve({
       user: index + 1,
       marker,
+      turns: completedTurns,
       ...payload,
     });
   };
@@ -238,18 +249,19 @@ function makeSession(index, audio, productionPrompt) {
   const fail = (error) => finish({
     ok: false,
     error: error instanceof Error ? error.message : String(error),
-    transcript,
-    responseWords: assistantText.trim().split(/\s+/u).filter(Boolean).length,
   });
 
-  const timer = setTimeout(() => fail(new Error(`Session timed out after ${timeoutMs} ms`)), timeoutMs);
+  const timer = setTimeout(
+    () => fail(new Error(`Session timed out after ${timeoutMs * turnCount} ms`)),
+    timeoutMs * turnCount,
+  );
 
   socket.on('open', () => {
-    timings.connectedAt = performance.now();
+    connectedAt = performance.now();
     const systemPrompt = `${productionPrompt}
 
 # Controlled staging load-test instruction
-Reply to the next question in exactly one short sentence of no more than 24 words.
+Reply to every question in exactly one short sentence of no more than 24 words.
 Begin that sentence exactly with "${marker}."`;
     socket.send(JSON.stringify({
       type: 'session.init',
@@ -268,31 +280,34 @@ Begin that sentence exactly with "${marker}."`;
     }
 
     if (message.type === 'session.ready') {
-      timings.readyAt = performance.now();
+      readyAt = performance.now();
       ready.resolve(true);
       return;
     }
     if (message.type === 'user.text.done') {
-      transcript = String(message.text || '');
-      timings.transcriptAt = performance.now();
+      if (!currentTurn) return;
+      currentTurn.transcript = String(message.text || '');
+      currentTurn.transcriptAt = performance.now();
       return;
     }
-    if (message.type === 'assistant.text.delta' && assistantFirstTokenAt == null) {
-      assistantFirstTokenAt = performance.now();
+    if (message.type === 'assistant.text.delta' && currentTurn?.assistantFirstTokenAt == null) {
+      currentTurn.assistantFirstTokenAt = performance.now();
       return;
     }
     if (message.type === 'assistant.text.done') {
-      timings.assistantDoneAt = performance.now();
-      assistantText = String(message.text || '').trim();
+      if (!currentTurn || currentTurn.processingAssistant) return;
+      currentTurn.processingAssistant = true;
+      currentTurn.assistantDoneAt = performance.now();
+      currentTurn.assistantText = String(message.text || '').trim();
       try {
-        const chunks = splitResponseChunks(assistantText);
+        const chunks = splitResponseChunks(currentTurn.assistantText);
         if (chunks.length === 0) throw new Error('Assistant response contained no speakable text.');
         const ttsStartedAt = performance.now();
         const chunkResults = [];
         for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
           const chunkStartedAt = performance.now();
           const response = await fetch(
-            `${ttsUrl}?chatbotLoadTest=${Date.now()}-${index}-${chunkIndex}`,
+            `${ttsUrl}?chatbotLoadTest=${Date.now()}-${index}-${turnIndex}-${chunkIndex}`,
             {
               method: 'POST',
               headers: {
@@ -309,7 +324,7 @@ Begin that sentence exactly with "${marker}."`;
           );
           const audioResponse = Buffer.from(await response.arrayBuffer());
           const chunkDoneAt = performance.now();
-          if (chunkIndex === 0) timings.firstVoiceAt = chunkDoneAt;
+          if (chunkIndex === 0) currentTurn.firstVoiceAt = chunkDoneAt;
           chunkResults.push({
             index: chunkIndex + 1,
             status: response.status,
@@ -322,18 +337,22 @@ Begin that sentence exactly with "${marker}."`;
           if (!chunkResults.at(-1).ok) break;
         }
         const ttsDoneAt = performance.now();
-        const ownMarker = containsUserMarker(assistantText, index + 1);
+        const ownMarker = containsUserMarker(currentTurn.assistantText, index + 1);
         const foreignMarkers = Array.from(
           { length: concurrency },
           (_, markerIndex) => markerIndex + 1,
-        ).filter((value) => value !== index + 1 && containsUserMarker(assistantText, value));
+        ).filter(
+          (value) => value !== index + 1
+            && containsUserMarker(currentTurn.assistantText, value),
+        );
         const validWavs = chunkResults.length === chunks.length
           && chunkResults.every((chunk) => chunk.ok);
 
-        finish({
+        const turnResult = {
+          turn: turnIndex + 1,
           ok: validWavs && foreignMarkers.length === 0,
-          transcript,
-          responseWords: assistantText.split(/\s+/u).filter(Boolean).length,
+          transcript: currentTurn.transcript || '',
+          responseWords: currentTurn.assistantText.split(/\s+/u).filter(Boolean).length,
           responseChunks: chunks.length,
           ownMarker,
           foreignMarkers,
@@ -341,28 +360,45 @@ Begin that sentence exactly with "${marker}."`;
           ttsBytes: chunkResults.reduce((sum, chunk) => sum + chunk.bytes, 0),
           chunkLatencyMs: chunkResults.map((chunk) => Math.round(chunk.latencyMs)),
           timingsMs: {
-            connect: timings.connectedAt - timings.createdAt,
-            sessionReady: timings.readyAt - timings.createdAt,
-            speechToTranscript: timings.transcriptAt == null || timings.speechEndedAt == null
+            speechToTranscript: currentTurn.transcriptAt == null
+              || currentTurn.speechEndedAt == null
               ? null
-              : timings.transcriptAt - timings.speechEndedAt,
-            speechToFirstToken: assistantFirstTokenAt == null || timings.speechEndedAt == null
+              : currentTurn.transcriptAt - currentTurn.speechEndedAt,
+            speechToFirstToken: currentTurn.assistantFirstTokenAt == null
+              || currentTurn.speechEndedAt == null
               ? null
-              : assistantFirstTokenAt - timings.speechEndedAt,
-            speechToTextDone: timings.speechEndedAt == null
+              : currentTurn.assistantFirstTokenAt - currentTurn.speechEndedAt,
+            speechToTextDone: currentTurn.speechEndedAt == null
               ? null
-              : timings.assistantDoneAt - timings.speechEndedAt,
-            timeToFirstVoice: timings.firstVoiceAt == null || timings.inputStartedAt == null
+              : currentTurn.assistantDoneAt - currentTurn.speechEndedAt,
+            timeToFirstVoice: currentTurn.firstVoiceAt == null
+              || currentTurn.inputStartedAt == null
               ? null
-              : timings.firstVoiceAt - timings.inputStartedAt,
-            speechToFirstVoice: timings.firstVoiceAt == null || timings.speechEndedAt == null
+              : currentTurn.firstVoiceAt - currentTurn.inputStartedAt,
+            speechToFirstVoice: currentTurn.firstVoiceAt == null
+              || currentTurn.speechEndedAt == null
               ? null
-              : timings.firstVoiceAt - timings.speechEndedAt,
+              : currentTurn.firstVoiceAt - currentTurn.speechEndedAt,
             voiceSynthesis: ttsDoneAt - ttsStartedAt,
-            endToEnd: timings.inputStartedAt == null ? null : ttsDoneAt - timings.inputStartedAt,
+            endToEnd: currentTurn.inputStartedAt == null
+              ? null
+              : ttsDoneAt - currentTurn.inputStartedAt,
           },
-          responseSample: assistantText.slice(0, 240),
-        });
+          responseSample: currentTurn.assistantText.slice(0, 240),
+        };
+        completedTurns.push(turnResult);
+        if (!turnResult.ok) {
+          finish({ ok: false, error: `Turn ${turnIndex + 1} voice generation failed.` });
+        } else if (completedTurns.length === turnCount) {
+          finish({
+            ok: true,
+            connectMs: Math.round(connectedAt - createdAt),
+            sessionReadyMs: Math.round(readyAt - createdAt),
+          });
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, thinkTimeMs));
+          await startNextTurn();
+        }
       } catch (error) {
         fail(error);
       }
@@ -378,10 +414,16 @@ Begin that sentence exactly with "${marker}."`;
     if (!settled) fail(new Error(`WebSocket closed (${code}): ${reason.toString()}`));
   });
 
-  async function start() {
-    if (settled || started) return;
-    started = true;
-    timings.inputStartedAt = performance.now();
+  async function startNextTurn() {
+    if (settled) return;
+    turnIndex += 1;
+    currentTurn = {
+      inputStartedAt: performance.now(),
+      assistantFirstTokenAt: null,
+      assistantText: '',
+      transcript: '',
+      processingAssistant: false,
+    };
     const frameBytes = Math.max(
       audio.blockAlign,
       Math.floor((audio.sampleRate * audio.blockAlign * audioFrameMs) / 1000),
@@ -405,12 +447,18 @@ Begin that sentence exactly with "${marker}."`;
       return true;
     };
     if (!await sendPcm(audio.pcm)) return;
-    timings.speechEndedAt = performance.now();
+    currentTurn.speechEndedAt = performance.now();
     if (!await sendPcm(trailingSilence)) return;
-    timings.inputCommittedAt = performance.now();
+    currentTurn.inputCommittedAt = performance.now();
     if (manualCommit) {
       socket.send(JSON.stringify({ type: 'input.commit' }));
     }
+  }
+
+  async function start() {
+    if (settled || started) return;
+    started = true;
+    await startNextTurn();
   }
 
   return {
@@ -438,72 +486,53 @@ const wallMs = performance.now() - wallStartedAt;
 const successful = results.filter((item) => item.ok);
 const failures = results.filter((item) => !item.ok);
 
-const metric = (name) => summarize(
-  successful.map((item) => item.timingsMs?.[name]).filter(Number.isFinite),
-);
+const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
+  const turnResults = results
+    .map((item) => item.turns?.[index])
+    .filter(Boolean);
+  const metric = (name) => summarize(
+    turnResults.map((item) => item.timingsMs?.[name]).filter(Number.isFinite),
+  );
+  return {
+    turn: index + 1,
+    completed: turnResults.filter((item) => item.ok).length,
+    failed: concurrency - turnResults.filter((item) => item.ok).length,
+    responseWords: summarize(turnResults.map((item) => item.responseWords)),
+    responseChunks: summarize(turnResults.map((item) => item.responseChunks)),
+    latencyMs: {
+      speechToTranscript: metric('speechToTranscript'),
+      speechToFirstToken: metric('speechToFirstToken'),
+      speechToTextDone: metric('speechToTextDone'),
+      timeToFirstVoice: metric('timeToFirstVoice'),
+      speechToFirstVoice: metric('speechToFirstVoice'),
+      firstVoiceChunk: summarize(
+        turnResults.map((item) => item.chunkLatencyMs?.[0]).filter(Number.isFinite),
+      ),
+      voiceSynthesis: metric('voiceSynthesis'),
+      endToEnd: metric('endToEnd'),
+    },
+  };
+});
 
 console.log(JSON.stringify({
   wsUrl,
   ttsUrl,
   concurrency,
+  turnCount,
+  thinkTimeMs,
   ready: readyCount,
   success: successful.length,
   failed: failures.length,
   wallMs: Math.round(wallMs),
-  latencyMs: {
-    connect: metric('connect'),
-    sessionReady: metric('sessionReady'),
-    speechToTranscript: metric('speechToTranscript'),
-    speechToFirstToken: metric('speechToFirstToken'),
-    speechToTextDone: metric('speechToTextDone'),
-    timeToFirstVoice: metric('timeToFirstVoice'),
-    speechToFirstVoice: metric('speechToFirstVoice'),
-    voiceSynthesis: metric('voiceSynthesis'),
-    endToEnd: metric('endToEnd'),
-  },
+  turnSummaries,
   isolation: {
     ownMarker: results.filter((item) => item.ownMarker).length,
     foreignMarker: results.filter((item) => item.foreignMarkers?.length > 0).length,
   },
   responseSamples: successful.slice(0, 3).map((item) => ({
     user: item.user,
-    transcript: item.transcript,
-    response: item.responseSample,
+    transcript: item.turns?.[0]?.transcript,
+    response: item.turns?.[0]?.responseSample,
   })),
-  sessions: results.map(({
-    user,
-    ok,
-    error,
-    transcript,
-    responseWords,
-    responseChunks,
-    ownMarker,
-    foreignMarkers,
-    ttsStatus,
-    ttsBytes,
-    chunkLatencyMs,
-    timingsMs,
-    responseSample,
-  }) => ({
-    user,
-    ok,
-    ...(error ? { error } : {}),
-    transcript,
-    responseWords,
-    responseChunks,
-    ownMarker,
-    foreignMarkers,
-    ttsStatus,
-    ttsBytes,
-    chunkLatencyMs,
-    responseSample,
-    timingsMs: timingsMs
-      ? Object.fromEntries(
-        Object.entries(timingsMs).map(([key, value]) => [
-          key,
-          Number.isFinite(value) ? Math.round(value) : null,
-        ]),
-      )
-      : null,
-  })),
+  sessions: results,
 }, null, 2));

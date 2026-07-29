@@ -63,15 +63,25 @@ async function wait(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchInferenceWithCapacityRetry(routePath, options) {
-  const startedAt = Date.now();
+export async function fetchInferenceWithCapacityRetry(routePath, options, {
+  fetchImpl = fetch,
+  waitImpl = wait,
+  now = Date.now,
+} = {}) {
+  const startedAt = now();
   const budgetMs = capacityRetryBudgetMs();
   let attempt = 0;
   while (true) {
-    const response = await fetch(`${inferenceBaseUrl()}${routePath}`, options);
+    const response = await fetchImpl(`${inferenceBaseUrl()}${routePath}`, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(attempt > 0 ? { 'X-VCS-Capacity-Retry': String(attempt) } : {}),
+      },
+    });
     if (!isCapacityStatus(response.status)) return response;
 
-    const elapsed = Date.now() - startedAt;
+    const elapsed = now() - startedAt;
     const retryAfterSeconds = Number(response.headers.get('retry-after'));
     const exponentialMs = Math.min(2_000, 250 * (2 ** attempt));
     const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
@@ -81,7 +91,7 @@ async function fetchInferenceWithCapacityRetry(routePath, options) {
 
     // Consume the response before retrying so Node can reuse the ALB connection.
     await response.arrayBuffer();
-    await wait(delayMs);
+    await waitImpl(delayMs);
     attempt += 1;
   }
 }
