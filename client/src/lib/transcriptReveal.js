@@ -11,6 +11,31 @@ export const SEGMENT_PENDING = 'pending';
 export const SEGMENT_ACTIVE = 'active';
 
 /**
+ * Index of the first word whose start is after `seconds`, over a sorted array.
+ *
+ * Both callers below want the same "how much of this has happened" answer over
+ * a monotonic list, differing only in which field they read.
+ */
+function countStartedBy(items, seconds, readStart) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+
+  const at = Number(seconds);
+  if (!Number.isFinite(at)) return 0;
+  if (at < readStart(items[0])) return 0;
+  if (at >= readStart(items[items.length - 1])) return items.length;
+
+  // Highest index whose start <= at, plus one.
+  let low = 0;
+  let high = items.length - 1;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (readStart(items[mid]) <= at) low = mid;
+    else high = mid - 1;
+  }
+  return low + 1;
+}
+
+/**
  * Where `seconds` sits relative to one segment.
  *
  * Callers use this to skip per-word work for the ~17 of 18 segments that are
@@ -36,23 +61,38 @@ export function segmentPhase(segment, seconds) {
  * binary search rather than a scan.
  */
 export function spokenWordCount(segment, seconds) {
-  const words = segment?.words;
-  if (!Array.isArray(words) || words.length === 0) return 0;
+  return countStartedBy(segment?.words, seconds, (word) => Number(word.start));
+}
 
-  const at = Number(seconds);
-  if (!Number.isFinite(at)) return 0;
-  if (at < Number(words[0].start)) return 0;
-  if (at >= Number(words[words.length - 1].start)) return words.length;
+/**
+ * How many segments have begun by `seconds`.
+ *
+ * The panel reads as live captions: a segment that has not started is not in
+ * the DOM at all, so the transcript grows with the lecture instead of showing
+ * the student what is about to be said. A count rather than a filtered array
+ * keeps the caller's slice cheap and its React keys stable.
+ */
+export function revealedSegmentCount(segments, seconds) {
+  return countStartedBy(segments, seconds, (segment) => Number(segment.time));
+}
 
-  // Highest index whose start <= at, plus one.
-  let low = 0;
-  let high = words.length - 1;
-  while (low < high) {
-    const mid = (low + high + 1) >> 1;
-    if (Number(words[mid].start) <= at) low = mid;
-    else high = mid - 1;
-  }
-  return low + 1;
+/**
+ * True when nothing has been spoken yet, so the panel can explain itself rather
+ * than sit empty before the student has pressed play.
+ *
+ * Deliberately not `revealedSegmentCount === 0`: the first segment starts at
+ * 0s, so it counts as begun the moment the page loads while none of its words
+ * have arrived.
+ */
+export function isRevealIdle(segments, seconds) {
+  const revealed = revealedSegmentCount(segments, seconds);
+  if (revealed === 0) return true;
+  if (revealed > 1) return false;
+
+  // A segment with no timings reveals whole, so having begun is enough.
+  const first = segments[0];
+  if (!Array.isArray(first?.words) || first.words.length === 0) return false;
+  return spokenWordCount(first, seconds) === 0;
 }
 
 /**

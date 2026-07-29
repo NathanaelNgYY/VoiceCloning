@@ -54,7 +54,18 @@ The two agree closely enough to make this safe: **96.3% of curated words matched
 
 ## Rendering notes
 
-Unspoken words stay in the layout at low contrast rather than being hidden. Revealing by insertion would reflow the paragraph on every frame, and the panel scrolls independently — the reader's position would jump. Fading in place gives the same "arriving with the audio" read with a stable box.
+**The transcript reads as live captions: nothing ahead of the playhead is in the DOM at all.** A segment that has not begun is not rendered, and inside the active segment only the words already spoken exist. The panel grows downward as the lecture talks, and what has been said stays. Words fade in over 180 ms on mount, and a blinking caret marks the leading edge so the gap between two words reads as waiting rather than as a stall.
+
+This reverses the original decision (unspoken words held in the layout at low contrast) after review on 2026-07-29 — being able to read ahead broke the illusion. The reflow that motivated the original approach turns out to be contained: appending to the end of a paragraph leaves every earlier word where it was, and there is nothing rendered below the active segment to be pushed down.
+
+Because the panel now grows, `LessonPage` follows the bottom edge — but only while the reader is within `TRANSCRIPT_FOLLOW_THRESHOLD_PX` (48 px) of it. Scrolling up to re-read releases the follow; scrolling back resumes it. Switching away to the chat tab and back re-anchors on the playhead.
+
+Two reveal-gating rules worth knowing:
+
+- **Nothing renders until playback has started** (`hasPlayed`, or any `currentTime > 0` for a scrub). The first word of the GI lesson starts at `0.0 s`, so without this the page would greet the student with the single word "Good" before they pressed play.
+- **`isRevealIdle` drives the "transcript appears here as the lesson plays" hint**, which is not the same as "no segment has begun" — segment one starts at 0 s and so counts as begun on load while none of its words have arrived.
+
+Navigation forward is unaffected: the Content Outline still lists all 8 topics with thumbnails, so hiding future transcript text costs no seeking ability.
 
 `LessonPage` samples the media clock on a `requestAnimationFrame` loop while playing, not on `timeupdate`. `timeupdate` fires ~4×/s, coarser than the ~0.3 s words it drives. State is pushed at ~10 Hz (`REVEAL_RESOLUTION_SECONDS`) because the chat panel is mounted alongside and re-rendering it 60×/s to move one highlight is not worth it.
 

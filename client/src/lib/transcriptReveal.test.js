@@ -6,6 +6,8 @@ import {
   SEGMENT_PENDING,
   SEGMENT_SPOKEN,
   activeWordIndex,
+  isRevealIdle,
+  revealedSegmentCount,
   segmentPhase,
   spokenWordCount,
 } from './transcriptReveal.js';
@@ -76,4 +78,60 @@ test('activeWordIndex reports nothing during a gap between words', () => {
 
 test('activeWordIndex reports nothing before the first word', () => {
   assert.equal(activeWordIndex(segment, 5), -1);
+});
+
+const segments = [
+  {
+    time: 0,
+    endTime: 10,
+    words: [
+      { text: 'Welcome.', start: 0.5, end: 1.0 },
+      { text: 'Today', start: 1.0, end: 1.4 },
+    ],
+  },
+  segment,
+  {
+    time: 20,
+    endTime: 30,
+    words: [{ text: 'Next.', start: 20.2, end: 20.8 }],
+  },
+];
+
+test('revealedSegmentCount leaves segments that have not begun out', () => {
+  // The point of the live-caption reveal: at 15s the student can see the first
+  // two segments and has no way to read ahead to the third.
+  assert.equal(revealedSegmentCount(segments, 15), 2);
+});
+
+test('revealedSegmentCount counts a segment the instant it starts', () => {
+  assert.equal(revealedSegmentCount(segments, 9.99), 1);
+  assert.equal(revealedSegmentCount(segments, 10), 2);
+  assert.equal(revealedSegmentCount(segments, 20), 3);
+});
+
+test('revealedSegmentCount reveals the whole transcript past the last start', () => {
+  assert.equal(revealedSegmentCount(segments, 600), 3);
+});
+
+test('revealedSegmentCount survives a missing or empty transcript', () => {
+  assert.equal(revealedSegmentCount([], 5), 0);
+  assert.equal(revealedSegmentCount(undefined, 5), 0);
+  assert.equal(revealedSegmentCount(segments, Number.NaN), 0);
+});
+
+test('reveal is idle until the first word is actually spoken', () => {
+  // The first segment starts at 0s, so it has "begun" on page load while none
+  // of its words have arrived — the panel would otherwise sit blank.
+  assert.equal(isRevealIdle(segments, 0), true);
+  assert.equal(isRevealIdle(segments, 0.49), true);
+  assert.equal(isRevealIdle(segments, 0.5), false);
+});
+
+test('reveal is not idle once playback is past the first segment', () => {
+  assert.equal(isRevealIdle(segments, 15), false);
+});
+
+test('reveal is not idle for a segment with no word timings', () => {
+  // Those reveal whole, so having begun is all there is to wait for.
+  assert.equal(isRevealIdle([{ time: 0, endTime: 10, text: 'Plain.' }], 0), false);
 });

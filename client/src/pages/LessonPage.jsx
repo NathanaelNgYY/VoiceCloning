@@ -19,6 +19,7 @@ import {
   isVideoPositionSharingEnabled,
 } from "@/lib/lessonVideoContext";
 import { useVideoTopicThumbnails } from "@/hooks/useVideoTopicThumbnails";
+import { isRevealIdle, revealedSegmentCount } from "@/lib/transcriptReveal";
 
 function formatTimestamp(totalSeconds) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
@@ -44,6 +45,7 @@ export function LessonPage() {
   const { slug = "" } = useParams();
   const auth = useAuth();
   const videoRef = useRef(null);
+  const transcriptScrollRef = useRef(null);
 
   const [course, setCourse] = useState(null);
   const [courseError, setCourseError] = useState("");
@@ -51,6 +53,10 @@ export function LessonPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("transcript");
   const [currentTime, setCurrentTime] = useState(0);
+  // The first word of the lesson starts at 0.0s, so it counts as spoken the
+  // moment the page loads. Hold the whole reveal back until playback has
+  // actually begun, or the panel greets the student with one stray word.
+  const [hasPlayed, setHasPlayed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +135,20 @@ export function LessonPage() {
     }
   }
 
+  // A segment that has not begun is left out of the DOM entirely, so the panel
+  // reads as a live transcription instead of as a script the student can read
+  // ahead in. Jumping forward stays available through the Content Outline.
+  //
+  // Scrubbing counts as starting: the clock has moved even though `play` never
+  // fired, and the student is plainly asking to see that part of the lesson.
+  const hasStarted = hasPlayed || currentTime > 0;
+  const revealedSegments = hasStarted
+    ? transcriptSegments.slice(0, revealedSegmentCount(transcriptSegments, currentTime))
+    : [];
+  const isTranscriptIdle =
+    transcriptSegments.length > 0 &&
+    (!hasStarted || isRevealIdle(transcriptSegments, currentTime));
+
   const seekTo = (seconds) => {
     setCurrentTime(seconds);
 
@@ -166,6 +186,7 @@ export function LessonPage() {
     };
 
     const start = () => {
+      setHasPlayed(true);
       if (!frame) frame = window.requestAnimationFrame(sample);
     };
     const stop = () => {
@@ -188,6 +209,33 @@ export function LessonPage() {
       if (frame) window.cancelAnimationFrame(frame);
     };
   }, []);
+
+  // Follow the growing edge of the transcript, but yield as soon as the student
+  // scrolls up to re-read something — yanking them back to the playhead
+  // mid-sentence is worse than letting the reveal continue off-screen. Coming
+  // back within a line of the bottom resumes the follow.
+  const TRANSCRIPT_FOLLOW_THRESHOLD_PX = 48;
+
+  useEffect(() => {
+    if (activeTab !== "transcript") return;
+
+    const panel = transcriptScrollRef.current;
+    if (!panel) return;
+
+    const fromBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight;
+    if (fromBottom > TRANSCRIPT_FOLLOW_THRESHOLD_PX) return;
+
+    panel.scrollTop = panel.scrollHeight;
+  }, [currentTime, activeTab]);
+
+  // Returning from the chat tab lands on the playhead rather than on wherever
+  // the reveal happened to be when the student left it.
+  useEffect(() => {
+    if (activeTab !== "transcript") return;
+
+    const panel = transcriptScrollRef.current;
+    if (panel) panel.scrollTop = panel.scrollHeight;
+  }, [activeTab]);
 
   // Still needed for movement that happens without a frame loop running:
   // scrubbing or a transcript click while the video is paused.
@@ -406,12 +454,13 @@ export function LessonPage() {
 
                   <div className="flex flex-1 min-h-0 flex-col">
                     <div
+                      ref={transcriptScrollRef}
                       className={cn(
                         "lesson-transcript-scrollbar flex-1 space-y-4 overscroll-contain overflow-y-auto p-3 sm:p-5",
                         activeTab !== "transcript" && "hidden",
                       )}
                     >
-                        {transcriptSegments.map((segment, index) => {
+                        {revealedSegments.map((segment, index) => {
                           const isActive = activeTranscriptIndex === index;
                           return (
                             <button
@@ -460,6 +509,12 @@ export function LessonPage() {
                             </button>
                           );
                         })}
+
+                        {isTranscriptIdle && (
+                          <p className="px-3 text-xs italic text-slate-400">
+                            The transcript appears here as the lesson plays.
+                          </p>
+                        )}
                     </div>
 
                     {/* Kept mounted across tab switches. Unmounting tears down the
