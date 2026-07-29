@@ -6,7 +6,16 @@
     "instanceId": "i-0f0da8be59367f7a8",
     "branch": "staging",
     "chatbotBranch": "staging-chatbot",
+    "chatbotBuildMode": "gi",
     "workerAccess": "ssm",
+    "autoscaling": {
+      "targetGroupName": "vcs-stg-opt-3103",
+      "sourceAmiId": "ami-07ecb50a65a104ef1",
+      "launchTemplateName": "vcs-staging-gpu-inference",
+      "launchTemplateId": "lt-07728350a25e691a4",
+      "autoScalingGroupName": "vcs-staging-gpu-inference",
+      "serviceLinkedRoleReady": false
+    },
     "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO" },
     "clientTargets": {
       "training": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-training",
@@ -21,12 +30,13 @@
     "instanceId": "i-03f258d470a2fa73f",
     "branch": "separate-containers-new",
     "chatbotBranch": "chatbot-live-full",
+    "chatbotBuildMode": "gi",
     "workerAccess": "ssh",
     "distributions": { "training": "E2KTGN0G56FW71", "live-fast": "E36CNBL620DMGM", "chatbot": "EYZ4NLNGITY7T" },
     "clientTargets": {
       "training": "s3://interns2026-small-projects-bucket-shared/echolect/dist-training",
       "live-fast": "s3://interns2026-small-projects-bucket-shared/echolect/dist-live-fast",
-      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect/dist-chatbot"
+      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect/dist-gi"
     }
   }
 }

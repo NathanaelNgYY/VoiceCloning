@@ -6,9 +6,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $cfg = (Get-Content "$PSScriptRoot\deploy.config.json" -Raw | ConvertFrom-Json).$Env
 $repo = Resolve-Path "$PSScriptRoot\.."
-$envSrc = "$repo\client\env\$Env\$Mode.env"
-$envDst = "$repo\client\.env.$Mode.local"
-$dist = "$repo\client\dist-$Mode"
+$buildMode = if ($Mode -eq 'chatbot' -and $cfg.chatbotBuildMode) {
+  [string]$cfg.chatbotBuildMode
+} else {
+  $Mode
+}
+$envSrc = "$repo\client\env\$Env\$buildMode.env"
+$envDst = "$repo\client\.env.$buildMode.local"
+$dist = "$repo\client\dist-$buildMode"
 $target = $cfg.clientTargets.$Mode
 $distro = $cfg.distributions.$Mode
 
@@ -23,19 +28,28 @@ if ($Mode -eq 'chatbot') {
 }
 
 if ($DryRun) {
-  Write-Host "[dry-run] build client --mode $Mode with $envSrc; sync $dist -> $target; invalidate $distro ($Env)"
+  Write-Host "[dry-run] build client --mode $buildMode with $envSrc; sync $dist -> $target; invalidate $distro ($Env)"
   exit 0
 }
-Copy-Item $envSrc $envDst -Force
+$hasEnvOverride = Test-Path $envSrc
+if ($hasEnvOverride) {
+  Copy-Item $envSrc $envDst -Force
+}
 try {
   Push-Location "$repo\client"
-  npm run "build:$Mode"
+  npm run "build:$buildMode"
   if ($LASTEXITCODE -ne 0) { throw "vite build failed" }
 } finally {
   Pop-Location
-  Remove-Item $envDst -Force -ErrorAction SilentlyContinue
+  if ($hasEnvOverride) {
+    Remove-Item $envDst -Force -ErrorAction SilentlyContinue
+  }
 }
-aws s3 sync $dist $target --delete --region $cfg.s3Region
+if ($buildMode -eq 'gi') {
+  aws s3 sync $dist $target --delete --exclude "videos/*" --region $cfg.s3Region
+} else {
+  aws s3 sync $dist $target --delete --region $cfg.s3Region
+}
 if ($LASTEXITCODE -ne 0) { throw "s3 sync failed" }
 aws cloudfront create-invalidation --distribution-id $distro --paths "/*"
 if ($LASTEXITCODE -ne 0) { throw "invalidation failed" }
