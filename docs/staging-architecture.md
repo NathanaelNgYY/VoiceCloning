@@ -405,6 +405,233 @@ An intermediate no-reboot AMI (`ami-0b06a87a36a68328d`, launch-template v9) capt
 The corrected image was created only after verifying the 3,577-byte file and flushing
 the filesystem, then validated from a fresh v10 instance before cutover.
 
+### Test method and timing glossary
+
+`scripts/load-test-staging-chatbot.mjs` tests the complete public student flow, not
+only the GPU endpoint. Every virtual user opens an independent WebSocket to the exact
+staging hostname, waits for `session.ready`, and then all ready users begin together.
+Each user streams the same real 24 kHz PCM question at real-time pace, receives an
+OpenAI response, splits that response into speakable chunks, and sends the chunks
+sequentially through the public DeanVoice endpoint. The harness requires HTTP 200,
+`audio/wav`, and a RIFF header for every chunk. Per-user markers in the system prompt
+detect response mixing across WebSockets. A user sends the next turn only after all
+voice chunks for the current turn finish, matching the website rather than submitting
+hundreds of requests at once.
+
+The normal complete-flow command is:
+
+```powershell
+$env:VCS_CHATBOT_TURNS='3'
+$env:VCS_CHATBOT_REPORT_FILE="$PWD\.tmp\chatbot-report.json"
+node scripts/load-test-staging-chatbot.mjs 50
+```
+
+`scripts/load-test-staging-tts.mjs` isolates the public TTS path. With no duration it
+sends one request per virtual user. With `VCS_LOAD_TEST_DURATION_MS`, every virtual
+user runs closed-loop: it sends one request, waits for the WAV, and only then sends its
+next request. `VCS_LOAD_TEST_TEXT`, `VCS_LOAD_TEST_SKIP_VERIFY`, and
+`VCS_LOAD_TEST_REPORT_FILE` control the sentence, verification, and JSON output.
+Verification must be stated with every result because skipping it changes service time.
+
+```powershell
+$env:VCS_LOAD_TEST_DURATION_MS='120000'
+$env:VCS_LOAD_TEST_SKIP_VERIFY='true'
+$env:VCS_LOAD_TEST_TEXT='Gastrointestinal bleeding means bleeding somewhere inside the digestive tract, and it needs careful medical assessment.'
+$env:VCS_LOAD_TEST_REPORT_FILE="$PWD\.tmp\tts-report.json"
+node scripts/load-test-staging-tts.mjs 100
+```
+
+Timing fields have different boundaries:
+
+| Field | Starts | Ends | Includes |
+|---|---|---|---|
+| `speechToTranscript` | Last real speech frame sent | Final user transcript event | WebSocket/gateway/OpenAI transcription only |
+| `speechToFirstToken` | Last real speech frame sent | First assistant text token | Conversation response startup |
+| `speechToTextDone` | Last real speech frame sent | Complete assistant text event | Transcription plus complete chatbot text generation |
+| `firstVoiceChunk` | First public TTS HTTP request | First valid WAV response | Lambda profile resolution, any internal Lambda capacity retries, ALB/Target Optimizer routing, worker queue wait, and GPU synthesis |
+| `speechToFirstVoice` | Last real speech frame sent | First valid WAV response | Preferred first-audio measure: conversation work plus first TTS chunk |
+| `timeToFirstVoice` | Beginning of streamed user audio | First valid WAV response | Also includes the user's input-audio duration; do not compare it with `speechToFirstVoice` |
+| `voiceSynthesis` | First TTS chunk request | Last TTS chunk response | Every response chunk generated sequentially |
+| `endToEnd` | Beginning of streamed user audio | Last TTS chunk response | Input duration, conversation, and all voice chunks |
+| `wallMs` | Harness starts opening sessions | Last session finishes | Entire test wave, not one user's latency |
+
+The public harness's HTTP timing includes Lambda's internal bounded retry when Target
+Optimizer rejects capacity. It does not include the GI browser's separate retry after
+an entire public request returns 429/503, because the harness calls `fetch` directly.
+A four-to-six-second first chunk therefore *can* contain retry time, but its duration
+alone does not prove a retry happened. Use `TargetControlRequestRejectCount`, Lambda
+logs, and response status together.
+
+`p50` is the median user; `p95` is the slowest-five-percent boundary. Complete voice
+time depends strongly on answer length and chunk count, so compare first-audio time
+and response words/chunks before attributing a total-time change to GPU capacity.
+
+### Detailed final test ledger
+
+Corrected route-warm complete-flow results:
+
+| Fleet / users | Turn | Completed | First audio after speech p50 / p95 | First TTS chunk p50 / p95 | Complete response p50 / p95 |
+|---|---:|---:|---:|---:|---:|
+| 32 GPUs / 50 users | 1 | 50/50 | 7.57 / 9.27 s | 5.34 / 6.93 s | 31.05 / 43.00 s |
+| 32 GPUs / 50 users | 2 | 50/50 | 3.79 / 5.26 s | 1.74 / 2.64 s | 27.80 / 38.73 s |
+| 32 GPUs / 50 users | 3 | 50/50 | 4.11 / 5.35 s | 1.95 / 2.87 s | 29.02 / 35.75 s |
+| 32 GPUs / 100 users | 1 | 100/100 | 9.59 / 15.41 s | 8.25 s p50 | 31.50 / 49.56 s |
+| 32 GPUs / 100 users | 2 | 98/100 | 4.20 / 6.36 s | 2.89 s p50 | 24.82 / 38.34 s |
+| 32 GPUs / 100 users | 3 | 98/100 | 4.12 / 6.12 s | 2.73 s p50 | 20.71 / 30.52 s |
+| 51 hot GPUs / 100 users | 1 | 100/100 | 5.02 / 12.66 s | 3.23 / 10.08 s | 23.54 / 44.41 s |
+| 51 hot GPUs / 100 users | 2 | 100/100 | 3.34 / 4.54 s | 1.82 / 2.80 s | 19.04 / 29.68 s |
+| 51 hot GPUs / 100 users | 3 | 100/100 | 3.40 / 5.47 s | 1.96 / 3.52 s | 17.15 / 28.41 s |
+| 51 hot GPUs / 50 users | 1 | 50/50 | 5.69 / 7.26 s | 3.41 / 4.72 s | 28.11 / 40.71 s |
+| 51 hot GPUs / 50 users | 2 | 50/50 | 4.10 / 5.52 s | 1.74 / 2.78 s | 25.42 / 37.39 s |
+| 51 hot GPUs / 50 users | 3 | 50/50 | 4.30 / 5.90 s | 1.73 / 3.11 s | 29.30 / 33.12 s |
+
+The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
+time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
+turn-one voice and later closed WebSocket code 1006; they were not TTS capacity
+timeouts. The hot 51-GPU/100-user wall time was 121.67 seconds and the hot
+51-GPU/50-user wall time was 114.14 seconds. No foreign marker was accepted as a
+successful session.
+
+Closed-loop saturation results:
+
+| Fleet / virtual users | Hold | Requests | Valid WAV | Failures | Latency p50 / p95 | Capacity/scaling observation |
+|---|---:|---:|---:|---:|---:|---|
+| 32 / 100, short text, verification skipped | 90 s | 3,186 | 3,186 | 0 | 2.28 / 5.99 s | One-to-two slots still appeared free; no scale |
+| 32 / 100, realistic text, verification skipped | 120 s | 2,427 | 2,427 | 0 | 3.86 / 11.31 s | Two slots remained at busiest sample; no scale |
+| 32 / 128, realistic text, verification skipped | 240 s | 5,007 | 4,972 | 34x504 + 1x503 | 4.19 / 15.41 s | One slot remained at sampled points; strict rule did not scale |
+| 32 / 192, realistic text, verification skipped | 180 s | 3,948 | 3,773 | 173x504 + 2x503 | 4.91 / 21.83 s | Zero-capacity minute; desired 32->51 |
+
+The 192-user run was deliberately excessive to verify the strict alarm, not an
+accepted user target. Its zero-capacity metric minute began at 20:20 SGT; CloudWatch
+entered ALARM at 20:23:43, launch began at 20:23:56, and all 19 new instances passed
+cloud-init, inference service, real-route warm, and Target Optimizer checks between
+20:28:28 and 20:28:31. This is about 4m32s-4m35s from EC2 launch and about 8m45s
+from the beginning of the metric minute. The detection delay includes CloudWatch
+metric publication and alarm evaluation, not EC2 startup.
+
+### Warm-up ownership and burst findings
+
+The GI student build does **not** call `/models/select` or send a browser warm request
+when a student enters. It reads the pinned `deanvoice-v1` profile and starts the
+WebSocket/TTS flow when the student uses chat. The administrative Live page does call
+model selection, which loads weights and warms references, but that client flow is not
+part of the deployed GI website.
+
+This separation is intentional. If 50 students entering the page each loaded the same
+model and sent a throwaway inference, the preparation itself would create a redundant
+50-request warm-up burst. Every ASG instance instead prepares once during bootstrap:
+
+1. Start `gpu-inference-worker`.
+2. Load/check the pinned GPT and SoVITS weights.
+3. Cache the primary reference and five auxiliary references.
+4. Run reference/throwaway synthesis.
+5. Call the real `/inference/tts` route and require a RIFF WAV.
+6. Start Target Optimizer only after every previous step succeeds.
+
+A server-side warm request covers GPU weights, references, and the real worker route.
+It does not pre-create every student's WebSocket, OpenAI session, Lambda execution
+environment, ALB connection, or unique response text. That is why the first production
+turn can be slower even after correct GPU warm-up.
+
+A simultaneous burst can also be slower than a short ramp. Separate EC2 GPUs do not
+share compute with each other, but two requests placed on one `g6.xlarge` share that
+GPU's compute and memory bandwidth. With 50 users and 32 two-slot GPUs, up to 18 GPUs
+may temporarily carry a second user while the remainder carry one. Staggering arrivals
+by one or two seconds lets early jobs use more of their GPU before later jobs overlap,
+usually improving first-audio p95 and retry pressure at the cost of a longer arrival
+window. This should be measured with a controlled 2-5 second ramp rather than assumed.
+
+Target Optimizer is a concurrency gate, not a durable queue. A request rejected at
+zero advertised capacity waits inside Lambda before retrying. A slot can finish during
+that wait and appear free until the retry returns. ALB/Target Optimizer does not provide
+global retry priority; `X-VCS-Capacity-Retry` only moves an admitted retry ahead of
+normal entries in that selected worker's local queue. Do not describe the current
+system as end-to-end priority.
+
+### Candidate improvements and tradeoffs
+
+The current recommendation for the August event remains scheduled EC2 prewarming plus
+the tested bounded retries. The following are post-event experiments, not approved
+changes:
+
+| Option | Potential benefit | Downside / risk |
+|---|---|---|
+| Retry more frequently with 200-500 ms jitter | Reduces short periods where a newly free slot waits for the next Lambda retry | More Lambda/ALB attempts, cost, reject noise, and thundering-herd risk; still no global priority |
+| Shared durable priority queue/dispatcher | Buffers bursts and can order retries ahead of new work globally | Changes synchronous TTS into a job API; adds storage, dispatcher availability, fairness/starvation rules, and client polling/WebSocket completion |
+| SageMaker Asynchronous Inference | Managed request queue, long jobs, S3 results, and scale-to-zero support | Near-real-time rather than streaming; requires S3 input/output and API redesign, container/model migration, cold-start handling, and cannot provide immediate first audio |
+| SageMaker real-time endpoint | Managed model endpoint and autoscaling surface | Still has reactive cold-start delay; requires a compatible serving container and migration from current worker/session contracts; sustained GPU endpoint cost |
+| EC2 Auto Scaling warm pool, stopped | Preserves initialized EBS and can use lifecycle hooks before service | Stopping loses RAM/GPU model state, so Python/model reload still occurs; EBS and lifecycle complexity remain; must benchmark against the 272-275 s final AMI |
+| EC2 warm pool, running | Near-immediate scale-out | Costs almost the same as active prewarmed GPUs, making the existing schedule simpler |
+| Hibernated warm pool | Could preserve RAM where supported | Requires supported instance/AMI configuration, stores RAM on EBS, and GPU/process restoration must be proven; do not assume CUDA state survives correctly |
+| EBS Fast Snapshot Restore or deliberate block pre-read | May reduce the snapshot-backed first-read portion of cold start | Extra per-AZ cost and operational work; does not remove Python/model initialization and needs phase-timed proof |
+| High-resolution custom capacity metric | Can evaluate continuous fullness more precisely than Target Optimizer's sampled CloudWatch metric | New agent/publisher, CloudWatch cost, missing-data/failure semantics, and alarm maintenance |
+| Multi-AZ private subnets | Better resilience and regional capacity options | Additional NAT/network cost, cache duplication, routing validation, and more infrastructure permissions |
+| WebSocket reconnect/resume | Addresses the two code-1006 session losses | Conversation resumption, duplicate-event handling, idempotency, and UI state become more complex |
+| One synthesis slot per GPU | More predictable single-user latency | Roughly doubles required GPUs and cost for the same concurrent population |
+
+### Multi-user training and Live Full roadmap
+
+Training and Live Full are not yet horizontally scalable in the same sense as short
+DeanVoice inference.
+
+The training worker currently has one bounded FIFO queue stored in process memory and
+runs one job at a time on the fixed training GPU. This is safe for concurrent
+submissions but is not durable or horizontally distributed: a worker restart loses
+queued entries, all users share one failure domain, and wait time grows with each
+multi-stage training job.
+
+Two credible training directions should be prototyped after the event:
+
+| Training option | Required work | Benefit | Downside |
+|---|---|---|---|
+| Durable queue + training ASG/AWS Batch | Put job definitions and status in SQS plus DynamoDB/S3; claim with leases; run one isolated job per GPU; publish checkpoints/progress; autoscale from backlog or estimated GPU-hours | Reuses the current pipeline/container and allows several users to train independently | Queue/lease/idempotency/cancellation complexity, EC2 capacity management, duplicate-job protection, idle GPU cost, and more operational ownership |
+| SageMaker Training Jobs | Package the complete GPT-SoVITS/v2ProPlus pipeline, checkpoints, dependencies, input/output contract, metrics, and network/IAM into a training image and submit one managed job per user | Managed job isolation, logs, retries, S3 artifacts, and per-job GPU lifecycle | Container migration effort, startup/cache time, service quotas, potentially higher per-job cost, progress/SSE integration work, and no benefit for real-time inference |
+
+Whichever training platform is selected must use immutable job IDs and per-job S3
+prefixes, checkpoint safely, make completion idempotent, support cancellation, enforce
+per-user concurrency/cost limits, and never automatically replace the globally active
+voice profile. A completed model should become selectable only after artifact and
+metadata validation. Queue depth alone is a weak scaling metric when jobs vary greatly;
+estimated remaining GPU time is preferable but harder to calculate.
+
+Live Full persists manifests, chunks, previews, finals, cancellation markers, and
+events in S3, so another inference target can hydrate a session. However, its synthesis
+lease is currently worker-local. Two targets concurrently mutating the same hydrated
+session could still race, and initial generation is one long accepted request that
+occupies a GPU slot. Before claiming fully distributed Live Full, implement:
+
+1. A distributed session lease with TTL and fencing tokens, or deterministic
+   session-to-worker ownership with safe failover. Local scheduler locks are not enough.
+2. Conditional manifest revisions and idempotency keys for regenerate/restore/
+   insert/delete so stale workers cannot overwrite newer chunk state.
+3. Durable asynchronous job state and shared progress delivery. A short REST request
+   should enqueue generation and return a session/job ID; browser SSE/WebSocket should
+   resume after reconnect without duplicating events.
+4. Autoscaling from queued and active estimated GPU work, separated by model/voice
+   locality. Raw request count underrepresents a long Full job.
+5. Per-user fairness and limits so one long document or repeated regeneration cannot
+   occupy every GPU.
+6. Optional chunk-level parallelism only after measuring voice consistency. Independent
+   chunks can be synthesized on separate GPUs, but final ordering, cancellation,
+   retries, loudness normalization, version history, and deterministic reconstruction
+   must be reconciled by one coordinator.
+7. Failure tests covering worker loss during generation, duplicate delivery, stale
+   lease expiry, concurrent edits, model-version changes, S3 delay/failure, and final
+   WAV reconstruction.
+
+The simplest first Live Full improvement is distributed lease/version correctness
+while keeping one session on one GPU. Parallel chunk generation can reduce total time,
+but may introduce inconsistent prosody/voice quality between GPUs, consumes more fleet
+capacity per user, and makes regeneration and cancellation substantially more complex.
+Do not parallelize chunks merely because shared S3 hydration exists.
+
+AWS references:
+
+- [SageMaker Asynchronous Inference](https://docs.aws.amazon.com/sagemaker/latest/dg/async-inference.html)
+- [Autoscale an asynchronous endpoint](https://docs.aws.amazon.com/sagemaker/latest/dg/async-inference-autoscale.html)
+- [EC2 Auto Scaling warm pools](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-warm-pools.html)
+- [Warm-pool lifecycle hooks](https://docs.aws.amazon.com/autoscaling/ec2/userguide/warm-pool-instance-lifecycle.html)
+
 ### AWS permissions needed
 
 Keep discovery and implementation permissions in separate, short-lived sessions. Scope
