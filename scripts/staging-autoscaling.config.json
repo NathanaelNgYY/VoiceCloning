@@ -17,9 +17,9 @@
   "launchTemplateName": "vcs-staging-gpu-inference",
   "autoScalingGroupName": "vcs-staging-gpu-inference",
   "minSize": 1,
-  "maxSize": 16,
+  "maxSize": 192,
   "desiredCapacity": 1,
   "healthCheckGracePeriodSeconds": 600,
   "defaultPreWarmCapacity": 2,
-  "eventCapacity": 16
+  "eventCapacity": 32
 }

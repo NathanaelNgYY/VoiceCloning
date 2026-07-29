@@ -245,12 +245,13 @@ The implemented staging design keeps the public hostnames and separates roles:
    registered targets.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
-   by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`, and
-   `VCS_STAGING_SCALE_DOWN_AT`, not hardcoded into application behavior.
-5. For a 50-request near-simultaneous burst, the measured one-GPU throughput supports
-   an initial event plan of 16 prewarmed GPUs (32 immediate physical slots, then one
-   short queued wave). This must be confirmed with the complete fleet before declaring
-   the 50-user acceptance test passed.
+   by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
+   `VCS_STAGING_SCALE_DOWN_AT`, and `VCS_STAGING_MAX_CAPACITY`, not hardcoded into
+   application behavior. `VCS_STAGING_EVENT=true` uses the configured event default
+   only when an explicit prewarm capacity was not supplied.
+5. The original 16-GPU event plan passed the complete 50- and 60-request public
+   bursts. The requested schedule now prewarms 32 for additional headroom; 32 has not
+   been separately load-tested because the 16-node fleet already passed the target.
 
 Target Optimizer requires a new target group and its agent on every inference target.
 Do not apply it to the WebSocket gateway on port 3002 or the training worker on 3001.
@@ -327,6 +328,12 @@ so desired capacity stayed at one. Scheduled event prewarm is therefore required
 AWS Auto Scaling also requires a finite numeric maximum; this ASG remains capped at
 16 even though the account G/VT quota was 768 vCPUs (192 `g6.xlarge` total) during
 the audit. Single-AZ capacity is not guaranteed.
+
+The requested next configuration is a 32-instance event prewarm and a maximum of 192,
+the largest numeric ceiling compatible with the audited 768-vCPU quota. Repo defaults
+and environment overrides support this, but the live ASG remains max 16 until fresh
+credentials allow the update. A maximum of 200 would require 800 vCPUs and exceeds
+the verified quota. Raising the maximum alone launches no instances.
 
 Launch-template v11 keeps Target Optimizer stopped until
 `warm-staging-deanvoice.sh` completes. This prevents ALB health from turning green

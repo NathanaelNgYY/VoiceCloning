@@ -7,6 +7,9 @@ param(
   [int]$PreWarmCapacity = $(if ($env:VCS_STAGING_PREWARM_CAPACITY) {
     [int]$env:VCS_STAGING_PREWARM_CAPACITY
   } else { -1 }),
+  [int]$MaxCapacity = $(if ($env:VCS_STAGING_MAX_CAPACITY) {
+    [int]$env:VCS_STAGING_MAX_CAPACITY
+  } else { -1 }),
   [switch]$Apply,
   [switch]$SwitchListener
 )
@@ -16,17 +19,32 @@ $cfg = Get-Content "$PSScriptRoot\staging-autoscaling.config.json" -Raw | Conver
 if ($cfg.environment -ne 'staging') { throw 'This script is staging-only.' }
 if ($AmiId -notmatch '^ami-[0-9a-f]+$') { throw 'AmiId must be an AMI id.' }
 if ($DesiredCapacity -lt 0) { $DesiredCapacity = [int]$cfg.desiredCapacity }
-if ($PreWarmCapacity -lt 0) { $PreWarmCapacity = [int]$cfg.defaultPreWarmCapacity }
+if ($MaxCapacity -lt 0) { $MaxCapacity = [int]$cfg.maxSize }
 
 $eventEnabled = [bool]($Event -and $Event.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on'))
+if ($PreWarmCapacity -lt 0) {
+  $PreWarmCapacity = if ($eventEnabled) {
+    [int]$cfg.eventCapacity
+  } else {
+    [int]$cfg.defaultPreWarmCapacity
+  }
+}
 if ($eventEnabled) {
-  $PreWarmCapacity = [int]$cfg.eventCapacity
   if (-not $PreWarmAt) {
     $DesiredCapacity = $PreWarmCapacity
   }
 }
 if ([bool]$PreWarmAt -xor [bool]$ScaleDownAt) {
   throw 'PreWarmAt and ScaleDownAt must be provided together so event capacity cannot be left running indefinitely.'
+}
+if ($MaxCapacity -lt [int]$cfg.minSize) {
+  throw "MaxCapacity must be at least the baseline minimum of $($cfg.minSize)."
+}
+if ($PreWarmCapacity -gt $MaxCapacity) {
+  throw "PreWarmCapacity $PreWarmCapacity cannot exceed MaxCapacity $MaxCapacity."
+}
+if ($DesiredCapacity -gt $MaxCapacity) {
+  throw "DesiredCapacity $DesiredCapacity cannot exceed MaxCapacity $MaxCapacity."
 }
 $effectiveMinSize = if ($eventEnabled -and -not $PreWarmAt) {
   $PreWarmCapacity
@@ -151,7 +169,7 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
   Invoke-AwsJson autoscaling create-auto-scaling-group --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --launch-template "LaunchTemplateName=$($cfg.launchTemplateName),Version=`$Default" `
-    --min-size $effectiveMinSize --max-size $cfg.maxSize --desired-capacity $DesiredCapacity `
+    --min-size $effectiveMinSize --max-size $MaxCapacity --desired-capacity $DesiredCapacity `
     --vpc-zone-identifier ($cfg.subnetIds -join ',') `
     --target-group-arns $targetGroupArn `
     --health-check-type ELB `
@@ -162,7 +180,7 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
   Invoke-AwsJson autoscaling update-auto-scaling-group --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --launch-template "LaunchTemplateName=$($cfg.launchTemplateName),Version=`$Default" `
-    --min-size $effectiveMinSize --max-size $cfg.maxSize --desired-capacity $DesiredCapacity `
+    --min-size $effectiveMinSize --max-size $MaxCapacity --desired-capacity $DesiredCapacity `
     --vpc-zone-identifier ($cfg.subnetIds -join ',') `
     --health-check-type ELB `
     --health-check-grace-period $cfg.healthCheckGracePeriodSeconds `
@@ -246,7 +264,7 @@ if ($PreWarmAt) {
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --scheduled-action-name vcs-staging-prewarm `
     --start-time $startUtc `
-    --min-size $PreWarmCapacity --max-size $cfg.maxSize --desired-capacity $PreWarmCapacity
+    --min-size $PreWarmCapacity --max-size $MaxCapacity --desired-capacity $PreWarmCapacity
 }
 if ($ScaleDownAt) {
   $endUtc = ([DateTimeOffset]::Parse($ScaleDownAt)).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -254,7 +272,7 @@ if ($ScaleDownAt) {
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --scheduled-action-name vcs-staging-scale-down `
     --start-time $endUtc `
-    --min-size $cfg.minSize --max-size $cfg.maxSize --desired-capacity $cfg.desiredCapacity
+    --min-size $cfg.minSize --max-size $MaxCapacity --desired-capacity $cfg.desiredCapacity
 }
 
-Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarmAt=$PreWarmAt"
+Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity PreWarmAt=$PreWarmAt"
