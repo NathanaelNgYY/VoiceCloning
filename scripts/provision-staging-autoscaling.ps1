@@ -27,8 +27,17 @@ function Invoke-AwsJson {
     Write-Host ('[dry-run] aws ' + ($Args -join ' '))
     return $null
   }
-  $raw = & aws @Args --output json 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell turns redirected native stderr into ErrorRecord objects.
+    # Keep those records capturable here so the handlers below can classify them.
+    $ErrorActionPreference = 'Continue'
+    $raw = & aws @Args --output json 2>&1
+    $awsExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  if ($awsExitCode -ne 0) {
     $errorText = $raw -join [Environment]::NewLine
     if ($AllowNotFound -and $errorText -match 'NotFound|does not exist') { return $null }
     if ($AllowDuplicate -and $errorText -match 'InvalidPermission\.Duplicate') { return $null }
