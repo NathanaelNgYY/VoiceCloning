@@ -564,8 +564,8 @@ changes:
 | EC2 warm pool, running | Near-immediate scale-out | Costs almost the same as active prewarmed GPUs, making the existing schedule simpler |
 | Hibernated warm pool | Could preserve RAM where supported | Requires supported instance/AMI configuration, stores RAM on EBS, and GPU/process restoration must be proven; do not assume CUDA state survives correctly |
 | EBS Fast Snapshot Restore or deliberate block pre-read | May reduce the snapshot-backed first-read portion of cold start | Extra per-AZ cost and operational work; does not remove Python/model initialization and needs phase-timed proof |
-| High-resolution custom capacity metric | Can evaluate continuous fullness more precisely than Target Optimizer's sampled CloudWatch metric | New agent/publisher, CloudWatch cost, missing-data/failure semantics, and alarm maintenance |
-| Proactive utilization scale-out | Scale when roughly 50-75% of GPU synthesis slots remain busy for one full minute, leaving headroom during the 4.5-minute instance startup instead of waiting for rejected traffic at zero capacity | May launch costly GPUs for short bursts or users who stop immediately; requires a reliable fleet-wide utilization metric, cooldown, and event rehearsal before replacing the strict alarm |
+| High-resolution custom capacity metric | Can check utilization every 10 seconds and evaluate a true 30-second window more precisely than the current one-minute sampled Target Optimizer metric | New agent/publisher, CloudWatch cost, missing-data/failure semantics, and alarm maintenance |
+| Proactive utilization scale-out | Scale when roughly 50-75% of GPU synthesis slots remain occupied for three consecutive 10-second samples, leaving headroom during the 4.5-minute instance startup instead of waiting for rejected traffic at zero capacity | May launch costly GPUs for short bursts or users who stop immediately; requires a reliable fleet-wide utilization metric, cooldown, and event rehearsal before replacing the strict alarm |
 | Multi-AZ private subnets | Better resilience and regional capacity options | Additional NAT/network cost, cache duplication, routing validation, and more infrastructure permissions |
 | WebSocket reconnect/resume | Addresses the two code-1006 session losses | Conversation resumption, duplicate-event handling, idempotency, and UI state become more complex |
 | One synthesis slot per GPU | More predictable single-user latency | Roughly doubles required GPUs and cost for the same concurrent population |
@@ -573,9 +573,20 @@ changes:
 Future user activity cannot be predicted precisely: users pause between messages,
 leave sessions, or submit another turn at different times. A proactive threshold can
 therefore reduce cold-start impact, but it should be treated as a headroom policy rather
-than a prediction of exact user count. The preferred experiment is a percentage of the
-current fleet, such as 50-75% of synthesis slots continuously busy for one minute,
-because it adapts when the group contains 1, 32, or 100 GPUs. An absolute trigger such
+than a prediction of exact user count.
+
+In this proposal, **busy means an occupied synthesis slot**, not merely an instance
+that is powered on. The deployed worker advertises two tested synthesis slots per GPU:
+one active generation makes that GPU 50% occupied, while two simultaneous active
+generations make it full. Fleet utilization is occupied slots divided by total slots.
+For example, 32 GPUs provide 64 slots; 32 simultaneous generations equal 50% fleet
+utilization even if they are distributed one per GPU. Queued work should be reported
+separately because it indicates demand already exceeds immediately available slots.
+
+The preferred experiment is to publish occupied and total slots every 10 seconds and
+scale after three consecutive samples at roughly 50-75% utilization: a real 30-second
+window. The current standard one-minute Target Optimizer/CloudWatch metric cannot
+reliably implement that exact window and remains unchanged. An absolute trigger such
 as 10-30 busy GPUs may be added only as a minimum guard for large fleets; by itself it
 would scale too late on a small fleet and too early on a large fleet. Use a slow
 scale-in policy, a scale-out cooldown, and compare rejected requests, first-audio
