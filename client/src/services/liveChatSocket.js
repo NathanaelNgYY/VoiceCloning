@@ -10,10 +10,16 @@ function withLanguageParam(path, language) {
   return url.toString();
 }
 
-export function createLiveChatSocket({ language = 'en', onOpen, onMessage, onError, onClose } = {}) {
+export function createLiveChatSocket({ language = 'en', systemPrompt = '', onOpen, onMessage, onError, onClose } = {}) {
   const socket = new WebSocket(withLanguageParam(resolveWsPath(LIVE_CHAT_SOCKET_PATH), language));
 
   socket.addEventListener('open', (event) => {
+    // Handshake first: the gateway defers connecting to OpenAI until it sees this.
+    try {
+      socket.send(JSON.stringify({ type: 'session.init', systemPrompt: systemPrompt || '' }));
+    } catch {
+      // If the immediate send fails the gateway's timeout fallback still connects.
+    }
     onOpen?.(event);
   });
 

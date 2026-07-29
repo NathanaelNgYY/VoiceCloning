@@ -4,6 +4,28 @@
 @tailwind components;
 @tailwind utilities;
 
+.gi-root .lesson-transcript-scrollbar {
+  scrollbar-color: rgb(148 163 184 / 0.7) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar-thumb {
+  border: 0.125rem solid transparent;
+  border-radius: 9999px;
+  background: rgb(148 163 184 / 0.7);
+  background-clip: padding-box;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 @layer base {
   :root {
     --background: 220 40% 99%;
@@ -76,4 +98,15 @@ audio {
 ::selection {
   background: hsl(var(--primary));
   color: white;
+}
+
+/* GI-Bleeding skin palette — LKCMedicine maroon (#7c1d6f).
+   Scoped to the gi root so other build modes keep the default blue. Every gi
+   surface reads these tokens (text-primary / bg-primary-soft / ring-primary),
+   so a rebrand is this block only — no hardcoded hex in the pages. */
+.gi-root {
+  --primary: 308 62% 30%; /* #7c1d6f */
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 266 33% 96%; /* #f4f1f8 */
+  --ring: 308 62% 30%;
 }

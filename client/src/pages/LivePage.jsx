@@ -38,6 +38,7 @@ import {
   normalizeLiveLanguage,
   splitLiveReplyChunks,
   shortenFirstFastPhrase,
+  nextAudioErrorAction,
 } from '../hooks/liveConversation.js';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -72,7 +73,9 @@ import {
 import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
+  isSelectedModelLoaded,
   resolveInferenceStatusState,
+  sameLoadedWeights,
   shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
 } from '@/lib/modelLoading';
@@ -80,7 +83,6 @@ import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { isTransientBackendError, sanitizeBackendError } from '@/lib/backendErrors';
-import { APP_MODE_CONFIG } from '@/lib/appMode';
 import FloatingNotice from '@/components/FloatingNotice';
 import {
   addTtsHistoryItem,
@@ -96,6 +98,24 @@ import {
   serializePronunciationCsv,
 } from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
+import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
+import {
+  resolveChatbotSystemPrompt,
+  getDefaultChatbotSystemPrompt,
+  persistChatbotSystemPrompt,
+  clearChatbotSystemPrompt,
+} from '@/lib/chatbotSystemPrompt';
+import {
+  MAX_DOCUMENTS_CHARS,
+  resolveChatbotDocuments,
+  persistChatbotDocuments,
+  addChatbotDocument,
+  removeChatbotDocument,
+  buildDocumentsContext,
+  combineSystemPromptWithDocuments,
+} from '@/lib/chatbotDocuments';
+import { extractPdfText } from '@/lib/chatbotPdf';
+import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
   buildSavedVoiceProfileRestoreKey,
   findSavedVoiceProfileKey,
@@ -137,19 +157,6 @@ import {
   X,
 } from 'lucide-react';
 
-function messageStatusText(message) {
-  if (message.role === 'user') {
-    return { listening: 'Listening', transcribing: 'Transcribing', done: 'Sent' }[message.status] || 'Sent';
-  }
-  return {
-    thinking: 'Writing',
-    generating_voice: 'Generating voice',
-    ready: 'Voice ready',
-    played: 'Played',
-    interrupted: 'Interrupted',
-    error: 'Failed',
-  }[message.status] || 'Reply';
-}
 
 function fallbackName(filePath) {
   return (filePath || '').replace(/\\/g, '/').split('/').pop() || 'reference.wav';
@@ -161,6 +168,11 @@ function normalizeReferenceLanguage(lang) {
 }
 
 const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 'names', 'acronyms', 'math'];
+
+// Advanced settings are still fully wired up (state + auto-applied defaults);
+// this just hides the collapsible UI so it doesn't confuse end users. Flip to
+// true to expose the panel again.
+const SHOW_ADVANCED_SETTINGS = false;
 
 function buildConfigId(seed = '') {
   const slug = String(seed || 'config')
@@ -196,11 +208,6 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
           ? 'rounded-br-md bg-slate-900 text-white'
           : 'rounded-bl-md border border-slate-100 bg-slate-50 text-slate-900'
       )}>
-        <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide opacity-60">
-          {isBusy && <Loader2 size={10} className="animate-spin" />}
-          {messageStatusText(message)}
-        </div>
-
         <p className={cn('whitespace-pre-wrap text-sm leading-6', isBusy && !message.text && 'italic opacity-60')}>
           {message.text || (isUser ? 'Listening...' : 'Thinking...')}
         </p>
@@ -209,22 +216,6 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
           <p className="mt-2 flex items-center gap-1 text-xs text-red-500">
             <CircleAlert size={12} />{message.error}
           </p>
-        )}
-
-        {!isUser && message.audioParts?.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {message.audioParts.map((part) => (
-              <span key={part.id} className={cn(
-                'rounded-full border px-2 py-0.5 text-[10px] capitalize',
-                part.status === 'ready' || part.status === 'played' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : part.status === 'generating' ? 'border-blue-200 bg-blue-50 text-blue-700'
-                  : part.status === 'error' ? 'border-red-200 bg-red-50 text-red-600'
-                  : 'border-slate-200 bg-white text-slate-400'
-              )}>
-                {part.index}: {part.status}
-              </span>
-            ))}
-          </div>
         )}
 
         {hasVoice && (
@@ -265,6 +256,17 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 }
 
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
+  const kiosk = APP_MODE_CONFIG.kiosk;
+  const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
+  const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
+  const [chatbotDocError, setChatbotDocError] = useState('');
+  const chatbotCombinedSystemPrompt = useMemo(
+    () => combineSystemPromptWithDocuments(
+      chatbotSystemPrompt,
+      buildDocumentsContext(chatbotDocuments).text,
+    ),
+    [chatbotSystemPrompt, chatbotDocuments],
+  );
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -319,6 +321,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [referenceAudioUrls, setReferenceAudioUrls] = useState({});
   const [loadingPreviewPath, setLoadingPreviewPath] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  // Mobile-only: the kiosk "Assistant instructions" panel is a slide-over drawer on
+  // small screens (it stays an in-flow sidebar at lg+). This tracks the drawer state.
+  const [showInstructions, setShowInstructions] = useState(false);
 
   const [speed, setSpeed] = useState(DEFAULT_LIVE_FAST_SETTINGS.speed);
   const [topK, setTopK] = useState(DEFAULT_LIVE_FAST_SETTINGS.topK);
@@ -343,7 +348,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   // Chatbot synthesis engine: 'fast' (live/tts-sentence) or 'full' (/inference for accuracy).
-  const [liveEngine, setLiveEngine] = useState('fast');
+  // Dean kiosk defaults to Live Fast; the toggle can opt into Live Full.
+  const [liveEngine, setLiveEngine] = useState(APP_MODE_CONFIG.defaultLiveEngine);
   const [ttsText, setTtsText] = useState('');
   const [ttsHistory, setTtsHistory] = useState([]);
   const [regeneratingFullChunk, setRegeneratingFullChunk] = useState('');
@@ -431,7 +437,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     ? buildSavedVoiceProfileRestoreKey(activeVoiceProfile)
     : '';
   const loadedProfile = availableProfiles.find((p) =>
-    p.gptModel?.path === loadedGPTPath && p.sovitsModel?.path === loadedSoVITSPath
+    sameLoadedWeights(p.gptModel?.path, loadedGPTPath) && sameLoadedWeights(p.sovitsModel?.path, loadedSoVITSPath)
   ) || null;
 
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
@@ -588,15 +594,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     replyMode,
     language: liveLanguage,
     voiceProfileId: selectedVoiceProfileId,
+    systemPrompt: kiosk ? chatbotCombinedSystemPrompt : '',
     fastMaxChunkWords: liveFastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
   });
   const playbackReady = liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc);
   const isConversationActive = liveSpeech.phase !== 'idle';
-  const liveSelectedModelLoaded = Boolean(
-    serverReady && selectedGPT && selectedSoVITS &&
-    selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
-  );
+  const liveSelectedModelLoaded = isSelectedModelLoaded({
+    serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
+  });
   const autoSyncRequestFingerprint = getAutoSyncRequestFingerprint({
     pendingFingerprint: pendingAutoSyncFingerprintRef.current,
     currentFingerprint: currentAutoSyncFingerprint,
@@ -3025,9 +3031,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }, [loadingPreviewPath]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const voiceParam = params.get('voice');
-    if (voiceParam) urlVoiceKeyRef.current = voiceParam.toLowerCase().replace(/[\s_-]+/g, '');
+    const initialVoiceKey = resolveInitialVoiceKey({
+      search: window.location.search,
+      envVoiceId: import.meta.env.VITE_CHATBOT_VOICE_PROFILE_ID,
+    });
+    if (initialVoiceKey) urlVoiceKeyRef.current = initialVoiceKey;
+    // The first fetchModels/checkStatus/loadActiveVoiceProfile now fires from the
+    // GPU-readiness-gated effect below, so we don't hit a cold backend on mount.
   }, []);
 
   // Kick off the first model/status/profile load only once the GPU worker is
@@ -3499,6 +3509,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     return () => window.removeEventListener('voice-cloning-gpu-ready', handleGpuReady);
   }, []);
 
+  // A failed or not-ready /inference/status response (cold Lambda, network blip,
+  // api_v2 busy with a warm synth) flips serverReady off while the loaded paths
+  // stay matching — so the auto-load effect never re-fires and, without this,
+  // nothing else re-checks status: the page would sit on "Loading the voice"
+  // until a manual refresh. Re-poll until the server reports ready again.
+  useEffect(() => {
+    if (serverReady || !modelsFetched) return undefined;
+    const id = window.setInterval(() => { checkStatus(); }, 8000);
+    return () => window.clearInterval(id);
+  }, [serverReady, modelsFetched]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [liveSpeech.messages.length, liveSpeech.phase]);
@@ -3511,10 +3532,30 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     audio.play().catch(() => {});
   }, [liveSpeech.audioSrc, liveSpeech.selectedReplyId, playbackReady]);
 
-  const selectedModelLoaded = Boolean(
-    serverReady && selectedGPT && selectedSoVITS &&
-    selectedGPT === loadedGPTPath && selectedSoVITS === loadedSoVITSPath
-  );
+  // The reply plays as a chain of audio clips that only advances on the `ended`
+  // event. If one clip fails to load/decode (a transient hiccup), `ended` never
+  // fires and the whole reply would stall — the voice "cuts off" and only a
+  // manual replay recovers. Retry the failed clip once, then skip it so the rest
+  // of the reply keeps playing.
+  const audioErrorStateRef = useRef({ src: '', retried: false });
+  function handleLiveAudioError() {
+    const audio = audioRef.current;
+    // Ignore errors that aren't from an active reply clip (e.g. clearing the src
+    // during interruption/teardown fires an error on an empty element).
+    if (!audio || liveSpeech.phase !== 'speaking') return;
+    const { action, retryState } = nextAudioErrorAction(audioErrorStateRef.current, liveSpeech.audioSrc);
+    audioErrorStateRef.current = retryState;
+    if (action === 'retry') {
+      try { audio.load(); audio.play().catch(() => { liveSpeech.onAudioEnded(); }); }
+      catch { liveSpeech.onAudioEnded(); }
+    } else if (action === 'skip') {
+      liveSpeech.onAudioEnded();
+    }
+  }
+
+  const selectedModelLoaded = isSelectedModelLoaded({
+    serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
+  });
   const isReady = selectedModelLoaded && Boolean(liveRefParams);
   // Last line of defence against a raw CloudFront/nginx 503/404 page ever rendering
   // as an error banner — strip HTML and swallow bare gateway errors.
@@ -3552,18 +3593,111 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       stopping: 'Stopping...',
     }[liveSpeech.phase] || 'Tap the mic to start.';
 
+  function handleChatbotSystemPromptChange(value) {
+    setChatbotSystemPrompt(value);
+    persistChatbotSystemPrompt(value);
+  }
+
+  function handleResetChatbotSystemPrompt() {
+    const next = getDefaultChatbotSystemPrompt();
+    clearChatbotSystemPrompt();
+    setChatbotSystemPrompt(next);
+  }
+
+  async function handleAddChatbotDocuments(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setChatbotDocError('');
+    let next = chatbotDocuments;
+    for (const file of files) {
+      if (file.type !== 'application/pdf') {
+        setChatbotDocError(`${file.name}: not a PDF.`);
+        continue;
+      }
+      try {
+        const doc = await extractPdfText(file);
+        if (!doc.text) {
+          setChatbotDocError(`${file.name}: no extractable text (scanned image?).`);
+          continue;
+        }
+        next = addChatbotDocument(next, doc);
+      } catch {
+        setChatbotDocError(`${file.name}: could not read PDF.`);
+      }
+    }
+    setChatbotDocuments(next);
+    const { ok } = persistChatbotDocuments(next);
+    if (!ok) setChatbotDocError('Documents too large to save; kept for this session only.');
+  }
+
+  function handleRemoveChatbotDocument(name) {
+    const next = removeChatbotDocument(chatbotDocuments, name);
+    setChatbotDocuments(next);
+    persistChatbotDocuments(next);
+  }
+
+  // Live Fast / Live Full engine toggle — shared so it can render in both the
+  // full-app top bar and the kiosk (where the rest of the top-bar chrome is hidden).
+  const engineToggle = (
+    <div className="flex items-center gap-2">
+      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Engine</span>
+      <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+        {[
+          { value: 'fast', label: 'Live Fast' },
+          // Live Full is kept wired up but hidden from the UI for now — flip
+          // hidden to false to expose it again.
+          { value: 'full', label: 'Live Full', hidden: true },
+        ].filter((option) => !option.hidden).map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => setLiveEngine(option.value)}
+            className={cn(
+              'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+              liveEngine === option.value
+                ? 'bg-primary/10 text-primary'
+                : 'text-slate-500 hover:text-slate-800'
+            )}
+            title={option.value === 'full'
+              ? 'Higher-accuracy /inference route; queues each phrase as soon as it is generated.'
+              : 'Fastest first-word latency; live sentence route.'}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     /* flex-1 + min-h-0 lets this fill the main flex column */
     <div className="animate-fade-in flex min-h-0 flex-1 flex-col gap-3">
 
       {/* ── Top bar: title + compact controls ── */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <h1 className="text-2xl font-bold tracking-tight">
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">
           <span className="bg-gradient-to-br from-slate-900 via-slate-800 to-primary/80 bg-clip-text text-transparent">
             {isTtsMode ? 'Text to Speech' : 'Live Voice Chat'}
           </span>
         </h1>
 
+        {/* Kiosk: expose only the engine toggle (the rest of the top bar is hidden). */}
+        {kiosk && !isTtsMode && (
+          <div className="flex flex-1 flex-wrap items-center gap-3">
+            {engineToggle}
+            {/* Mobile: open the Assistant-instructions drawer (in-flow sidebar at lg+). */}
+            <button
+              type="button"
+              onClick={() => setShowInstructions(true)}
+              className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 lg:hidden"
+            >
+              <Pencil size={13} />
+              Instructions
+            </button>
+          </div>
+        )}
+
+        {!kiosk && (
         <div className="flex flex-1 flex-wrap items-center gap-3">
           {/* Voice model selector */}
           <div className="flex items-center gap-2">
@@ -3600,47 +3734,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
 
           {/* Synthesis engine toggle (chat only) — Live Fast vs Live Full */}
-          {!isTtsMode && (
-            <div className="flex items-center gap-2">
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Engine</span>
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
-                {[
-                  { value: 'fast', label: 'Live Fast' },
-                  { value: 'full', label: 'Live Full' },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setLiveEngine(option.value)}
-                    className={cn(
-                      'rounded-lg px-3 py-1 text-xs font-medium transition-colors',
-                      liveEngine === option.value
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-slate-500 hover:text-slate-800'
-                    )}
-                    title={option.value === 'full'
-                      ? 'Higher-accuracy /inference route; queues each phrase as soon as it is generated.'
-                      : 'Fastest first-word latency; live sentence route.'}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {!isTtsMode && engineToggle}
 
           {/* Model status + refresh */}
           <div className="ml-auto flex flex-col items-end gap-1.5">
             <div className="flex items-center gap-3">
               <span className={cn(
                 'flex items-center gap-1.5 text-xs',
-                selectedModelLoaded ? 'text-emerald-600' : loadingModel ? 'text-blue-500' : 'text-slate-400'
+                selectedModelLoaded ? 'text-emerald-600' : loadingModel || selectedProfile || !modelsFetched ? 'text-blue-500' : 'text-slate-400'
               )}>
-                {loadingModel
+                {/* A selected-but-not-loaded profile is about to auto-load, so show
+                    it as loading rather than the confusing "No model". */}
+                {loadingModel || (!selectedModelLoaded && (selectedProfile || !modelsFetched))
                   ? <Loader2 size={11} className="animate-spin" />
                   : <span className={cn('h-2 w-2 rounded-full', selectedModelLoaded ? 'bg-emerald-500' : 'bg-slate-300')} />
                 }
-                {selectedModelLoaded ? 'Ready' : loadingModel ? 'Loading...' : 'No model'}
+                {selectedModelLoaded ? 'Ready' : loadingModel || selectedProfile || !modelsFetched ? 'Loading...' : 'No model'}
               </span>
               <Button
                 type="button"
@@ -3677,6 +3786,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       <FloatingNotice notice={gpuNotice} onClose={() => setGpuNotice(null)} />
@@ -3686,12 +3796,20 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       )}
 
       {!isReady && !displayModelError && (
-        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
-          {availableProfiles.length === 0
-            ? 'No trained models found. Train a voice first, then return here.'
-            : !selectedModelLoaded
-              ? 'Select a trained model — it will load automatically.'
-              : 'Reference clips loading — the best clip will be selected automatically.'}
+        <div className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+          {/* The whole startup sequence (fetch models -> auto-select -> auto-load ->
+              pick references) runs by itself, so just say "loading" instead of
+              surfacing each internal step as if the user had to act on it. */}
+          {modelsFetched && availableProfiles.length === 0 ? (
+            'No trained models found. Train a voice first, then return here.'
+          ) : (
+            <>
+              <Loader2 size={14} className="shrink-0 animate-spin" />
+              {!selectedModelLoaded
+                ? 'Loading the voice — this may take a moment.'
+                : 'Almost ready — preparing the voice references.'}
+            </>
+          )}
         </div>
       )}
 
@@ -4441,6 +4559,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </aside>
         </div>
       ) : (
+      <div className={cn('flex min-h-0 flex-1 gap-3', kiosk ? 'flex-row' : 'flex-col')}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]">
 
         {/* Messages */}
@@ -4490,7 +4609,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               {playbackReady && (
                 <button
                   type="button"
-                  onClick={liveSpeech.interruptPlayback}
+                  onClick={liveSpeech.stopVoicePlayback}
                   title="Stop voice"
                   className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800"
                 >
@@ -4555,9 +4674,129 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
         </div>
       </div>
+      {kiosk && (
+        <>
+        {/* Mobile-only backdrop for the instructions drawer. */}
+        {showInstructions && (
+          <div
+            className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden"
+            onClick={() => setShowInstructions(false)}
+            aria-hidden="true"
+          />
+        )}
+        <aside
+          className={cn(
+            'min-h-0 flex-col overflow-hidden border border-slate-100 bg-white shadow-[0_4px_32px_-8px_rgba(0,0,0,0.09)]',
+            // lg+: normal in-flow sidebar
+            'lg:static lg:z-auto lg:flex lg:w-[380px] lg:shrink-0 lg:rounded-2xl',
+            // mobile: right-anchored slide-over overlay
+            'fixed inset-y-0 right-0 z-50 w-[86%] max-w-[380px] rounded-l-2xl',
+            // display toggle (no off-screen transform → no horizontal-scroll risk)
+            showInstructions ? 'flex' : 'hidden',
+          )}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+              Assistant instructions
+            </span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleResetChatbotSystemPrompt}
+                disabled={isConversationActive}
+                className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-700 disabled:opacity-40"
+              >
+                Reset to default
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowInstructions(false)}
+                className="text-slate-400 transition-colors hover:text-slate-700 lg:hidden"
+                aria-label="Close instructions"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+          <Textarea
+            value={chatbotSystemPrompt}
+            onChange={(e) => handleChatbotSystemPromptChange(e.target.value)}
+            disabled={isConversationActive}
+            spellCheck={false}
+            className="min-h-0 flex-1 resize-none rounded-none border-0 bg-white px-4 py-3 text-xs leading-5 text-slate-700 shadow-none focus-visible:ring-0"
+          />
+          <div className="border-t border-slate-100 px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Reference documents
+              </span>
+              <label
+                className={cn(
+                  'cursor-pointer text-xs font-medium text-primary hover:text-primary/80',
+                  isConversationActive && 'pointer-events-none opacity-40',
+                )}
+              >
+                + Add PDF
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  multiple
+                  className="hidden"
+                  disabled={isConversationActive}
+                  onChange={(e) => { handleAddChatbotDocuments(e.target.files); e.target.value = ''; }}
+                />
+              </label>
+            </div>
+            {chatbotDocuments.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {chatbotDocuments.map((doc) => (
+                  <li key={doc.name} className="flex items-center justify-between gap-2 text-[11px] text-slate-600">
+                    <span className="truncate">{doc.name}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="text-slate-400">{doc.chars.toLocaleString()} chars</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveChatbotDocument(doc.name)}
+                        disabled={isConversationActive}
+                        className="text-slate-400 hover:text-red-500 disabled:opacity-40"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {buildDocumentsContext(chatbotDocuments).totalChars > 0 && (
+              <p
+                className={cn(
+                  'mt-2 text-[11px]',
+                  buildDocumentsContext(chatbotDocuments).totalChars > MAX_DOCUMENTS_CHARS
+                    ? 'text-amber-600'
+                    : 'text-slate-400',
+                )}
+              >
+                {buildDocumentsContext(chatbotDocuments).totalChars.toLocaleString()}
+                {' / '}
+                {MAX_DOCUMENTS_CHARS.toLocaleString()} chars
+                {buildDocumentsContext(chatbotDocuments).totalChars > MAX_DOCUMENTS_CHARS ? ' — will be truncated.' : ''}
+              </p>
+            )}
+            {chatbotDocError && (
+              <p className="mt-2 text-[11px] text-red-500">{chatbotDocError}</p>
+            )}
+          </div>
+          <p className="border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">
+            Applied to the next conversation. Locked while a chat is active.
+          </p>
+        </aside>
+        </>
+      )}
+      </div>
       )}
 
-      {/* ── Advanced settings collapsible ── */}
+      {/* ── Advanced settings collapsible (hidden from end users; settings still applied) ── */}
+      {SHOW_ADVANCED_SETTINGS && (
       <Collapsible open={showSettings} onOpenChange={setShowSettings}>
         <CollapsibleTrigger asChild>
           <button
@@ -5295,8 +5534,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
         </CollapsibleContent>
       </Collapsible>
+      )}
 
-      <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} />
+      <audio ref={audioRef} className="hidden" onEnded={liveSpeech.onAudioEnded} onError={handleLiveAudioError} />
     </div>
   );
 }

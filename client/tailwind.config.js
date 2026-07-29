@@ -15,6 +15,7 @@ export default {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          soft: "hsl(var(--primary-soft, 234 46% 94%))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -40,6 +41,9 @@ export default {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",
         },
+        surface: "hsl(var(--gi-surface, 210 40% 98%))",
+        ink: "hsl(var(--gi-ink, 215 25% 27%))",
+        "ink-muted": "hsl(var(--gi-ink-muted, 215 16% 47%))",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -77,6 +81,10 @@ export default {
           "33%":       { opacity: "0.75", transform: "scale(1.14) translate(28px, -22px)" },
           "66%":       { opacity: "0.45", transform: "scale(0.92) translate(-18px, 24px)" },
         },
+        "pulse-ring": {
+          "0%": { transform: "scale(1)", opacity: "0.5" },
+          "100%": { transform: "scale(1.7)", opacity: "0" },
+        },
       },
       animation: {
         "fade-in": "fade-in 0.4s ease",
@@ -87,6 +95,8 @@ export default {
         "orb-float-1": "orb-float 10s ease-in-out infinite",
         "orb-float-2": "orb-float 13s ease-in-out infinite 3.5s",
         "orb-float-3": "orb-float 16s ease-in-out infinite 7s",
+        "pulse-ring": "pulse-ring 1.6s ease-out infinite",
+        "pulse-ring-fast": "pulse-ring 0.8s ease-out infinite",
       },
     },
   },

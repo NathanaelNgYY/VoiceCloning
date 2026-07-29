@@ -25,6 +25,8 @@ import { fetchLiveDemoLockout } from '@/lib/runtimeConfig';
 const GPU_AUTO_START = !APP_MODE_CONFIG.showTraining;
 import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
+import GiChatPage from './pages/GiChatPage.jsx';
+import GiApp from './GiApp.jsx';
 
 function LiveFastEntry() {
   const location = useLocation();
@@ -199,9 +201,15 @@ function LiveDemoLockoutScreen() {
 }
 
 export default function App() {
+  // The gi build is a full app (search → lesson → chat) with its own chrome and
+  // auth gate, so it replaces AppShell entirely. The GPU still auto-starts in
+  // the background, but the blocking overlay is deliberately not rendered —
+  // browsing lessons and the transcript must not wait on the voice engine.
+  // The Dean-demo lockout lives inside AppShell, so gi deliberately bypasses it
+  // too: a lesson page must stay readable while the shared GPU is busy.
   return (
     <GpuStatusProvider autoStart={GPU_AUTO_START}>
-      <AppShell />
+      {APP_MODE_CONFIG.gi ? <GiApp /> : <AppShell />}
     </GpuStatusProvider>
   );
 }
@@ -227,8 +235,9 @@ function AppShell() {
         <AnimatedBackground />
         {GPU_AUTO_START && <GpuStartingOverlay />}
         {/* Minimal header */}
+        {!appConfig.showGiChat && (
         <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md">
-          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-8">
+          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-8">
             <nav className="flex items-center gap-1">
               {appConfig.navItems.map((item) => (
                 <NavLink
@@ -253,18 +262,24 @@ function AppShell() {
           {/* thin gradient accent line */}
           <div className="h-px bg-gradient-to-r from-primary/30 via-violet-400/20 to-transparent" />
         </header>
+        )}
 
         {/* Main content */}
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-8 py-8">
+        <main className={cn(
+          'flex w-full flex-1 flex-col',
+          appConfig.showGiChat ? 'min-h-0' : 'mx-auto max-w-6xl px-4 py-4 sm:px-8 sm:py-8'
+        )}>
           <Routes>
             <Route
               path="/"
               element={
-                appConfig.showTraining
-                  ? <TrainingPage />
-                  : appConfig.showLiveFast
-                    ? <LiveFastEntry />
-                    : <Navigate to={appConfig.defaultPath} replace />
+                appConfig.showGiChat
+                  ? <GiChatPage />
+                  : appConfig.showTraining
+                    ? <TrainingPage />
+                    : appConfig.showLiveFast
+                      ? <LiveFastEntry />
+                      : <Navigate to={appConfig.defaultPath} replace />
               }
             />
             <Route
@@ -290,11 +305,13 @@ function AppShell() {
         </main>
 
         {/* Footer */}
-        <footer className="mx-auto w-full max-w-6xl border-t border-slate-100 px-8">
+        {!appConfig.showGiChat && (
+        <footer className="mx-auto w-full max-w-6xl border-t border-slate-100 px-4 sm:px-8">
           <div className="flex items-center py-5">
             <span className="text-xs text-slate-400">Voice Cloning Studio</span>
           </div>
         </footer>
+        )}
       </div>
     </TooltipProvider>
   );
