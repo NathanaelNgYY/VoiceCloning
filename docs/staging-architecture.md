@@ -234,15 +234,14 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The validated image is `ami-02e0a90f76ed1ce2a`, built from commit
-   `62f86ff`. Launch template `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 11) uses this AMI, `g6.xlarge`,
+   port 3004. The validated image is `ami-0ffe20a0a5986a0cb`, built from commit
+   `2ab26ee`. Launch template `vcs-staging-gpu-inference`
+   (`lt-07728350a25e691a4`, default version 13) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
    ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with instance
-   `i-059fb463d9c95258f` (launched on v10 before v11 changed startup ordering);
+   `i-02ed1e071bbf085d2`;
    `AWSServiceRoleForAutoScaling` also exists. Minimum
-   capacity is 1 because ALB request-count target tracking cannot recover from zero
-   registered targets.
+   capacity is 1 so public inference always has a warm baseline.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
@@ -253,20 +252,26 @@ The implemented staging design keeps the public hostnames and separates roles:
    bursts. The requested schedule now prewarms 32 for additional headroom; 32 has not
    been separately load-tested because the 16-node fleet already passed the target.
 
-Live target tracking uses completed `RequestCountPerTarget` samples:
+Live scaling uses Target Optimizer capacity signals rather than completed-request
+target tracking:
 
-- scale out when the metric is above 6 for three consecutive 60-second periods;
-- scale in when it is below 4.2 for fifteen consecutive 60-second periods;
+- scale out by 60% after one 60-second datapoint where advertised work capacity is
+  zero and Target Optimizer rejected traffic;
+- do not scale when any work slot is visible in the sampled minute, even if retry
+  rejects also occurred;
+- scale in one instance after fifteen one-minute periods with no ALB traffic;
 - default instance warmup and ELB health grace are 600 seconds, default cooldown is
   300 seconds, and target deregistration delay is 120 seconds;
 - normal scale-in stops at ASG minimum 1. An event action that raises minimum to 32
   deliberately blocks automatic scale-in below 32 until a paired action restores
   minimum/desired 1.
 
-Therefore idle automatic scale-in normally begins after about fifteen quiet minutes
-and may take another two minutes to drain targets. A newly launched cold target needs
-about seven minutes to warm, so the three-minute scale-out alarm cannot rescue a sudden
-request burst before upstream timeout; it is intended for sustained completed traffic.
+`TargetControlWorkQueueLength` is sampled, not a durable request queue. A rejected
+Lambda invocation sleeps and retries; a slot that becomes free during that delay can
+appear unused until the next retry. Therefore reject count alone is deliberately not a
+scale-out signal. Idle automatic scale-in begins after about fifteen quiet minutes and
+may take another two minutes to drain. Reactive scale-out still cannot rescue the first
+sudden burst because new GPUs take minutes to boot and warm.
 
 Target Optimizer requires a new target group and its agent on every inference target.
 Do not apply it to the WebSocket gateway on port 3002 or the training worker on 3001.
@@ -320,6 +325,12 @@ when 50 students all submit at once.
 | Full chatbot, 50 users, 32 warm GPUs | WebSocket/transcript 50/50; complete voice 41/50; 9 first-chunk 504s; first voice after speech p50 26.54 s/p95 31.64 s; complete response p50 51.85 s/p95 57.94 s |
 | Reactive scale-out from 32 | Three 8-request minute waves; alarm after 5m36s; desired 32->43->45; first new healthy capacity 4m20s after launch, all 45 healthy 12m20s after first demand |
 | Full chatbot, 50 users, 45 warm GPUs | 50/50 complete; first voice after speech p50 11.62 s/p95 21.00 s; complete response p50 31.25 s/p95 45.20 s |
+| Full chatbot, 50 users, 32 route-warmed GPUs | 50/50 complete; turn first-voice p50 7.57/3.79/4.11 s; turn total p50 31.05/27.80/29.02 s; 109.51 s wave |
+| Full chatbot, 100 users, 32 route-warmed GPUs | 98/100 complete sessions; all 100 completed turn 1 voice; turn first-voice p50 9.59/4.20/4.12 s; desired stayed 32 because capacity samples retained at least five free slots |
+| Closed-loop TTS, 100 users, 32 GPUs, 120 s, verification skipped | 2,427/2,427 valid WAVs; p50 3.86 s/p95 11.31 s; two free slots remained, so no scale |
+| Deliberate 192-user saturation | zero-capacity minute at 20:20 SGT; alarm 20:23:43; desired 32->51; 19 launches at 20:23:56; all 19 route-warm checks complete by 20:28:31 |
+| Full chatbot, 100 users, 51 hot GPUs | 100/100 complete three-turn sessions; first voice p50 5.02/3.34/3.40 s; total p50 23.54/19.04/17.15 s |
+| Full chatbot, 50 users, 51 hot GPUs | 50/50 complete; first voice p50 5.69/4.10/4.30 s; total p50 28.11/25.42/29.30 s |
 
 The complete-flow test command is `node scripts/load-test-staging-chatbot.mjs 50`.
 Each virtual user opens an independent public WebSocket, streams a real 24 kHz PCM
@@ -333,11 +344,13 @@ chunk while Lambda/backend processing continued for as long as about 36 seconds.
 
 A single earlier chatbot response produced 14 voice chunks sequentially in about
 28 seconds. It did not scale because that is one user's one-at-a-time workload and
-cannot sustain the high alarm for three consecutive one-minute periods. The controlled
-scale test maintained eight completed requests in each of three minutes. First demand
-began at 18:09:05 SGT, the alarm changed state at 18:14:41, the first 11 launches
-started nine seconds later, and all two scaling steps reached 45 healthy targets by
-18:21:25. Existing warm targets stayed available during scale-out.
+does not exhaust the fleet. The old completed-request policy was replaced after it
+scaled too aggressively from small sustained traffic. The current policy scaled only
+when the 192-user trigger produced a zero-capacity sampled minute plus rejected
+traffic. The metric minute began at 20:20 SGT, CloudWatch entered ALARM at 20:23:43,
+desired changed 32->51, and 19 instances launched at 20:23:56. Their cloud-init,
+route-level synthesis warm, inference service, and Target Optimizer checks all
+completed between 20:28:28 and 20:28:31. Existing warm targets stayed available.
 
 SSM diagnosis found overlapping cold-start requests could leave an abandoned Python
 child alive after the 120-second startup timeout, allowing a retry to launch a second
@@ -374,10 +387,18 @@ min/desired 1 at 18:00 SGT. The stored UTC times are 2026-08-01 23:15Z and
 until the provisioner is rerun with `-Apply`. A maximum of 200 would require
 800 vCPUs and exceeds the verified quota.
 
-Launch-template v11 keeps Target Optimizer stopped until
-`warm-staging-deanvoice.sh` completes. This prevents ALB health from turning green
-after weight selection but before the reference/throwaway synthesis has warmed the
-actual request path.
+Launch-template v13 keeps Target Optimizer stopped until
+`warm-staging-deanvoice.sh` completes. The warm script now calls the real
+`/inference/tts` route and validates a RIFF WAV in addition to loading weights and
+warming references. This prevents optimized traffic from reaching a worker before the
+same synthesis route used by the chatbot has completed once. A first production wave
+can still be slower than the synthetic warm, so scheduled prewarming remains required.
+
+Capacity retries sent by Lambda carry `X-VCS-Capacity-Retry`; a worker that receives
+one inserts it ahead of normal queued work while preserving FIFO within each lane.
+This priority applies after Target Optimizer has routed the request. Target Optimizer
+rejections happen before the local queue and are retried by Lambda within a bounded
+30-second budget.
 
 An intermediate no-reboot AMI (`ami-0b06a87a36a68328d`, launch-template v9) captured
 `gpu-inference-worker/src/index.js` as zero bytes and was rolled back before promotion.
@@ -464,11 +485,11 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The optimized target group, final AMI `ami-02e0a90f76ed1ce2a`, launch-template v11,
-   ASG, one healthy `InService` instance, and request-count target tracking policy are
-   live. ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the
-   optimized target. Paired 32-GPU 07:15 SGT prewarm and 18:00 SGT scale-down actions
-   are live for 2026-08-02.
+7. The optimized target group, final AMI `ami-0ffe20a0a5986a0cb`, launch-template v13,
+   ASG, one healthy `InService` instance, and zero-capacity scaling policy are live.
+   ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the optimized
+   target. Paired 32-GPU 07:15 SGT prewarm and 18:00 SGT scale-down actions are live
+   for 2026-08-02.
 8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.

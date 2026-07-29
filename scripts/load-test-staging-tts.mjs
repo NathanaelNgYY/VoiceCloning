@@ -1,12 +1,21 @@
 import { performance } from 'node:perf_hooks';
+import { dirname } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 const concurrency = Number.parseInt(process.argv[2] || '10', 10);
 const url = process.env.VCS_LOAD_TEST_URL
   || 'https://d25sg72wp8oj5g.cloudfront.net/api/live/tts-sentence';
 const timeoutMs = Number.parseInt(process.env.VCS_LOAD_TEST_TIMEOUT_MS || '180000', 10);
+const durationMs = Number.parseInt(process.env.VCS_LOAD_TEST_DURATION_MS || '0', 10);
+const reportFile = process.env.VCS_LOAD_TEST_REPORT_FILE || '';
+const testText = process.env.VCS_LOAD_TEST_TEXT || 'Concurrent staging voice check.';
+const skipVerify = process.env.VCS_LOAD_TEST_SKIP_VERIFY === 'true';
 
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 500) {
   throw new Error('Concurrency must be an integer from 1 to 500.');
+}
+if (!Number.isInteger(durationMs) || durationMs < 0 || durationMs > 900_000) {
+  throw new Error('VCS_LOAD_TEST_DURATION_MS must be from 0 to 900000.');
 }
 
 function percentile(sorted, fraction) {
@@ -14,10 +23,10 @@ function percentile(sorted, fraction) {
   return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)];
 }
 
-async function runRequest(index, startedAt) {
+async function runRequest(index, sequence, startedAt) {
   const started = performance.now();
   try {
-    const response = await fetch(`${url}?loadTest=${startedAt}-${index}`, {
+    const response = await fetch(`${url}?loadTest=${startedAt}-${index}-${sequence}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -25,7 +34,8 @@ async function runRequest(index, startedAt) {
       },
       body: JSON.stringify({
         voiceProfileId: 'deanvoice-v1',
-        text: `Concurrent staging voice check ${index + 1}.`,
+        text: testText,
+        ...(skipVerify ? { skip_verify: true } : {}),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -56,9 +66,17 @@ async function runRequest(index, startedAt) {
 
 const runId = Date.now();
 const wallStarted = performance.now();
-const results = await Promise.all(
-  Array.from({ length: concurrency }, (_, index) => runRequest(index, runId)),
+const deadline = durationMs > 0 ? wallStarted + durationMs : null;
+const perUser = await Promise.all(
+  Array.from({ length: concurrency }, async (_, index) => {
+    const userResults = [];
+    do {
+      userResults.push(await runRequest(index, userResults.length, runId));
+    } while (deadline != null && performance.now() < deadline);
+    return userResults;
+  }),
 );
+const results = perUser.flat();
 const wallMs = performance.now() - wallStarted;
 const successful = results.filter((result) => result.ok);
 const latencies = successful.map((result) => result.latencyMs).sort((a, b) => a - b);
@@ -82,9 +100,17 @@ const statusCounts = Object.groupBy
     return counts;
   }, {});
 
-console.log(JSON.stringify({
+const report = {
   url,
   concurrency,
+  durationMs,
+  testText,
+  skipVerify,
+  totalRequests: results.length,
+  requestsPerUser: {
+    min: Math.min(...perUser.map((items) => items.length)),
+    max: Math.max(...perUser.map((items) => items.length)),
+  },
   startedAt: new Date(runId).toISOString(),
   wallMs: Math.round(wallMs),
   success: successful.length,
@@ -102,4 +128,9 @@ console.log(JSON.stringify({
     max: successful.length ? Math.max(...successful.map((result) => result.bytes)) : null,
   },
   failures,
-}, null, 2));
+};
+if (reportFile) {
+  mkdirSync(dirname(reportFile), { recursive: true });
+  writeFileSync(reportFile, JSON.stringify(report, null, 2));
+}
+console.log(JSON.stringify({ ...report, ...(reportFile ? { reportFile } : {}) }, null, 2));
