@@ -159,6 +159,24 @@ Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cf
   --group-id $cfg.securityGroupId --protocol tcp `
   --port $cfg.targetControlPort --source-group $cfg.albSecurityGroupId
 
+foreach ($port in @($cfg.targetDataPort, $cfg.targetControlPort)) {
+  $egressPermission = @{
+    IpProtocol = 'tcp'
+    FromPort = [int]$port
+    ToPort = [int]$port
+    UserIdGroupPairs = @(@{ GroupId = $cfg.securityGroupId })
+  } | ConvertTo-Json -Depth 4 -Compress
+  $egressPermissionPath = Join-Path $env:TEMP "vcs-staging-alb-egress-$port.json"
+  [IO.File]::WriteAllText(
+    $egressPermissionPath,
+    "[$egressPermission]",
+    (New-Object Text.UTF8Encoding($false))
+  )
+  Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-egress --region $cfg.region `
+    --group-id $cfg.albSecurityGroupId `
+    --ip-permissions "file://$egressPermissionPath"
+}
+
 if ($SwitchListener -and $targetGroupArn) {
   Invoke-AwsJson elbv2 modify-rule --region $cfg.region --rule-arn (
     (Invoke-AwsJson elbv2 describe-rules --region $cfg.region --listener-arn $cfg.listenerArn).Rules |
