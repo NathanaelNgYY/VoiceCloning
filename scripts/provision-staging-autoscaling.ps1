@@ -151,7 +151,33 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
 
 $albResource = ($cfg.albArn -split ':loadbalancer/')[1]
 $targetGroupResource = ($targetGroupArn -split ':')[5]
-if ($albResource -and $targetGroupResource) {
+
+Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
+  --group-id $cfg.securityGroupId --protocol tcp `
+  --port $cfg.targetDataPort --source-group $cfg.albSecurityGroupId
+Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
+  --group-id $cfg.securityGroupId --protocol tcp `
+  --port $cfg.targetControlPort --source-group $cfg.albSecurityGroupId
+
+if ($SwitchListener -and $targetGroupArn) {
+  Invoke-AwsJson elbv2 modify-rule --region $cfg.region --rule-arn (
+    (Invoke-AwsJson elbv2 describe-rules --region $cfg.region --listener-arn $cfg.listenerArn).Rules |
+      Where-Object Priority -eq ([string]$cfg.inferenceRulePriority) |
+      Select-Object -ExpandProperty RuleArn
+  ) --actions "Type=forward,TargetGroupArn=$targetGroupArn"
+}
+
+$listenerRoutesToTarget = $false
+if ($Apply -and $targetGroupArn) {
+  $inferenceRule = (Invoke-AwsJson elbv2 describe-rules --region $cfg.region `
+    --listener-arn $cfg.listenerArn).Rules |
+    Where-Object Priority -eq ([string]$cfg.inferenceRulePriority)
+  $listenerRoutesToTarget = [bool](
+    $inferenceRule.Actions |
+    Where-Object TargetGroupArn -eq $targetGroupArn
+  )
+}
+if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   $trackingConfig = @{
     PredefinedMetricSpecification = @{
       PredefinedMetricType = 'ALBRequestCountPerTarget'
@@ -172,21 +198,8 @@ if ($albResource -and $targetGroupResource) {
     --policy-type TargetTrackingScaling `
     --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
     --target-tracking-configuration "file://$trackingConfigPath"
-}
-
-Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
-  --group-id $cfg.securityGroupId --protocol tcp `
-  --port $cfg.targetDataPort --source-group $cfg.albSecurityGroupId
-Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
-  --group-id $cfg.securityGroupId --protocol tcp `
-  --port $cfg.targetControlPort --source-group $cfg.albSecurityGroupId
-
-if ($SwitchListener -and $targetGroupArn) {
-  Invoke-AwsJson elbv2 modify-rule --region $cfg.region --rule-arn (
-    (Invoke-AwsJson elbv2 describe-rules --region $cfg.region --listener-arn $cfg.listenerArn).Rules |
-      Where-Object Priority -eq ([string]$cfg.inferenceRulePriority) |
-      Select-Object -ExpandProperty RuleArn
-  ) --actions "Type=forward,TargetGroupArn=$targetGroupArn"
+} elseif ($Apply) {
+  Write-Host 'Scaling policy deferred until the inference listener routes to the optimized target group.'
 }
 
 if ($PreWarmAt) {
