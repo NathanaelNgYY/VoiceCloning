@@ -21,6 +21,7 @@ touchpoint/
 
 # Graphify generated knowledge graph (rebuilt locally by git post-commit hook)
 graphify-out/
+.tmp/
 
 # Local env files
 client/.env.combined

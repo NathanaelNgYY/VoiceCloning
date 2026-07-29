@@ -317,6 +317,27 @@ when 50 students all submit at once.
 | 60 concurrent, same warm fleet after the first wave | 60/60; p50 3.67 s, p95 9.09 s, 9.92 s wall |
 | 60 concurrent, one cold target | 0/60; all CloudFront/Lambda 504 around 30.7 s |
 | Fresh launch-template v10 node | cloud-init ready in 442 s; public 10/10 after healthy |
+| Full chatbot, 50 users, 32 warm GPUs | WebSocket/transcript 50/50; complete voice 41/50; 9 first-chunk 504s; first voice after speech p50 26.54 s/p95 31.64 s; complete response p50 51.85 s/p95 57.94 s |
+| Reactive scale-out from 32 | Three 8-request minute waves; alarm after 5m36s; desired 32->43->45; first new healthy capacity 4m20s after launch, all 45 healthy 12m20s after first demand |
+| Full chatbot, 50 users, 45 warm GPUs | 50/50 complete; first voice after speech p50 11.62 s/p95 21.00 s; complete response p50 31.25 s/p95 45.20 s |
+
+The complete-flow test command is `node scripts/load-test-staging-chatbot.mjs 50`.
+Each virtual user opens an independent public WebSocket, streams a real 24 kHz PCM
+question, receives its OpenAI answer, and sequentially sends the answer chunks through
+public DeanVoice synthesis. The 32-GPU run averaged 160.6 response words and 10.3
+chunks per user; the 45-GPU run averaged 105.7 words and 7.66 chunks. The latter
+improvement therefore reflects both additional capacity and shorter generated answers,
+not capacity alone. No ALB 503 or Target Optimizer rejection was recorded in the
+32-GPU run. The nine failures were CloudFront 504s near 30 seconds on the first voice
+chunk while Lambda/backend processing continued for as long as about 36 seconds.
+
+A single earlier chatbot response produced 14 voice chunks sequentially in about
+28 seconds. It did not scale because that is one user's one-at-a-time workload and
+cannot sustain the high alarm for three consecutive one-minute periods. The controlled
+scale test maintained eight completed requests in each of three minutes. First demand
+began at 18:09:05 SGT, the alarm changed state at 18:14:41, the first 11 launches
+started nine seconds later, and all two scaling steps reached 45 healthy targets by
+18:21:25. Existing warm targets stayed available during scale-out.
 
 SSM diagnosis found overlapping cold-start requests could leave an abandoned Python
 child alive after the 120-second startup timeout, allowing a retry to launch a second

@@ -23,7 +23,7 @@
       "scheduledActionsCreated": true,
       "eventPreWarmAt": "2026-08-02T07:15:00+08:00",
       "eventScaleDownAt": "2026-08-02T18:00:00+08:00",
-      "currentInstanceId": "i-059fb463d9c95258f",
+      "currentInstanceId": "i-080216db47f377410",
       "listenerCutover": true
     },
     "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO" },
