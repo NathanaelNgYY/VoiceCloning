@@ -2,6 +2,15 @@
 set -euo pipefail
 
 worker_url="${VCS_WORKER_URL:-http://127.0.0.1:3003}"
+total_started_at="${SECONDS}"
+phase_started_at="${SECONDS}"
+
+finish_phase() {
+  local phase="$1"
+  local now="${SECONDS}"
+  echo "warm_timing phase=${phase} seconds=$((now - phase_started_at))"
+  phase_started_at="${now}"
+}
 
 post_json() {
   local endpoint="$1"
@@ -20,11 +29,14 @@ for _ in $(seq 1 60); do
   fi
   sleep 2
 done
+finish_phase "wait_for_worker"
 
 gpt_result="$(post_json /models/download 180 \
   '{"s3Key":"models/user-models/gpt/DeanVoice-e25.ckpt"}')"
+finish_phase "gpt_model_cache"
 sovits_result="$(post_json /models/download 180 \
   '{"s3Key":"models/user-models/sovits/DeanVoice_e20_s2260.pth"}')"
+finish_phase "sovits_model_cache"
 
 gpt_path="$(printf '%s' "${gpt_result}" | sed -n 's/.*"localPath":"\([^"]*\)".*/\1/p')"
 sovits_path="$(printf '%s' "${sovits_result}" | sed -n 's/.*"localPath":"\([^"]*\)".*/\1/p')"
@@ -35,6 +47,7 @@ fi
 
 post_json /inference/weights/pair 420 \
   "{\"gptPath\":\"${gpt_path}\",\"sovitsPath\":\"${sovits_path}\"}"
+finish_phase "load_weight_pair"
 
 post_json /ref-audio/warm 300 '{
   "voiceProfileId":"deanvoice-v1",
@@ -51,6 +64,7 @@ post_json /ref-audio/warm 300 '{
   "text_lang":"en",
   "warm_text":"The staging voice is ready."
 }'
+finish_phase "reference_cache_and_synthesis"
 
 status="$(curl --fail --silent --show-error "${worker_url}/inference/status")"
 if [[ "${status}" != *'"ready":true'* ]]; then
@@ -58,4 +72,5 @@ if [[ "${status}" != *'"ready":true'* ]]; then
   exit 1
 fi
 
+echo "warm_timing total_seconds=$((SECONDS - total_started_at))"
 echo 'DeanVoice staging warm completed.'
