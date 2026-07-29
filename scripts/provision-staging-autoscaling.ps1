@@ -68,12 +68,14 @@ $userData = @'
 #cloud-config
 bootcmd:
   - [systemctl, disable, gpu-worker.service]
+  - [systemctl, disable, target-optimizer-inference.service]
 runcmd:
   - [systemctl, disable, --now, gpu-worker.service]
+  - [systemctl, disable, --now, target-optimizer-inference.service]
   - [systemctl, daemon-reload]
   - [systemctl, enable, --now, gpu-inference-worker.service]
-  - [systemctl, enable, --now, target-optimizer-inference.service]
   - [sudo, -u, ubuntu, /home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh]
+  - [systemctl, enable, --now, target-optimizer-inference.service]
 '@
 $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
 

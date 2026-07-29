@@ -234,12 +234,15 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The validated image is `ami-0cc434135361d7400`, built from commit
-   `472b44e`. Launch template `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 8) uses this AMI, `g6.xlarge`,
+   port 3004. The validated image is `ami-02e0a90f76ed1ce2a`, built from commit
+   `62f86ff`. Launch template `vcs-staging-gpu-inference`
+   (`lt-07728350a25e691a4`, default version 11) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
    ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with instance
-   `i-041c6f69364b50413`; `AWSServiceRoleForAutoScaling` also exists.
+   `i-059fb463d9c95258f` (launched on v10 before v11 changed startup ordering);
+   `AWSServiceRoleForAutoScaling` also exists. Minimum
+   capacity is 1 because ALB request-count target tracking cannot recover from zero
+   registered targets.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`, and
@@ -284,7 +287,7 @@ Use a target utilization no higher than `0.7` for the event. Also test the true
 simultaneous burst: the formula describes sustained throughput, not the wait experienced
 when 50 students all submit at once.
 
-**Results recorded 2026-07-28 through the real staging Lambda URL:**
+**Results recorded 2026-07-28 through 2026-07-29 through the real staging public path:**
 
 | Probe | Result |
 |---|---|
@@ -294,6 +297,10 @@ when 50 students all submit at once.
 | 4 concurrent, concurrency 2, verification disabled | 4/4 valid WAV; 7.1 s wall |
 | 4 concurrent, concurrency 2, verification enabled | 4/4 valid WAV; 10.8 s wall |
 | 10 concurrent, concurrency 2, verification enabled | 10/10 valid WAV; 32.7 s wall |
+| 50 concurrent, 16 prewarmed GPUs | 50/50; p50 20.18 s, p95 24.30 s, 25.35 s wall |
+| 60 concurrent, same warm fleet after the first wave | 60/60; p50 3.67 s, p95 9.09 s, 9.92 s wall |
+| 60 concurrent, one cold target | 0/60; all CloudFront/Lambda 504 around 30.7 s |
+| Fresh launch-template v10 node | cloud-init ready in 442 s; public 10/10 after healthy |
 
 SSM diagnosis found overlapping cold-start requests could leave an abandoned Python
 child alive after the 120-second startup timeout, allowing a retry to launch a second
@@ -303,6 +310,33 @@ A fresh launch-template instance loaded DeanVoice once, warmed references, produ
 valid 32 kHz WAV, and exposed exactly one API process. Rule 3 now routes to the healthy
 optimized target. Three final public chatbot requests returned WAVs in 13.49, 2.10,
 and 1.65 seconds. This validates one node, not the planned 16-GPU event capacity.
+
+The earlier undifferentiated ~352-second warm measurement was instrumented in commit
+`62f86ff`. On an already initialized node the complete warm command took 13 seconds:
+5 seconds GPT cache lookup, 4 seconds SoVITS cache lookup, 1 second pair selection,
+and 3 seconds reference/throwaway synthesis. A brand-new v10 instance took 378 seconds
+inside the warm command: 9 seconds model-cache lookup, 273 seconds starting the Python
+stack and loading GPT/SoVITS/BERT/CNHuBERT, and 96 seconds caching references plus the
+first synthesis. Cloud-init finished 442 seconds after boot. The large fresh-instance
+difference is consistent with first reads from snapshot-backed EBS blocks; prewarming
+must complete before traffic.
+
+Reactive scaling did not increase capacity during a 60-request cold burst: the public
+requests timed out before `ALBRequestCountPerTarget` recorded enough completed work,
+so desired capacity stayed at one. Scheduled event prewarm is therefore required.
+AWS Auto Scaling also requires a finite numeric maximum; this ASG remains capped at
+16 even though the account G/VT quota was 768 vCPUs (192 `g6.xlarge` total) during
+the audit. Single-AZ capacity is not guaranteed.
+
+Launch-template v11 keeps Target Optimizer stopped until
+`warm-staging-deanvoice.sh` completes. This prevents ALB health from turning green
+after weight selection but before the reference/throwaway synthesis has warmed the
+actual request path.
+
+An intermediate no-reboot AMI (`ami-0b06a87a36a68328d`, launch-template v9) captured
+`gpu-inference-worker/src/index.js` as zero bytes and was rolled back before promotion.
+The corrected image was created only after verifying the 3,577-byte file and flushing
+the filesystem, then validated from a fresh v10 instance before cutover.
 
 ### AWS permissions needed
 
@@ -384,7 +418,7 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The optimized target group, final AMI `ami-0cc434135361d7400`, launch-template v8,
+7. The optimized target group, final AMI `ami-02e0a90f76ed1ce2a`, launch-template v11,
    ASG, one healthy `InService` instance, and request-count target tracking policy are
    live. ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the
    optimized target. No 16-GPU prewarm/scale-down schedule exists yet; create it only

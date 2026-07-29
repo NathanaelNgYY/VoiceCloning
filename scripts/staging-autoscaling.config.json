@@ -16,9 +16,9 @@
   "targetControlPort": 3004,
   "launchTemplateName": "vcs-staging-gpu-inference",
   "autoScalingGroupName": "vcs-staging-gpu-inference",
-  "minSize": 0,
+  "minSize": 1,
   "maxSize": 16,
-  "desiredCapacity": 0,
+  "desiredCapacity": 1,
   "healthCheckGracePeriodSeconds": 600,
   "defaultPreWarmCapacity": 2,
   "eventCapacity": 16
