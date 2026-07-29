@@ -253,6 +253,21 @@ The implemented staging design keeps the public hostnames and separates roles:
    bursts. The requested schedule now prewarms 32 for additional headroom; 32 has not
    been separately load-tested because the 16-node fleet already passed the target.
 
+Live target tracking uses completed `RequestCountPerTarget` samples:
+
+- scale out when the metric is above 6 for three consecutive 60-second periods;
+- scale in when it is below 4.2 for fifteen consecutive 60-second periods;
+- default instance warmup and ELB health grace are 600 seconds, default cooldown is
+  300 seconds, and target deregistration delay is 120 seconds;
+- normal scale-in stops at ASG minimum 1. An event action that raises minimum to 32
+  deliberately blocks automatic scale-in below 32 until a paired action restores
+  minimum/desired 1.
+
+Therefore idle automatic scale-in normally begins after about fifteen quiet minutes
+and may take another two minutes to drain targets. A newly launched cold target needs
+about seven minutes to warm, so the three-minute scale-out alarm cannot rescue a sudden
+request burst before upstream timeout; it is intended for sustained completed traffic.
+
 Target Optimizer requires a new target group and its agent on every inference target.
 Do not apply it to the WebSocket gateway on port 3002 or the training worker on 3001.
 
