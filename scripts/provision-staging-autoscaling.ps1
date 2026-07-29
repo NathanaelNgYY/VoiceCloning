@@ -37,6 +37,15 @@ if ($eventEnabled) {
 if ([bool]$PreWarmAt -xor [bool]$ScaleDownAt) {
   throw 'PreWarmAt and ScaleDownAt must be provided together so event capacity cannot be left running indefinitely.'
 }
+$preWarmTimestamp = $null
+$scaleDownTimestamp = $null
+if ($PreWarmAt) {
+  $preWarmTimestamp = [DateTimeOffset]::Parse($PreWarmAt)
+  $scaleDownTimestamp = [DateTimeOffset]::Parse($ScaleDownAt)
+  if ($scaleDownTimestamp -le $preWarmTimestamp) {
+    throw 'ScaleDownAt must be later than PreWarmAt.'
+  }
+}
 if ($MaxCapacity -lt [int]$cfg.minSize) {
   throw "MaxCapacity must be at least the baseline minimum of $($cfg.minSize)."
 }
@@ -259,7 +268,7 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
 }
 
 if ($PreWarmAt) {
-  $startUtc = ([DateTimeOffset]::Parse($PreWarmAt)).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $startUtc = $preWarmTimestamp.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
   Invoke-AwsJson autoscaling put-scheduled-update-group-action --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --scheduled-action-name vcs-staging-prewarm `
@@ -267,7 +276,7 @@ if ($PreWarmAt) {
     --min-size $PreWarmCapacity --max-size $MaxCapacity --desired-capacity $PreWarmCapacity
 }
 if ($ScaleDownAt) {
-  $endUtc = ([DateTimeOffset]::Parse($ScaleDownAt)).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $endUtc = $scaleDownTimestamp.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
   Invoke-AwsJson autoscaling put-scheduled-update-group-action --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --scheduled-action-name vcs-staging-scale-down `

@@ -184,7 +184,7 @@ Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-
 - **Manual stop/start:** EC2 console or `aws ec2 stop-instances/start-instances --instance-ids i-0f0da8be59367f7a8`. Same-instance stop/start preserves TG registration, Lambda config, and IP-independence (everything references the instance ID or ALB DNS).
 - **Smoke test:** `https://d1qh0ebsvevhy3.cloudfront.net/api/models` → 200 JSON; `/api/instance/status` → `workerReady:true` when the box is up; TG health `describe-target-health` all `healthy`.
 
-## 10. Multi-user readiness and 2026-08-03 event
+## 10. Multi-user readiness and 2026-08-02 event
 
 ### Implemented multi-user behavior
 
@@ -288,7 +288,7 @@ DeanVoice profile. Do not benchmark only static files or `/api/instance/status`.
    throttles, GPU utilization/memory, and per-target active requests.
 5. Repeat the accepted load for 60 minutes, then perform one target termination during
    a lower-load resilience run and verify draining/replacement.
-6. Run a final rehearsal on 2026-08-02 at 08:00 SGT with the exact fleet size and keep
+6. Run a final rehearsal on 2026-08-01 at 08:00 SGT with the exact fleet size and keep
    a rollback path to the original single instance/target group.
 
 CloudFront load testing must use multiple independent clients and DNS resolution. It is
@@ -345,10 +345,13 @@ AWS Auto Scaling also requires a finite numeric maximum. The live ASG maximum is
 `g6.xlarge`; this is only a ceiling and does not launch instances. Single-AZ capacity
 is not guaranteed.
 
-The requested next configuration is a 32-instance event prewarm. Repo defaults and
-environment overrides support it, but no scheduled action exists until the event end
-time is confirmed. A maximum of 200 would require 800 vCPUs and exceeds the verified
-quota.
+The 2026-08-02 event has paired one-time actions: `vcs-staging-prewarm` sets
+min/desired 32 (max 192) at 07:15 SGT, and `vcs-staging-scale-down` restores
+min/desired 1 at 18:00 SGT. The stored UTC times are 2026-08-01 23:15Z and
+2026-08-02 10:00Z. Times remain flexible through `VCS_STAGING_PREWARM_AT` and
+`VCS_STAGING_SCALE_DOWN_AT`; changing an environment variable alone does nothing
+until the provisioner is rerun with `-Apply`. A maximum of 200 would require
+800 vCPUs and exceeds the verified quota.
 
 Launch-template v11 keeps Target Optimizer stopped until
 `warm-staging-deanvoice.sh` completes. This prevents ALB health from turning green
@@ -443,8 +446,8 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 7. The optimized target group, final AMI `ami-02e0a90f76ed1ce2a`, launch-template v11,
    ASG, one healthy `InService` instance, and request-count target tracking policy are
    live. ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the
-   optimized target. No 16-GPU prewarm/scale-down schedule exists yet; create it only
-   after the event end time, quota/capacity, and load-test result are confirmed.
+   optimized target. Paired 32-GPU 07:15 SGT prewarm and 18:00 SGT scale-down actions
+   are live for 2026-08-02.
 8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.

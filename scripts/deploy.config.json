@@ -20,7 +20,9 @@
       "desiredCapacity": 1,
       "maxCapacity": 192,
       "eventPreWarmCapacity": 32,
-      "scheduledActionsCreated": false,
+      "scheduledActionsCreated": true,
+      "eventPreWarmAt": "2026-08-02T07:15:00+08:00",
+      "eventScaleDownAt": "2026-08-02T18:00:00+08:00",
       "currentInstanceId": "i-059fb463d9c95258f",
       "listenerCutover": true
     },
