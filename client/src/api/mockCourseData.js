@@ -1,3 +1,18 @@
+// Per-word start/end times so the transcript can reveal itself in step with
+// playback instead of sitting there as finished paragraphs.
+//
+// Produced once, offline, from the lesson audio (OpenAI whisper-1 with
+// timestamp_granularities:["word"] — the only model that returns word-level
+// timings). The WORDING stays the curated transcript below; only the timings
+// come from ASR, because raw ASR drops punctuation and mangles exactly the
+// terms this lesson turns on ("melena", "ligament of Treitz"). 96% of curated
+// words matched an ASR word directly; the rest are interpolated from their
+// neighbours so every word has a monotonic timing and the reveal never stalls.
+//
+// Each entry is [word, startSeconds, endSeconds]; segments are keyed by `time`.
+// Regenerate only if the video changes — see docs/lesson-transcript-timings.md.
+import GI_BLEEDING_WORD_TIMINGS from "./giBleedingWordTimings.json";
+
 // Served same-origin so the player and the Content Outline thumbnails work
 // without CORS — both set crossOrigin="anonymous", and the thumbnail hook reads
 // pixels back off a canvas, which a cross-origin source would taint.
@@ -157,6 +172,33 @@ export function searchMockCourses(query) {
         }));
 }
 
+// Join the timings onto the curated segments by start time. Kept out of the
+// literal above so the transcript stays readable — 1290 inline word tuples
+// would bury it. A segment with no timings simply renders as plain text, which
+// is what happens to any lesson that has not been through the offline pass.
+const WORD_TIMINGS_BY_SLUG = {
+    "gi-bleeding": GI_BLEEDING_WORD_TIMINGS,
+};
+
+function withWordTimings(course) {
+    const timings = WORD_TIMINGS_BY_SLUG[course.slug];
+    if (!timings) return course;
+
+    const byTime = new Map(timings.map((entry) => [entry.time, entry.words]));
+    return {
+        ...course,
+        transcriptSegments: course.transcriptSegments.map((segment) => {
+            const words = byTime.get(segment.time);
+            if (!words) return segment;
+            return {
+                ...segment,
+                words: words.map(([text, start, end]) => ({ text, start, end })),
+            };
+        }),
+    };
+}
+
 export function getMockCourseBySlug(slug) {
-    return courses.find((course) => course.slug === slug) ?? null;
+    const course = courses.find((item) => item.slug === slug) ?? null;
+    return course ? withWordTimings(course) : null;
 }

@@ -13,6 +13,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/auth/useAuth";
 import { cn } from "@/lib/utils";
 import { GiChatPanel } from "@/components/gi/GiChatPanel.jsx";
+import { TranscriptText } from "@/components/gi/TranscriptText.jsx";
 import {
   buildLessonVideoContext,
   isVideoPositionSharingEnabled,
@@ -141,6 +142,55 @@ export function LessonPage() {
     }
   };
 
+  // `timeupdate` only fires about 4x a second, which is coarser than the words
+  // it now drives (~0.3s each) — the transcript would visibly lag the audio.
+  // While playing, sample the media clock on a frame loop instead, but only
+  // push state at ~10Hz: the chat panel is mounted alongside this page, and
+  // re-rendering it 60 times a second to move one highlight is not worth it.
+  const REVEAL_RESOLUTION_SECONDS = 0.1;
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    let frame = 0;
+    let last = -1;
+
+    const sample = () => {
+      const now = video.currentTime;
+      if (Math.abs(now - last) >= REVEAL_RESOLUTION_SECONDS) {
+        last = now;
+        setCurrentTime(now);
+      }
+      frame = window.requestAnimationFrame(sample);
+    };
+
+    const start = () => {
+      if (!frame) frame = window.requestAnimationFrame(sample);
+    };
+    const stop = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = 0;
+      // Land on the exact position so a pause does not leave the reveal
+      // stranded up to 100ms short of where the audio actually stopped.
+      setCurrentTime(video.currentTime);
+    };
+
+    video.addEventListener('play', start);
+    video.addEventListener('pause', stop);
+    video.addEventListener('ended', stop);
+    if (!video.paused) start();
+
+    return () => {
+      video.removeEventListener('play', start);
+      video.removeEventListener('pause', stop);
+      video.removeEventListener('ended', stop);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // Still needed for movement that happens without a frame loop running:
+  // scrubbing or a transcript click while the video is paused.
   const handleTimeUpdate = () => {
     if (videoRef.current) {
       setCurrentTime(videoRef.current.currentTime);
@@ -398,15 +448,12 @@ export function LessonPage() {
                                   >
                                     {segment.title}
                                   </h4>
-                                  <p
-                                    className={cn(
-                                      "mt-1.5 text-xs leading-relaxed transition-colors",
-                                      isActive
-                                        ? "font-medium text-slate-800"
-                                        : "text-slate-500",
-                                    )}
-                                  >
-                                    {segment.text}
+                                  <p className="mt-1.5 text-xs leading-relaxed">
+                                    <TranscriptText
+                                      segment={segment}
+                                      currentTime={currentTime}
+                                      isActiveSegment={isActive}
+                                    />
                                   </p>
                                 </div>
                               </div>
