@@ -114,6 +114,8 @@ export default function GiChatPage() {
       onStop={chat.stopConversation}
       micMuted={chat.micMuted}
       onToggleMute={chat.toggleMute}
+      playbackReady={chat.playbackReady}
+      onStopVoice={chat.stopVoicePlayback}
     />
   );
 
@@ -268,7 +270,13 @@ export default function GiChatPage() {
                 style={{ paddingBottom: `${footerHeight + 16}px` }}
               >
                 {hasMessages ? (
-                  <ChatList messages={chat.messages} status={chat.status} scrollKey={chatScrollKey} />
+                  <ChatList
+                    messages={chat.messages}
+                    status={chat.status}
+                    scrollKey={chatScrollKey}
+                    speakingMessageId={chat.speakingMessageId}
+                    onPlay={chat.playReply}
+                  />
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
                     <p className="text-sm text-ink-muted">Start a conversation — click the mic</p>

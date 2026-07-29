@@ -187,5 +187,12 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     selectedReplyId: liveSpeech.selectedReplyId,
     playbackReady: liveSpeech.shouldPlayAudio && Boolean(liveSpeech.audioSrc),
     onAudioEnded: liveSpeech.onAudioEnded,
+    // Per-reply playback controls, mirroring pages/LivePage.jsx:3914-3948.
+    // `speakingMessageId` is the reply currently reading aloud, so its bubble
+    // can show "Playing" instead of the "Play voice" replay affordance.
+    speakingMessageId:
+      liveSpeech.phase === 'speaking' ? liveSpeech.selectedReply?.id || '' : '',
+    playReply: liveSpeech.playReply,
+    stopVoicePlayback: liveSpeech.stopVoicePlayback,
   };
 }

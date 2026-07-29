@@ -33,7 +33,12 @@ export function GiChatPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto border-b border-slate-100 px-4 py-4">
         {hasMessages ? (
-          <ChatList messages={chat.messages} status={chat.status} />
+          <ChatList
+            messages={chat.messages}
+            status={chat.status}
+            speakingMessageId={chat.speakingMessageId}
+            onPlay={chat.playReply}
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
             <p className="text-xs text-ink-muted">{emptyHint}</p>
@@ -70,6 +75,8 @@ export function GiChatPanel({
           onStop={chat.stopConversation}
           micMuted={chat.micMuted}
           onToggleMute={chat.toggleMute}
+          playbackReady={chat.playbackReady}
+          onStopVoice={chat.stopVoicePlayback}
         />
       </div>
 
