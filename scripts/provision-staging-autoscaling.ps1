@@ -324,9 +324,28 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --treat-missing-data breaching `
     --alarm-actions $scaleInPolicy.PolicyARN
 
-  Invoke-AwsJson -AllowNotFound autoscaling delete-policy --region $cfg.region `
+  $disabledLegacyTracking = @{
+    PredefinedMetricSpecification = @{
+      PredefinedMetricType = 'ALBRequestCountPerTarget'
+      ResourceLabel = "$albResource/$targetGroupResource"
+    }
+    TargetValue = 1000000000
+    DisableScaleIn = $true
+  } | ConvertTo-Json -Depth 4 -Compress
+  $disabledLegacyTrackingPath = Join-Path $env:TEMP 'vcs-staging-disabled-legacy-tracking.json'
+  [IO.File]::WriteAllText(
+    $disabledLegacyTrackingPath,
+    $disabledLegacyTracking,
+    (New-Object Text.UTF8Encoding($false))
+  )
+  # This role cannot delete scaling policies. Keep the old policy inert so a future
+  # provisioner run cannot re-enable request-count scale-out by accident.
+  Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
-    --policy-name vcs-staging-inference-request-rate
+    --policy-name vcs-staging-inference-request-rate `
+    --policy-type TargetTrackingScaling `
+    --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --target-tracking-configuration "file://$disabledLegacyTrackingPath"
 } elseif ($Apply) {
   Write-Host 'Scaling policy deferred until the inference listener routes to the optimized target group.'
 }

@@ -1,5 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -26,6 +31,7 @@ const thinkTimeMs = Number.parseInt(process.env.VCS_CHATBOT_THINK_MS || '250', 1
 const paceAudio = process.env.VCS_CHATBOT_PACE_AUDIO !== 'false';
 const manualCommit = process.env.VCS_CHATBOT_MANUAL_COMMIT === 'true';
 const voiceProfileId = process.env.VCS_CHATBOT_VOICE_PROFILE_ID || 'deanvoice-v1';
+const reportFile = process.env.VCS_CHATBOT_REPORT_FILE || '';
 
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 200) {
   throw new Error('Concurrency must be an integer from 1 to 200.');
@@ -514,7 +520,7 @@ const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
   };
 });
 
-console.log(JSON.stringify({
+const report = {
   wsUrl,
   ttsUrl,
   concurrency,
@@ -535,4 +541,12 @@ console.log(JSON.stringify({
     response: item.turns?.[0]?.responseSample,
   })),
   sessions: results,
+};
+if (reportFile) {
+  mkdirSync(dirname(reportFile), { recursive: true });
+  writeFileSync(reportFile, JSON.stringify(report, null, 2));
+}
+console.log(JSON.stringify({
+  ...report,
+  ...(reportFile ? { reportFile, sessions: undefined } : {}),
 }, null, 2));

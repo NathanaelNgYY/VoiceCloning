@@ -66,6 +66,36 @@ post_json /ref-audio/warm 300 '{
 }'
 finish_phase "reference_cache_and_synthesis"
 
+route_warm_path="/tmp/vcs-staging-deanvoice-route-warm.wav"
+post_json /inference/tts 300 '{
+  "voiceProfileId":"deanvoice-v1",
+  "ref_audio_path":"training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0004481280_0004613440.wav",
+  "aux_ref_audio_paths":[
+    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0000340800_0000464000.wav",
+    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0001180160_0001340800.wav",
+    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0001525440_0001710720.wav",
+    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0002227520_0002364800.wav",
+    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0002661120_0002808000.wav"
+  ],
+  "prompt_text":" experience as well as steady hands and very sharp eyes.",
+  "prompt_lang":"en",
+  "text_lang":"en",
+  "text":"Gastrointestinal bleeding means bleeding somewhere inside the digestive tract.",
+  "skip_verify":true,
+  "text_split_method":"cut0",
+  "batch_size":1,
+  "streaming_mode":false,
+  "split_bucket":true,
+  "parallel_infer":false,
+  "fragment_interval":0.1
+}' > "${route_warm_path}"
+if [[ "$(head -c 4 "${route_warm_path}")" != "RIFF" ]]; then
+  echo 'DeanVoice route-level warm did not return a RIFF WAV.' >&2
+  exit 1
+fi
+rm -f "${route_warm_path}"
+finish_phase "route_level_synthesis"
+
 status="$(curl --fail --silent --show-error "${worker_url}/inference/status")"
 if [[ "${status}" != *'"ready":true'* ]]; then
   echo "DeanVoice warm finished without ready status: ${status}" >&2
