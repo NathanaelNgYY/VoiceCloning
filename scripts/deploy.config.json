@@ -10,15 +10,16 @@
     "workerAccess": "ssm",
     "autoscaling": {
       "targetGroupName": "vcs-stg-opt-3103",
-      "sourceAmiId": "ami-07ecb50a65a104ef1",
+      "sourceAmiId": "ami-0cc434135361d7400",
       "launchTemplateName": "vcs-staging-gpu-inference",
       "launchTemplateId": "lt-07728350a25e691a4",
+      "launchTemplateVersion": 8,
       "autoScalingGroupName": "vcs-staging-gpu-inference",
       "serviceLinkedRoleReady": true,
       "created": true,
       "desiredCapacity": 1,
-      "currentInstanceId": "i-0cfbf33c4a372fc55",
-      "listenerCutover": false
+      "currentInstanceId": "i-041c6f69364b50413",
+      "listenerCutover": true
     },
     "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO" },
     "clientTargets": {

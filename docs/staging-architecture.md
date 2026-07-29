@@ -234,12 +234,12 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The source image is `ami-07ecb50a65a104ef1`, built from commit `1c945b9`.
-   Launch template `vcs-staging-gpu-inference` (`lt-07728350a25e691a4`, version 6)
-   was created on 2026-07-29 with this AMI, `g6.xlarge`, `VoiClo_GPU`, and the staging
-   GPU security group.
+   port 3004. The validated image is `ami-0cc434135361d7400`, built from commit
+   `472b44e`. Launch template `vcs-staging-gpu-inference`
+   (`lt-07728350a25e691a4`, default version 8) uses this AMI, `g6.xlarge`,
+   `VoiClo_GPU`, and the staging GPU security group.
    ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with instance
-   `i-0cfbf33c4a372fc55`; `AWSServiceRoleForAutoScaling` also exists.
+   `i-041c6f69364b50413`; `AWSServiceRoleForAutoScaling` also exists.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`, and
@@ -295,11 +295,14 @@ when 50 students all submit at once.
 | 4 concurrent, concurrency 2, verification enabled | 4/4 valid WAV; 10.8 s wall |
 | 10 concurrent, concurrency 2, verification enabled | 10/10 valid WAV; 32.7 s wall |
 
-The first ASG target passed Target Optimizer health after ALB SG egress was added for
-3103/3004, but real DeanVoice startup did not become synthesis-ready. Rule 3 was
-rolled back to the original healthy target. Diagnosis is blocked by denied
-`ssm:SendCommand`/`ssm:GetCommandInvocation`; do not claim the 2026-08-03 capacity
-goal is met from the one-GPU probes.
+SSM diagnosis found overlapping cold-start requests could leave an abandoned Python
+child alive after the 120-second startup timeout, allowing a retry to launch a second
+process on port 9880. Commit `472b44e` kills timed-out children, protects process
+ownership from late exit events, and allows five minutes for a true cold boot.
+A fresh launch-template instance loaded DeanVoice once, warmed references, produced a
+valid 32 kHz WAV, and exposed exactly one API process. Rule 3 now routes to the healthy
+optimized target. Three final public chatbot requests returned WAVs in 13.49, 2.10,
+and 1.65 seconds. This validates one node, not the planned 16-GPU event capacity.
 
 ### AWS permissions needed
 
@@ -354,9 +357,10 @@ stays stable. Load-test runners need no AWS write permission when run externally
 - `ssm:SendCommand`, `ssm:GetCommandInvocation` (interactive `ssm:StartSession` works)
 
 **Confirmed 2026-07-29:** launch-template, target-group-attribute, quota, Lambda, S3,
-CloudFront, service-linked-role, and ASG access now works. The remaining denied
-actions needed to diagnose the first inference target are `ssm:SendCommand` on
-staging ASG instances and `ssm:GetCommandInvocation`.
+CloudFront, service-linked-role, ASG, `ssm:SendCommand`, and
+`ssm:GetCommandInvocation` access works after assuming the deployment role.
+`ssm:DescribeInstanceInformation` remains denied but is not required for command
+execution.
 
 The launch-template path also needs `ec2:CreateLaunchTemplateVersion`,
 `ec2:ModifyLaunchTemplate`, `ec2:RunInstances`, `ec2:CreateTags`, and
@@ -380,12 +384,11 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The target group, AMI, launch template, ASG, one `InService` instance, and target
-   tracking policy exist. ALB egress for 3103/3004 is fixed. A zero-weight health
-   check passed and rule 3 was briefly cut over, but DeanVoice cold start stayed
-   not-ready; rule 3 is rolled back to `vcs-staging-tg-3003`. Grant read-only
-   `ssm:SendCommand`/`ssm:GetCommandInvocation`, inspect the new instance's inference
-   logs, fix and retest before another cutover. No prewarm schedule exists yet.
+7. The optimized target group, final AMI `ami-0cc434135361d7400`, launch-template v8,
+   ASG, one healthy `InService` instance, and request-count target tracking policy are
+   live. ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the
+   optimized target. No 16-GPU prewarm/scale-down schedule exists yet; create it only
+   after the event end time, quota/capacity, and load-test result are confirmed.
 8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.
