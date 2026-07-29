@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory)][string]$AmiId,
   [int]$DesiredCapacity = -1,
+  [string]$Event = $env:VCS_STAGING_EVENT,
   [string]$PreWarmAt = $env:VCS_STAGING_PREWARM_AT,
   [string]$ScaleDownAt = $env:VCS_STAGING_SCALE_DOWN_AT,
   [int]$PreWarmCapacity = $(if ($env:VCS_STAGING_PREWARM_CAPACITY) {
@@ -16,6 +17,22 @@ if ($cfg.environment -ne 'staging') { throw 'This script is staging-only.' }
 if ($AmiId -notmatch '^ami-[0-9a-f]+$') { throw 'AmiId must be an AMI id.' }
 if ($DesiredCapacity -lt 0) { $DesiredCapacity = [int]$cfg.desiredCapacity }
 if ($PreWarmCapacity -lt 0) { $PreWarmCapacity = [int]$cfg.defaultPreWarmCapacity }
+
+$eventEnabled = [bool]($Event -and $Event.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on'))
+if ($eventEnabled) {
+  $PreWarmCapacity = [int]$cfg.eventCapacity
+  if (-not $PreWarmAt) {
+    $DesiredCapacity = $PreWarmCapacity
+  }
+}
+if ([bool]$PreWarmAt -xor [bool]$ScaleDownAt) {
+  throw 'PreWarmAt and ScaleDownAt must be provided together so event capacity cannot be left running indefinitely.'
+}
+$effectiveMinSize = if ($eventEnabled -and -not $PreWarmAt) {
+  $PreWarmCapacity
+} else {
+  [int]$cfg.minSize
+}
 
 function Invoke-AwsJson {
   param(
@@ -56,6 +73,7 @@ runcmd:
   - [systemctl, daemon-reload]
   - [systemctl, enable, --now, gpu-inference-worker.service]
   - [systemctl, enable, --now, target-optimizer-inference.service]
+  - [sudo, -u, ubuntu, /home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh]
 '@
 $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
 
@@ -131,7 +149,7 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
   Invoke-AwsJson autoscaling create-auto-scaling-group --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --launch-template "LaunchTemplateName=$($cfg.launchTemplateName),Version=`$Default" `
-    --min-size $cfg.minSize --max-size $cfg.maxSize --desired-capacity $DesiredCapacity `
+    --min-size $effectiveMinSize --max-size $cfg.maxSize --desired-capacity $DesiredCapacity `
     --vpc-zone-identifier ($cfg.subnetIds -join ',') `
     --target-group-arns $targetGroupArn `
     --health-check-type ELB `
@@ -142,7 +160,7 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
   Invoke-AwsJson autoscaling update-auto-scaling-group --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --launch-template "LaunchTemplateName=$($cfg.launchTemplateName),Version=`$Default" `
-    --min-size $cfg.minSize --max-size $cfg.maxSize --desired-capacity $DesiredCapacity `
+    --min-size $effectiveMinSize --max-size $cfg.maxSize --desired-capacity $DesiredCapacity `
     --vpc-zone-identifier ($cfg.subnetIds -join ',') `
     --health-check-type ELB `
     --health-check-grace-period $cfg.healthCheckGracePeriodSeconds `
@@ -237,4 +255,4 @@ if ($ScaleDownAt) {
     --min-size $cfg.minSize --max-size $cfg.maxSize --desired-capacity $cfg.desiredCapacity
 }
 
-Write-Host "Staging ASG provisioning complete. Apply=$Apply ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarmAt=$PreWarmAt"
+Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarmAt=$PreWarmAt"

@@ -29,7 +29,13 @@ app.use(cors({ origin: buildCorsOriginOption(CORS_ORIGIN) }));
 app.use(express.json());
 
 app.get('/healthz', (_req, res) => {
-  res.json({ ok: true, service: 'gpu-inference-worker', timestamp: Date.now() });
+  const ready = inferenceServer.ready;
+  res.status(ready ? 200 : 503).json({
+    ok: ready,
+    ready,
+    service: 'gpu-inference-worker',
+    timestamp: Date.now(),
+  });
 });
 
 app.use('/', inferenceRoutes);

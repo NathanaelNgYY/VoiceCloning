@@ -20,5 +20,6 @@
   "maxSize": 16,
   "desiredCapacity": 0,
   "healthCheckGracePeriodSeconds": 600,
-  "defaultPreWarmCapacity": 2
+  "defaultPreWarmCapacity": 2,
+  "eventCapacity": 16
 }
