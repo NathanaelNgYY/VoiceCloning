@@ -14,7 +14,11 @@
       "launchTemplateName": "vcs-staging-gpu-inference",
       "launchTemplateId": "lt-07728350a25e691a4",
       "autoScalingGroupName": "vcs-staging-gpu-inference",
-      "serviceLinkedRoleReady": false
+      "serviceLinkedRoleReady": true,
+      "created": true,
+      "desiredCapacity": 1,
+      "currentInstanceId": "i-0cfbf33c4a372fc55",
+      "listenerCutover": false
     },
     "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO" },
     "clientTargets": {

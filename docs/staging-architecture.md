@@ -235,9 +235,11 @@ The implemented staging design keeps the public hostnames and separates roles:
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
    port 3004. The source image is `ami-07ecb50a65a104ef1`, built from commit `1c945b9`.
-   Launch template `vcs-staging-gpu-inference` (`lt-07728350a25e691a4`, version 1)
+   Launch template `vcs-staging-gpu-inference` (`lt-07728350a25e691a4`, version 6)
    was created on 2026-07-29 with this AMI, `g6.xlarge`, `VoiClo_GPU`, and the staging
    GPU security group.
+   ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with instance
+   `i-0cfbf33c4a372fc55`; `AWSServiceRoleForAutoScaling` also exists.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`, and
@@ -293,10 +295,11 @@ when 50 students all submit at once.
 | 4 concurrent, concurrency 2, verification enabled | 4/4 valid WAV; 10.8 s wall |
 | 10 concurrent, concurrency 2, verification enabled | 10/10 valid WAV; 32.7 s wall |
 
-The 25/50/60-user and 60-minute fleet tests remain blocked until the default Auto
-Scaling service-linked role exists. `AWSServiceRoleForAutoScaling` was confirmed
-absent on 2026-07-29, and ASG creation cannot create it with the current role. Do not
-claim the 2026-08-03 capacity goal is met from the one-GPU probes.
+The first ASG target passed Target Optimizer health after ALB SG egress was added for
+3103/3004, but real DeanVoice startup did not become synthesis-ready. Rule 3 was
+rolled back to the original healthy target. Diagnosis is blocked by denied
+`ssm:SendCommand`/`ssm:GetCommandInvocation`; do not claim the 2026-08-03 capacity
+goal is met from the one-GPU probes.
 
 ### AWS permissions needed
 
@@ -351,11 +354,9 @@ stays stable. Load-test runners need no AWS write permission when run externally
 - `ssm:SendCommand`, `ssm:GetCommandInvocation` (interactive `ssm:StartSession` works)
 
 **Confirmed 2026-07-29:** launch-template, target-group-attribute, quota, Lambda, S3,
-and CloudFront deployment access now works. ASG creation is blocked only because
-`AWSServiceRoleForAutoScaling` does not exist and `iam:CreateServiceLinkedRole` is
-denied. An administrator can create it once with
-`aws iam create-service-linked-role --aws-service-name autoscaling.amazonaws.com`,
-or grant that exact service-linked-role creation action temporarily.
+CloudFront, service-linked-role, and ASG access now works. The remaining denied
+actions needed to diagnose the first inference target are `ssm:SendCommand` on
+staging ASG instances and `ssm:GetCommandInvocation`.
 
 The launch-template path also needs `ec2:CreateLaunchTemplateVersion`,
 `ec2:ModifyLaunchTemplate`, `ec2:RunInstances`, `ec2:CreateTags`, and
@@ -379,12 +380,12 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The target-optimized target group `vcs-stg-opt-3103`, AMI
-   `ami-07ecb50a65a104ef1`, and launch template `lt-07728350a25e691a4` exist. ASG,
-   listener cutover, and 07:15 prewarm are **not created** because the account lacks
-   `AWSServiceRoleForAutoScaling`; create that standard service-linked role, rerun
-   `scripts/provision-staging-autoscaling.ps1` with desired capacity 1, verify the
-   target is healthy, then use `-SwitchListener`.
+7. The target group, AMI, launch template, ASG, one `InService` instance, and target
+   tracking policy exist. ALB egress for 3103/3004 is fixed. A zero-weight health
+   check passed and rule 3 was briefly cut over, but DeanVoice cold start stayed
+   not-ready; rule 3 is rolled back to `vcs-staging-tg-3003`. Grant read-only
+   `ssm:SendCommand`/`ssm:GetCommandInvocation`, inspect the new instance's inference
+   logs, fix and retest before another cutover. No prewarm schedule exists yet.
 8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.
