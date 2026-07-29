@@ -80,13 +80,15 @@ async function parseJsonOrText(response) {
   }
 }
 
-class InferenceServer {
-  constructor() {
+export class InferenceServer {
+  constructor({ spawnProcess = spawn, startupTimeoutMs = 120_000 } = {}) {
     this.process = null;
     this.ready = false;
     this.startPromise = null;
     this.currentGPTWeights = '';
     this.currentSoVITSWeights = '';
+    this.spawnProcess = spawnProcess;
+    this.startupTimeoutMs = startupTimeoutMs;
   }
 
   isRunning() {
@@ -147,16 +149,21 @@ class InferenceServer {
         this.ready = true;
         resolve(this.getStatusSnapshot());
       };
-      const finishReject = (error) => {
+      const finishReject = (error, { terminate = false } = {}) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        this.process = null;
-        this.ready = false;
+        if (terminate) {
+          this.terminateProcess(child);
+        }
+        if (this.process === child) {
+          this.process = null;
+          this.ready = false;
+        }
         reject(error);
       };
 
-      this.process = spawn(PYTHON_EXEC, [
+      const child = this.spawnProcess(PYTHON_EXEC, [
         ...PYTHON_RUNNER,
         GPT_SOVITS_ROOT,
         toolsDir,
@@ -169,10 +176,11 @@ class InferenceServer {
         env: buildPythonEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      this.process = child;
 
       const timeout = setTimeout(() => {
-        finishReject(new Error('Inference server startup timed out'));
-      }, 120_000);
+        finishReject(new Error('Inference server startup timed out'), { terminate: true });
+      }, this.startupTimeoutMs);
 
       const onData = (data) => {
         const text = data.toString();
@@ -182,17 +190,22 @@ class InferenceServer {
         }
       };
 
-      this.process.stdout.on('data', onData);
-      this.process.stderr.on('data', onData);
+      child.stdout.on('data', onData);
+      child.stderr.on('data', onData);
 
-      this.process.on('error', (err) => {
+      child.on('error', (err) => {
         finishReject(err);
       });
 
-      this.process.on('close', () => {
+      child.on('close', (code, signal) => {
         clearTimeout(timeout);
-        this.process = null;
-        this.ready = false;
+        if (this.process === child) {
+          this.process = null;
+          this.ready = false;
+        }
+        finishReject(new Error(
+          `Inference server exited before startup completed (code=${code}, signal=${signal})`,
+        ));
       });
     }).finally(() => {
       this.startPromise = null;
@@ -201,8 +214,25 @@ class InferenceServer {
     return this.startPromise;
   }
 
+  terminateProcess(child) {
+    try {
+      if (process.platform === 'win32') {
+        execSync(`taskkill /t /f /pid ${child.pid}`, { stdio: 'ignore' });
+      } else {
+        child.kill('SIGKILL');
+      }
+    } catch {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   stop() {
-    if (!this.process) {
+    const child = this.process;
+    if (!child) {
       this.ready = false;
       return buildStatus({
         ready: false,
@@ -212,21 +242,11 @@ class InferenceServer {
       });
     }
 
-    try {
-      if (process.platform === 'win32') {
-        execSync(`taskkill /t /f /pid ${this.process.pid}`, { stdio: 'ignore' });
-      } else {
-        this.process.kill('SIGKILL');
-      }
-    } catch {
-      try {
-        this.process.kill('SIGKILL');
-      } catch {
-        // ignore
-      }
-    }
+    this.terminateProcess(child);
 
-    this.process = null;
+    if (this.process === child) {
+      this.process = null;
+    }
     this.ready = false;
     this.currentGPTWeights = '';
     this.currentSoVITSWeights = '';
