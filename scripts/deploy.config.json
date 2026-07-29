@@ -18,6 +18,9 @@
       "serviceLinkedRoleReady": true,
       "created": true,
       "desiredCapacity": 1,
+      "maxCapacity": 192,
+      "eventPreWarmCapacity": 32,
+      "scheduledActionsCreated": false,
       "currentInstanceId": "i-059fb463d9c95258f",
       "listenerCutover": true
     },

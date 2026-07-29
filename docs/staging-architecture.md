@@ -325,15 +325,15 @@ must complete before traffic.
 Reactive scaling did not increase capacity during a 60-request cold burst: the public
 requests timed out before `ALBRequestCountPerTarget` recorded enough completed work,
 so desired capacity stayed at one. Scheduled event prewarm is therefore required.
-AWS Auto Scaling also requires a finite numeric maximum; this ASG remains capped at
-16 even though the account G/VT quota was 768 vCPUs (192 `g6.xlarge` total) during
-the audit. Single-AZ capacity is not guaranteed.
+AWS Auto Scaling also requires a finite numeric maximum. The live ASG maximum is now
+192, matching the account's verified 768-vCPU On-Demand G/VT quota at four vCPUs per
+`g6.xlarge`; this is only a ceiling and does not launch instances. Single-AZ capacity
+is not guaranteed.
 
-The requested next configuration is a 32-instance event prewarm and a maximum of 192,
-the largest numeric ceiling compatible with the audited 768-vCPU quota. Repo defaults
-and environment overrides support this, but the live ASG remains max 16 until fresh
-credentials allow the update. A maximum of 200 would require 800 vCPUs and exceeds
-the verified quota. Raising the maximum alone launches no instances.
+The requested next configuration is a 32-instance event prewarm. Repo defaults and
+environment overrides support it, but no scheduled action exists until the event end
+time is confirmed. A maximum of 200 would require 800 vCPUs and exceeds the verified
+quota.
 
 Launch-template v11 keeps Target Optimizer stopped until
 `warm-staging-deanvoice.sh` completes. This prevents ALB health from turning green
