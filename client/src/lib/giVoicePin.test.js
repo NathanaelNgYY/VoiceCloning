@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { matchesPinnedVoice, resolvePinnedVoiceKey } from './giVoicePin.js';
+import {
+  buildPinnedVoiceModel,
+  matchesPinnedVoice,
+  resolvePinnedVoiceKey,
+} from './giVoicePin.js';
 
 const DEAN = { displayName: 'DeanVoice', voiceProfileId: 'deanvoice-v1' };
 
@@ -60,4 +64,22 @@ test('matchesPinnedVoice accepts anything when no pin is configured', () => {
 test('matchesPinnedVoice rejects a missing profile when a pin is set', () => {
   // No active profile at all must not read as "the pinned voice is ready".
   assert.equal(matchesPinnedVoice(null, 'deanvoice'), false);
+});
+
+test('buildPinnedVoiceModel freezes the exact GI profile revision', () => {
+  assert.deepEqual(buildPinnedVoiceModel({
+    voiceProfileId: 'deanvoice-v1',
+    gptKey: 'models/user-models/gpt/dean.ckpt',
+    sovitsKey: 'models/user-models/sovits/dean.pth',
+    updatedAt: '2026-07-29T02:00:00.000Z',
+  }), {
+    voiceProfileId: 'deanvoice-v1',
+    gptRef: 'models/user-models/gpt/dean.ckpt',
+    sovitsRef: 'models/user-models/sovits/dean.pth',
+    revision: '2026-07-29T02:00:00.000Z',
+  });
+});
+
+test('buildPinnedVoiceModel rejects incomplete model pairs', () => {
+  assert.equal(buildPinnedVoiceModel({ gptKey: 'dean.ckpt' }), null);
 });

@@ -35,3 +35,16 @@ export function matchesPinnedVoice(profile, pinnedKey) {
     (candidate) => normalizeVoiceKey(candidate) === pinnedKey
   );
 }
+
+export function buildPinnedVoiceModel(profile) {
+  const gptRef = String(profile?.gptKey || profile?.gptPath || '').trim();
+  const sovitsRef = String(profile?.sovitsKey || profile?.sovitsPath || '').trim();
+  if (!gptRef || !sovitsRef) return null;
+
+  return {
+    voiceProfileId: String(profile?.voiceProfileId || '').trim(),
+    gptRef,
+    sovitsRef,
+    revision: String(profile?.updatedAt || profile?.activatedAt || '').trim(),
+  };
+}
