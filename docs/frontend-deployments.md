@@ -75,7 +75,7 @@ Three things will block you:
 
 1. **The script and its env files are not on `chatbot-live-full`.** `scripts/deploy-client.ps1`, `scripts/deploy.config.json`, and the whole `client/env/` tree exist only on `separate-containers-new`.
 2. **It refuses to build `chatbot` off the wrong branch.** It compares `git branch --show-current` against `chatbotBranch`, which is `staging-chatbot` for staging.
-3. **`staging-chatbot` is stale.** It is a clean ancestor of `chatbot-live-full`, 34 commits behind as of 2026-07-29 — so it fast-forwards, but until you do, staging ships without recent client work.
+3. **`staging-chatbot` is stale.** It is a clean ancestor of `chatbot-live-full`, 34 commits behind as of 2026-07-29 — so it fast-forwards, but until you do, staging ships without recent client work. See [§5](#5-which-branch-has-which-frontend) for the full branch model, including the separate (and also stale) staging *backend* branch.
 
 Do **not** run a bare `npm run build:chatbot` from `chatbot-live-full` and upload it. That branch's `client/.env.chatbot` has **empty** backend URLs:
 
@@ -114,6 +114,34 @@ Staging does not have this problem — its chatbot distribution has its own pref
 
 ## 5. Which branch has which frontend
 
+### Four branches, in two pairs
+
+Each environment has **one backend branch and one client branch** — the frontend is never built from the backend branch.
+
+| Env | Backend branch | Client branch | Frontend surface |
+|---|---|---|---|
+| **dev** | `separate-containers-new` | `chatbot-live-full` | d2o (gi) |
+| **staging** | `staging` | `staging-chatbot` | d25 (chatbot) |
+
+This is what `deploy.config.json` encodes per environment: `branch` (backend) and `chatbotBranch` (client). `deploy-client.ps1` compares your current branch against `chatbotBranch` and refuses to build otherwise — so **d25 must be built from `staging-chatbot`**, not from `staging` and not from `chatbot-live-full`.
+
+### Promotion is a fast-forward
+
+The staging pair are frozen snapshots of the dev pair. Both are strict ancestors, so promoting is just a fast-forward — no merge, no conflicts.
+
+| Staging branch | Behind its dev counterpart | Ancestor? |
+|---|---|---|
+| `staging-chatbot` | **34 commits** behind `chatbot-live-full` | ✅ fast-forwards |
+| `staging` | **84 commits** behind `separate-containers-new` | ✅ fast-forwards |
+
+*(Counts as of 2026-07-29. Re-check with `git rev-list --left-right --count origin/staging-chatbot...origin/chatbot-live-full`.)*
+
+> **The staging backend is stale too, not just the frontend.** At 84 commits behind, `staging` is missing the SSML `<break>` work, OOV scanning, the Live Full chunking rework, and phoneme verification. Pronunciation behaviour observed on staging is **not** what dev runs.
+
+`staging-chatbot` has no `build:gi` script and no `client/src/components/gi/` — consistent with d25 serving the chatbot kiosk rather than the lesson page.
+
+### Feature split across the dev pair
+
 | | `chatbot-live-full` | `separate-containers-new` |
 |---|---|---|
 | `gi` mode + `client/src/components/gi/*` | ✅ | ❌ **absent entirely** |
@@ -127,6 +155,12 @@ The split is deliberate. Commit `902569f` on `separate-containers-new` states th
 **Practical effect:** you cannot cherry-pick a gi commit onto `separate-containers-new` — the files it touches do not exist there. Unifying the two frontends onto one branch requires a full merge (13 conflicting files as of 2026-07-29), not a cherry-pick.
 
 There is **no `gi` entry in `deploy.config.json`**, so `deploy-client.ps1 -Mode gi` is not a valid invocation. GI deploys go through `client/scripts/deploy-gi.ps1` only, and only to dev.
+
+### If the frontends are ever unified
+
+Merging `chatbot-live-full` into `separate-containers-new` gives one tree that builds both surfaces (`build:gi` → dist-gi, `build:chatbot` → dist-chatbot; separate outDirs, so neither overwrites the other). That only affects the **dev** pair — `staging`/`staging-chatbot` keep working unchanged.
+
+Longer-term it makes the four-branch model redundant: staging could promote from a single unified branch, and `staging-chatbot` would no longer be needed. Landing such a merge means updating `chatbotBranch` in `deploy.config.json` and adding a `gi` entry to `distributions`/`clientTargets` — neither of which is done today.
 
 ---
 
