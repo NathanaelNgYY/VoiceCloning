@@ -152,21 +152,26 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
 $albResource = ($cfg.albArn -split ':loadbalancer/')[1]
 $targetGroupResource = ($targetGroupArn -split ':')[5]
 if ($albResource -and $targetGroupResource) {
+  $trackingConfig = @{
+    PredefinedMetricSpecification = @{
+      PredefinedMetricType = 'ALBRequestCountPerTarget'
+      ResourceLabel = "$albResource/$targetGroupResource"
+    }
+    TargetValue = 6
+    DisableScaleIn = $false
+  } | ConvertTo-Json -Depth 4 -Compress
+  $trackingConfigPath = Join-Path $env:TEMP 'vcs-staging-target-tracking.json'
+  [IO.File]::WriteAllText(
+    $trackingConfigPath,
+    $trackingConfig,
+    (New-Object Text.UTF8Encoding($false))
+  )
   Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --policy-name vcs-staging-inference-request-rate `
     --policy-type TargetTrackingScaling `
     --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
-    --target-tracking-configuration (
-      @{
-        PredefinedMetricSpecification = @{
-          PredefinedMetricType = 'ALBRequestCountPerTarget'
-          ResourceLabel = "$albResource/$targetGroupResource"
-        }
-        TargetValue = 6
-        DisableScaleIn = $false
-      } | ConvertTo-Json -Depth 4 -Compress
-    )
+    --target-tracking-configuration "file://$trackingConfigPath"
 }
 
 Invoke-AwsJson -AllowDuplicate ec2 authorize-security-group-ingress --region $cfg.region `
