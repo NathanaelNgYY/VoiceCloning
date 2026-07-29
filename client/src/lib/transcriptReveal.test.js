@@ -8,6 +8,7 @@ import {
   activeWordIndex,
   isRevealIdle,
   revealedSegmentCount,
+  revealedWordCount,
   segmentPhase,
   spokenWordCount,
 } from './transcriptReveal.js';
@@ -134,4 +135,38 @@ test('reveal is not idle once playback is past the first segment', () => {
 test('reveal is not idle for a segment with no word timings', () => {
   // Those reveal whole, so having begun is all there is to wait for.
   assert.equal(isRevealIdle([{ time: 0, endTime: 10, text: 'Plain.' }], 0), false);
+});
+
+test('revealedWordCount keeps a settled segment whole when seeking back into it', () => {
+  // The bug this exists to prevent: clicking an earlier timestamp used to
+  // delete the text after it. Having reached 20s, the segment is fully heard,
+  // and stays fully rendered no matter where the playhead goes afterwards.
+  assert.equal(revealedWordCount(segment, 20), segment.words.length);
+  assert.equal(revealedWordCount(segment, 600), segment.words.length);
+});
+
+test('revealedWordCount still arrives word by word on the frontier segment', () => {
+  assert.equal(revealedWordCount(segment, 10.2), 1);
+  assert.equal(revealedWordCount(segment, 10.5), 2);
+  assert.equal(revealedWordCount(segment, 11.6), 3);
+});
+
+test('revealedWordCount renders nothing for a segment never reached', () => {
+  assert.equal(revealedWordCount(segment, 5), 0);
+});
+
+test('revealedWordCount collapses to zero without timings', () => {
+  assert.equal(revealedWordCount({ time: 0, endTime: 5 }, 3), 0);
+  assert.equal(revealedWordCount({ time: 0, endTime: 5, words: [] }, 3), 0);
+});
+
+test('the high-water mark never lets the transcript shrink', () => {
+  // Watch to 15s, then scrub back to 2s: the first two segments stay unlocked
+  // and stay whole, which is the whole point of tracking the furthest point.
+  const reached = 15;
+  assert.equal(revealedSegmentCount(segments, reached), 2);
+  assert.equal(revealedWordCount(segments[0], reached), segments[0].words.length);
+  assert.equal(revealedWordCount(segments[1], reached), segments[1].words.length);
+  // ...and the third is still locked, so there is nothing to read ahead.
+  assert.equal(revealedWordCount(segments[2], reached), 0);
 });

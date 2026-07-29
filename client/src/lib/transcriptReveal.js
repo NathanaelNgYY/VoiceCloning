@@ -65,6 +65,25 @@ export function spokenWordCount(segment, seconds) {
 }
 
 /**
+ * How many words of `segment` to render, given the furthest point playback has
+ * reached.
+ *
+ * Deliberately not `spokenWordCount`: that un-reveals words when the student
+ * seeks backwards, which is right for a highlight but wrong for the transcript
+ * itself — you cannot un-hear a sentence. Only the segment holding the frontier
+ * is still arriving; everything behind it is settled.
+ */
+export function revealedWordCount(segment, reachedSeconds) {
+  const words = segment?.words;
+  if (!Array.isArray(words) || words.length === 0) return 0;
+
+  const phase = segmentPhase(segment, reachedSeconds);
+  if (phase === SEGMENT_PENDING) return 0;
+  if (phase === SEGMENT_SPOKEN) return words.length;
+  return spokenWordCount(segment, reachedSeconds);
+}
+
+/**
  * How many segments have begun by `seconds`.
  *
  * The panel reads as live captions: a segment that has not started is not in

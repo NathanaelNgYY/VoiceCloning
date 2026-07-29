@@ -58,14 +58,22 @@ The two agree closely enough to make this safe: **96.3% of curated words matched
 
 This reverses the original decision (unspoken words held in the layout at low contrast) after review on 2026-07-29 — being able to read ahead broke the illusion. The reflow that motivated the original approach turns out to be contained: appending to the end of a paragraph leaves every earlier word where it was, and there is nothing rendered below the active segment to be pushed down.
 
-Because the panel now grows, `LessonPage` follows the bottom edge — but only while the reader is within `TRANSCRIPT_FOLLOW_THRESHOLD_PX` (48 px) of it. Scrolling up to re-read releases the follow; scrolling back resumes it. Switching away to the chat tab and back re-anchors on the playhead.
+### Two clocks
+
+The reveal runs on `reachedTime` — the furthest point playback has got to — while the highlight runs on `currentTime`. Keying both to `currentTime` was the first attempt and it was wrong: clicking an earlier timestamp deleted every segment after it. **You cannot un-hear a sentence**, so `reachedTime` only ever moves forward (`advanceTo` in `LessonPage` is the single writer of both). A settled segment renders whole; only the one holding the frontier is still arriving word by word; the highlight still tracks the playhead so a scrub shows you where you are.
+
+`revealedWordCount(segment, reachedTime)` is the reveal rule. It is deliberately **not** `spokenWordCount`, which does un-reveal on rewind — right for a highlight, wrong for the transcript.
+
+### Locked rows
+
+A segment past the frontier renders as a header-only row: timestamp badge and title, muted, clickable, no prose. So the transcript stays a fine-grained way to navigate — including forward into parts never watched, which promotes the high-water mark and unlocks everything up to it — while there is still nothing to read ahead. (The Content Outline covers forward jumps too, but only at the 8-topic granularity, against the transcript's 18 segments.)
+
+Because the frontier segment grows, `LessonPage` keeps it in view — but only while it is actually on screen. Scrolling it out of view releases the follow; scrolling back resumes it. Switching to the chat tab and back re-anchors on the frontier.
 
 Two reveal-gating rules worth knowing:
 
-- **Nothing renders until playback has started** (`hasPlayed`, or any `currentTime > 0` for a scrub). The first word of the GI lesson starts at `0.0 s`, so without this the page would greet the student with the single word "Good" before they pressed play.
-- **`isRevealIdle` drives the "transcript appears here as the lesson plays" hint**, which is not the same as "no segment has begun" — segment one starts at 0 s and so counts as begun on load while none of its words have arrived.
-
-Navigation forward is unaffected: the Content Outline still lists all 8 topics with thumbnails, so hiding future transcript text costs no seeking ability.
+- **Nothing renders until playback has started** (`hasPlayed`, or any `reachedTime > 0` for a scrub). The first word of the GI lesson starts at `0.0 s`, so without this the page would greet the student with the single word "Good" before they pressed play.
+- **`isRevealIdle` drives the "transcript fills in here" hint**, which is not the same as "no segment has begun" — segment one starts at 0 s and so counts as begun on load while none of its words have arrived.
 
 `LessonPage` samples the media clock on a `requestAnimationFrame` loop while playing, not on `timeupdate`. `timeupdate` fires ~4×/s, coarser than the ~0.3 s words it drives. State is pushed at ~10 Hz (`REVEAL_RESOLUTION_SECONDS`) because the chat panel is mounted alongside and re-rendering it 60×/s to move one highlight is not worth it.
 

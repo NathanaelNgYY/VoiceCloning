@@ -46,6 +46,7 @@ export function LessonPage() {
   const auth = useAuth();
   const videoRef = useRef(null);
   const transcriptScrollRef = useRef(null);
+  const frontierRef = useRef(null);
 
   const [course, setCourse] = useState(null);
   const [courseError, setCourseError] = useState("");
@@ -53,10 +54,22 @@ export function LessonPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("transcript");
   const [currentTime, setCurrentTime] = useState(0);
+  // The furthest point playback has reached, which is what the transcript is
+  // revealed against. Keyed to `currentTime` instead, seeking back to an
+  // earlier timestamp would delete every segment after it — you cannot un-hear
+  // a sentence, so the reveal only ever moves forward.
+  const [reachedTime, setReachedTime] = useState(0);
   // The first word of the lesson starts at 0.0s, so it counts as spoken the
   // moment the page loads. Hold the whole reveal back until playback has
   // actually begun, or the panel greets the student with one stray word.
   const [hasPlayed, setHasPlayed] = useState(false);
+
+  // Every clock update goes through here so the high-water mark cannot drift
+  // out of step with the position it is derived from.
+  const advanceTo = useCallback((seconds) => {
+    setCurrentTime(seconds);
+    setReachedTime((furthest) => (seconds > furthest ? seconds : furthest));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +78,10 @@ export function LessonPage() {
       setCourseLoading(true);
       setCourseError("");
       setCurrentTime(0);
+      // A new lesson starts locked again, or its transcript would inherit the
+      // previous lesson's high-water mark and open pre-revealed.
+      setReachedTime(0);
+      setHasPlayed(false);
 
       try {
         const response = await api.getCourse({
@@ -135,22 +152,22 @@ export function LessonPage() {
     }
   }
 
-  // A segment that has not begun is left out of the DOM entirely, so the panel
-  // reads as a live transcription instead of as a script the student can read
-  // ahead in. Jumping forward stays available through the Content Outline.
-  //
   // Scrubbing counts as starting: the clock has moved even though `play` never
   // fired, and the student is plainly asking to see that part of the lesson.
-  const hasStarted = hasPlayed || currentTime > 0;
-  const revealedSegments = hasStarted
-    ? transcriptSegments.slice(0, revealedSegmentCount(transcriptSegments, currentTime))
-    : [];
+  const hasStarted = hasPlayed || reachedTime > 0;
+
+  // Segments the student has reached carry their transcript; the rest render as
+  // a header-only row — clickable, so the transcript stays a way to navigate,
+  // but carrying no text, so there is still nothing to read ahead.
+  const unlockedCount = hasStarted
+    ? revealedSegmentCount(transcriptSegments, reachedTime)
+    : 0;
   const isTranscriptIdle =
     transcriptSegments.length > 0 &&
-    (!hasStarted || isRevealIdle(transcriptSegments, currentTime));
+    (!hasStarted || isRevealIdle(transcriptSegments, reachedTime));
 
   const seekTo = (seconds) => {
-    setCurrentTime(seconds);
+    advanceTo(seconds);
 
     if (videoRef.current) {
       videoRef.current.currentTime = seconds;
@@ -180,7 +197,7 @@ export function LessonPage() {
       const now = video.currentTime;
       if (Math.abs(now - last) >= REVEAL_RESOLUTION_SECONDS) {
         last = now;
-        setCurrentTime(now);
+        advanceTo(now);
       }
       frame = window.requestAnimationFrame(sample);
     };
@@ -194,7 +211,7 @@ export function LessonPage() {
       frame = 0;
       // Land on the exact position so a pause does not leave the reveal
       // stranded up to 100ms short of where the audio actually stopped.
-      setCurrentTime(video.currentTime);
+      advanceTo(video.currentTime);
     };
 
     video.addEventListener('play', start);
@@ -208,40 +225,51 @@ export function LessonPage() {
       video.removeEventListener('ended', stop);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [advanceTo]);
 
-  // Follow the growing edge of the transcript, but yield as soon as the student
-  // scrolls up to re-read something — yanking them back to the playhead
-  // mid-sentence is worse than letting the reveal continue off-screen. Coming
-  // back within a line of the bottom resumes the follow.
-  const TRANSCRIPT_FOLLOW_THRESHOLD_PX = 48;
+  // Keep the segment that is still arriving in view as it grows, but yield the
+  // moment the student scrolls it off-screen to read something else — pulling
+  // them back mid-sentence is worse than letting the reveal continue unseen.
+  // Scrolling it back into view resumes the follow.
+  const TRANSCRIPT_FOLLOW_MARGIN_PX = 12;
+
+  const followFrontier = useCallback(() => {
+    const panel = transcriptScrollRef.current;
+    const frontier = frontierRef.current;
+    if (!panel || !frontier) return;
+
+    const panelBox = panel.getBoundingClientRect();
+    const frontierBox = frontier.getBoundingClientRect();
+
+    const isOnScreen =
+      frontierBox.bottom > panelBox.top && frontierBox.top < panelBox.bottom;
+    if (!isOnScreen) return;
+
+    const overshoot = frontierBox.bottom - panelBox.bottom;
+    if (overshoot > 0) {
+      panel.scrollTop += overshoot + TRANSCRIPT_FOLLOW_MARGIN_PX;
+    }
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "transcript") return;
+    followFrontier();
+  }, [reachedTime, activeTab, followFrontier]);
 
-    const panel = transcriptScrollRef.current;
-    if (!panel) return;
-
-    const fromBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight;
-    if (fromBottom > TRANSCRIPT_FOLLOW_THRESHOLD_PX) return;
-
-    panel.scrollTop = panel.scrollHeight;
-  }, [currentTime, activeTab]);
-
-  // Returning from the chat tab lands on the playhead rather than on wherever
+  // Returning from the chat tab lands on the frontier rather than on wherever
   // the reveal happened to be when the student left it.
   useEffect(() => {
     if (activeTab !== "transcript") return;
 
-    const panel = transcriptScrollRef.current;
-    if (panel) panel.scrollTop = panel.scrollHeight;
+    const frontier = frontierRef.current;
+    if (frontier) frontier.scrollIntoView({ block: "nearest" });
   }, [activeTab]);
 
   // Still needed for movement that happens without a frame loop running:
   // scrubbing or a transcript click while the video is paused.
   const handleTimeUpdate = () => {
     if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      advanceTo(videoRef.current.currentTime);
     }
   };
 
@@ -460,16 +488,29 @@ export function LessonPage() {
                         activeTab !== "transcript" && "hidden",
                       )}
                     >
-                        {revealedSegments.map((segment, index) => {
+                        {isTranscriptIdle && (
+                          <p className="px-3 text-xs italic text-slate-400">
+                            The transcript fills in here as the lesson plays.
+                            Jump to any timestamp below.
+                          </p>
+                        )}
+
+                        {transcriptSegments.map((segment, index) => {
                           const isActive = activeTranscriptIndex === index;
+                          // Not reached yet: a clickable header, no transcript.
+                          const isLocked = index >= unlockedCount;
+                          // The one still arriving, which the panel follows.
+                          const isFrontier = index === unlockedCount - 1;
                           return (
                             <button
                               key={`${segment.time}-${segment.title}`}
+                              ref={isFrontier ? frontierRef : undefined}
                               type="button"
                               onClick={() => seekTo(segment.time)}
                               aria-label={`Play video from ${formatTimestamp(segment.time)}: ${segment.title}`}
                               className={cn(
-                                "group block w-full cursor-pointer rounded-xl border border-transparent p-3 text-left transition-all duration-200",
+                                "group block w-full cursor-pointer rounded-xl border border-transparent text-left transition-all duration-200",
+                                isLocked ? "px-3 py-1.5" : "p-3",
                                 isActive
                                   ? "border-slate-100 bg-slate-50 shadow-sm"
                                   : "hover:bg-slate-50/50",
@@ -481,7 +522,9 @@ export function LessonPage() {
                                     "mt-0.5 inline-flex h-5 shrink-0 items-center justify-center rounded px-1.5 text-[10px] font-bold transition-colors",
                                     isActive
                                       ? "bg-primary text-white"
-                                      : "bg-slate-100 text-slate-400 group-hover:bg-slate-200 group-hover:text-slate-600",
+                                      : isLocked
+                                        ? "bg-slate-50 text-slate-300 group-hover:bg-slate-100 group-hover:text-slate-500"
+                                        : "bg-slate-100 text-slate-400 group-hover:bg-slate-200 group-hover:text-slate-600",
                                   )}
                                 >
                                   {formatTimestamp(segment.time)}
@@ -492,29 +535,29 @@ export function LessonPage() {
                                       "text-xs font-bold transition-colors",
                                       isActive
                                         ? "text-primary"
-                                        : "text-slate-700 group-hover:text-slate-800",
+                                        : isLocked
+                                          ? "text-slate-300 group-hover:text-slate-500"
+                                          : "text-slate-700 group-hover:text-slate-800",
                                     )}
                                   >
                                     {segment.title}
                                   </h4>
-                                  <p className="mt-1.5 text-xs leading-relaxed">
-                                    <TranscriptText
-                                      segment={segment}
-                                      currentTime={currentTime}
-                                      isActiveSegment={isActive}
-                                    />
-                                  </p>
+                                  {!isLocked && (
+                                    <p className="mt-1.5 text-xs leading-relaxed">
+                                      <TranscriptText
+                                        segment={segment}
+                                        currentTime={currentTime}
+                                        reachedTime={reachedTime}
+                                        isActiveSegment={isActive}
+                                      />
+                                    </p>
+                                  )}
                                 </div>
                               </div>
                             </button>
                           );
                         })}
 
-                        {isTranscriptIdle && (
-                          <p className="px-3 text-xs italic text-slate-400">
-                            The transcript appears here as the lesson plays.
-                          </p>
-                        )}
                     </div>
 
                     {/* Kept mounted across tab switches. Unmounting tears down the

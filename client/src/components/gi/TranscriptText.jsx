@@ -4,8 +4,8 @@ import {
   SEGMENT_ACTIVE,
   SEGMENT_PENDING,
   activeWordIndex,
+  revealedWordCount,
   segmentPhase,
-  spokenWordCount,
 } from '@/lib/transcriptReveal';
 
 // Unspoken words are not rendered at all — the transcript should read like a
@@ -14,12 +14,17 @@ import {
 // edge so a pause between words looks like waiting rather than like a stall.
 //
 // The reflow this causes is contained: appending to the end of a paragraph
-// leaves every earlier word where it was, and there is nothing rendered below
-// the active segment to be pushed down. LessonPage follows the growing edge.
+// leaves every earlier word where it was, and only the frontier segment ever
+// grows. LessonPage keeps that segment in view.
 const SPEAKING = 'rounded bg-primary/10 font-semibold text-primary';
 
 /**
  * A transcript segment that reveals itself in step with playback.
+ *
+ * Two clocks, deliberately: how much text exists comes from `reachedTime`, the
+ * furthest point playback has got to, so seeking backwards never un-hears a
+ * sentence. Which word is lit comes from `currentTime`, so a scrub still shows
+ * the student where they are.
  *
  * Falls back to the plain paragraph when a segment has no word timings, so a
  * lesson that has not been through the offline alignment pass still renders —
@@ -28,6 +33,7 @@ const SPEAKING = 'rounded bg-primary/10 font-semibold text-primary';
 export const TranscriptText = memo(function TranscriptText({
   segment,
   currentTime,
+  reachedTime,
   isActiveSegment,
 }) {
   const words = segment?.words;
@@ -37,22 +43,25 @@ export const TranscriptText = memo(function TranscriptText({
     return <span className={baseTone}>{segment?.text}</span>;
   }
 
-  const phase = segmentPhase(segment, currentTime);
+  const revealPhase = segmentPhase(segment, reachedTime);
 
-  // Only the segment under the playhead needs per-word work; everything behind
-  // it is fully read. A pending segment should have been filtered out by the
-  // caller, but render nothing rather than leak it if one slips through.
-  if (phase !== SEGMENT_ACTIVE) {
-    if (phase === SEGMENT_PENDING) return null;
+  // A segment the student has never reached is rendered by LessonPage as a
+  // header-only row, not through here — but stay quiet rather than leak it.
+  if (revealPhase === SEGMENT_PENDING) return null;
+
+  const revealed = revealedWordCount(segment, reachedTime);
+
+  // Settled segments are plain text: no per-word spans, no stale caret.
+  if (revealPhase !== SEGMENT_ACTIVE && !isActiveSegment) {
     return <span className={baseTone}>{segment.text}</span>;
   }
 
-  const spoken = spokenWordCount(segment, currentTime);
-  const speakingIndex = activeWordIndex(segment, currentTime);
+  const speakingIndex = isActiveSegment ? activeWordIndex(segment, currentTime) : -1;
+  const isFrontier = revealPhase === SEGMENT_ACTIVE;
 
   return (
     <span className={baseTone}>
-      {words.slice(0, spoken).map((word, index) => (
+      {words.slice(0, revealed).map((word, index) => (
         <span
           key={`${word.start}-${index}`}
           className={cn(
@@ -64,7 +73,9 @@ export const TranscriptText = memo(function TranscriptText({
           {index < words.length - 1 ? ' ' : ''}
         </span>
       ))}
-      <span className="gi-transcript-caret" aria-hidden="true" />
+      {isFrontier && revealed < words.length && (
+        <span className="gi-transcript-caret" aria-hidden="true" />
+      )}
     </span>
   );
 });
