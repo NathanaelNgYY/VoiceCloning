@@ -6,6 +6,11 @@
   `scripts/staging-autoscaling.config.json` and the deployment documentation.
   Applied the live Auto Scaling scheduled action and read back min/desired 50,
   max 192 at 07:15 SGT; the paired 18:00 action remains min/desired 1, max 192.
+- Ran public three-turn WebSocket→OpenAI→DeanVoice rehearsals. Newly warm 50 GPUs
+  completed 48/100 sessions; hot 50 GPUs completed 129/150; a real zero-capacity
+  alarm scaled 50→80; route-warmed 80 GPUs completed 150/150. Restored min/desired 1.
+  Raw JSON remains under ignored `.tmp/`; detailed timing is in repo
+  `docs/staging-architecture.md`. No application code changed.
 
 ## 2026-07-29
 

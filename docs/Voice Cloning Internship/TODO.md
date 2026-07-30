@@ -7,8 +7,10 @@
   actions are complete and verified live.
   Corrected route-warm testing passed 50/50 on 32 GPUs; the 100-user run completed
   first-turn voice for 100/100 and all three turns for 98/100. True zero-capacity
-  scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. Then run the
-  60-minute soak and one target termination rehearsal.
+  scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. The 2026-07-30
+  50-GPU rehearsal was not reliable (48/100 immediately after warm; later 129/150),
+  while real scale-out to 80 passed 150/150. Decide whether to raise event prewarm
+  from 50 to 80, then run the 60-minute soak and one target termination rehearsal.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,

@@ -60,19 +60,13 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
   priority over normal entries in each GPU's local queue.
 ## Test Evidence
-- Corrected route-warm, 32 GPUs/50 users/3 turns: 50/50 complete; median first voice
-  7.57/3.79/4.11s; median totals 31.05/27.80/29.02s.
-- 32 GPUs/100 users/3 turns: all 100 completed first-turn voice, 98 completed all
-  turns; five free slots remained at the busiest sample, so desired correctly stayed 32.
-- Closed-loop 100 users for 120s with verification skipped: 2,427/2,427 valid WAVs, p50/p95 3.86/11.31s;
-  two free slots remained. Retry rejects and free capacity can coexist because
-  rejected Lambdas sleep before retry while slots finish work.
-- A deliberate 192-user trigger produced a zero-capacity minute at 20:20 SGT. Alarm
-  entered at 20:23:43, desired went 32->51, launches began 20:23:56, and all 19 new
-  nodes passed cloud-init/route-warm/service checks by 20:28:31.
-- Hot 51-GPU full flow: 100/100 completed all three turns; median first voice
-  5.02/3.34/3.40s and totals 23.54/19.04/17.15s. A subsequent 50/50 run had median
-  first voice 5.69/4.10/4.30s. Two users/GPU showed no first-audio penalty here.
+- Newly route-warmed 50 GPUs/100 users: 48/100 completed three turns; exactly 50
+  first-turn TTS calls returned 504. Hot 50 GPUs/150 users later delivered first-turn
+  voice 150/150 but completed 129/150 because 21 WebSockets closed code 1006.
+- A 500-client sustained TTS trigger put the real alarm into ALARM and scaled 50->80.
+  After all 80 targets route-warmed, 150/150 users completed all three turns; average
+  first voice was 12.43/3.45/3.37s and average end-to-end 29.97/19.86/18.01s.
+- Verdict: 50 is not proven reliable for the event; 80 passed the tested 150-user flow.
 - Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
   `node scripts/load-test-staging-chatbot.mjs 50` for WebSocket->OpenAI->DeanVoice.
 
@@ -96,8 +90,7 @@ voice generation. Commit `62f86ff` added phase timing.
 - The old completed-request policy reacted to small sustained traffic and could scale
   despite available capacity. It is neutralized live because the role cannot delete it;
   the new zero-capacity policy is authoritative.
-- Min/desired 1 is restored after the 32->51 rehearsal; `i-02ed1e071bbf085d2` is the
-  healthy target.
+- Min/desired 1 was restored after the 50->80 rehearsal.
 - Health must mean usable synthesis, not only a listening Node service; LT v13 gates
   the ALB-facing Target Optimizer until the full warm completes.
 
@@ -109,8 +102,8 @@ voice generation. Commit `62f86ff` added phase timing.
 - Repo/live max is 192. Max 200 exceeds the audited 768-vCPU On-Demand quota;
   usage, cost, and single-AZ capacity still apply.
 - The corrected 32-GPU route-warm passed 50/50 but the 100-user run completed 98/100
-  sessions. Event prewarm is live at 50; next run a 60-minute soak, one target
-  termination, and the two-browser exact-revision race.
+  sessions. The new 50-GPU event rehearsal was unreliable while 80 passed 150/150;
+  decide whether to raise prewarm, then run a 60-minute soak and target termination.
 - Next session: read the three sources, check Git, assume the role, live-describe
   LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
   health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;

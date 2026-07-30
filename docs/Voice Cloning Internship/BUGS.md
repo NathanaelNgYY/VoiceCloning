@@ -2,6 +2,13 @@
 
 ## Active
 
+- 2026-07-30: immediately after all 50 event targets first became healthy, a 100-user
+  three-turn full-flow run completed only 48/100 sessions and returned exactly 50
+  first-turn CloudFront 504s. A later 150-user run on the same hot 50 targets delivered
+  first-turn voice to 150/150 but lost 21 sessions to WebSocket code 1006. After real
+  autoscaling 50->80 and full route warm, 150/150 completed all three turns. Target
+  health and one route-warm synthesis therefore do not yet prove reliable immediate
+  two-slot event readiness; investigate second-slot priming and WebSocket 1006 failures.
 - 2026-07-29: the corrected real-route warm made the 32-GPU/50-user chatbot flow pass
   50/50, but a 100-user three-turn run completed 98/100 sessions; two WebSockets closed
   with code 1006 after turn 1. A separate 128-user sustained TTS run produced 34

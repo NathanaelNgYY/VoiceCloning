@@ -308,7 +308,7 @@ Use a target utilization no higher than `0.7` for the event. Also test the true
 simultaneous burst: the formula describes sustained throughput, not the wait experienced
 when 50 students all submit at once.
 
-**Results recorded 2026-07-28 through 2026-07-29 through the real staging public path:**
+**Results recorded 2026-07-28 through 2026-07-30 through the real staging public path:**
 
 | Probe | Result |
 |---|---|
@@ -331,6 +331,10 @@ when 50 students all submit at once.
 | Deliberate 192-user saturation | zero-capacity minute at 20:20 SGT; alarm 20:23:43; desired 32->51; 19 launches at 20:23:56; all 19 route-warm checks complete by 20:28:31 |
 | Full chatbot, 100 users, 51 hot GPUs | 100/100 complete three-turn sessions; first voice p50 5.02/3.34/3.40 s; total p50 23.54/19.04/17.15 s |
 | Full chatbot, 50 users, 51 hot GPUs | 50/50 complete; first voice p50 5.69/4.10/4.30 s; total p50 28.11/25.42/29.30 s |
+| Full chatbot, 100 users, newly route-warmed 50 GPUs | 48/100 complete; exactly 50 first-turn TTS requests returned 504; first-audio average 29.60/4.05/3.95 s for users reaching each turn |
+| Full chatbot, 150 users, hot 50 GPUs before scale-out | 129/150 complete; first-turn voice 150/150; 21 WebSockets later closed code 1006; first-audio average 10.46/5.51/5.01 s |
+| Deliberate 500-user sustained TTS saturation | 9,543 requests; 8,195 valid WAV; 1,323x504 + 25x503; real alarm changed desired 50->80 |
+| Full chatbot, 150 users, 80 route-warmed GPUs after scale-out | 150/150 complete; first-audio average 12.43/3.45/3.37 s; no TTS or WebSocket failures |
 
 The complete-flow test command is `node scripts/load-test-staging-chatbot.mjs 50`.
 Each virtual user opens an independent public WebSocket, streams a real 24 kHz PCM
@@ -427,6 +431,12 @@ $env:VCS_CHATBOT_REPORT_FILE="$PWD\.tmp\chatbot-report.json"
 node scripts/load-test-staging-chatbot.mjs 50
 ```
 
+For 100 or 150 synchronized virtual users, replace the last argument with `100` or
+`150`. Do not open 100-150 browser tabs: tab throttling, shared browser resources,
+manual timing, and unsynchronized starts make that a poor load test. Use one to three
+real browser tabs only for human listening/UI checks; use the harness for repeatable
+capacity measurements.
+
 `scripts/load-test-staging-tts.mjs` isolates the public TTS path. With no duration it
 sends one request per virtual user. With `VCS_LOAD_TEST_DURATION_MS`, every virtual
 user runs closed-loop: it sends one request, waits for the WAV, and only then sends its
@@ -486,6 +496,31 @@ Corrected route-warm complete-flow results:
 | 51 hot GPUs / 50 users | 2 | 50/50 | 4.10 / 5.52 s | 1.74 / 2.78 s | 25.42 / 37.39 s |
 | 51 hot GPUs / 50 users | 3 | 50/50 | 4.30 / 5.90 s | 1.73 / 3.11 s | 29.30 / 33.12 s |
 
+2026-07-30 event-mode rehearsal, where average is the arithmetic mean and
+`endToEnd` runs from the beginning of streamed user audio through the last cloned
+voice chunk:
+
+| Fleet / users | Turn | Completed | First audio min / average / p50 / p95 / max | Average end-to-end |
+|---|---:|---:|---:|---:|
+| Newly route-warmed 50 / 100 | 1 | 50/100 | 12.34 / 29.60 / 32.12 / 33.21 / 33.66 s | 44.12 s |
+| Newly route-warmed 50 / 100 | 2 | 48/100 | 2.27 / 4.05 / 3.77 / 5.51 / 5.94 s | 25.23 s |
+| Newly route-warmed 50 / 100 | 3 | 48/100 | 2.21 / 3.95 / 3.91 / 5.08 / 5.36 s | 25.59 s |
+| Hot 50 / 150, before scale-out | 1 | 150/150 | 6.05 / 10.46 / 8.40 / 18.68 / 27.00 s | 48.92 s |
+| Hot 50 / 150, before scale-out | 2 | 131/150 | 3.48 / 5.51 / 5.18 / 8.55 / 10.97 s | 37.13 s |
+| Hot 50 / 150, before scale-out | 3 | 129/150 | 2.89 / 5.01 / 4.99 / 6.50 / 7.41 s | 32.46 s |
+| Route-warmed 80 / 150, after scale-out | 1 | 150/150 | 5.01 / 12.43 / 7.20 / 27.73 / 30.74 s | 29.97 s |
+| Route-warmed 80 / 150, after scale-out | 2 | 150/150 | 2.13 / 3.45 / 3.40 / 4.69 / 14.63 s | 19.86 s |
+| Route-warmed 80 / 150, after scale-out | 3 | 150/150 | 1.99 / 3.37 / 3.30 / 4.58 / 6.81 s | 18.01 s |
+
+Wall times were 133.62 seconds for 100/50, 147.06 seconds for the pre-scale
+150/50 run, and 102.56 seconds for the post-scale 150/80 run. The first 100-user
+wave began immediately after all 50 targets first became healthy and returned exactly
+50 first-chunk 504s. A later 150-user wave on the same hot fleet returned first-turn
+voice for 150/150, but 21 sessions closed WebSocket code 1006 before completing all
+three turns. This inconsistency means 50 cannot be called reliable for the event based
+on these tests, even though its later first-turn voice capacity reached 150 users.
+The 80-GPU post-scale run is the only one of these three that completed 100%.
+
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
 turn-one voice and later closed WebSocket code 1006; they were not TTS capacity
@@ -501,6 +536,8 @@ Closed-loop saturation results:
 | 32 / 100, realistic text, verification skipped | 120 s | 2,427 | 2,427 | 0 | 3.86 / 11.31 s | Two slots remained at busiest sample; no scale |
 | 32 / 128, realistic text, verification skipped | 240 s | 5,007 | 4,972 | 34x504 + 1x503 | 4.19 / 15.41 s | One slot remained at sampled points; strict rule did not scale |
 | 32 / 192, realistic text, verification skipped | 180 s | 3,948 | 3,773 | 173x504 + 2x503 | 4.91 / 21.83 s | Zero-capacity minute; desired 32->51 |
+| 50 / 300, realistic text, verification skipped | 180 s | 6,415 | 6,132 | 273x504 + 10x503 | 4.48 / 21.28 s | Sampled free capacity remained; no scale |
+| 50 / 500, realistic text, verification skipped | 240 s | 9,543 | 8,195 | 1,323x504 + 25x503 | 7.19 / 25.58 s | Real zero-capacity alarm; desired 50->80 |
 
 The 192-user run was deliberately excessive to verify the strict alarm, not an
 accepted user target. Its zero-capacity metric minute began at 20:20 SGT; CloudWatch
