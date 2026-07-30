@@ -33,8 +33,14 @@
   configurable two-slot rounds (20 syntheses per GPU), cycling representative medical
   chunks through first-chunk and verified later-chunk paths before Target Optimizer
   starts. Sequential mocks verified 20 calls, mode distribution, non-RIFF failure,
-  invalid-round rejection, and Bash syntax. Deployment and fresh-fleet load proof are
-  pending; this is a mitigation, not yet evidence of lower latency.
+  invalid-round rejection, and Bash syntax.
+- Deployed that deep warm from commit `330d329`, baked AMI
+  `ami-021aeb72894b8c79b`/snapshot `snap-09cf487a09a2c82f3`, and promoted launch
+  template v15. A fresh validator completed the 10 rounds in 26 seconds and total
+  cloud-init warm in 256 seconds before Target Optimizer started. The mitigation
+  failed its public proof: newly warmed 50 GPUs completed 59/100 sessions (40
+  first-turn 504s and one later WebSocket 1006), while the same hot fleet completed
+  150/150. This disproves more localhost synthesis as a sufficient readiness fix.
 
 ## 2026-07-29
 

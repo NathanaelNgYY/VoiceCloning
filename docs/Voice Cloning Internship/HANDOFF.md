@@ -21,9 +21,9 @@ Last updated: 2026-07-30
 ## Live AWS State
 - Account/region/role: `329599637774` / `ap-northeast-2` / `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
 - Live ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192.
-- Healthy v14 baseline instance after the rehearsal: `i-0b8ce19b5fe17d751`.
-- Final AMI `ami-0a2618372e7f8b8da` contains commit `fff074c`.
-- Launch template `lt-07728350a25e691a4` defaults to v14.
+- Healthy baseline instance after the rehearsal: `i-0b8ce19b5fe17d751`.
+- Current AMI `ami-021aeb72894b8c79b` contains commit `330d329`.
+- Launch template `lt-07728350a25e691a4` defaults to v15.
 - Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
 - Private subnet `subnet-0c1937ef298f54500`, GPU SG `sg-03a2f3dddf4eff21c`,
   instance profile `VoiClo_GPU`. Fleet is single-AZ.
@@ -46,11 +46,11 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Fixed ALB SG egress for ports 3103/3004; missing egress caused health timeouts.
 - Added `scripts/load-test-staging-tts.mjs`: concurrent public requests count only
   HTTP 200 `audio/wav` RIFF output as success.
-- Live v14 requires two concurrent local-route RIFF syntheses before advertising
-  capacity. Source now deep-primes 10 two-slot rounds; deployment/retest is pending.
+- Live v15 requires 10 concurrent two-slot rounds (20 valid local RIFF syntheses)
+  before advertising capacity, covering first-chunk and verified later-chunk paths.
 - Added event controls to `scripts/provision-staging-autoscaling.ps1`.
-  `VCS_STAGING_EVENT=true` selects 32; paired prewarm/scale-down times are mandatory.
-- Live LT v14 gates on two concurrent RIFF responses before advertising two slots.
+  `VCS_STAGING_EVENT=true` selects 50; paired prewarm/scale-down times are mandatory.
+- Live LT v15 gates on all 10 two-slot RIFF rounds before advertising capacity.
 - GI students do not call model selection/warm on page entry; each ASG node performs
   that preparation once before advertising capacity, avoiding a user-entry warm burst.
 - Live scale-out adds 10 GPUs after at least one rejection in a one-minute period.
@@ -65,6 +65,9 @@ Use per-instance `ssm:GetCommandInvocation`.
 - A real 226-rejection minute exercised the fixed policy exactly 50->60. After all
   ten added v14 nodes route-warmed, 150/150 users completed all three turns with
   average first-audio 5.94/2.44/2.36s and no TTS/WebSocket failures.
+- A fresh v15 validator ran deep warm in 26s and total cloud-init in 256s. Newly
+  warmed 50 GPUs still completed only 59/100 (40 first-turn 504s, one later 1006);
+  the same hot fleet completed 150/150 at average first-audio 7.04/3.01/2.81s.
 - Verdict: 50 is not reliable for the immediate event burst. Sixty passed one
   150-user v14 wave; earlier route-warmed 80 also passed, so keep safety headroom.
 - Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
@@ -80,8 +83,8 @@ voice generation. Commit `62f86ff` added phase timing.
   reference preparation plus first synthesis 96s.
 - The fresh-only delay is consistent with first reads of snapshot-backed EBS blocks;
   it was not S3 downloads because cache checks took only 8-9s.
-- A fresh v14 validator completed both route syntheses in 3s and full cloud-init warm
-  in 206s, became healthy in the real target group, and passed public RIFF synthesis.
+- A fresh v15 validator completed 20 local syntheses in 26s and full cloud-init in
+  256s. Public cold-burst failure proves localhost warm is not adequate readiness.
 
 ## Incidents and Recovery
 - LT v9 AMI `ami-0b06a87a36a68328d` captured the worker entry file as zero bytes.
@@ -95,6 +98,7 @@ voice generation. Commit `62f86ff` added phase timing.
   the ALB-facing Target Optimizer until the full warm completes.
 - Validator `i-015de451bff24a73b` is stopped but remains registered as unused; an admin
   must deregister it from `vcs-stg-opt-3103` and terminate it because this role is denied.
+- Stopped v15 validator `i-0eb2ca68edb88d6d7` also needs administrator termination.
 
 ## Event Plan and Next Session
 - Live event actions for 2026-08-02 are 50 at 07:15 and back to 1 at
@@ -104,9 +108,9 @@ voice generation. Commit `62f86ff` added phase timing.
 - Repo/live max is 192. Max 200 exceeds the audited 768-vCPU On-Demand quota;
   usage, cost, and single-AZ capacity still apply.
 - The corrected 32-GPU route-warm passed 50/50 but the 100-user run completed 98/100
-  sessions. Both 50-GPU event rehearsals were unreliable; v14 fixed-step 60 and the
-  earlier 80 each passed 150/150 once. Decide whether to raise prewarm, then run a
-  60-minute soak and target termination.
+  sessions. The v14 and v15 50-GPU newly warmed rehearsals were unreliable; extra
+  localhost deep warm did not help. v14 fixed-step 60 and earlier 80 each passed
+  150/150 once. Decide prewarm, test routed readiness, soak, and target termination.
 - Next session: read the three sources, check Git, assume the role, live-describe
   LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
   health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;

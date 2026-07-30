@@ -8,15 +8,15 @@
   Corrected route-warm testing passed 50/50 on 32 GPUs; the 100-user run completed
   first-turn voice for 100/100 and all three turns for 98/100. True zero-capacity
   scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. The 2026-07-30
-  50-GPU rehearsals remain unreliable: v14 completed 68/100 immediately after warm
-  and 144/150 when hot. The fixed +10 policy scaled 50->60, and route-warmed 60
-  passed 150/150 once; earlier 80 also passed 150/150. Decide whether to raise event
-  prewarm above 50, push local commits, then run the 60-minute soak and one target
-  termination rehearsal.
-- [ ] Deploy the 10-round/two-slot deep warm in `scripts/warm-staging-deanvoice.sh`,
-  bake a new AMI/LT version, and repeat the newly-warmed 50-GPU/100-user flow.
+  50-GPU rehearsals remain unreliable: v14 completed 68/100 immediately after warm;
+  v15's 10-round deep warm completed only 59/100, while its hot follow-up passed
+  150/150. The fixed +10 policy previously scaled 50->60 and route-warmed 60 passed
+  150/150 once; earlier 80 also passed 150/150. Decide whether to raise event prewarm
+  above 50, replace localhost-only readiness with a routed readiness experiment, then
+  run the 60-minute soak and one target termination rehearsal.
 - [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
-  from `vcs-stg-opt-3103` and terminate it; this role is denied both actions.
+  from `vcs-stg-opt-3103` and terminate it, and terminate stopped v15 validator
+  `i-0eb2ca68edb88d6d7`; this role is denied the required actions.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,

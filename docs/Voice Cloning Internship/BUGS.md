@@ -12,8 +12,12 @@
   but an immediate 100-user/50-GPU rerun still completed only 68/100 because 32 first
   chunks returned 504. A later hot 50-GPU/150-user run delivered first-turn voice
   150/150 but completed 144/150 because six WebSockets closed code 1006. Fixed-step
-  scale-out to 60 then passed 150/150 once. A configurable 10-round/two-slot local
-  deep-prime is implemented but not deployed; burst headroom and 1006 remain unresolved.
+  scale-out to 60 then passed 150/150 once. The configurable 10-round/two-slot local
+  deep-prime was deployed as AMI/LT v15 and independently verified on a fresh node,
+  but the immediate 50-GPU rerun regressed to 59/100 complete: 40 first-turn 504s and
+  one later WebSocket 1006. The same hot fleet passed 150/150. More localhost warm
+  calls are not a supported fix; the unrouted public-path initialization, burst
+  headroom, and intermittent 1006 remain unresolved.
 - 2026-07-29: the corrected real-route warm made the 32-GPU/50-user chatbot flow pass
   50/50, but a 100-user three-turn run completed 98/100 sessions; two WebSockets closed
   with code 1006 after turn 1. A separate 128-user sustained TTS run produced 34

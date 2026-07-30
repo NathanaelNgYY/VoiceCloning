@@ -234,12 +234,12 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The validated image is `ami-0a2618372e7f8b8da` (snapshot
-   `snap-0b12245cada7a5d60`), built from commit `fff074c`. Launch template
+   port 3004. The current image is `ami-021aeb72894b8c79b` (snapshot
+   `snap-09cf487a09a2c82f3`), built from commit `330d329`. Launch template
    `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 14) uses this AMI, `g6.xlarge`,
+   (`lt-07728350a25e691a4`, default version 15) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
-   ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with v14 instance
+   ASG `vcs-staging-gpu-inference` normally runs at desired capacity 1 with baseline
    `i-0b8ce19b5fe17d751`;
    `AWSServiceRoleForAutoScaling` also exists. Minimum
    capacity is 1 so public inference always has a warm baseline.
@@ -341,6 +341,8 @@ when 50 students all submit at once.
 | Full chatbot, 150 users, hot v14 50 GPUs | 144/150 complete; first-turn voice 150/150; six WebSockets later closed code 1006 |
 | Fixed-step rejection scale-out | Real 226-rejection minute changed desired 50->60 exactly once; all ten added v14 targets passed the two-slot gate |
 | Full chatbot, 150 users, 60 route-warmed v14 GPUs | 150/150 complete; successful first-audio average 5.94/2.44/2.36 s; no TTS or WebSocket failures |
+| Full chatbot, 100 users, newly deep-warmed v15 50 GPUs | 59/100 complete; 40 first-turn 504s and one later WebSocket 1006; successful first-audio average 24.23/1.85/1.87 s |
+| Full chatbot, 150 users, same hot v15 50 GPUs | 150/150 complete; successful first-audio average 7.04/3.01/2.81 s; no TTS or WebSocket failures |
 
 The complete-flow test command is `node scripts/load-test-staging-chatbot.mjs 50`.
 Each virtual user opens an independent public WebSocket, streams a real 24 kHz PCM
@@ -398,13 +400,15 @@ were read back and verified on 2026-07-30. The stored UTC times are 2026-08-01 2
 until the provisioner is rerun with `-Apply`. A maximum of 200 would require
 800 vCPUs and exceeds the verified quota.
 
-Launch-template v14 keeps Target Optimizer stopped until
-`warm-staging-deanvoice.sh` completes. Its live AMI launches two same-model real
-`/inference/tts` requests concurrently and requires both RIFF WAVs after loading
-weights and warming references. A fresh v14 instance passed both route syntheses in
-3 seconds, completed cloud-init warm-up in 206 seconds, became healthy through the
-Target Optimizer target group, and passed a public RIFF smoke request. Scheduled
-prewarming remains required.
+Launch-template v15 keeps Target Optimizer stopped until
+`warm-staging-deanvoice.sh` completes. Its AMI runs 10 two-request rounds, requiring
+20 RIFF WAVs while cycling first-chunk (`skip_verify:true`) and verified later-chunk
+paths after loading weights and references. A fresh v15 validator completed the deep
+rounds in 26 seconds and its full cloud-init warm-up in 256 seconds before Target
+Optimizer started. The subsequent 50-GPU public test still returned 40 first-turn
+504s, so the extra local syntheses are verified as deployed but are not an effective
+public cold-burst mitigation. Scheduled prewarming remains required, and ALB health
+must not be interpreted as proof that first routed traffic will meet the timeout.
 
 Capacity retries sent by Lambda carry `X-VCS-Capacity-Retry`; a worker that receives
 one inserts it ahead of normal queued work while preserving FIFO within each lane.
@@ -561,6 +565,30 @@ The two-slot gate prevents advertising an untested second route, but exact nomin
 capacity still leaves no scheduling/latency headroom. Sixty GPUs passed this single
 150-user rerun, but one passing wave is not enough to call 60 guaranteed; the earlier
 80-GPU rehearsal is additional evidence for using more prewarm headroom.
+
+The v15 deep-warm rerun used the same audio-only definition and began only after all
+50 targets were healthy:
+
+| v15 fleet / users | Turn | Heard / users | First audio fastest / average / p50 / p95 / slowest | Average full voice |
+|---|---:|---:|---:|---:|
+| Newly deep-warmed 50 / 100 | 1 | 60/100 | 10.19 / 24.23 / 25.97 / 30.28 / 30.60 s | 40.39 s |
+| Newly deep-warmed 50 / 100 | 2 | 59/100 | 1.02 / 1.85 / 1.69 / 2.87 / 5.00 s | 14.38 s |
+| Newly deep-warmed 50 / 100 | 3 | 59/100 | 1.06 / 1.87 / 1.78 / 2.83 / 4.22 s | 13.76 s |
+| Same hot 50 / 150 | 1 | 150/150 | 3.34 / 7.04 / 4.85 / 13.81 / 21.29 s | 27.25 s |
+| Same hot 50 / 150 | 2 | 150/150 | 1.64 / 3.01 / 2.77 / 4.73 / 6.75 s | 22.22 s |
+| Same hot 50 / 150 | 3 | 150/150 | 1.07 / 2.81 / 2.75 / 3.99 / 7.84 s | 16.80 s |
+
+The v15 wall times were 132.06 seconds for newly warmed 100/50 and 115.81 seconds
+for hot 150/50. The first run had 40 first-turn voice failures, all HTTP 504, plus
+one WebSocket 1006 after successful turn-one audio; the hot comparison had no
+failures. Compared with v14's immediate 68/100 result, v15 completed only 59/100 and
+successful turn-one first audio was effectively unchanged (24.23 versus 23.77
+seconds). Ten local two-slot rounds therefore disproved the assumption that more
+localhost synthesis alone would make a newly advertised target behave like a target
+already exercised through the public route. The next experiment must isolate the
+unwarmed layer in the routed Target Optimizer/ALB/Lambda path or keep new targets out
+of service until an equivalent routed readiness probe succeeds; blindly adding more
+local rounds is not justified by this evidence.
 
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
@@ -814,10 +842,11 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The optimized target group, final AMI `ami-0a2618372e7f8b8da`, launch-template v14,
+7. The optimized target group, current AMI `ami-021aeb72894b8c79b`, launch-template v15,
    ASG, one healthy `InService` instance, and fixed-increment rejection policy are live.
    The alarm adds 10 GPUs after at least one reject in a minute. Concurrent two-slot
-   route warm passed fresh-node, target-health, and public RIFF validation.
+   deep warm passed fresh-node validation, but the new 50-GPU fleet still failed
+   40/100 first-turn requests; it does not prove public burst readiness.
    ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the optimized
    target. Live paired actions now prewarm 50 GPUs at 07:15 SGT and scale down to
    one at 18:00 SGT for 2026-08-02.
@@ -825,6 +854,8 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
    unused target because this role is denied deregistration and termination. An
    administrator should deregister it from `vcs-stg-opt-3103` and terminate it; the
    stopped EBS volume continues to incur storage cost.
-9. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
+9. Fresh v15 validator `i-0eb2ca68edb88d6d7` is stopped and also requires
+   administrator termination because this role was denied `ec2:TerminateInstances`.
+10. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.

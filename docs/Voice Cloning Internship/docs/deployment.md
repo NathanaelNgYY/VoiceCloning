@@ -188,12 +188,12 @@ reference, five auxiliary references, throwaway synthesis, and the real TTS rout
 prepared once by each ASG instance before Target Optimizer starts. This avoids a
 redundant student-entry warm-up burst.
 
-## Staging ASG State (2026-07-29)
+## Staging ASG State (2026-07-30)
 
-- Final image `ami-0a2618372e7f8b8da` contains commit `fff074c`; launch template
-  `lt-07728350a25e691a4` default version 14 uses `g6.xlarge`, `VoiClo_GPU`, and the
+- Current image `ami-021aeb72894b8c79b` contains commit `330d329`; launch template
+  `lt-07728350a25e691a4` default version 15 uses `g6.xlarge`, `VoiClo_GPU`, and the
   staging GPU security group.
-- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy v14 target
+- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy baseline
   `i-0b8ce19b5fe17d751` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
@@ -206,13 +206,14 @@ redundant student-entry warm-up burst.
 - Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
   a request routed on retry is marked and receives priority in the worker's local
   queue. A slot may be briefly unused while rejected Lambdas sleep before retry.
-- Launch-template v14 requires two concurrent RIFF responses before advertising two
-  slots. A fresh validator completed both syntheses in 3 seconds, full cloud-init warm
-  in 206 seconds, became healthy in the real target group, and passed public RIFF synthesis.
-- v14 starts Target Optimizer only after the complete DeanVoice warm succeeds.
-- Repository source now defaults `VCS_ROUTE_WARM_ROUNDS` to 10 (valid 1-20), or 20
-  local syntheses per GPU, before Target Optimizer starts. It is not live until a new
-  AMI/LT version passes fresh-node and newly-warmed fleet testing.
+- Launch-template v15 requires 10 two-slot rounds (20 RIFF responses) before
+  advertising capacity, covering first-chunk and verified later-chunk paths. A fresh
+  validator completed the deep rounds in 26 seconds and full cloud-init warm in 256
+  seconds before Target Optimizer started.
+- The newly warmed v15 50-GPU/100-user run completed only 59/100: 40 first-turn
+  CloudFront 504s and one later WebSocket 1006. The same hot fleet then completed
+  150/150. Local deep warm is therefore deployed but is not a valid public-readiness
+  proof; do not add more local rounds without isolating the routed cold layer.
 - Public GI DeanVoice synthesis passed after fresh-instance cold-load validation.
   A fresh v10 node completed cloud-init in 442 seconds: its timed warm command spent
   9 seconds on cache lookups, 273 seconds loading the Python/base/voice model stack,
@@ -251,11 +252,17 @@ redundant student-entry warm-up burst.
 - Validator `i-015de451bff24a73b` is stopped but remains registered as an unused target.
   An administrator must deregister it from `vcs-stg-opt-3103` and terminate it because
   this role is denied both actions; its stopped EBS volume still incurs storage cost.
+- Fresh v15 validator `i-0eb2ca68edb88d6d7` is stopped and requires administrator
+  termination because this role is denied `ec2:TerminateInstances`.
 - The v14 event rerun waited for all 50 two-slot gates before load. Immediate 100 users
   completed 68/100 (32 first-chunk 504s); hot 150 users completed 144/150 (six
   WebSocket 1006 closures). A real 226-rejection minute changed desired 50->60
   exactly, and all 60 route-warmed targets then completed 150/150. Fifty is not a
   reliable immediate-burst capacity; 60 has one passing v14 wave, not a guarantee.
+- The v15 event rerun also waited for all 50 targets. Immediate 100 users heard
+  turn-one audio for 60/100 and completed 59/100; successful first-audio averages were
+  24.23/1.85/1.87s. The hot 150-user follow-up completed 150/150 at
+  7.04/3.01/2.81s. Deep localhost warming did not improve cold public traffic.
 
 Detailed per-turn timing definitions, the complete test ledger, warm-up ownership,
 burst interpretation, and evaluated future options with downsides are maintained in
