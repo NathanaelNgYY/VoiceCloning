@@ -73,6 +73,25 @@ if ($ScaleOutRejectsPerMinute -lt 1) {
 if ($ScaleOutAddCapacity -lt 1 -or $ScaleOutAddCapacity -gt $MaxCapacity) {
   throw "ScaleOutAddCapacity must be from 1 to MaxCapacity $MaxCapacity."
 }
+if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeUrl) -or
+  [string]$cfg.publicPrimeUrl -notmatch '^https://') {
+  throw 'publicPrimeUrl must be an HTTPS URL.'
+}
+if ([int]$cfg.publicPrimeDelaySeconds -lt 0 -or
+  [int]$cfg.publicPrimeDelaySeconds -gt 600) {
+  throw 'publicPrimeDelaySeconds must be from 0 to 600.'
+}
+if ([int]$cfg.publicPrimeRequestsPerInstance -lt 1 -or
+  [int]$cfg.publicPrimeRequestsPerInstance -gt 10) {
+  throw 'publicPrimeRequestsPerInstance must be from 1 to 10.'
+}
+if ([int]$cfg.publicPrimeSettleSeconds -lt 0 -or
+  [int]$cfg.publicPrimeSettleSeconds -gt 300) {
+  throw 'publicPrimeSettleSeconds must be from 0 to 300.'
+}
+if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeText)) {
+  throw 'publicPrimeText must not be empty.'
+}
 $effectiveMinSize = if ($eventEnabled -and -not $PreWarmAt) {
   $PreWarmCapacity
 } else {
@@ -109,6 +128,15 @@ function Invoke-AwsJson {
   return $raw | ConvertFrom-Json
 }
 
+$publicPrimeBody = @{
+  voiceProfileId = 'deanvoice-v1'
+  text = [string]$cfg.publicPrimeText
+  skip_verify = $true
+} | ConvertTo-Json -Compress
+$publicPrimeBodyB64 = [Convert]::ToBase64String(
+  [Text.Encoding]::UTF8.GetBytes($publicPrimeBody)
+)
+
 $userData = @'
 #cloud-config
 write_files:
@@ -119,6 +147,48 @@ write_files:
       [Service]
       ExecStartPost=/home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh
       TimeoutStartSec=900
+  - path: /usr/local/sbin/vcs-prime-public-route.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -u
+
+      prime_url='__PUBLIC_PRIME_URL__'
+      prime_body_b64='__PUBLIC_PRIME_BODY_B64__'
+      delay_seconds=__PUBLIC_PRIME_DELAY_SECONDS__
+      request_count=__PUBLIC_PRIME_REQUESTS__
+      settle_seconds=__PUBLIC_PRIME_SETTLE_SECONDS__
+
+      sleep "${delay_seconds}"
+      prime_body="$(printf '%s' "${prime_body_b64}" | base64 --decode)"
+      pids=()
+      for request_index in $(seq 1 "${request_count}"); do
+        (
+          status="$(
+            curl --silent --show-error \
+              --max-time 60 \
+              --output "/tmp/vcs-public-prime-${request_index}.response" \
+              --write-out '%{http_code}' \
+              --header 'Content-Type: application/json' \
+              --header 'Cache-Control: no-cache' \
+              --data-binary "${prime_body}" \
+              "${prime_url}?instancePrime=$(date +%s)-${request_index}" \
+              || true
+          )"
+          echo "public_prime request=${request_index} status=${status:-000}"
+          rm -f "/tmp/vcs-public-prime-${request_index}.response"
+        ) &
+        pids+=("$!")
+      done
+      for pid in "${pids[@]}"; do
+        wait "${pid}" || true
+      done
+
+      # CloudFront can return 504 before Lambda/the GPU stops working. Let those
+      # accepted syntheses finish so the public route is hot before cloud-init ends.
+      sleep "${settle_seconds}"
+      echo 'public_prime completed'
 bootcmd:
   - [systemctl, disable, gpu-worker.service]
   - [systemctl, disable, target-optimizer-inference.service]
@@ -130,7 +200,22 @@ runcmd:
   - [systemctl, enable, gpu-inference-worker.service]
   - [systemctl, restart, gpu-inference-worker.service]
   - [systemctl, enable, --now, target-optimizer-inference.service]
+  - [/usr/local/sbin/vcs-prime-public-route.sh]
 '@
+$userData = $userData.Replace('__PUBLIC_PRIME_URL__', [string]$cfg.publicPrimeUrl)
+$userData = $userData.Replace('__PUBLIC_PRIME_BODY_B64__', $publicPrimeBodyB64)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_DELAY_SECONDS__',
+  [string][int]$cfg.publicPrimeDelaySeconds
+)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_REQUESTS__',
+  [string][int]$cfg.publicPrimeRequestsPerInstance
+)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_SETTLE_SECONDS__',
+  [string][int]$cfg.publicPrimeSettleSeconds
+)
 $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
 
 $tg = Invoke-AwsJson -AllowNotFound elbv2 describe-target-groups --region $cfg.region --names $cfg.targetGroupName

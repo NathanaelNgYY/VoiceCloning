@@ -24,5 +24,10 @@
   "scaleOutAddCapacity": 10,
   "scaleInIdleMinutes": 15,
   "defaultPreWarmCapacity": 2,
-  "eventCapacity": 50
+  "eventCapacity": 50,
+  "publicPrimeUrl": "https://d25sg72wp8oj5g.cloudfront.net/api/live/tts-sentence",
+  "publicPrimeDelaySeconds": 90,
+  "publicPrimeRequestsPerInstance": 2,
+  "publicPrimeSettleSeconds": 45,
+  "publicPrimeText": "Gastrointestinal bleeding means bleeding somewhere inside the digestive tract, and doctors assess its severity, identify the source, and treat the underlying cause."
 }
