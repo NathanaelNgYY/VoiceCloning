@@ -21,7 +21,7 @@ Last updated: 2026-07-30
 ## Live AWS State
 - Account/region/role: `329599637774` / `ap-northeast-2` / `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
 - Live ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192.
-- Healthy baseline instance after the rehearsal: `i-02ed1e071bbf085d2`.
+- Healthy v14 baseline instance after the rehearsal: `i-0b8ce19b5fe17d751`.
 - Final AMI `ami-0a2618372e7f8b8da` contains commit `fff074c`.
 - Launch template `lt-07728350a25e691a4` defaults to v14.
 - Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
@@ -59,13 +59,14 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
   priority over normal entries in each GPU's local queue.
 ## Test Evidence
-- Newly route-warmed 50 GPUs/100 users: 48/100 completed three turns; exactly 50
-  first-turn TTS calls returned 504. Hot 50 GPUs/150 users later delivered first-turn
-  voice 150/150 but completed 129/150 because 21 WebSockets closed code 1006.
-- A 500-client sustained TTS trigger put the real alarm into ALARM and scaled 50->80.
-  After all 80 targets route-warmed, 150/150 users completed all three turns; average
-  first voice was 12.43/3.45/3.37s and average end-to-end 29.97/19.86/18.01s.
-- Verdict: 50 is not proven reliable for the event; 80 passed the tested 150-user flow.
+- v14 newly two-slot-warmed 50 GPUs completed 68/100 three-turn users; 32 first
+  chunks returned 504. Hot 50 GPUs delivered turn-one voice 150/150, then six
+  sessions closed WebSocket 1006, leaving 144/150 complete.
+- A real 226-rejection minute exercised the fixed policy exactly 50->60. After all
+  ten added v14 nodes route-warmed, 150/150 users completed all three turns with
+  average first-audio 5.94/2.44/2.36s and no TTS/WebSocket failures.
+- Verdict: 50 is not reliable for the immediate event burst. Sixty passed one
+  150-user v14 wave; earlier route-warmed 80 also passed, so keep safety headroom.
 - Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
   `node scripts/load-test-staging-chatbot.mjs 50` for WebSocket->OpenAI->DeanVoice.
 
@@ -103,8 +104,9 @@ voice generation. Commit `62f86ff` added phase timing.
 - Repo/live max is 192. Max 200 exceeds the audited 768-vCPU On-Demand quota;
   usage, cost, and single-AZ capacity still apply.
 - The corrected 32-GPU route-warm passed 50/50 but the 100-user run completed 98/100
-  sessions. The new 50-GPU event rehearsal was unreliable while 80 passed 150/150;
-  decide whether to raise prewarm, then run a 60-minute soak and target termination.
+  sessions. Both 50-GPU event rehearsals were unreliable; v14 fixed-step 60 and the
+  earlier 80 each passed 150/150 once. Decide whether to raise prewarm, then run a
+  60-minute soak and target termination.
 - Next session: read the three sources, check Git, assume the role, live-describe
   LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
   health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;

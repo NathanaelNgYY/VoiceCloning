@@ -23,6 +23,12 @@
   in 3 seconds and cloud-init warm-up in 206 seconds, became healthy through Target
   Optimizer, and passed public RIFF synthesis. It is stopped but requires an admin to
   deregister and terminate it because this role is denied those actions.
+- Repeated the public three-turn event rehearsal on v14. Newly warmed 50 GPUs
+  completed 68/100 users (32 first-chunk 504s); hot 50 completed 144/150 (six
+  WebSocket 1006 closures after turn-one voice). A real 226-rejection minute proved
+  fixed scale-out 50->60, and fully route-warmed 60 GPUs completed 150/150 with no
+  failures. Raw JSON is ignored under `.tmp/`; detailed audio-only timing is in repo
+  `docs/staging-architecture.md`. The fleet was restored to one after testing.
 
 ## 2026-07-29
 

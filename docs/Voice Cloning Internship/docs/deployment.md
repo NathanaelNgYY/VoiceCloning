@@ -193,8 +193,8 @@ redundant student-entry warm-up burst.
 - Final image `ami-0a2618372e7f8b8da` contains commit `fff074c`; launch template
   `lt-07728350a25e691a4` default version 14 uses `g6.xlarge`, `VoiClo_GPU`, and the
   staging GPU security group.
-- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy target
-  `i-02ed1e071bbf085d2` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
+- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy v14 target
+  `i-0b8ce19b5fe17d751` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
 - Live scale-out adds 10 GPUs after at least one Target Optimizer rejection in a
@@ -248,6 +248,11 @@ redundant student-entry warm-up burst.
 - Validator `i-015de451bff24a73b` is stopped but remains registered as an unused target.
   An administrator must deregister it from `vcs-stg-opt-3103` and terminate it because
   this role is denied both actions; its stopped EBS volume still incurs storage cost.
+- The v14 event rerun waited for all 50 two-slot gates before load. Immediate 100 users
+  completed 68/100 (32 first-chunk 504s); hot 150 users completed 144/150 (six
+  WebSocket 1006 closures). A real 226-rejection minute changed desired 50->60
+  exactly, and all 60 route-warmed targets then completed 150/150. Fifty is not a
+  reliable immediate-burst capacity; 60 has one passing v14 wave, not a guarantee.
 
 Detailed per-turn timing definitions, the complete test ledger, warm-up ownership,
 burst interpretation, and evaluated future options with downsides are maintained in

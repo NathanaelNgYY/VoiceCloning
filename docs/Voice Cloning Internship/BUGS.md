@@ -8,9 +8,11 @@
   first-turn voice to 150/150 but lost 21 sessions to WebSocket code 1006. After real
   autoscaling 50->80 and full route warm, 150/150 completed all three turns. Target
   health and one route-warm synthesis therefore did not prove reliable immediate
-  two-slot event readiness. Concurrent two-slot RIFF warm is now baked into live
-  launch-template v14 and passed fresh-node/target-group validation; the 100/150-user
-  burst has not been rerun on v14, and WebSocket 1006 failures remain under investigation.
+  two-slot event readiness. Launch-template v14 now gates on two concurrent RIFFs,
+  but an immediate 100-user/50-GPU rerun still completed only 68/100 because 32 first
+  chunks returned 504. A later hot 50-GPU/150-user run delivered first-turn voice
+  150/150 but completed 144/150 because six WebSockets closed code 1006. Fixed-step
+  scale-out to 60 then passed 150/150 once. Burst headroom and 1006 remain unresolved.
 - 2026-07-29: the corrected real-route warm made the 32-GPU/50-user chatbot flow pass
   50/50, but a 100-user three-turn run completed 98/100 sessions; two WebSockets closed
   with code 1006 after turn 1. A separate 128-user sustained TTS run produced 34

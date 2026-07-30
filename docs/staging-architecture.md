@@ -239,8 +239,8 @@ The implemented staging design keeps the public hostnames and separates roles:
    `vcs-staging-gpu-inference`
    (`lt-07728350a25e691a4`, default version 14) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
-   ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with instance
-   `i-02ed1e071bbf085d2`;
+   ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with v14 instance
+   `i-0b8ce19b5fe17d751`;
    `AWSServiceRoleForAutoScaling` also exists. Minimum
    capacity is 1 so public inference always has a warm baseline.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
@@ -337,6 +337,10 @@ when 50 students all submit at once.
 | Full chatbot, 150 users, hot 50 GPUs before scale-out | 129/150 complete; first-turn voice 150/150; 21 WebSockets later closed code 1006; first-audio average 10.46/5.51/5.01 s |
 | Deliberate 500-user sustained TTS saturation | 9,543 requests; 8,195 valid WAV; 1,323x504 + 25x503; real alarm changed desired 50->80 |
 | Full chatbot, 150 users, 80 route-warmed GPUs after scale-out | 150/150 complete; first-audio average 12.43/3.45/3.37 s; no TTS or WebSocket failures |
+| Full chatbot, 100 users, newly two-slot-warmed v14 50 GPUs | 68/100 complete; 32 first-turn 504s; successful first-audio average 23.77/1.82/2.11 s |
+| Full chatbot, 150 users, hot v14 50 GPUs | 144/150 complete; first-turn voice 150/150; six WebSockets later closed code 1006 |
+| Fixed-step rejection scale-out | Real 226-rejection minute changed desired 50->60 exactly once; all ten added v14 targets passed the two-slot gate |
+| Full chatbot, 150 users, 60 route-warmed v14 GPUs | 150/150 complete; successful first-audio average 5.94/2.44/2.36 s; no TTS or WebSocket failures |
 
 The complete-flow test command is `node scripts/load-test-staging-chatbot.mjs 50`.
 Each virtual user opens an independent public WebSocket, streams a real 24 kHz PCM
@@ -523,6 +527,40 @@ voice for 150/150, but 21 sessions closed WebSocket code 1006 before completing 
 three turns. This inconsistency means 50 cannot be called reliable for the event based
 on these tests, even though its later first-turn voice capacity reached 150 users.
 The 80-GPU post-scale run is the only one of these three that completed 100%.
+
+The v14 two-slot-gate rerun began only after all 50 targets were healthy. “First
+audio” below is the first successful RIFF chunk request-to-response time; failed 504
+bodies are excluded because no audio was heard. “Full voice” is all sequential cloned
+voice chunks for that turn.
+
+| v14 fleet / users | Turn | Heard / users | First audio fastest / average / p50 / p95 / slowest | Average full voice |
+|---|---:|---:|---:|---:|
+| Newly two-slot-warmed 50 / 100 | 1 | 68/100 | 10.07 / 23.77 / 24.30 / 29.87 / 30.21 s | 40.56 s |
+| Newly two-slot-warmed 50 / 100 | 2 | 68/100 | 1.06 / 1.82 / 1.76 / 2.82 / 3.59 s | 14.42 s |
+| Newly two-slot-warmed 50 / 100 | 3 | 68/100 | 1.07 / 2.11 / 2.00 / 3.14 / 3.81 s | 14.42 s |
+| Hot 50 / 150 before fixed-step scale | 1 | 150/150 | 2.66 / 6.17 / 4.29 / 11.31 / 16.49 s | 31.13 s |
+| Hot 50 / 150 before fixed-step scale | 2 | 144/150 | 1.36 / 3.02 / 2.97 / 4.71 / 7.11 s | 22.70 s |
+| Hot 50 / 150 before fixed-step scale | 3 | 144/150 | 1.21 / 2.90 / 2.89 / 4.22 / 7.26 s | 19.14 s |
+| Route-warmed 60 / 150 after fixed-step scale | 1 | 150/150 | 2.81 / 5.94 / 4.50 / 14.20 / 20.05 s | 25.61 s |
+| Route-warmed 60 / 150 after fixed-step scale | 2 | 150/150 | 0.94 / 2.44 / 2.31 / 3.62 / 10.47 s | 18.23 s |
+| Route-warmed 60 / 150 after fixed-step scale | 3 | 150/150 | 0.99 / 2.36 / 2.33 / 3.48 / 4.33 s | 16.12 s |
+
+The v14 wall times were 122.35 seconds for 100/50, 154.69 seconds for the
+pre-scale 150/50 run, and 115.35 seconds for the post-scale 150/60 run. The first run
+failed 32 sessions on first-chunk HTTP 504s. The hot 50-GPU run delivered turn-one
+voice to all 150 users, then lost six sessions to WebSocket code 1006 after successful
+WAVs. Alarm actions were disabled for both controlled 50-GPU measurements so the
+fleet size could not change mid-test. A real 226-rejection metric minute was then
+allowed to evaluate with actions enabled; the fixed policy changed desired capacity
+50->60, exactly +10. All 60 targets were healthy before the final 150-user run, which
+completed 150/150 with no failures. A separate 200-user one-shot TTS saturation sent
+after alarm re-arm returned 200/200 valid WAVs at p50/p95 6.66/12.18 seconds.
+
+Verdict: 50 GPUs are **not reliable** for the immediate 100/150-user event burst.
+The two-slot gate prevents advertising an untested second route, but exact nominal
+capacity still leaves no scheduling/latency headroom. Sixty GPUs passed this single
+150-user rerun, but one passing wave is not enough to call 60 guaranteed; the earlier
+80-GPU rehearsal is additional evidence for using more prewarm headroom.
 
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
