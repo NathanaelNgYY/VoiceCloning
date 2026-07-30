@@ -10,7 +10,9 @@
   scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. The 2026-07-30
   50-GPU rehearsal was not reliable (48/100 immediately after warm; later 129/150),
   while real scale-out to 80 passed 150/150. Decide whether to raise event prewarm
-  from 50 to 80, then run the 60-minute soak and one target termination rehearsal.
+  from 50 to 80. Push the two-slot warm change, bake and fresh-node validate a new
+  AMI/LT version, then
+  run the 60-minute soak and one target termination rehearsal.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,
@@ -20,7 +22,7 @@
   publish occupied/total synthesis slots every 10 seconds and try 50-75% utilization
   for three consecutive samples, a scale-out cooldown, and slow scale-in. Compare
   first-audio latency, rejected requests, false scale-outs, and GPU-hours before
-  changing the live one-minute zero-capacity alarm; use 10-30 busy GPUs only as an
+  comparing against the planned one-minute rejection alarm; use 10-30 busy GPUs only as an
   optional minimum guard, not the primary threshold.
 - [ ] Make Live Full horizontally correct before increasing its concurrency: add a
   distributed session lease/fencing token, conditional manifest revisions,

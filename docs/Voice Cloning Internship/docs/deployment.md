@@ -159,6 +159,8 @@ rejects a chatbot build from another branch.
    $env:VCS_STAGING_EVENT='true'
    $env:VCS_STAGING_PREWARM_CAPACITY='50'
    $env:VCS_STAGING_MAX_CAPACITY='192'
+   $env:VCS_STAGING_SCALE_OUT_REJECTS_PER_MINUTE='1'
+   $env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY='10'
    $env:VCS_STAGING_PREWARM_AT='2026-08-02T07:15:00+08:00'
    $env:VCS_STAGING_SCALE_DOWN_AT='2026-08-02T18:00:00+08:00'
    .\scripts\provision-staging-autoscaling.ps1 -AmiId <verified-ami> -DesiredCapacity 1
@@ -195,15 +197,18 @@ redundant student-entry warm-up burst.
   `i-02ed1e071bbf085d2` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
-- Live scale-out adds 60% after one minute sampled with zero Target Optimizer capacity
-  plus rejected traffic. Any sampled free slot blocks scale-out. Scale-in removes one
-  instance after fifteen no-traffic minutes.
+- Live scale-out adds 10 GPUs after at least one Target Optimizer rejection in a
+  one-minute period. The reject threshold and fixed increment are environment/config
+  settings. Scale-in removes one instance after fifteen no-traffic minutes.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
   2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below
   50 until the paired scale-down action restores min/desired 1.
 - Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
   a request routed on retry is marked and receives priority in the worker's local
   queue. A slot may be briefly unused while rejected Lambdas sleep before retry.
+- Repository route warm now requires two concurrent RIFF responses before advertising
+  two slots. The live launch-template v13 AMI still uses one RIFF until a new image and
+  launch-template version pass fresh-node validation.
 - v13 starts Target Optimizer only after the complete DeanVoice warm succeeds,
   including a valid RIFF from the real `/inference/tts` route.
 - Public GI DeanVoice synthesis passed after fresh-instance cold-load validation.

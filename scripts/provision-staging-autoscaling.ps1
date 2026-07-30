@@ -10,6 +10,12 @@ param(
   [int]$MaxCapacity = $(if ($env:VCS_STAGING_MAX_CAPACITY) {
     [int]$env:VCS_STAGING_MAX_CAPACITY
   } else { -1 }),
+  [int]$ScaleOutRejectsPerMinute = $(if ($env:VCS_STAGING_SCALE_OUT_REJECTS_PER_MINUTE) {
+    [int]$env:VCS_STAGING_SCALE_OUT_REJECTS_PER_MINUTE
+  } else { -1 }),
+  [int]$ScaleOutAddCapacity = $(if ($env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY) {
+    [int]$env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY
+  } else { -1 }),
   [switch]$Apply,
   [switch]$SwitchListener
 )
@@ -20,6 +26,12 @@ if ($cfg.environment -ne 'staging') { throw 'This script is staging-only.' }
 if ($AmiId -notmatch '^ami-[0-9a-f]+$') { throw 'AmiId must be an AMI id.' }
 if ($DesiredCapacity -lt 0) { $DesiredCapacity = [int]$cfg.desiredCapacity }
 if ($MaxCapacity -lt 0) { $MaxCapacity = [int]$cfg.maxSize }
+if ($ScaleOutRejectsPerMinute -lt 0) {
+  $ScaleOutRejectsPerMinute = [int]$cfg.scaleOutRejectsPerMinute
+}
+if ($ScaleOutAddCapacity -lt 0) {
+  $ScaleOutAddCapacity = [int]$cfg.scaleOutAddCapacity
+}
 
 $eventEnabled = [bool]($Event -and $Event.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on'))
 if ($PreWarmCapacity -lt 0) {
@@ -54,6 +66,12 @@ if ($PreWarmCapacity -gt $MaxCapacity) {
 }
 if ($DesiredCapacity -gt $MaxCapacity) {
   throw "DesiredCapacity $DesiredCapacity cannot exceed MaxCapacity $MaxCapacity."
+}
+if ($ScaleOutRejectsPerMinute -lt 1) {
+  throw 'ScaleOutRejectsPerMinute must be at least 1.'
+}
+if ($ScaleOutAddCapacity -lt 1 -or $ScaleOutAddCapacity -gt $MaxCapacity) {
+  throw "ScaleOutAddCapacity must be from 1 to MaxCapacity $MaxCapacity."
 }
 $effectiveMinSize = if ($eventEnabled -and -not $PreWarmAt) {
   $PreWarmCapacity
@@ -247,11 +265,10 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --policy-name vcs-staging-inference-all-capacity-busy `
     --policy-type StepScaling `
-    --adjustment-type PercentChangeInCapacity `
-    --min-adjustment-magnitude 1 `
+    --adjustment-type ChangeInCapacity `
     --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
     --metric-aggregation-type Maximum `
-    --step-adjustments "MetricIntervalLowerBound=0,ScalingAdjustment=$($cfg.scaleOutPercentWhenFull)"
+    --step-adjustments "MetricIntervalLowerBound=0,ScalingAdjustment=$ScaleOutAddCapacity"
 
   $scaleInPolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
@@ -262,53 +279,16 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --metric-aggregation-type Maximum `
     --step-adjustments 'MetricIntervalUpperBound=0,ScalingAdjustment=-1'
 
-  $capacityAlarmMetrics = @(
-    @{
-      Id = 'free'
-      MetricStat = @{
-        Metric = @{
-          Namespace = 'AWS/ApplicationELB'
-          MetricName = 'TargetControlWorkQueueLength'
-          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
-        }
-        Period = 60
-        Stat = 'Sum'
-      }
-      ReturnData = $false
-    },
-    @{
-      Id = 'rejected'
-      MetricStat = @{
-        Metric = @{
-          Namespace = 'AWS/ApplicationELB'
-          MetricName = 'TargetControlRequestRejectCount'
-          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
-        }
-        Period = 60
-        Stat = 'Sum'
-      }
-      ReturnData = $false
-    },
-    @{
-      Id = 'full'
-      Label = 'All Target Optimizer capacity busy with rejected traffic'
-      Expression = 'IF((FILL(free,0)<=0)*(FILL(rejected,0)>0),1,0)'
-      ReturnData = $true
-    }
-  ) | ConvertTo-Json -Depth 8 -Compress
-  $capacityAlarmMetricsPath = Join-Path $env:TEMP 'vcs-staging-capacity-alarm-metrics.json'
-  [IO.File]::WriteAllText(
-    $capacityAlarmMetricsPath,
-    $capacityAlarmMetrics,
-    (New-Object Text.UTF8Encoding($false))
-  )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-all-capacity-busy-1m `
-    --alarm-description 'Scale out only when no Target Optimizer work capacity is advertised and requests are rejected for one minute.' `
+    --alarm-description "Add $ScaleOutAddCapacity GPUs when Target Optimizer rejects at least $ScaleOutRejectsPerMinute requests in a one-minute CloudWatch period." `
+    --namespace AWS/ApplicationELB `
+    --metric-name TargetControlRequestRejectCount `
+    --dimensions "Name=LoadBalancer,Value=$albResource" `
+    --statistic Sum --period 60 `
     --evaluation-periods 1 --datapoints-to-alarm 1 `
-    --threshold 1 --comparison-operator GreaterThanOrEqualToThreshold `
+    --threshold $ScaleOutRejectsPerMinute --comparison-operator GreaterThanOrEqualToThreshold `
     --treat-missing-data notBreaching `
-    --metrics "file://$capacityAlarmMetricsPath" `
     --alarm-actions $scaleOutPolicy.PolicyARN
 
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
@@ -367,4 +347,4 @@ if ($ScaleDownAt) {
     --min-size $cfg.minSize --max-size $MaxCapacity --desired-capacity $cfg.desiredCapacity
 }
 
-Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity PreWarmAt=$PreWarmAt"
+Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity RejectsPerMinute=$ScaleOutRejectsPerMinute ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"

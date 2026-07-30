@@ -46,17 +46,16 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Fixed ALB SG egress for ports 3103/3004; missing egress caused health timeouts.
 - Added `scripts/load-test-staging-tts.mjs`: concurrent public requests count only
   HTTP 200 `audio/wav` RIFF output as success.
-- Added `scripts/warm-staging-deanvoice.sh`: check/load weights, cache main plus five
-  auxiliary references, make a throwaway clip, validate readiness, and log timings.
+- Updated `scripts/warm-staging-deanvoice.sh` to require two concurrent real-route
+  RIFF syntheses before advertising capacity; source is tested but not yet baked live.
 - Added event controls to `scripts/provision-staging-autoscaling.ps1`.
   `VCS_STAGING_EVENT=true` selects 32; paired prewarm/scale-down times are mandatory.
-- LT v13 starts Target Optimizer only after weights, references, and a valid RIFF from
-  the real `/inference/tts` route have warmed.
+- Live LT v13 still gates on one RIFF. The next AMI must validate the new two-slot gate.
 - GI students do not call model selection/warm on page entry; each ASG node performs
   that preparation once before advertising capacity, avoiding a user-entry warm burst.
-- Scale-out is +60% after one minute sampled with zero optimizer capacity plus rejected
-  traffic. Any sampled free slot blocks scale-out. Idle scale-in removes one after
-  15 quiet minutes; warmup/grace 10m, cooldown 5m, drain 2m, floor 1.
+- Live scale-out adds 10 GPUs after at least one rejection in a one-minute period.
+  Both values are repository/env-configurable. Idle scale-in is -1 after 15 quiet
+  minutes; floor 1 outside event mode.
 - Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
   priority over normal entries in each GPU's local queue.
 ## Test Evidence
