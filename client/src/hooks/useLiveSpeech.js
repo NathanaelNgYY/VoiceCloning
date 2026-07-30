@@ -10,20 +10,37 @@ import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import { connectInferenceSSE } from '../services/sse.js';
 import { sanitizeBackendError } from '../lib/backendErrors.js';
 import {
+  VIDEO_POSITION_SYNC_INTERVAL_MS,
+  shouldSendVideoPosition,
+} from '../lib/lessonVideoContext.js';
+import {
   LIVE_REPLY_MODES,
+  MIN_COMMIT_VOICE_FRAMES,
+  USER_TRANSCRIPT_TIMEOUT_MS,
+  VOICE_GATE,
   buildLiveSentenceParams,
   buildLiveReplyParams,
+  canReuseActiveUserMessage,
   cleanLiveText,
   createChatMessage,
   createLiveSynthesisSnapshot,
+  createVoiceGateState,
+  nextVoiceGateState,
   findFirstReplayablePart,
   findNextPhrasePlayback,
+  findNextReplyPlayback,
   findSelectedPlayback,
+  hasPendingReplyWork,
   getMicOffAction,
   isLiveInputPhase,
+  isBenignRealtimeError,
+  fixSpeechPronunciation,
+  interClipGapMs,
   normalizeLiveLanguage,
-  splitLiveReplyChunks,
+  resolvePendingTranscriptPatch,
+  resolveSpeakingContinuation,
   shortenFirstFastPhrase,
+  splitLiveReplyChunks,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
@@ -42,6 +59,12 @@ const LIVE_TARGET_SAMPLE_RATE = 24000;
 const MANUAL_COMMIT_SILENCE_MS = 360;
 const BARGE_IN_MIN_FRAMES = 2;
 const BARGE_IN_COOLDOWN_MS = 900;
+// While a long reply plays, the mic is muted so nothing flows over the WebSocket.
+// An idle WebSocket behind CloudFront/proxies gets closed at the idle timeout
+// (~60s), which would end the conversation mid-reply. Send a lightweight
+// keepalive well under that window to keep the connection warm. The gateway
+// ignores unknown message types.
+const KEEPALIVE_INTERVAL_MS = 15000;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -118,8 +141,10 @@ export function useLiveSpeech({
   language = 'en',
   voiceProfileId = '',
   voiceModel = null,
+  systemPrompt = '',
   fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
+  getVideoPosition = null,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -138,6 +163,9 @@ export function useLiveSpeech({
 
   const phaseRef = useRef('idle');
   const socketRef = useRef(null);
+  const keepAliveTimerRef = useRef(null);
+  const videoPositionTimerRef = useRef(null);
+  const lastSentVideoPositionRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
@@ -153,6 +181,10 @@ export function useLiveSpeech({
   const currentSynthesisMessageIdRef = useRef('');
   const cancelledReplyIdsRef = useRef(new Set());
   const userTextBuffersRef = useRef(new Map());
+  const userTranscriptTimersRef = useRef(new Map());
+  const voiceGateRef = useRef(createVoiceGateState());
+  const gatePrerollRef = useRef([]);
+  const turnVoicedFramesRef = useRef(0);
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
@@ -162,6 +194,7 @@ export function useLiveSpeech({
   const bargeInArmedRef = useRef(false);
   const bargeInFramesRef = useRef(0);
   const lastBargeInAtRef = useRef(0);
+  const clipGapTimerRef = useRef(null);
   // Engine + ref params are read through refs so switching Live Fast <-> Live Full
   // takes effect on the next reply even while a conversation is already open (the
   // socket handler captured the render snapshot when start() ran).
@@ -170,6 +203,8 @@ export function useLiveSpeech({
   const engineRef = useRef(engine);
   const voiceProfileIdRef = useRef(voiceProfileId);
   const voiceModelRef = useRef(voiceModel);
+  const systemPromptRef = useRef(systemPrompt);
+  const getVideoPositionRef = useRef(getVideoPosition);
   const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
   const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
   useEffect(() => { refParamsRef.current = refParams; }, [refParams]);
@@ -177,9 +212,9 @@ export function useLiveSpeech({
   useEffect(() => { engineRef.current = engine; }, [engine]);
   useEffect(() => { voiceProfileIdRef.current = voiceProfileId; }, [voiceProfileId]);
   useEffect(() => { voiceModelRef.current = voiceModel; }, [voiceModel]);
-  useEffect(() => {
-    fastMaxChunkWordsRef.current = fastMaxChunkWords;
-  }, [fastMaxChunkWords]);
+  useEffect(() => { systemPromptRef.current = systemPrompt; }, [systemPrompt]);
+  useEffect(() => { getVideoPositionRef.current = getVideoPosition; }, [getVideoPosition]);
+  useEffect(() => { fastMaxChunkWordsRef.current = fastMaxChunkWords; }, [fastMaxChunkWords]);
   useEffect(() => {
     fastMaxSentencesPerChunkRef.current = fastMaxSentencesPerChunk;
   }, [fastMaxSentencesPerChunk]);
@@ -261,6 +296,10 @@ export function useLiveSpeech({
     setMessagesSync((prev) => [...prev, message]);
   }
 
+  function removeMessage(id) {
+    setMessagesSync((prev) => prev.filter((message) => message.id !== id));
+  }
+
   function showNotice(message) {
     setNotice(message);
     if (noticeTimeoutRef.current) {
@@ -315,6 +354,50 @@ export function useLiveSpeech({
     lastBargeInAtRef.current = 0;
     cancelledReplyIdsRef.current = new Set();
     userTextBuffersRef.current = new Map();
+    clearAllUserTranscriptTimers();
+  }
+
+  function clearUserTranscriptTimer(id) {
+    const timer = userTranscriptTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      userTranscriptTimersRef.current.delete(id);
+    }
+  }
+
+  function clearAllUserTranscriptTimers() {
+    for (const timer of userTranscriptTimersRef.current.values()) {
+      window.clearTimeout(timer);
+    }
+    userTranscriptTimersRef.current = new Map();
+  }
+
+  // Close a user bubble whose transcript never arrived and release the active
+  // ref so the next turn gets its own bubble. No-ops unless the bubble is
+  // actually stuck in 'transcribing'.
+  function finalizePendingUserMessage(id) {
+    const message = messagesRef.current.find((entry) => entry.id === id);
+    const patch = resolvePendingTranscriptPatch(message);
+    if (!patch) return;
+    clearUserTranscriptTimer(id);
+    userTextBuffersRef.current.delete(message.itemId || id);
+    patchMessage(id, patch);
+    if (activeUserMessageIdRef.current === id) {
+      activeUserMessageIdRef.current = '';
+    }
+  }
+
+  // The gateway normally closes every turn with user.text.done/failed. This
+  // timer is the client's own guarantee: if that terminal event is lost (WS
+  // drop, gateway bug, OpenAI never emitting transcription.completed), the
+  // bubble still resolves instead of hanging on "Transcribing..." and being
+  // overwritten by the next turn.
+  function armUserTranscriptTimer(id) {
+    clearUserTranscriptTimer(id);
+    userTranscriptTimersRef.current.set(id, window.setTimeout(() => {
+      userTranscriptTimersRef.current.delete(id);
+      finalizePendingUserMessage(id);
+    }, USER_TRANSCRIPT_TIMEOUT_MS));
   }
 
   function findUserMessageId(itemId) {
@@ -324,7 +407,22 @@ export function useLiveSpeech({
       );
       if (existing) return existing.id;
     }
-    return activeUserMessageIdRef.current;
+
+    const activeId = activeUserMessageIdRef.current;
+    if (!activeId) return '';
+    const active = messagesRef.current.find((message) => message.id === activeId);
+    // A finished bubble is history, and a bubble keyed to a different turn
+    // belongs to that turn. Reusing either would overwrite a previous message
+    // (a stale ref once turned a finished transcript into the next turn's
+    // "Transcribing..."), so drop the ref and let the caller create a fresh one.
+    if (
+      !canReuseActiveUserMessage(active)
+      || (itemId && active.itemId && active.itemId !== itemId)
+    ) {
+      activeUserMessageIdRef.current = '';
+      return '';
+    }
+    return activeId;
   }
 
   function ensureUserMessage(itemId = '') {
@@ -423,24 +521,29 @@ export function useLiveSpeech({
     throw lastError;
   }
 
-  function firstReadyPart(message, afterPartId = '') {
-    const parts = message?.audioParts || [];
-    const start = afterPartId
-      ? Math.max(0, parts.findIndex((part) => part.id === afterPartId) + 1)
-      : 0;
-    return parts.slice(start).find((part) => part.status === 'ready' && part.audioUrl) || null;
+  function isVoiceStoppedMessage(messageId) {
+    return Boolean(messagesRef.current.find((item) => item.id === messageId)?.voiceStopped);
   }
 
-  function hasPendingParts(message) {
-    return (message?.audioParts || []).some((part) =>
-      ['queued', 'generating'].includes(part.status)
-    );
+  // Starting to synthesize a new reply must not cut off a clip that is still
+  // reading an earlier reply aloud (a Realtime interruption splits one reply
+  // across messages). Keep an actively playing selection — when its clip ends,
+  // onAudioEnded chains into this message's parts. Only reset the selection
+  // when nothing is actually playing.
+  function clearReplySelectionUnlessPlaying() {
+    const active = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
+    if (!active || phaseRef.current !== 'speaking') {
+      setSelectedReplyId('');
+    }
   }
 
   async function synthesizeFullAssistantReply(messageId, text, runId) {
     const synthesis = getActiveSynthesisSnapshot();
     const activeRefParams = synthesis.refParams;
-    if (!activeRefParams) return;
+    if (!activeRefParams) {
+      patchMessage(messageId, { status: 'error', error: 'No reference audio configured.' });
+      return;
+    }
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
@@ -464,8 +567,12 @@ export function useLiveSpeech({
 
       const url = URL.createObjectURL(blob);
       patchMessage(messageId, { status: 'ready', audioUrl: url, error: null });
-      setSelectedReplyId(messageId);
-      setPhase('speaking');
+      // A voice-stopped reply finishes generating silently; the user replays
+      // it with the Play voice button.
+      if (!isVoiceStoppedMessage(messageId)) {
+        setSelectedReplyId(messageId);
+        setPhase('speaking');
+      }
     } catch (err) {
       if (isCancelledRef.current || runId !== runIdRef.current) return;
 
@@ -473,10 +580,12 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
+      if (!isVoiceStoppedMessage(messageId)) {
+        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+      }
     } finally {
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
@@ -487,27 +596,31 @@ export function useLiveSpeech({
   async function synthesizePhraseAssistantReply(messageId, text, runId) {
     const synthesis = getActiveSynthesisSnapshot();
     const activeRefParams = synthesis.refParams;
-    if (!activeRefParams) return;
+    // The message was already marked generating_voice — settle its status on
+    // early exits so it can't pin the conversation in the 'speaking' phase.
+    if (!activeRefParams) {
+      patchMessage(messageId, { status: 'error', error: 'No reference audio configured.' });
+      return;
+    }
 
     if (synthesis.engine === 'full') {
       await synthesizeFullQueuedAssistantReply(messageId, text, runId, synthesis, activeRefParams);
       return;
     }
 
-    // Live Fast now sends whole-sentence chunks (same shape as Live Full) instead of
-    // tiny phrases, so each request has enough context for a clean read and the endpoint
-    // can re-seed/verify per chunk to catch dropped words. The first chunk is shortened
-    // at a clause boundary so the very first audio still starts quickly.
     const phrases = shortenFirstFastPhrase(splitLiveReplyChunks(text, {
       maxChunkWords: fastMaxChunkWordsRef.current,
       maxSentencesPerChunk: fastMaxSentencesPerChunkRef.current,
     }));
-    if (phrases.length === 0) return;
+    if (phrases.length === 0) {
+      patchMessage(messageId, { status: 'ready' });
+      return;
+    }
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
     pauseOpenAiInput();
-    setSelectedReplyId('');
+    clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, {
       status: 'generating_voice',
@@ -536,7 +649,10 @@ export function useLiveSpeech({
         patchAudioPart(messageId, partId, { status: 'generating', error: null });
         const { blob } = await synthesizeForEngine(
           synthesis.engine,
-          buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage)
+          buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage, {
+            // First clip gates time-to-first-audio — play it unverified.
+            skipVerify: index === 0,
+          })
         );
 
         if (
@@ -548,21 +664,15 @@ export function useLiveSpeech({
         }
 
         const url = URL.createObjectURL(blob);
+        // No inline clip selection here: the speaking-continuation effect picks
+        // the earliest unplayed ready clip from fresh render state. Selecting
+        // partId directly raced the ended handler's ref reads and could jump
+        // past a clip that was ready but not yet visible in messagesRef.
         patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
-        if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
-          setSelectedReplyId(partId);
-        }
       }
 
       if (!cancelledReplyIdsRef.current.has(messageId)) {
         patchMessage(messageId, { status: 'ready' });
-        const message = messagesRef.current.find((item) => item.id === messageId);
-        if (!selectedReplyIdRef.current) {
-          const nextPart = firstReadyPart(message);
-          if (nextPart) {
-            setSelectedReplyId(nextPart.id);
-          }
-        }
       }
     } catch (err) {
       if (isCancelledRef.current || runId !== runIdRef.current) return;
@@ -571,11 +681,15 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
-      setSelectedReplyId('');
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
+      // A voice-stopped reply fails quietly in the background — tearing down
+      // the phase/selection here would cut off a newer reply mid-playback.
+      if (!isVoiceStoppedMessage(messageId)) {
+        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSelectedReplyId('');
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+      }
     } finally {
       if (currentSynthesisMessageIdRef.current === messageId) {
         currentSynthesisMessageIdRef.current = '';
@@ -587,7 +701,7 @@ export function useLiveSpeech({
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
     pauseOpenAiInput();
-    setSelectedReplyId('');
+    clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, { status: 'generating_voice', error: null, audioParts: [] });
 
@@ -639,10 +753,8 @@ export function useLiveSpeech({
               const blob = await getInferenceChunk(sessionId, index);
               if (isStale()) return;
               const url = URL.createObjectURL(blob);
+              // Selection is handled by the speaking-continuation effect.
               patchAudioPart(messageId, partId, { status: 'ready', audioUrl: url, error: null });
-              if (!selectedReplyIdRef.current && phaseRef.current === 'speaking') {
-                setSelectedReplyId(partId);
-              }
             })();
             pendingChunkFetches.add(fetchChunk);
             fetchChunk.catch(reject).finally(() => pendingChunkFetches.delete(fetchChunk));
@@ -654,11 +766,6 @@ export function useLiveSpeech({
                 return;
               }
               patchMessage(messageId, { status: 'ready' });
-              const message = messagesRef.current.find((item) => item.id === messageId);
-              if (!selectedReplyIdRef.current) {
-                const nextPart = firstReadyPart(message);
-                if (nextPart) setSelectedReplyId(nextPart.id);
-              }
               resolve();
             });
           },
@@ -674,11 +781,13 @@ export function useLiveSpeech({
         status: 'error',
         error: err.message || 'Voice generation failed',
       });
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
-      setSelectedReplyId('');
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
+      if (!isVoiceStoppedMessage(messageId)) {
+        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSelectedReplyId('');
+        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        setPhase(nextPhase);
+        syncOpenAiInputWithMic(nextPhase);
+      }
     } finally {
       if (inferenceEventSourceRef.current) {
         inferenceEventSourceRef.current.close();
@@ -700,7 +809,64 @@ export function useLiveSpeech({
     synthesizeFullAssistantReply(messageId, text, runId);
   }
 
+  function stopKeepAlive() {
+    if (keepAliveTimerRef.current) {
+      window.clearInterval(keepAliveTimerRef.current);
+      keepAliveTimerRef.current = null;
+    }
+  }
+
+  function startKeepAlive() {
+    stopKeepAlive();
+    keepAliveTimerRef.current = window.setInterval(() => {
+      // send() is a no-op when the socket isn't OPEN, so this is safe.
+      socketRef.current?.send({ type: 'keepalive' });
+    }, KEEPALIVE_INTERVAL_MS);
+  }
+
+  function stopVideoPositionSync() {
+    if (videoPositionTimerRef.current) {
+      window.clearInterval(videoPositionTimerRef.current);
+      videoPositionTimerRef.current = null;
+    }
+    lastSentVideoPositionRef.current = null;
+  }
+
+  // Polls the caller for the lesson video's position instead of taking it as a
+  // prop: a playing <video> fires timeupdate several times a second, and this
+  // hook must not re-render on every one of them.
+  function startVideoPositionSync() {
+    stopVideoPositionSync();
+    if (typeof getVideoPositionRef.current !== 'function') return;
+
+    const sync = () => {
+      const getPosition = getVideoPositionRef.current;
+      if (typeof getPosition !== 'function') return;
+
+      const position = getPosition();
+      if (!shouldSendVideoPosition(position, lastSentVideoPositionRef.current)) return;
+
+      // send() is a no-op when the socket isn't OPEN, so this is safe.
+      const sent = socketRef.current?.send({
+        type: 'video.position',
+        seconds: Number(position.seconds),
+        paused: Boolean(position.paused),
+      });
+      if (sent) {
+        lastSentVideoPositionRef.current = {
+          seconds: Number(position.seconds),
+          paused: Boolean(position.paused),
+        };
+      }
+    };
+
+    sync();
+    videoPositionTimerRef.current = window.setInterval(sync, VIDEO_POSITION_SYNC_INTERVAL_MS);
+  }
+
   function closeSocket() {
+    stopKeepAlive();
+    stopVideoPositionSync();
     if (socketRef.current) {
       socketRef.current.close();
       socketRef.current = null;
@@ -711,6 +877,9 @@ export function useLiveSpeech({
     setAudioLevel(0);
     setMicInputEnabled(false);
     setBargeInArmed(false);
+    voiceGateRef.current = createVoiceGateState();
+    gatePrerollRef.current = [];
+    turnVoicedFramesRef.current = 0;
 
     if (processorRef.current) {
       processorRef.current.onaudioprocess = null;
@@ -733,24 +902,49 @@ export function useLiveSpeech({
 
   function endConversationFromSocket() {
     socketRef.current = null;
+    stopKeepAlive();
     stopMicCapture();
     conversationSynthesisRef.current = null;
     setInterimTranscript('');
+    // If a reply is still playing when the socket drops, don't cut the voice off
+    // mid-sentence. Keep playing; onAudioEnded will fall through to idle (socket
+    // is now null) once the last clip finishes.
+    if (phaseRef.current === 'speaking') {
+      return;
+    }
     setPhase('idle');
   }
 
-  function interruptPlayback() {
+  // Silence the reply that is currently reading aloud. Two flavors:
+  // - Barge-in (default): the user is talking over the bot, so the reply is
+  //   dead — cancel its synthesis loop too (cancelledReplyIds aborts it).
+  // - Stop voice button (cancelPendingSynthesis: false): only playback stops.
+  //   Remaining clips keep generating in the background, marked voiceStopped
+  //   so nothing auto-plays them until the user presses Play voice.
+  function interruptPlayback({ cancelPendingSynthesis = true } = {}) {
     if (phaseRef.current !== 'speaking') return;
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
     const currentReplyId = playback?.message.id || currentSynthesisMessageIdRef.current;
     if (!playback && !currentReplyId) return;
 
-    if (currentReplyId) {
-      cancelledReplyIdsRef.current.add(currentReplyId);
-      patchMessage(currentReplyId, { status: 'interrupted' });
+    // A split reply can have a second message still synthesizing while the
+    // first one plays — an interruption must silence that one too, or its
+    // clips would start reading out later, after the user has moved on.
+    const synthesizingId = currentSynthesisMessageIdRef.current;
+    for (const messageId of new Set([currentReplyId, synthesizingId].filter(Boolean))) {
+      if (cancelPendingSynthesis) {
+        cancelledReplyIdsRef.current.add(messageId);
+        patchMessage(messageId, { status: 'interrupted' });
+      } else {
+        patchMessage(messageId, { voiceStopped: true });
+      }
     }
     if (playback?.part) {
-      patchAudioPart(playback.message.id, playback.part.id, { status: 'interrupted' });
+      // For a plain stop, the cut clip stays replayable ('played' keeps it in
+      // the Play voice chain); a barge-in marks it interrupted as before.
+      patchAudioPart(playback.message.id, playback.part.id, {
+        status: cancelPendingSynthesis ? 'interrupted' : 'played',
+      });
     }
 
     setSelectedReplyId('');
@@ -760,11 +954,20 @@ export function useLiveSpeech({
     showNotice(micInputEnabledRef.current ? 'Voice stopped. Listening...' : 'Voice stopped. Mic is off.');
   }
 
+  function stopVoicePlayback() {
+    interruptPlayback({ cancelPendingSynthesis: false });
+  }
+
   function playReply(messageId) {
     const message = messagesRef.current.find((item) => item.id === messageId);
     if (!message || message.role !== 'assistant') return;
     const playbackId = isPhraseMode ? findFirstReplayablePart(message)?.id : message.id;
     if (!playbackId) return;
+    if (message.voiceStopped) {
+      // Pressing Play voice on a stopped reply un-stops it, so clips still
+      // being generated in the background chain on after the replay.
+      patchMessage(messageId, { voiceStopped: false });
+    }
     pauseOpenAiInput();
     setSelectedReplyId(playbackId);
     setPhase('speaking');
@@ -816,6 +1019,9 @@ export function useLiveSpeech({
     processorRef.current = processor;
     setSpeechApiAvailable(true);
     setMicInputEnabled(true);
+    voiceGateRef.current = createVoiceGateState();
+    gatePrerollRef.current = [];
+    turnVoicedFramesRef.current = 0;
 
     let smoothedLevel = 0;
     processor.onaudioprocess = (event) => {
@@ -850,6 +1056,7 @@ export function useLiveSpeech({
         sentForBargeIn = sendAudioChunk(input, audioCtx.sampleRate);
         if (sentForBargeIn && rms > 0.006) {
           pendingInputAudioRef.current = true;
+          turnVoicedFramesRef.current += 1;
         }
       }
 
@@ -857,9 +1064,29 @@ export function useLiveSpeech({
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current,
       }) && !sentForBargeIn) {
-        const sent = sendAudioChunk(input, audioCtx.sampleRate);
-        if (sent && rms > 0.006) {
-          pendingInputAudioRef.current = true;
+        // Noise-gate what OpenAI hears: sub-threshold frames are buffered, not
+        // sent, so its server VAD can't flag breaths/clicks as new speech. On
+        // opening, replay the pre-roll so soft speech onsets aren't clipped.
+        const gate = nextVoiceGateState(voiceGateRef.current, rms);
+        voiceGateRef.current = gate;
+        if (gate.open) {
+          if (gate.justOpened) {
+            for (const buffered of gatePrerollRef.current) {
+              sendAudioChunk(buffered, audioCtx.sampleRate);
+            }
+            gatePrerollRef.current = [];
+          }
+          const sent = sendAudioChunk(input, audioCtx.sampleRate);
+          if (sent && rms >= VOICE_GATE.threshold) {
+            pendingInputAudioRef.current = true;
+            turnVoicedFramesRef.current += 1;
+          }
+        } else {
+          // The processor reuses `input`; the pre-roll needs its own copy.
+          gatePrerollRef.current.push(new Float32Array(input));
+          if (gatePrerollRef.current.length > VOICE_GATE.prerollFrames) {
+            gatePrerollRef.current.shift();
+          }
         }
       }
     };
@@ -905,19 +1132,43 @@ export function useLiveSpeech({
     const action = getMicOffAction({
       phase: phaseAtToggle,
       hasPendingAudio: pendingInputAudioRef.current,
+      hasVoiceEvidence: turnVoicedFramesRef.current >= MIN_COMMIT_VOICE_FRAMES,
     });
 
     if (action === 'commit') {
       const id = ensureUserMessage();
       patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+      armUserTranscriptTimer(id);
       setPhase('thinking');
       setInterimTranscript('Thinking...');
       sendManualCommitTail();
       commitOpenAiInput();
+      turnVoicedFramesRef.current = 0;
       // Mute means silent: send what was already said, then fully stop capture so
       // no background noise can barge in over the reply. Tap the mic again to talk.
       stopMicCapture();
       showNotice('Mic off. Sending what you said.');
+      return;
+    }
+
+    if (action === 'discard') {
+      // The pending turn was opened by noise, not speech — drop the phantom
+      // bubble and send nothing.
+      const id = activeUserMessageIdRef.current;
+      if (id) {
+        const phantom = messagesRef.current.find((message) => message.id === id);
+        if (phantom && (phantom.status === 'listening' || phantom.status === 'transcribing')) {
+          clearUserTranscriptTimer(id);
+          userTextBuffersRef.current.delete(phantom.itemId || id);
+          removeMessage(id);
+        }
+        activeUserMessageIdRef.current = '';
+      }
+      pendingInputAudioRef.current = false;
+      stopMicCapture();
+      pauseOpenAiInput();
+      setInterimTranscript('');
+      showNotice('Mic off. Nothing heard to send.');
       return;
     }
 
@@ -953,7 +1204,15 @@ export function useLiveSpeech({
       case 'user.speech.started': {
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = true;
-          ensureUserMessage();
+          // A new turn starting proves the previous turn is over: if its bubble
+          // is still waiting on a transcript that never came, close it now so
+          // this turn gets its own bubble instead of overwriting it.
+          const activeId = activeUserMessageIdRef.current;
+          const active = messagesRef.current.find((message) => message.id === activeId);
+          if (active && (active.itemId || '') !== (event.itemId || '')) {
+            finalizePendingUserMessage(activeId);
+          }
+          ensureUserMessage(event.itemId || '');
           setPhase('listening');
           setInterimTranscript('Listening...');
         }
@@ -963,8 +1222,12 @@ export function useLiveSpeech({
       case 'user.speech.stopped': {
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = false;
-          const id = ensureUserMessage();
+          // The server closed this turn; voiced frames from it must not count
+          // as evidence for the next one.
+          turnVoicedFramesRef.current = 0;
+          const id = ensureUserMessage(event.itemId || '');
           patchMessage(id, { status: 'transcribing', text: 'Transcribing...' });
+          armUserTranscriptTimer(id);
           setPhase('thinking');
           setInterimTranscript('Thinking...');
         }
@@ -977,12 +1240,15 @@ export function useLiveSpeech({
         const nextText = `${userTextBuffersRef.current.get(key) || ''}${event.text || ''}`;
         userTextBuffersRef.current.set(key, nextText);
         patchMessage(id, { itemId: event.itemId || '', text: nextText, status: 'transcribing' });
+        // The transcript is streaming, just slowly — push the deadline back.
+        armUserTranscriptTimer(id);
         break;
       }
 
       case 'user.text.done': {
         const id = ensureUserMessage(event.itemId);
         const key = event.itemId || id;
+        clearUserTranscriptTimer(id);
         userTextBuffersRef.current.delete(key);
         pendingInputAudioRef.current = false;
         patchMessage(id, {
@@ -998,6 +1264,7 @@ export function useLiveSpeech({
 
       case 'user.text.failed': {
         const id = ensureUserMessage(event.itemId);
+        clearUserTranscriptTimer(id);
         pendingInputAudioRef.current = false;
         patchMessage(id, {
           text: 'Voice message sent.',
@@ -1025,27 +1292,57 @@ export function useLiveSpeech({
         break;
       }
 
+      case 'assistant.text.cancelled': {
+        // OpenAI cancelled this reply mid-generation (the user spoke over it and
+        // a fresh reply is coming). Keep any partial text as a quiet
+        // "interrupted" bubble for context — never send it to TTS — and drop the
+        // bubble entirely if nothing had streamed yet.
+        const partialText = cleanLiveText(assistantTextRef.current || event.text || '');
+        const id = activeAssistantMessageIdRef.current;
+        assistantTextRef.current = '';
+        activeAssistantMessageIdRef.current = '';
+        setInterimTranscript('');
+        if (id) {
+          if (partialText) {
+            patchMessage(id, { text: partialText, status: 'interrupted' });
+          } else {
+            removeMessage(id);
+          }
+        }
+        break;
+      }
+
       case 'assistant.text.done': {
-        const text = cleanLiveText(event.text || assistantTextRef.current || '');
+        // Display the clean model text (the streamed raw, e.g. "GI bleeding",
+        // "6.7 percent"); speak the gateway-preprocessed text with dragged
+        // initialisms rejoined for smooth pronunciation ("G I" -> "gee eye").
+        const displayText = cleanLiveText(assistantTextRef.current || event.text || '');
+        const speechText = fixSpeechPronunciation(cleanLiveText(event.text || assistantTextRef.current || ''));
         assistantTextRef.current = '';
         setInterimTranscript('');
-        if (text) {
+        if (speechText) {
           const id = ensureAssistantMessage();
           activeAssistantMessageIdRef.current = '';
-          patchMessage(id, { text, status: 'generating_voice' });
-          synthesizeAssistantReply(id, text, runId);
+          patchMessage(id, { text: displayText || speechText, status: 'generating_voice' });
+          synthesizeAssistantReply(id, speechText, runId);
         } else if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }
         break;
       }
 
-      case 'error':
-        setError(event.message || 'AI conversation failed.');
+      case 'error': {
+        const message = event.message || 'AI conversation failed.';
+        // Benign Realtime races (e.g. an active response already in progress)
+        // resolve on their own and only confuse the user — don't surface them.
+        if (!isBenignRealtimeError(message)) {
+          setError(message);
+        }
         if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }
         break;
+      }
 
       case 'session.closed':
         if (phaseRef.current !== 'idle') {
@@ -1111,6 +1408,7 @@ export function useLiveSpeech({
 
     const socket = createLiveChatSocket({
       language: liveLanguage,
+      systemPrompt: systemPromptRef.current,
       onOpen: () => {
         if (runId === runIdRef.current) {
           setNotice('Connected. Preparing live chat...');
@@ -1130,6 +1428,8 @@ export function useLiveSpeech({
       },
     });
     socketRef.current = socket;
+    startKeepAlive();
+    startVideoPositionSync();
   }
 
   function stop() {
@@ -1160,49 +1460,110 @@ export function useLiveSpeech({
     enableMicInput();
   }
 
+  function settleAfterPlayback() {
+    const nextPhase = socketRef.current ? 'listening' : 'idle';
+    setPhase(nextPhase);
+    syncOpenAiInputWithMic(nextPhase);
+    setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
+    if (!micInputEnabledRef.current && bargeInArmedRef.current) {
+      stopMicCapture();
+    }
+  }
+
+  // "Speaking, but nothing selected": start the earliest unplayed ready clip,
+  // keep waiting while clips are generating, or settle out of the speaking
+  // phase when the reply is truly finished. Only ever called from the
+  // reconciler effect below so the decision always reads fresh rendered state
+  // — never from event handlers, whose messagesRef view can lag and re-select
+  // a clip that already played.
+  function applySpeakingContinuation(messages) {
+    if (phaseRef.current !== 'speaking' || selectedReplyIdRef.current) return;
+    const decision = resolveSpeakingContinuation(messages, {
+      synthesisMessageId: currentSynthesisMessageIdRef.current,
+    });
+    if (decision.action === 'play') {
+      setSelectedReplyId(decision.part.id);
+    } else if (decision.action === 'settle') {
+      settleAfterPlayback();
+    }
+  }
+
+  function clearClipGapTimer() {
+    if (clipGapTimerRef.current) {
+      window.clearTimeout(clipGapTimerRef.current);
+      clipGapTimerRef.current = null;
+    }
+  }
+
+  // Advance to the clip after `playback`, recomputing from fresh state — by the
+  // time a gap timer fires, the spent clip's 'played' patch has flushed, so this
+  // never re-selects the clip that just ended.
+  function advanceFromEndedClip(playback) {
+    const nextPlayback = findNextPhrasePlayback(messagesRef.current, playback.part.id);
+    const nextReady = nextPlayback?.part
+      ? nextPlayback
+      : findNextReplyPlayback(messagesRef.current, playback.message.id);
+    if (nextReady?.part) {
+      setSelectedReplyId(nextReady.part.id);
+    } else {
+      setSelectedReplyId('');
+    }
+  }
+
+  // Punctuation-aware breath between clips. The selection is held on the spent
+  // clip for the gap — the reconciler effect only acts on an EMPTY selection, so
+  // nothing can start playing during the hold — then advances. Guards make a
+  // stale timer harmless: it no-ops after a stop, barge-in, or manual replay.
+  function scheduleNextClip(playback, gapMs) {
+    clearClipGapTimer();
+    if (!(gapMs > 0)) {
+      advanceFromEndedClip(playback);
+      return;
+    }
+    const endedPartId = playback.part.id;
+    clipGapTimerRef.current = window.setTimeout(() => {
+      clipGapTimerRef.current = null;
+      if (phaseRef.current !== 'speaking') return;
+      if (selectedReplyIdRef.current !== endedPartId) return;
+      advanceFromEndedClip(playback);
+    }, gapMs);
+  }
+
   function onAudioEnded() {
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
 
     if (isPhraseMode && playback?.part) {
       patchAudioPart(playback.message.id, playback.part.id, { status: 'played' });
       const nextPlayback = findNextPhrasePlayback(messagesRef.current, playback.part.id);
-      if (nextPlayback?.part) {
-        setSelectedReplyId(nextPlayback.part.id);
+      const nextReady = nextPlayback?.part
+        ? nextPlayback
+        // A Realtime interruption can split one spoken reply across two assistant
+        // messages — keep reading straight into the next message's unplayed clips.
+        : findNextReplyPlayback(messagesRef.current, playback.message.id);
+      if (nextReady?.part) {
+        scheduleNextClip(playback, interClipGapMs(playback.part.text));
         return;
       }
-
-      setSelectedReplyId('');
-      if (
-        currentSynthesisMessageIdRef.current === playback.message.id ||
-        hasPendingParts(playback.message)
-      ) {
-        setPhase('speaking');
-        return;
-      }
-
-      if (phaseRef.current === 'speaking') {
-        const nextPhase = socketRef.current ? 'listening' : 'idle';
-        setPhase(nextPhase);
-        syncOpenAiInputWithMic(nextPhase);
-        setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
-        if (!micInputEnabledRef.current && bargeInArmedRef.current) {
-          stopMicCapture();
-        }
-      }
-      return;
     }
 
+    // Only clear the selection here — the speaking-continuation effect makes
+    // the play/wait/settle decision on the NEXT render, from fresh state.
+    // Deciding synchronously from messagesRef re-selected the clip that just
+    // ended (its 'played' patch hadn't flushed yet), and since the selection
+    // ended the React batch unchanged, the <audio> effect never re-fired: the
+    // reply froze silently on a spent clip right after the short first phrase.
     setSelectedReplyId('');
-    if (phaseRef.current === 'speaking') {
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
-      setPhase(nextPhase);
-      syncOpenAiInputWithMic(nextPhase);
-      setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
-      if (!micInputEnabledRef.current && bargeInArmedRef.current) {
-        stopMicCapture();
-      }
-    }
   }
+
+  // Self-healing playback reconciler. The ended handler and the synthesis
+  // loop coordinate through refs that can lag rendered state, so either side
+  // can drop the handoff (observed live: replies stopping mid-text at a
+  // sentence boundary, or skipping a clip). Re-deciding from fresh state after
+  // every render makes those races self-correcting.
+  useEffect(() => {
+    if (phase !== 'speaking' || selectedReplyId) return;
+    applySpeakingContinuation(messages);
+  }, [messages, selectedReplyId, phase]);
 
   useEffect(() => {
     return () => {
@@ -1212,6 +1573,7 @@ export function useLiveSpeech({
       stopMicCapture();
       cleanupConversation();
       conversationSynthesisRef.current = null;
+      clearClipGapTimer();
       if (noticeTimeoutRef.current) {
         window.clearTimeout(noticeTimeoutRef.current);
       }
@@ -1251,6 +1613,7 @@ export function useLiveSpeech({
     enableMicInput,
     disableMicInput,
     interruptPlayback,
+    stopVoicePlayback,
     playReply,
     onAudioEnded,
   };

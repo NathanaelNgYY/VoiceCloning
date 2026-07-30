@@ -4,6 +4,77 @@
 @tailwind components;
 @tailwind utilities;
 
+.gi-root .lesson-transcript-scrollbar {
+  scrollbar-color: rgb(148 163 184 / 0.7) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar-thumb {
+  border: 0.125rem solid transparent;
+  border-radius: 9999px;
+  background: rgb(148 163 184 / 0.7);
+  background-clip: padding-box;
+}
+
+.gi-root .lesson-transcript-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Transcript words are mounted as they are spoken, so this runs once per word,
+   on arrival. Opacity only — `transform` does not apply to inline boxes, and
+   making each word inline-block to get one would change how the paragraph
+   wraps. Kept well under the ~300ms a word lasts so the fade stays in step with
+   the audio instead of trailing it. */
+@keyframes gi-transcript-word-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.gi-root .gi-transcript-word {
+  animation: gi-transcript-word-in 180ms ease-out both;
+}
+
+/* Marks the leading edge of the transcription, so the gap between two words
+   reads as waiting rather than as a stall. */
+.gi-root .gi-transcript-caret {
+  display: inline-block;
+  width: 0.125rem;
+  height: 0.85em;
+  margin-left: 0.125rem;
+  vertical-align: -0.1em;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.5;
+  animation: gi-transcript-caret-blink 1.1s step-end infinite;
+}
+
+@keyframes gi-transcript-caret-blink {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gi-root .gi-transcript-word,
+  .gi-root .gi-transcript-caret {
+    animation: none;
+  }
+}
+
 @layer base {
   :root {
     --background: 220 40% 99%;
@@ -76,4 +147,15 @@ audio {
 ::selection {
   background: hsl(var(--primary));
   color: white;
+}
+
+/* GI-Bleeding skin palette — LKCMedicine maroon (#7c1d6f).
+   Scoped to the gi root so other build modes keep the default blue. Every gi
+   surface reads these tokens (text-primary / bg-primary-soft / ring-primary),
+   so a rebrand is this block only — no hardcoded hex in the pages. */
+.gi-root {
+  --primary: 308 62% 30%; /* #7c1d6f */
+  --primary-foreground: 0 0% 100%;
+  --primary-soft: 266 33% 96%; /* #f4f1f8 */
+  --ring: 308 62% 30%;
 }

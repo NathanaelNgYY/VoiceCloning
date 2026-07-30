@@ -105,48 +105,38 @@ const ENGLISH_NUMBER_WORD_RE =
 const LATIN_WORD_RE = /\p{Script=Latin}+(?:[-'’]\p{Script=Latin}+)*/gu;
 const QUESTION_START_RE =
   /^(who|what|where|when|why|how|which|whose|can|could|should|would|will|do|does|did|is|are|am|was|were|have|has|had)\b/i;
-const PHRASE_END_RE = /[.!?;:。！？；：]$/u;
+const PHRASE_END_RE = /[.!?;:…。！？；：]$/u;
 const PHRASE_SPLIT_RE = /[^.!?;:。！？；：]+[.!?;:。！？；：]+|[^.!?;:。！？；：]+$/gu;
 const DOTTED_INITIALISM_DOT = '\uE000';
 const SSML_BREAK_OPEN = '\uE010';
 const SSML_BREAK_CLOSE = '\uE011';
 const SSML_BREAK_TAG_RE = /<\s*break\b[^>]*\/?\s*>/giu;
 
+// Silence inserted between an ended reply clip and the next ready one, keyed by
+// how the ended clip's text stops: a finished sentence gets a full breath, a
+// mid-sentence continuation (dash/ellipsis/clause split) a short one. The gap
+// only runs when the next clip is already synthesized — when it isn't, the
+// synthesis wait is the pause — so it never delays the first clip of a reply.
+export const INTER_CLIP_GAP_MS = {
+  continuation: 180,
+  sentence: 420,
+};
+
+const CONTINUATION_FINAL_RE = /(?:…|\.{3})["')\]]*$/u;
+const SENTENCE_FINAL_RE = /[.!?。！？]["')\]]*$/u;
+
+export function interClipGapMs(previousClipText) {
+  const text = String(previousClipText || '').trim();
+  if (!text) return 0;
+  // '...' ends in '.' character-wise, so test continuation marks first:
+  // '…', '...', ';' and ':' all hang mid-thought.
+  if (CONTINUATION_FINAL_RE.test(text)) return INTER_CLIP_GAP_MS.continuation;
+  if (SENTENCE_FINAL_RE.test(text)) return INTER_CLIP_GAP_MS.sentence;
+  return INTER_CLIP_GAP_MS.continuation;
+}
+
 export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
-}
-
-function protectSsmlBreakTags(text) {
-  const tags = [];
-  return {
-    text: String(text || '').replace(SSML_BREAK_TAG_RE, (tag) => {
-      const index = tags.push(tag) - 1;
-      return `${SSML_BREAK_OPEN}${index}${SSML_BREAK_CLOSE}`;
-    }),
-    tags,
-  };
-}
-
-function restoreSsmlBreakTags(text, tags) {
-  return String(text || '').replace(
-    new RegExp(`${SSML_BREAK_OPEN}(\\d+)${SSML_BREAK_CLOSE}`, 'gu'),
-    (_match, index) => tags[Number(index)] || '',
-  );
-}
-
-function mergeChunksAcrossSsmlBreaks(chunks) {
-  const merged = [];
-  for (const chunk of chunks) {
-    const previous = merged[merged.length - 1] || '';
-    const beginsWithBreak = /^\s*<\s*break\b[^>]*\/?\s*>/iu.test(chunk);
-    const previousEndsWithBreak = /<\s*break\b[^>]*\/?\s*>\s*$/iu.test(previous);
-    if (merged.length > 0 && (beginsWithBreak || previousEndsWithBreak)) {
-      merged[merged.length - 1] = `${previous} ${chunk}`.trim();
-    } else {
-      merged.push(chunk);
-    }
-  }
-  return merged;
 }
 
 function englishNumberWordsToDigits(match) {
@@ -198,9 +188,12 @@ export function shouldTriggerLiveBargeIn({
   return phase === 'speaking' && Boolean(micInputEnabled) && Number(rms) >= threshold;
 }
 
-export function getMicOffAction({ phase, hasPendingAudio }) {
+export function getMicOffAction({ phase, hasPendingAudio, hasVoiceEvidence = true }) {
   if (phase === 'listening' && hasPendingAudio) {
-    return 'commit';
+    // A pending turn with no real voice behind it was opened by noise (OpenAI's
+    // VAD firing on breath/clicks in the open mic). Muting should drop it, not
+    // "send what you said".
+    return hasVoiceEvidence ? 'commit' : 'discard';
   }
 
   if (phase === 'listening' || phase === 'speaking') {
@@ -210,8 +203,54 @@ export function getMicOffAction({ phase, hasPendingAudio }) {
   return 'wait';
 }
 
-function ensurePhraseEnding(text) {
+// Client-side noise gate for the outbound mic stream. OpenAI's server VAD hears
+// whatever we send; streaming every frame lets it flag breaths, clicks, and room
+// noise as speech (phantom turns, phantom barge-ins). Frames are ~85ms
+// (ScriptProcessor 4096 samples @48k). The gate opens only after `openFrames`
+// consecutive voiced frames, stays open through pauses up to `hangoverFrames`
+// so mid-sentence lulls don't chop the turn, and callers replay `prerollFrames`
+// of buffered audio on opening so soft speech onsets aren't clipped.
+export const VOICE_GATE = {
+  threshold: 0.02,
+  openFrames: 2,
+  hangoverFrames: 18,
+  prerollFrames: 4,
+};
+
+// Minimum voiced (above-threshold) frames in a turn (~340ms) for a manual mute
+// to treat it as real speech worth committing.
+export const MIN_COMMIT_VOICE_FRAMES = 4;
+
+export function createVoiceGateState() {
+  return { open: false, justOpened: false, loudStreak: 0, quietStreak: 0 };
+}
+
+export function nextVoiceGateState(state, rms, config = VOICE_GATE) {
+  const current = state || createVoiceGateState();
+  const voiced = Number(rms) >= config.threshold;
+
+  if (!current.open) {
+    const loudStreak = voiced ? current.loudStreak + 1 : 0;
+    if (loudStreak >= config.openFrames) {
+      return { open: true, justOpened: true, loudStreak, quietStreak: 0 };
+    }
+    return { open: false, justOpened: false, loudStreak, quietStreak: 0 };
+  }
+
+  const quietStreak = voiced ? 0 : current.quietStreak + 1;
+  if (quietStreak >= config.hangoverFrames) {
+    return createVoiceGateState();
+  }
+  return { open: true, justOpened: false, loudStreak: current.loudStreak, quietStreak };
+}
+
+// `continuation: true` marks a fragment that is mid-sentence (the half before an
+// em dash, or a clause split off for latency). It gets an ellipsis — GPT-SoVITS
+// reads '…' with a hanging, unfinished contour, where a '.' produces a falling
+// end-of-sentence read and a '?' a rising one, both wrong mid-thought.
+function ensurePhraseEnding(text, { continuation = false } = {}) {
   if (PHRASE_END_RE.test(text)) return text;
+  if (continuation) return `${text.replace(/[,，]$/u, '')}…`;
   return `${text}${QUESTION_START_RE.test(text) ? '?' : '.'}`;
 }
 
@@ -228,6 +267,41 @@ function restoreDottedInitialisms(text) {
   return text.replaceAll(DOTTED_INITIALISM_DOT, '.');
 }
 
+// SSML <break> tags survive chunking as opaque placeholders: the tag text would
+// otherwise be split on its own punctuation and stop being a valid tag.
+function protectSsmlBreakTags(text) {
+  const tags = [];
+  return {
+    text: String(text || '').replace(SSML_BREAK_TAG_RE, (tag) => {
+      const index = tags.push(tag) - 1;
+      return `${SSML_BREAK_OPEN}${index}${SSML_BREAK_CLOSE}`;
+    }),
+    tags,
+  };
+}
+
+function restoreSsmlBreakTags(text, tags) {
+  return String(text || '').replace(
+    new RegExp(`${SSML_BREAK_OPEN}(\\d+)${SSML_BREAK_CLOSE}`, 'gu'),
+    (_match, index) => tags[Number(index)] || '',
+  );
+}
+
+function mergeChunksAcrossSsmlBreaks(chunks) {
+  const merged = [];
+  for (const chunk of chunks) {
+    const previous = merged[merged.length - 1] || '';
+    const beginsWithBreak = /^\s*<\s*break\b[^>]*\/?\s*>/iu.test(chunk);
+    const previousEndsWithBreak = /<\s*break\b[^>]*\/?\s*>\s*$/iu.test(previous);
+    if (merged.length > 0 && (beginsWithBreak || previousEndsWithBreak)) {
+      merged[merged.length - 1] = `${previous} ${chunk}`.trim();
+    } else {
+      merged.push(chunk);
+    }
+  }
+  return merged;
+}
+
 export function splitLiveReplyPhrases(text) {
   const clean = protectDottedInitialisms(cleanLiveText(text));
   if (!clean) return [];
@@ -235,10 +309,19 @@ export function splitLiveReplyPhrases(text) {
   // Em/en dashes mark a pause but aren't sentence-enders, so GPT-SoVITS reads
   // straight through them. Break phrases at dashes first so each side becomes its
   // own synthesized clip with a real pause between (matching full-mode behavior).
+  // The fragment left dangling before a dash is mid-sentence, so it takes the
+  // continuation ellipsis rather than a sentence-final '.' or '?'.
   const segments = clean.split(/\s*[—–]+\s*/u).map((part) => part.trim()).filter(Boolean);
-  const matches = segments.flatMap((segment) => segment.match(PHRASE_SPLIT_RE) || [segment]);
-  return matches
-    .map((part) => restoreDottedInitialisms(ensurePhraseEnding(part.trim())))
+  return segments
+    .flatMap((segment, segmentIndex) => {
+      const matches = (segment.match(PHRASE_SPLIT_RE) || [segment]).map((part) => part.trim());
+      const beforeDash = segmentIndex < segments.length - 1;
+      return matches.map((part, partIndex) =>
+        restoreDottedInitialisms(ensurePhraseEnding(part, {
+          continuation: beforeDash && partIndex === matches.length - 1,
+        }))
+      );
+    })
     .filter(Boolean);
 }
 
@@ -266,9 +349,6 @@ export function shortenFirstFastPhrase(phrases, {
   if (!Array.isArray(phrases) || phrases.length === 0) return phrases;
   const first = phrases[0];
   if (!first || first.length <= maxFirstChars) return phrases;
-  // The break-aware chunker intentionally keeps both sides of an explicit pause in
-  // one backend request. Do not undo that here for the queued first-clip shortcut.
-  if (/<\s*break\b[^>]*\/?\s*>/iu.test(first)) return phrases;
 
   for (let i = 0; i < first.length; i += 1) {
     if (!CLAUSE_BREAK_RE.test(first[i])) continue;
@@ -281,7 +361,9 @@ export function shortenFirstFastPhrase(phrases, {
       && countWords(tail) >= minWords
     ) {
       return [
-        ensurePhraseEnding(head),
+        // The head is mid-sentence — a continuation ellipsis keeps its contour
+        // open instead of a falling sentence-final period.
+        ensurePhraseEnding(head, { continuation: true }),
         ensurePhraseEnding(tail),
         ...phrases.slice(1),
       ];
@@ -290,18 +372,14 @@ export function shortenFirstFastPhrase(phrases, {
   return phrases;
 }
 
-// --- Live Fast chunking -----------------------------------------------------
-// Live Fast used to split the reply on every .!?;: into tiny phrases, which robbed
-// GPT-SoVITS of the context it needs to pronounce cleanly and made cut/skipped words
-// more likely. It now keeps whole sentences intact and applies an explicit sentence
-// ceiling. A very short chunk may absorb one neighbouring sentence for enough context.
+// Live Fast keeps whole sentences together, then applies the saved word and
+// sentence ceilings before submitting each independently queued TTS request.
 const CHUNK_MAX_LENGTH = 280;
 const CHUNK_MAX_SENTENCES = 1;
 const CHUNK_MIN_LENGTH = 24;
 const CHUNK_MIN_CONTEXT_WORDS = 8;
-const CHUNK_NBSP = ' '; // NBSP sentinel to protect multi-word units while splitting
+const CHUNK_NBSP = ' ';
 
-// Common multi-word phrases that should not be split across chunks.
 const CHUNK_SEMANTIC_UNITS = [
   'of the', 'in the', 'to the', 'for the', 'on the', 'at the', 'by the',
   'to a', 'of a', 'in a', 'for a', 'on a',
@@ -314,14 +392,13 @@ const CHUNK_SEMANTIC_UNITS = [
 function protectChunkSemanticUnits(text) {
   let result = text;
   for (const phrase of CHUNK_SEMANTIC_UNITS) {
-    const pattern = new RegExp(phrase, 'gi');
-    result = result.replace(pattern, (match) => match.replace(/ /g, CHUNK_NBSP));
+    result = result.replace(new RegExp(phrase, 'gi'), (match) => match.replace(/ /g, CHUNK_NBSP));
   }
   return result;
 }
 
 function restoreChunkSemanticUnits(text) {
-  return text.replace(/ /g, ' ');
+  return text.replace(/\u00a0/g, ' ');
 }
 
 function splitIntoChunkSentences(text) {
@@ -332,6 +409,10 @@ function splitIntoChunkSentences(text) {
     .map((part) => part.trim())
     .filter(Boolean);
   return sentences.length > 0 ? sentences : [normalized];
+}
+
+function countChunkWords(text) {
+  return (String(text || '').match(/[\p{L}\p{N}']+/gu) || []).length;
 }
 
 function wordLimitCutIndex(text, maxWords) {
@@ -346,28 +427,23 @@ function splitLongChunkSentence(sentence, maxChunkLength, maxChunkWords = 0) {
   if (sentence.length <= maxChunkLength
     && (!(maxChunkWords > 0) || countChunkWords(sentence) <= maxChunkWords)) return [sentence];
 
-  const protectedText = protectChunkSemanticUnits(sentence);
   const parts = [];
-  let remaining = protectedText.trim();
-  const minCut = Math.floor(maxChunkLength * 0.6);
+  let remaining = protectChunkSemanticUnits(sentence).trim();
   const clauseSeparators = [';', ':', '；', '：'];
-
   while (remaining.length > maxChunkLength
     || (maxChunkWords > 0 && countChunkWords(remaining) > maxChunkWords)) {
-    const wordCut = wordLimitCutIndex(remaining, maxChunkWords);
-    const hardLimit = Math.min(maxChunkLength, wordCut);
+    const hardLimit = Math.min(maxChunkLength, wordLimitCutIndex(remaining, maxChunkWords));
     const searchWindow = remaining.slice(0, hardLimit + 1);
     const minCut = Math.floor(hardLimit * 0.6);
     let cut = -1;
-    for (const sep of clauseSeparators) {
-      const idx = searchWindow.lastIndexOf(sep);
-      if (idx > cut) cut = idx;
+    for (const separator of clauseSeparators) {
+      cut = Math.max(cut, searchWindow.lastIndexOf(separator));
     }
     if (cut < minCut) cut = searchWindow.lastIndexOf(' ');
     if (cut < minCut) cut = hardLimit;
-    const slice = remaining.slice(0, cut + (cut === hardLimit ? 0 : 1)).trim();
-    parts.push(restoreChunkSemanticUnits(slice));
-    remaining = remaining.slice(cut + (cut === hardLimit ? 0 : 1)).trim();
+    const includeSeparator = cut === hardLimit ? 0 : 1;
+    parts.push(restoreChunkSemanticUnits(remaining.slice(0, cut + includeSeparator).trim()));
+    remaining = remaining.slice(cut + includeSeparator).trim();
   }
   if (remaining) parts.push(restoreChunkSemanticUnits(remaining));
   return parts.filter(Boolean);
@@ -379,12 +455,6 @@ function chunkEndsSentence(text) {
   return '.!?。！？'.includes(trimmed.slice(-1));
 }
 
-// Fold any sub-minLength fragment into a neighbour so no chunk is ever short enough
-// to make GPT-SoVITS render a near-silent buffer. Mirrors mergeShortChunks server-side.
-function countChunkWords(text) {
-  return (String(text || '').match(/[\p{L}\p{N}']+/gu) || []).length;
-}
-
 function mergeShortChunks(chunks, minLength, {
   maxChunkLength,
   maxChunkWords,
@@ -394,11 +464,10 @@ function mergeShortChunks(chunks, minLength, {
   const merged = chunks.map((chunk) => chunk.trim()).filter(Boolean);
   const canMerge = (left, right, shortChunk) => {
     const candidate = `${left} ${right}`.trim();
-    const sentenceCount = splitIntoChunkSentences(candidate).length;
     return (shortChunk.length < minLength || countChunkWords(shortChunk) < CHUNK_MIN_CONTEXT_WORDS)
       && candidate.length <= maxChunkLength
       && (!(maxChunkWords > 0) || countChunkWords(candidate) <= maxChunkWords)
-      && sentenceCount <= maxSentencesPerChunk + 1;
+      && splitIntoChunkSentences(candidate).length <= maxSentencesPerChunk + 1;
   };
 
   for (let index = 0; index < merged.length;) {
@@ -418,8 +487,6 @@ function mergeShortChunks(chunks, minLength, {
   return merged;
 }
 
-// Group whole sentences into ~1-3 sentence chunks (same shape as Live Full). Dotted
-// initialisms ("W.H.O") are protected so their internal periods don't split a chunk.
 export function splitLiveReplyChunks(text, {
   maxChunkLength = CHUNK_MAX_LENGTH,
   maxChunkWords = 0,
@@ -428,13 +495,9 @@ export function splitLiveReplyChunks(text, {
   const protectedBreaks = protectSsmlBreakTags(cleanLiveText(text));
   const clean = protectDottedInitialisms(protectedBreaks.text);
   if (!clean) return [];
-
-  // An explicit word override takes priority over the default 280-character cap.
   const activeMaxChunkLength = maxChunkWords > 0 ? Number.MAX_SAFE_INTEGER : maxChunkLength;
-
   const rawSentences = splitIntoChunkSentences(clean)
     .flatMap((sentence) => splitLongChunkSentence(sentence, activeMaxChunkLength, maxChunkWords));
-
   const chunks = [];
   let current = '';
   let sentenceCount = 0;
@@ -444,10 +507,9 @@ export function splitLiveReplyChunks(text, {
     const exceedsLength = candidate.length > activeMaxChunkLength;
     const exceedsWords = maxChunkWords > 0 && countChunkWords(candidate) > maxChunkWords;
     const exceedsSentenceCount = sentenceCount >= maxSentencesPerChunk;
-    const currentWordCount = countChunkWords(current);
     const canAbsorbShortContext = exceedsSentenceCount
       && sentenceCount === maxSentencesPerChunk
-      && currentWordCount < CHUNK_MIN_CONTEXT_WORDS;
+      && countChunkWords(current) < CHUNK_MIN_CONTEXT_WORDS;
 
     if (current && (exceedsLength || exceedsWords || (exceedsSentenceCount && !canAbsorbShortContext))) {
       chunks.push(current.trim());
@@ -501,8 +563,15 @@ export function buildLiveReplyParams(text, refParams = {}, language = LIVE_TEXT_
   };
 }
 
-export function buildLiveSentenceParams(text, refParams = {}, language = LIVE_TEXT_LANG) {
-  return buildLiveReplyParams(text, refParams, language);
+// `skipVerify` marks the reply's first clip: the worker skips its ASR stutter
+// check so verification never delays time-to-first-audio. Later clips verify
+// behind playback. (The Full-inference route whitelists params, so the flag is
+// harmless if it reaches that path.)
+export function buildLiveSentenceParams(text, refParams = {}, language = LIVE_TEXT_LANG, { skipVerify = false } = {}) {
+  return {
+    ...buildLiveReplyParams(text, refParams, language),
+    ...(skipVerify ? { skip_verify: true } : {}),
+  };
 }
 
 export function createChatMessage({
@@ -515,6 +584,7 @@ export function createChatMessage({
   audioParts = [],
   error = null,
   createdAt = Date.now(),
+  voiceStopped = false,
 }) {
   return {
     id,
@@ -526,6 +596,40 @@ export function createChatMessage({
     audioParts,
     error,
     createdAt,
+    voiceStopped,
+  };
+}
+
+// How long a user bubble may sit in 'transcribing' before the client closes the
+// turn itself. Realtime transcripts normally land within a couple of seconds of
+// speech stopping; if the terminal user.text event is lost (gateway bug, WS drop,
+// OpenAI never emitting transcription.completed), waiting forever leaves the
+// bubble stuck and the next turn overwriting it.
+export const USER_TRANSCRIPT_TIMEOUT_MS = 10000;
+
+// The active-user-message ref may only be reused while the bubble is still
+// collecting the current turn. A 'done' bubble is history — overwriting it
+// destroys a previous message (a stale ref once turned a finished transcript
+// into the next turn's "Transcribing...").
+export function canReuseActiveUserMessage(message) {
+  return Boolean(message)
+    && message.role === 'user'
+    && (message.status === 'listening' || message.status === 'transcribing');
+}
+
+// Terminal patch for a user bubble whose transcript never arrived: keep any
+// words that already streamed in, otherwise fall back to the same generic label
+// the gateway's suppressed-transcript path uses. Returns null when the bubble
+// is not actually stuck.
+export function resolvePendingTranscriptPatch(message) {
+  if (!message || message.role !== 'user' || message.status !== 'transcribing') {
+    return null;
+  }
+  const text = cleanLiveText(message.text);
+  const hasPartialWords = text && text !== 'Transcribing...' && text !== 'Listening...';
+  return {
+    text: hasPartialWords ? text : 'Voice message sent.',
+    status: 'done',
   };
 }
 
@@ -568,6 +672,125 @@ export function findNextPhrasePlayback(messages, selectedId) {
   }
 
   return null;
+}
+
+// One spoken reply can arrive split across several assistant messages: OpenAI
+// Realtime interrupts an in-progress response when it hears more user speech,
+// then continues the answer in a new response. After the last clip of one
+// message finishes, chain into the first still-unplayed ready clip of a LATER
+// assistant message so the whole reply keeps reading aloud. Only 'ready'
+// (never-played) parts count — replaying an old message must not cascade into
+// messages that were already read out.
+export function findNextReplyPlayback(messages, afterMessageId) {
+  const startIndex = messages.findIndex((message) => message.id === afterMessageId);
+  if (startIndex === -1) return null;
+
+  for (const message of messages.slice(startIndex + 1)) {
+    if (message.role !== 'assistant') continue;
+    const part = (message.audioParts || []).find(
+      (item) => item.audioUrl && item.status === 'ready'
+    );
+    if (part) return { message, part, audioUrl: part.audioUrl };
+  }
+
+  return null;
+}
+
+// True while any assistant reply is still producing voice clips. Playback
+// end-detection uses this to stay in the 'speaking' phase when the clip that
+// just finished belongs to an earlier message than the one being synthesized
+// (a reply split across messages) — otherwise the phase would drop to
+// 'listening' and the pending reply's audio would never auto-play. Errored and
+// interrupted replies don't count: their synthesis loop has already stopped.
+export function hasPendingReplyWork(messages) {
+  return messages.some(
+    (message) =>
+      message.role === 'assistant'
+      && message.status === 'generating_voice'
+      && !message.voiceStopped
+  );
+}
+
+// Decide how to continue when the app is in the 'speaking' phase with no clip
+// selected. The ended-event handler and the synthesis loop hand playback to
+// each other through refs that lag React's render cycle, so either side can
+// miss the baton: a ready clip gets stranded (a sentence is skipped, or the
+// reply cuts off mid-text in a silent 'speaking' phase). This runs from a
+// render-driven effect with FRESH state and self-heals those races:
+//   play   — start the earliest never-played ready clip
+//   wait   — clips are still generating; stay in 'speaking'
+//   settle — nothing left to play or generate; leave 'speaking'
+// Voice-stopped replies generate in the background but must stay silent until
+// the user presses Play voice, so they are never auto-played and never hold
+// the phase. Interrupted/errored replies are dead: their loops have stopped.
+export function resolveSpeakingContinuation(messages, { synthesisMessageId = '' } = {}) {
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    if (message.voiceStopped) continue;
+    if (['interrupted', 'error'].includes(message.status)) continue;
+    const part = (message.audioParts || []).find(
+      (item) => item.audioUrl && item.status === 'ready'
+    );
+    if (part) return { action: 'play', part, message };
+  }
+
+  if (synthesisMessageId) {
+    const synthesizing = messages.find((message) => message.id === synthesisMessageId);
+    if (synthesizing && !synthesizing.voiceStopped) {
+      return { action: 'wait' };
+    }
+  }
+  if (hasPendingReplyWork(messages)) {
+    return { action: 'wait' };
+  }
+
+  return { action: 'settle' };
+}
+
+// Decide what to do when the reply <audio> element fails on a clip. The player
+// only advances on the `ended` event, so without this a failed clip would stall
+// the whole reply forever. Retry the same clip once (transient decode/network
+// hiccups usually recover on a reload), then skip it so the rest of the reply
+// still plays. `retryState` is caller-held ({ src, retried }); a new src always
+// gets a fresh retry.
+export function nextAudioErrorAction(retryState, src) {
+  if (!src) {
+    return { action: 'ignore', retryState };
+  }
+  if (retryState.src === src && retryState.retried) {
+    return { action: 'skip', retryState };
+  }
+  return { action: 'retry', retryState: { src, retried: true } };
+}
+
+// Some OpenAI Realtime "error" events are benign races that resolve on their own
+// (most often a new response requested while one is still in progress, which
+// happens with rapid barge-in). Surfacing them just confuses the user, so we
+// swallow these specific ones instead of showing the red error banner.
+export function isBenignRealtimeError(message) {
+  const text = String(message || '').toLowerCase();
+  return (
+    text.includes('active response in progress')
+    || text.includes('already has an active response')
+    || text.includes('conversation_already_has_active_response')
+  );
+}
+
+// The gateway letter-spaces initialisms for TTS (e.g. "GI" -> "G I"), which
+// GPT-SoVITS reads with a long drag between the lone letters ("G……I"). For the
+// SPOKEN text only, rejoin known initialisms into smooth phonetic spellings so
+// they read naturally. The on-screen chat keeps the clean original ("GI").
+// Add more entries here as other dragged terms turn up.
+const SPEECH_PRONUNCIATION_FIXES = [
+  [/\bG\s+I\b/g, 'gee eye'],
+];
+
+export function fixSpeechPronunciation(text) {
+  let out = String(text || '');
+  for (const [pattern, replacement] of SPEECH_PRONUNCIATION_FIXES) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
 }
 
 export function findFirstReplayablePart(message) {
