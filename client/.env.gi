@@ -20,4 +20,24 @@ VITE_GI_VOICE_PROFILE_ID=DeanVoice
 # rebuild only — no gateway redeploy.
 VITE_GI_VIDEO_POSITION=true
 
-# Everything else (PROXY_TARGET, VITE_*_URL) is inherited from .env.
+# Origin-agnostic on purpose — do NOT inherit these from .env.
+#
+# .env pins the worker and gateway to doovx82fh9tfs.cloudfront.net. Inheriting
+# that baked the wrong host into every `npm run build:gi` artifact, so a build
+# uploaded to any other distribution called back to doovx82fh9tfs instead of the
+# origin serving it.
+#
+# Blank means relative: runtimeConfig.js emits bare paths, so /api/* resolves
+# against whatever origin served the page and the /api/live/chat/realtime socket
+# falls back to window.location.origin. One artifact works on every
+# distribution, which is what makes a hand-upload to S3 safe.
+#
+# In dev this is strictly better too: the vite proxy forwards /api (ws included)
+# and /videos to PROXY_TARGET, keeping /videos same-origin so the video player
+# and the thumbnail canvas don't taint.
+VITE_API_BASE_URL=
+VITE_GPU_WORKER_URL=
+VITE_LIVE_GATEWAY_URL=
+
+# PROXY_TARGET is still inherited from .env — it is vite-level (no VITE_ prefix),
+# used only by the dev server proxy and never baked into the bundle.
