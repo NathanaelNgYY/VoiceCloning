@@ -46,8 +46,8 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Fixed ALB SG egress for ports 3103/3004; missing egress caused health timeouts.
 - Added `scripts/load-test-staging-tts.mjs`: concurrent public requests count only
   HTTP 200 `audio/wav` RIFF output as success.
-- Updated `scripts/warm-staging-deanvoice.sh` to require two concurrent real-route
-  RIFF syntheses before advertising capacity; it is baked and fresh-node validated.
+- Live v14 requires two concurrent local-route RIFF syntheses before advertising
+  capacity. Source now deep-primes 10 two-slot rounds; deployment/retest is pending.
 - Added event controls to `scripts/provision-staging-autoscaling.ps1`.
   `VCS_STAGING_EVENT=true` selects 32; paired prewarm/scale-down times are mandatory.
 - Live LT v14 gates on two concurrent RIFF responses before advertising two slots.

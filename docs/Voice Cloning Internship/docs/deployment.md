@@ -210,6 +210,9 @@ redundant student-entry warm-up burst.
   slots. A fresh validator completed both syntheses in 3 seconds, full cloud-init warm
   in 206 seconds, became healthy in the real target group, and passed public RIFF synthesis.
 - v14 starts Target Optimizer only after the complete DeanVoice warm succeeds.
+- Repository source now defaults `VCS_ROUTE_WARM_ROUNDS` to 10 (valid 1-20), or 20
+  local syntheses per GPU, before Target Optimizer starts. It is not live until a new
+  AMI/LT version passes fresh-node and newly-warmed fleet testing.
 - Public GI DeanVoice synthesis passed after fresh-instance cold-load validation.
   A fresh v10 node completed cloud-init in 442 seconds: its timed warm command spent
   9 seconds on cache lookups, 273 seconds loading the Python/base/voice model stack,

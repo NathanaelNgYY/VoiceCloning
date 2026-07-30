@@ -13,6 +13,8 @@
   passed 150/150 once; earlier 80 also passed 150/150. Decide whether to raise event
   prewarm above 50, push local commits, then run the 60-minute soak and one target
   termination rehearsal.
+- [ ] Deploy the 10-round/two-slot deep warm in `scripts/warm-staging-deanvoice.sh`,
+  bake a new AMI/LT version, and repeat the newly-warmed 50-GPU/100-user flow.
 - [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
   from `vcs-stg-opt-3103` and terminate it; this role is denied both actions.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a

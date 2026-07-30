@@ -29,6 +29,12 @@
   fixed scale-out 50->60, and fully route-warmed 60 GPUs completed 150/150 with no
   failures. Raw JSON is ignored under `.tmp/`; detailed audio-only timing is in repo
   `docs/staging-architecture.md`. The fleet was restored to one after testing.
+- Strengthened `scripts/warm-staging-deanvoice.sh` from one two-request pair to 10
+  configurable two-slot rounds (20 syntheses per GPU), cycling representative medical
+  chunks through first-chunk and verified later-chunk paths before Target Optimizer
+  starts. Sequential mocks verified 20 calls, mode distribution, non-RIFF failure,
+  invalid-round rejection, and Bash syntax. Deployment and fresh-fleet load proof are
+  pending; this is a mitigation, not yet evidence of lower latency.
 
 ## 2026-07-29
 
