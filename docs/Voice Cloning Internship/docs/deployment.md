@@ -157,7 +157,7 @@ rejects a chatbot build from another branch.
 
    ```powershell
    $env:VCS_STAGING_EVENT='true'
-   $env:VCS_STAGING_PREWARM_CAPACITY='32'
+   $env:VCS_STAGING_PREWARM_CAPACITY='50'
    $env:VCS_STAGING_MAX_CAPACITY='192'
    $env:VCS_STAGING_PREWARM_AT='2026-08-02T07:15:00+08:00'
    $env:VCS_STAGING_SCALE_DOWN_AT='2026-08-02T18:00:00+08:00'
@@ -199,8 +199,8 @@ redundant student-entry warm-up burst.
   plus rejected traffic. Any sampled free slot blocks scale-out. Scale-in removes one
   instance after fifteen no-traffic minutes.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
-  2 minutes. Normal scale-in stops at min 1; an event min 32 cannot auto-scale below
-  32 until the paired scale-down action restores min/desired 1.
+  2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below
+  50 until the paired scale-down action restores min/desired 1.
 - Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
   a request routed on retry is marked and receives priority in the worker's local
   queue. A slot may be briefly unused while rejected Lambdas sleep before retry.
@@ -230,11 +230,12 @@ redundant student-entry warm-up burst.
 - A prior one-user response's 14 chunks ran one after another in about 28 seconds.
   It did not autoscale because sequential chunks did not exhaust the fleet. Use
   `node scripts/load-test-staging-chatbot.mjs 50` for the complete-flow test.
-- Repo and live now use max 192, and the requested event default is 32, with
+- Repo uses max 192 and the requested event default is 50, with
   `VCS_STAGING_PREWARM_CAPACITY` and `VCS_STAGING_MAX_CAPACITY` overrides. Max 200
   is invalid against the verified 768-vCPU/192-instance On-Demand G/VT quota.
-- Live one-time actions now set min/desired 32 at 07:15 SGT on 2026-08-02 and restore
-  min/desired 1 at 18:00 SGT. The provisioner accepts flexible ISO timestamps through
+- Live one-time actions set min/desired 50 at 07:15 SGT on 2026-08-02 and
+  restore min/desired 1 at 18:00 SGT. Both were read back and verified on
+  2026-07-30. The provisioner accepts flexible ISO timestamps through
   `VCS_STAGING_PREWARM_AT` and `VCS_STAGING_SCALE_DOWN_AT`, requires both, and rejects
   an end time that is not later than the start. Rerun with `-Apply` to change AWS;
   setting environment variables alone does not modify an existing schedule.

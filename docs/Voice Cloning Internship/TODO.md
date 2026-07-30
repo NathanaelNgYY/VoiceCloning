@@ -3,13 +3,12 @@
 - [ ] Before 2026-08-02 07:15 SGT, finish staging fleet rollout: immutable
   per-session voices, shared Full state, bounded queues, two tested same-model slots per
   GPU, GI chatbot UI, Target Optimizer, final AMI/launch template, ASG, one fresh
-  instance, rule-3 cutover, max-192 ceiling, and paired 32-GPU 07:15/18:00 SGT
-  actions are complete.
+  instance, rule-3 cutover, max-192 ceiling, and paired 50-GPU 07:15/18:00 SGT
+  actions are complete and verified live.
   Corrected route-warm testing passed 50/50 on 32 GPUs; the 100-user run completed
   first-turn voice for 100/100 and all three turns for 98/100. True zero-capacity
-  scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. Decide whether
-  to keep event prewarm 32 or raise it, then run the 60-minute soak and one target
-  termination rehearsal.
+  scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. Then run the
+  60-minute soak and one target termination rehearsal.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,

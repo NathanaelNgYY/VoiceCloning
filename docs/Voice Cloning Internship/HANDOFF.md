@@ -1,6 +1,6 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 ## Purpose and Sources
 
@@ -27,7 +27,8 @@ Last updated: 2026-07-29
 - Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
 - Private subnet `subnet-0c1937ef298f54500`, GPU SG `sg-03a2f3dddf4eff21c`,
   instance profile `VoiClo_GPU`. Fleet is single-AZ.
-- Event schedule: 32 at 07:15 SGT, back to 1 at 18:00 SGT on 2026-08-02.
+- Live event schedule: 50 at 07:15 SGT, back to 1 at 18:00 SGT on
+  2026-08-02. Both scheduled actions were read back and verified on 2026-07-30.
 ## Access Procedure
 Export fresh `VCS_AWS_ACCESS_KEY_ID`, `VCS_AWS_SECRET_ACCESS_KEY`, and
 `VCS_AWS_SESSION_TOKEN` into Codex. Map to `AWS_*`, assume the role, verify account
@@ -101,14 +102,15 @@ voice generation. Commit `62f86ff` added phase timing.
   the ALB-facing Target Optimizer until the full warm completes.
 
 ## Event Plan and Next Session
-- Event actions are live for 2026-08-02: 32 at 07:15, back to 1 at 18:00 SGT.
+- Live event actions for 2026-08-02 are 50 at 07:15 and back to 1 at
+  18:00 SGT.
 - Times are flexible via `VCS_STAGING_PREWARM_AT` and `VCS_STAGING_SCALE_DOWN_AT`;
   set both, rerun with `-Apply`, then verify AWS. Env changes alone do not reschedule.
 - Repo/live max is 192. Max 200 exceeds the audited 768-vCPU On-Demand quota;
   usage, cost, and single-AZ capacity still apply.
 - The corrected 32-GPU route-warm passed 50/50 but the 100-user run completed 98/100
-  sessions; decide whether 32 is acceptable or raise event prewarm, then run a
-  60-minute soak, one target termination, and the two-browser exact-revision race.
+  sessions. Event prewarm is live at 50; next run a 60-minute soak, one target
+  termination, and the two-browser exact-revision race.
 - Next session: read the three sources, check Git, assume the role, live-describe
   LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
   health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;

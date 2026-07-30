@@ -23,5 +23,5 @@
   "scaleOutPercentWhenFull": 60,
   "scaleInIdleMinutes": 15,
   "defaultPreWarmCapacity": 2,
-  "eventCapacity": 32
+  "eventCapacity": 50
 }

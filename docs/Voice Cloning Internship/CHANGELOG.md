@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-30
+
+- Changed the requested 2026-08-02 staging event prewarm from 32 to 50 GPUs in
+  `scripts/staging-autoscaling.config.json` and the deployment documentation.
+  Applied the live Auto Scaling scheduled action and read back min/desired 50,
+  max 192 at 07:15 SGT; the paired 18:00 action remains min/desired 1, max 192.
+
 ## 2026-07-29
 
 - Consolidated the staging takeover memory after final testing: added the exact

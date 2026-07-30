@@ -249,8 +249,8 @@ The implemented staging design keeps the public hostnames and separates roles:
    application behavior. `VCS_STAGING_EVENT=true` uses the configured event default
    only when an explicit prewarm capacity was not supplied.
 5. The original 16-GPU event plan passed the complete 50- and 60-request public
-   bursts. The requested schedule now prewarms 32 for additional headroom; 32 has not
-   been separately load-tested because the 16-node fleet already passed the target.
+   bursts. The requested event default is now 50 for additional headroom. This
+   value is also applied to and verified on the live scheduled action.
 
 Live scaling uses Target Optimizer capacity signals rather than completed-request
 target tracking:
@@ -262,8 +262,8 @@ target tracking:
 - scale in one instance after fifteen one-minute periods with no ALB traffic;
 - default instance warmup and ELB health grace are 600 seconds, default cooldown is
   300 seconds, and target deregistration delay is 120 seconds;
-- normal scale-in stops at ASG minimum 1. An event action that raises minimum to 32
-  deliberately blocks automatic scale-in below 32 until a paired action restores
+- normal scale-in stops at ASG minimum 1. An event action that raises minimum to 50
+  deliberately blocks automatic scale-in below 50 until a paired action restores
   minimum/desired 1.
 
 `TargetControlWorkQueueLength` is sampled, not a durable request queue. A rejected
@@ -379,9 +379,10 @@ AWS Auto Scaling also requires a finite numeric maximum. The live ASG maximum is
 `g6.xlarge`; this is only a ceiling and does not launch instances. Single-AZ capacity
 is not guaranteed.
 
-The 2026-08-02 event has paired one-time actions: `vcs-staging-prewarm` sets
-min/desired 32 (max 192) at 07:15 SGT, and `vcs-staging-scale-down` restores
-min/desired 1 at 18:00 SGT. The stored UTC times are 2026-08-01 23:15Z and
+The 2026-08-02 event is configured for paired one-time actions:
+`vcs-staging-prewarm` should set min/desired 50 (max 192) at 07:15 SGT, and
+`vcs-staging-scale-down` restores min/desired 1 at 18:00 SGT. Both live actions
+were read back and verified on 2026-07-30. The stored UTC times are 2026-08-01 23:15Z and
 2026-08-02 10:00Z. Times remain flexible through `VCS_STAGING_PREWARM_AT` and
 `VCS_STAGING_SCALE_DOWN_AT`; changing an environment variable alone does nothing
 until the provisioner is rerun with `-Apply`. A maximum of 200 would require
@@ -738,8 +739,8 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 7. The optimized target group, final AMI `ami-0ffe20a0a5986a0cb`, launch-template v13,
    ASG, one healthy `InService` instance, and zero-capacity scaling policy are live.
    ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the optimized
-   target. Paired 32-GPU 07:15 SGT prewarm and 18:00 SGT scale-down actions are live
-   for 2026-08-02.
+   target. Live paired actions now prewarm 50 GPUs at 07:15 SGT and scale down to
+   one at 18:00 SGT for 2026-08-02.
 8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.
