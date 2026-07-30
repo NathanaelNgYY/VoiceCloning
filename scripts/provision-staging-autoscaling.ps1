@@ -111,15 +111,24 @@ function Invoke-AwsJson {
 
 $userData = @'
 #cloud-config
+write_files:
+  - path: /etc/systemd/system/gpu-inference-worker.service.d/staging-warm.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Service]
+      ExecStartPost=/home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh
+      TimeoutStartSec=900
 bootcmd:
   - [systemctl, disable, gpu-worker.service]
   - [systemctl, disable, target-optimizer-inference.service]
+  - [systemctl, mask, --now, apt-daily.service, apt-daily-upgrade.service, apt-daily.timer, apt-daily-upgrade.timer, unattended-upgrades.service, packagekit.service]
 runcmd:
   - [systemctl, disable, --now, gpu-worker.service]
   - [systemctl, disable, --now, target-optimizer-inference.service]
   - [systemctl, daemon-reload]
-  - [systemctl, enable, --now, gpu-inference-worker.service]
-  - [sudo, -u, ubuntu, /home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh]
+  - [systemctl, enable, gpu-inference-worker.service]
+  - [systemctl, restart, gpu-inference-worker.service]
   - [systemctl, enable, --now, target-optimizer-inference.service]
 '@
 $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
