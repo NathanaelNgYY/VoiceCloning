@@ -22,8 +22,8 @@ Last updated: 2026-07-30
 - Account/region/role: `329599637774` / `ap-northeast-2` / `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
 - Live ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192.
 - Healthy baseline instance after the rehearsal: `i-02ed1e071bbf085d2`.
-- Final AMI `ami-0ffe20a0a5986a0cb` contains commit `2ab26ee`.
-- Launch template `lt-07728350a25e691a4` defaults to v13.
+- Final AMI `ami-0a2618372e7f8b8da` contains commit `fff074c`.
+- Launch template `lt-07728350a25e691a4` defaults to v14.
 - Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
 - Private subnet `subnet-0c1937ef298f54500`, GPU SG `sg-03a2f3dddf4eff21c`,
   instance profile `VoiClo_GPU`. Fleet is single-AZ.
@@ -47,10 +47,10 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Added `scripts/load-test-staging-tts.mjs`: concurrent public requests count only
   HTTP 200 `audio/wav` RIFF output as success.
 - Updated `scripts/warm-staging-deanvoice.sh` to require two concurrent real-route
-  RIFF syntheses before advertising capacity; source is tested but not yet baked live.
+  RIFF syntheses before advertising capacity; it is baked and fresh-node validated.
 - Added event controls to `scripts/provision-staging-autoscaling.ps1`.
   `VCS_STAGING_EVENT=true` selects 32; paired prewarm/scale-down times are mandatory.
-- Live LT v13 still gates on one RIFF. The next AMI must validate the new two-slot gate.
+- Live LT v14 gates on two concurrent RIFF responses before advertising two slots.
 - GI students do not call model selection/warm on page entry; each ASG node performs
   that preparation once before advertising capacity, avoiding a user-entry warm burst.
 - Live scale-out adds 10 GPUs after at least one rejection in a one-minute period.
@@ -79,8 +79,8 @@ voice generation. Commit `62f86ff` added phase timing.
   reference preparation plus first synthesis 96s.
 - The fresh-only delay is consistent with first reads of snapshot-backed EBS blocks;
   it was not S3 downloads because cache checks took only 8-9s.
-- Final v13 scale-out nodes completed full cloud-init and real-route warm about
-  272-275s after launch, substantially faster than the earlier v10 measurement.
+- A fresh v14 validator completed both route syntheses in 3s and full cloud-init warm
+  in 206s, became healthy in the real target group, and passed public RIFF synthesis.
 
 ## Incidents and Recovery
 - LT v9 AMI `ami-0b06a87a36a68328d` captured the worker entry file as zero bytes.
@@ -90,8 +90,10 @@ voice generation. Commit `62f86ff` added phase timing.
   despite available capacity. It is neutralized live because the role cannot delete it;
   the new zero-capacity policy is authoritative.
 - Min/desired 1 was restored after the 50->80 rehearsal.
-- Health must mean usable synthesis, not only a listening Node service; LT v13 gates
+- Health must mean usable synthesis, not only a listening Node service; LT v14 gates
   the ALB-facing Target Optimizer until the full warm completes.
+- Validator `i-015de451bff24a73b` is stopped but remains registered as unused; an admin
+  must deregister it from `vcs-stg-opt-3103` and terminate it because this role is denied.
 
 ## Event Plan and Next Session
 - Live event actions for 2026-08-02 are 50 at 07:15 and back to 1 at

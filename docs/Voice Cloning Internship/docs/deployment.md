@@ -190,8 +190,8 @@ redundant student-entry warm-up burst.
 
 ## Staging ASG State (2026-07-29)
 
-- Final image `ami-0ffe20a0a5986a0cb` contains commit `2ab26ee`; launch template
-  `lt-07728350a25e691a4` default version 13 uses `g6.xlarge`, `VoiClo_GPU`, and the
+- Final image `ami-0a2618372e7f8b8da` contains commit `fff074c`; launch template
+  `lt-07728350a25e691a4` default version 14 uses `g6.xlarge`, `VoiClo_GPU`, and the
   staging GPU security group.
 - ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy target
   `i-02ed1e071bbf085d2` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
@@ -206,11 +206,10 @@ redundant student-entry warm-up burst.
 - Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
   a request routed on retry is marked and receives priority in the worker's local
   queue. A slot may be briefly unused while rejected Lambdas sleep before retry.
-- Repository route warm now requires two concurrent RIFF responses before advertising
-  two slots. The live launch-template v13 AMI still uses one RIFF until a new image and
-  launch-template version pass fresh-node validation.
-- v13 starts Target Optimizer only after the complete DeanVoice warm succeeds,
-  including a valid RIFF from the real `/inference/tts` route.
+- Launch-template v14 requires two concurrent RIFF responses before advertising two
+  slots. A fresh validator completed both syntheses in 3 seconds, full cloud-init warm
+  in 206 seconds, became healthy in the real target group, and passed public RIFF synthesis.
+- v14 starts Target Optimizer only after the complete DeanVoice warm succeeds.
 - Public GI DeanVoice synthesis passed after fresh-instance cold-load validation.
   A fresh v10 node completed cloud-init in 442 seconds: its timed warm command spent
   9 seconds on cache lookups, 273 seconds loading the Python/base/voice model stack,
@@ -246,6 +245,9 @@ redundant student-entry warm-up burst.
   setting environment variables alone does not modify an existing schedule.
 - After testing, live min/desired was restored to 1 and max remains 192. The schedule
   was re-read unchanged after cleanup.
+- Validator `i-015de451bff24a73b` is stopped but remains registered as an unused target.
+  An administrator must deregister it from `vcs-stg-opt-3103` and terminate it because
+  this role is denied both actions; its stopped EBS volume still incurs storage cost.
 
 Detailed per-turn timing definitions, the complete test ledger, warm-up ownership,
 burst interpretation, and evaluated future options with downsides are maintained in

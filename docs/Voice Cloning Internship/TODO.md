@@ -10,9 +10,11 @@
   scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. The 2026-07-30
   50-GPU rehearsal was not reliable (48/100 immediately after warm; later 129/150),
   while real scale-out to 80 passed 150/150. Decide whether to raise event prewarm
-  from 50 to 80. Push the two-slot warm change, bake and fresh-node validate a new
-  AMI/LT version, then
-  run the 60-minute soak and one target termination rehearsal.
+  from 50 to 80. Two-slot warm is live in AMI/LT v14 and passed fresh-node validation.
+  Push the remaining local config/docs commits, then run the 60-minute soak and one
+  target termination rehearsal.
+- [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
+  from `vcs-stg-opt-3103` and terminate it; this role is denied both actions.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,

@@ -17,7 +17,12 @@
   from the standard ALB metric. Updated route warm
   to launch two concurrent same-model TTS calls and require two RIFF results. Bash
   concurrency/syntax and PowerShell/JSON parsing pass. The live alarm/policy were read
-  back successfully; two-slot AMI deployment remains pending.
+  back successfully.
+- Baked the two-slot gate into AMI `ami-0a2618372e7f8b8da` from commit `fff074c`
+  and promoted launch-template v14. A fresh validator completed both route syntheses
+  in 3 seconds and cloud-init warm-up in 206 seconds, became healthy through Target
+  Optimizer, and passed public RIFF synthesis. It is stopped but requires an admin to
+  deregister and terminate it because this role is denied those actions.
 
 ## 2026-07-29
 

@@ -234,9 +234,10 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The validated image is `ami-0ffe20a0a5986a0cb`, built from commit
-   `2ab26ee`. Launch template `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 13) uses this AMI, `g6.xlarge`,
+   port 3004. The validated image is `ami-0a2618372e7f8b8da` (snapshot
+   `snap-0b12245cada7a5d60`), built from commit `fff074c`. Launch template
+   `vcs-staging-gpu-inference`
+   (`lt-07728350a25e691a4`, default version 14) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
    ASG `vcs-staging-gpu-inference` now exists at desired capacity 1 with instance
    `i-02ed1e071bbf085d2`;
@@ -393,12 +394,13 @@ were read back and verified on 2026-07-30. The stored UTC times are 2026-08-01 2
 until the provisioner is rerun with `-Apply`. A maximum of 200 would require
 800 vCPUs and exceeds the verified quota.
 
-Launch-template v13 keeps Target Optimizer stopped until
-`warm-staging-deanvoice.sh` completes. Its live AMI validates one real
-`/inference/tts` RIFF after loading weights and warming references. Repository source
-now launches two same-model route requests concurrently and requires both RIFF WAVs,
-but that change is not live until a new AMI and launch-template version pass fresh-node
-validation. Scheduled prewarming remains required.
+Launch-template v14 keeps Target Optimizer stopped until
+`warm-staging-deanvoice.sh` completes. Its live AMI launches two same-model real
+`/inference/tts` requests concurrently and requires both RIFF WAVs after loading
+weights and warming references. A fresh v14 instance passed both route syntheses in
+3 seconds, completed cloud-init warm-up in 206 seconds, became healthy through the
+Target Optimizer target group, and passed a public RIFF smoke request. Scheduled
+prewarming remains required.
 
 Capacity retries sent by Lambda carry `X-VCS-Capacity-Retry`; a worker that receives
 one inserts it ahead of normal queued work while preserving FIFO within each lane.
@@ -774,13 +776,17 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The optimized target group, final AMI `ami-0ffe20a0a5986a0cb`, launch-template v13,
+7. The optimized target group, final AMI `ami-0a2618372e7f8b8da`, launch-template v14,
    ASG, one healthy `InService` instance, and fixed-increment rejection policy are live.
    The alarm adds 10 GPUs after at least one reject in a minute. Concurrent two-slot
-   route warm is locally verified but still requires a new AMI and fresh-node proof.
+   route warm passed fresh-node, target-health, and public RIFF validation.
    ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the optimized
    target. Live paired actions now prewarm 50 GPUs at 07:15 SGT and scale down to
    one at 18:00 SGT for 2026-08-02.
-8. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
+8. Validation instance `i-015de451bff24a73b` is stopped but remains registered as an
+   unused target because this role is denied deregistration and termination. An
+   administrator should deregister it from `vcs-stg-opt-3103` and terminate it; the
+   stopped EBS volume continues to incur storage cost.
+9. Only one NAT-backed private subnet currently exists (`ap-northeast-2a`). A
    production-resilient fleet should add another private subnet/AZ before relying on
    multi-AZ capacity. Route edits are admin-only for this role.
