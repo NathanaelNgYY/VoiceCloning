@@ -198,12 +198,17 @@ redundant student-entry warm-up burst.
 - Live scale-out adds 60% after one minute sampled with zero Target Optimizer capacity
   plus rejected traffic. Any sampled free slot blocks scale-out. Scale-in removes one
   instance after fifteen no-traffic minutes.
+- Repository source changes the next alarm update to +60% after any one-minute period
+  with at least one rejection. It is not live because the AWS source session expired.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
   2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below
   50 until the paired scale-down action restores min/desired 1.
 - Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
   a request routed on retry is marked and receives priority in the worker's local
   queue. A slot may be briefly unused while rejected Lambdas sleep before retry.
+- Repository route warm now requires two concurrent RIFF responses before advertising
+  two slots. The live launch-template v13 AMI still uses one RIFF until a new image and
+  launch-template version pass fresh-node validation.
 - v13 starts Target Optimizer only after the complete DeanVoice warm succeeds,
   including a valid RIFF from the real `/inference/tts` route.
 - Public GI DeanVoice synthesis passed after fresh-instance cold-load validation.

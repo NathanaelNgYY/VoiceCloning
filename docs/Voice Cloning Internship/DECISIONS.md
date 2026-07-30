@@ -43,10 +43,12 @@
 - Staging scales the existing EC2 inference service with ALB Target Optimizer and an
   ASG. SageMaker training jobs are not an inference-serving replacement; a SageMaker
   endpoint migration is deferred beyond the 2026-08-03 deadline.
-- Scale-out is capacity-based, not completed-request-rate-based: add 60% only after a
-  sampled minute with zero Target Optimizer work capacity and rejected traffic. Any
-  sampled free slot blocks scale-out. Idle scale-in removes one instance after fifteen
-  no-traffic minutes and stops at the one-GPU baseline.
+- Scale-out is rejection-based, not completed-request-rate-based: add 60% after any
+  one-minute ALB metric period with at least one Target Optimizer rejection. The free
+  capacity condition was removed because sampled free slots coexisted with real 504s.
+  This can over-scale from one transient reject; measure false scale-outs and GPU-hours.
+  A true 30-second reaction requires a custom high-resolution metric. Idle scale-in
+  removes one instance after fifteen no-traffic minutes and stops at the baseline.
 - Retry priority is intentionally local, not global. ALB/Target Optimizer chooses a
   target without knowing retry priority. Once an admitted request reaches a worker,
   `X-VCS-Capacity-Retry` places it ahead of normal local queued work while preserving
@@ -54,7 +56,8 @@
 - The GI student client must not load/warm the shared voice when every student enters.
   Each ASG node owns preparation and exposes Target Optimizer only after loading the
   model, caching the primary plus auxiliary references, running throwaway synthesis,
-  and validating the real TTS route. This prevents a redundant user-entry warm burst.
+  and validating two concurrent real-route RIFF syntheses before advertising its two
+  slots. This prevents a redundant user-entry warm burst and single-slot false readiness.
 - Scheduled prewarming is the event safety mechanism. Reactive scaling is retained for
   sustained unforeseen demand but cannot hide the several-minute GPU launch/model-load
   delay from the burst that triggered it.

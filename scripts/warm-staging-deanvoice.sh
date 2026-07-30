@@ -66,8 +66,7 @@ post_json /ref-audio/warm 300 '{
 }'
 finish_phase "reference_cache_and_synthesis"
 
-route_warm_path="/tmp/vcs-staging-deanvoice-route-warm.wav"
-post_json /inference/tts 300 '{
+route_warm_body='{
   "voiceProfileId":"deanvoice-v1",
   "ref_audio_path":"training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0004481280_0004613440.wav",
   "aux_ref_audio_paths":[
@@ -88,13 +87,41 @@ post_json /inference/tts 300 '{
   "split_bucket":true,
   "parallel_infer":false,
   "fragment_interval":0.1
-}' > "${route_warm_path}"
-if [[ "$(head -c 4 "${route_warm_path}")" != "RIFF" ]]; then
-  echo 'DeanVoice route-level warm did not return a RIFF WAV.' >&2
+}'
+route_warm_path_1="/tmp/vcs-staging-deanvoice-route-warm-1.wav"
+route_warm_path_2="/tmp/vcs-staging-deanvoice-route-warm-2.wav"
+cleanup_route_warm() {
+  rm -f "${route_warm_path_1}" "${route_warm_path_2}"
+}
+trap cleanup_route_warm EXIT
+
+# Exercise both configured same-model synthesis slots concurrently before Target
+# Optimizer starts. One successful request proves only one slot is ready.
+post_json /inference/tts 300 "${route_warm_body}" > "${route_warm_path_1}" &
+route_warm_pid_1="$!"
+post_json /inference/tts 300 "${route_warm_body}" > "${route_warm_path_2}" &
+route_warm_pid_2="$!"
+route_warm_failed=0
+if ! wait "${route_warm_pid_1}"; then
+  route_warm_failed=1
+fi
+if ! wait "${route_warm_pid_2}"; then
+  route_warm_failed=1
+fi
+if [[ "${route_warm_failed}" -ne 0 ]]; then
+  echo 'DeanVoice two-slot route warm request failed.' >&2
   exit 1
 fi
-rm -f "${route_warm_path}"
-finish_phase "route_level_synthesis"
+
+for route_warm_path in "${route_warm_path_1}" "${route_warm_path_2}"; do
+  if [[ "$(head -c 4 "${route_warm_path}")" != "RIFF" ]]; then
+    echo "DeanVoice two-slot route warm did not return RIFF for ${route_warm_path}." >&2
+    exit 1
+  fi
+done
+cleanup_route_warm
+trap - EXIT
+finish_phase "route_level_two_slot_synthesis"
 
 status="$(curl --fail --silent --show-error "${worker_url}/inference/status")"
 if [[ "${status}" != *'"ready":true'* ]]; then

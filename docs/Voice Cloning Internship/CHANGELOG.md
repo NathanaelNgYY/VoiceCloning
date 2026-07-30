@@ -11,6 +11,12 @@
   alarm scaled 50→80; route-warmed 80 GPUs completed 150/150. Restored min/desired 1.
   Raw JSON remains under ignored `.tmp/`; detailed timing is in repo
   `docs/staging-architecture.md`. No application code changed.
+- Changed the provisioned scale-out condition from zero sampled capacity plus rejects
+  to any Target Optimizer rejection in one 60-second period, retaining +60%. Exact
+  30-second triggering is unavailable from the standard ALB metric. Updated route warm
+  to launch two concurrent same-model TTS calls and require two RIFF results. Bash
+  concurrency/syntax and PowerShell/JSON parsing pass. Live alarm/AMI deployment is
+  pending because the User-level AWS session expired.
 
 ## 2026-07-29
 

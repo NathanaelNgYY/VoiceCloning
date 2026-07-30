@@ -20,7 +20,7 @@
   "maxSize": 192,
   "desiredCapacity": 1,
   "healthCheckGracePeriodSeconds": 600,
-  "scaleOutPercentWhenFull": 60,
+  "scaleOutPercentOnReject": 60,
   "scaleInIdleMinutes": 15,
   "defaultPreWarmCapacity": 2,
   "eventCapacity": 50

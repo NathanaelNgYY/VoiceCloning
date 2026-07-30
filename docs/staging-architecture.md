@@ -252,13 +252,13 @@ The implemented staging design keeps the public hostnames and separates roles:
    bursts. The requested event default is now 50 for additional headroom. This
    value is also applied to and verified on the live scheduled action.
 
-Live scaling uses Target Optimizer capacity signals rather than completed-request
-target tracking:
+The repository's next scaling configuration uses Target Optimizer rejection signals
+rather than completed-request target tracking:
 
-- scale out by 60% after one 60-second datapoint where advertised work capacity is
-  zero and Target Optimizer rejected traffic;
-- do not scale when any work slot is visible in the sampled minute, even if retry
-  rejects also occurred;
+- scale out by 60% after one 60-second datapoint containing at least one
+  `TargetControlRequestRejectCount`;
+- do not require sampled free capacity to be zero; this is intentionally aggressive
+  and can scale from one transient rejection;
 - scale in one instance after fifteen one-minute periods with no ALB traffic;
 - default instance warmup and ELB health grace are 600 seconds, default cooldown is
   300 seconds, and target deregistration delay is 120 seconds;
@@ -266,12 +266,13 @@ target tracking:
   deliberately blocks automatic scale-in below 50 until a paired action restores
   minimum/desired 1.
 
-`TargetControlWorkQueueLength` is sampled, not a durable request queue. A rejected
-Lambda invocation sleeps and retries; a slot that becomes free during that delay can
-appear unused until the next retry. Therefore reject count alone is deliberately not a
-scale-out signal. Idle automatic scale-in begins after about fifteen quiet minutes and
+The ALB metric is published in 60-second periods, so this configuration cannot promise
+an exact 30-second reaction. A true 30-second rule requires a custom high-resolution
+metric publisher. Idle automatic scale-in begins after about fifteen quiet minutes and
 may take another two minutes to drain. Reactive scale-out still cannot rescue the first
-sudden burst because new GPUs take minutes to boot and warm.
+sudden burst because new GPUs take minutes to boot and warm. As of 2026-07-30, this
+repository change is locally tested but the live alarm retains the earlier
+zero-capacity-plus-rejection condition because the AWS source session expired.
 
 Target Optimizer requires a new target group and its agent on every inference target.
 Do not apply it to the WebSocket gateway on port 3002 or the training worker on 3001.
@@ -393,11 +394,11 @@ until the provisioner is rerun with `-Apply`. A maximum of 200 would require
 800 vCPUs and exceeds the verified quota.
 
 Launch-template v13 keeps Target Optimizer stopped until
-`warm-staging-deanvoice.sh` completes. The warm script now calls the real
-`/inference/tts` route and validates a RIFF WAV in addition to loading weights and
-warming references. This prevents optimized traffic from reaching a worker before the
-same synthesis route used by the chatbot has completed once. A first production wave
-can still be slower than the synthetic warm, so scheduled prewarming remains required.
+`warm-staging-deanvoice.sh` completes. Its live AMI validates one real
+`/inference/tts` RIFF after loading weights and warming references. Repository source
+now launches two same-model route requests concurrently and requires both RIFF WAVs,
+but that change is not live until a new AMI and launch-template version pass fresh-node
+validation. Scheduled prewarming remains required.
 
 Capacity retries sent by Lambda carry `X-VCS-Capacity-Retry`; a worker that receives
 one inserts it ahead of normal queued work while preserving FIFO within each lane.
@@ -775,6 +776,8 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
 7. The optimized target group, final AMI `ami-0ffe20a0a5986a0cb`, launch-template v13,
    ASG, one healthy `InService` instance, and zero-capacity scaling policy are live.
+   Repository changes for any-rejection scaling and concurrent two-slot route warm are
+   locally verified but still require AWS credentials, a new AMI, and fresh-node proof.
    ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the optimized
    target. Live paired actions now prewarm 50 GPUs at 07:15 SGT and scale down to
    one at 18:00 SGT for 2026-08-02.
