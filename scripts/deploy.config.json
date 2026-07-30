@@ -5,7 +5,7 @@
     "s3Region": "ap-southeast-1",
     "instanceId": "i-0f0da8be59367f7a8",
     "branch": "staging",
-    "chatbotBranch": "staging-chatbot",
+    "chatbotBranch": "codex/staging-multi-user-scaling",
     "chatbotBuildMode": "gi",
     "workerAccess": "ssm",
     "autoscaling": {
@@ -30,7 +30,7 @@
     "clientTargets": {
       "training": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-training",
       "live-fast": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-live-fast",
-      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-chatbot"
+      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-gi"
     }
   },
   "dev": {
