@@ -590,6 +590,65 @@ unwarmed layer in the routed Target Optimizer/ALB/Lambda path or keep new target
 of service until an equivalent routed readiness probe succeeds; blindly adding more
 local rounds is not justified by this evidence.
 
+### v16/v17 restart-safe and public-route prime proof
+
+The v15 fleet also exposed a separate first-boot failure. `unattended-upgrade`
+upgraded libc immediately after local warm and restarted containerd, NVIDIA,
+networking, Target Optimizer, and `gpu-inference-worker`. The restarted Node worker
+listened on port 3003 with `ready:false`, while Target Optimizer had already started.
+ALB health returned 503 and Auto Scaling churned the fleet. Launch-template v16 fixes
+that failure by masking automatic-update units on the immutable event fleet and
+putting the full DeanVoice warm in the worker's `ExecStartPost`; Target Optimizer
+cannot start until that restart-safe gate completes. A fresh v16 canary and three
+fresh fleet samples showed `cloud-init: done`, `NRestarts=0`, both services active,
+all update units masked, and `ready:true`.
+
+That fix removed churn but did not by itself solve public cold-burst latency. On a
+stable 50-target v16 fleet, 100 concurrent users completed only 48/100; all 52
+failures were first-turn CloudFront 504s. The same hot fleet delivered turn-one audio
+to 150/150 and completed 133/150; the 17 failures were later WebSocket 1006 closures.
+CloudWatch Lambda evidence ruled out Lambda cold-start cost: the fresh window had 100
+cold starts averaging 126.7 ms, but request duration p95/max was 30.36/37.89 seconds.
+Target Optimizer published 21 control-request rejections for the 07:39 UTC minute.
+The accepted synthesis work therefore continued after CloudFront's response window.
+
+A controlled realistic public prime then sent 100 concurrent first-clip requests
+through CloudFront, Lambda, ALB, Target Optimizer, and the GPUs. The prime itself
+returned 55 WAVs and 45 expected 504s; after a 30-second backend settle, the same fresh
+fleet completed 100/100 full three-turn sessions. Launch-template v17 automates the
+same operation: after local warm and Target Optimizer start, every new instance waits
+90 seconds, sends two concurrent realistic public first-clip requests, then waits
+45 seconds for work hidden by a CloudFront 504 to finish. Five independent v17 batch
+samples showed `public_prime completed`, active workers, and zero service restarts.
+
+Audio-heard results count only first-chunk HTTP 200 RIFF responses:
+
+| v17 fleet / users | Turn | Heard / users | First audio fastest / average / p50 / p95 / slowest | First-audio total | Average full voice |
+|---|---:|---:|---:|---:|---:|---:|
+| Auto-public-primed 50 / 100 | 1 | 100/100 | 3.92 / 6.51 / 5.01 / 11.15 / 14.00 s | 650.75 s | 26.66 s |
+| Auto-public-primed 50 / 100 | 2 | 100/100 | 1.26 / 2.16 / 2.12 / 3.10 / 3.29 s | 216.30 s | 16.09 s |
+| Auto-public-primed 50 / 100 | 3 | 100/100 | 1.16 / 2.03 / 1.93 / 3.02 / 3.35 s | 203.15 s | 16.78 s |
+| Same hot 50 / 150 | 1 | 150/150 | 3.19 / 6.46 / 4.24 / 12.04 / 18.59 s | 969.33 s | 26.89 s |
+| Same hot 50 / 150 | 2 | 148/150 | 1.56 / 3.02 / 2.80 / 4.10 / 10.54 s | 447.10 s | 20.05 s |
+| Same hot 50 / 150 | 3 | 148/150 | 1.24 / 2.71 / 2.63 / 3.80 / 6.64 s | 400.70 s | 16.81 s |
+
+The v17 wall times were 118.25 seconds for fresh/primed 100 and 137.93 seconds
+for hot 150. The first run had no failures. The second had no TTS failure and two
+WebSocket 1006 closures after successful turn-one audio, leaving 148/150 complete.
+This proves one fresh 50-GPU v17 rehearsal, not a universal capacity guarantee.
+
+The August 2 scheduled expansion now starts at 06:50 SGT so local warm, the converged
+98-request public prime from the 49 new nodes, and backend settle finish before the
+07:15 event. Scale-down remains 18:00. During the acceptance recycle, recent volume
+deletions temporarily produced a stale regional 50-TiB gp3 quota error even though
+the live inventory had fallen to 3.42 TiB; launches resumed after quota accounting
+cleared. Verify gp3 headroom before the event and do not rehearse a mass terminate/
+relaunch immediately before 06:50.
+
+Final cleanup restored min/desired 1, ELB health authority, and the rejection alarm
+in OK state with actions enabled. Retained v17 instance `i-096eb75d9a4560973` was
+healthy and a final public RIFF smoke completed in 3.27 seconds.
+
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
 turn-one voice and later closed WebSocket code 1006; they were not TTS capacity
@@ -634,6 +693,8 @@ model and sent a throwaway inference, the preparation itself would create a redu
 4. Run reference/throwaway synthesis.
 5. Call the real `/inference/tts` route and require a RIFF WAV.
 6. Start Target Optimizer only after every previous step succeeds.
+7. In v17, wait for the event batch to converge, send two realistic requests through
+   the public CloudFront route, and allow timed-out backend work to settle.
 
 A server-side warm request covers GPU weights, references, and the real worker route.
 It does not pre-create every student's WebSocket, OpenAI session, Lambda execution

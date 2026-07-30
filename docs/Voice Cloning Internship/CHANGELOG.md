@@ -2,6 +2,23 @@
 
 ## 2026-07-30
 
+- Verified two independent fresh-fleet failure layers. First-boot unattended upgrades
+  restarted warmed v15 services and erased model readiness; commit `407ab93` and LT
+  v16 mask update units and gate every worker restart on full warm. Stable v16 still
+  completed only 48/100 fresh users, proving service restart was not the sole cause.
+- Added automatic realistic public-route priming in commit `4d06d14` and promoted LT
+  v17 on AMI `ami-021aeb72894b8c79b`. Each new node deep-warms locally, starts Target
+  Optimizer, waits 90 seconds, sends two public first-clip syntheses, and waits 45
+  seconds for backend work hidden by CloudFront 504 to finish.
+- Fresh auto-primed v17 50 GPUs completed 100/100 three-turn users with first-audio
+  averages 6.51/2.16/2.03s. Hot 150 delivered turn one to 150/150 and completed
+  148/150; two later WebSockets closed 1006 and no TTS request failed. The August 2
+  scale-up now starts 06:50 SGT so preparation completes before 07:15; scale-down
+  remains 18:00.
+- Tests: PowerShell parse/dry-run, embedded Bash syntax, JSON/diff checks, v16 canary
+  restart audit, 50-target health audits, manual public-prime A/B, v17 canary prime,
+  fresh v17 100-user full flow, and hot v17 150-user full flow. Raw JSON is ignored
+  under `.tmp/`; full timing and evidence are in repo `docs/staging-architecture.md`.
 - Changed the requested 2026-08-02 staging event prewarm from 32 to 50 GPUs in
   `scripts/staging-autoscaling.config.json` and the deployment documentation.
   Applied the live Auto Scaling scheduled action and read back min/desired 50,

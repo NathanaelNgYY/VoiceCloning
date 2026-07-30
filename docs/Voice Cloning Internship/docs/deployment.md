@@ -213,7 +213,18 @@ redundant student-entry warm-up burst.
 - The newly warmed v15 50-GPU/100-user run completed only 59/100: 40 first-turn
   CloudFront 504s and one later WebSocket 1006. The same hot fleet then completed
   150/150. Local deep warm is therefore deployed but is not a valid public-readiness
-  proof; do not add more local rounds without isolating the routed cold layer.
+  proof; do not add more local rounds.
+- LT v16 masks first-boot automatic-update services and makes full warm an
+  `ExecStartPost` gate on every worker restart. It removed post-warm service churn,
+  but stable v16 still completed only 48/100 fresh users.
+- LT v17 adds the proven public-route prime: each new node waits 90 seconds after
+  Target Optimizer starts, sends two concurrent realistic first-clip requests through
+  CloudFront, then waits 45 seconds for backend work hidden by a 504 to settle.
+  Fresh auto-primed 50 GPUs passed 100/100; hot 150 delivered turn one to 150/150 and
+  completed 148/150 with two later WebSocket 1006 closures and no TTS failures.
+- Final cleanup restored min/desired 1, ELB health authority, and the rejection alarm
+  in OK state with actions enabled. The retained v17 baseline passed a public RIFF
+  smoke in 3.27 seconds.
 - Public GI DeanVoice synthesis passed after fresh-instance cold-load validation.
   A fresh v10 node completed cloud-init in 442 seconds: its timed warm command spent
   9 seconds on cache lookups, 273 seconds loading the Python/base/voice model stack,
@@ -222,7 +233,7 @@ redundant student-entry warm-up burst.
 - A 16-node warm fleet returned 50/50 requests (p50 20.18 s, p95 24.30 s) and then
   60/60 (p50 3.67 s, p95 9.09 s). A cold 60-request burst returned 60 HTTP 504s and
   did not trigger scaling before timeout, so the 07:15 SGT scheduled prewarm is
-  mandatory. Paired 07:15/18:00 SGT actions are now live for 2026-08-02.
+  mandatory. Paired 06:50/18:00 SGT actions are now live for 2026-08-02.
 - After real-route warm, 32 GPUs completed 50/50 three-turn chatbot sessions. Median
   first voice by turn was 7.57/3.79/4.11 seconds. At 100 users, all completed first
   voice and 98 completed all three turns; the busiest sample still had five free slots,
@@ -241,8 +252,9 @@ redundant student-entry warm-up burst.
 - Repo uses max 192 and the requested event default is 50, with
   `VCS_STAGING_PREWARM_CAPACITY` and `VCS_STAGING_MAX_CAPACITY` overrides. Max 200
   is invalid against the verified 768-vCPU/192-instance On-Demand G/VT quota.
-- Live one-time actions set min/desired 50 at 07:15 SGT on 2026-08-02 and
-  restore min/desired 1 at 18:00 SGT. Both were read back and verified on
+- Live one-time actions start min/desired 50 preparation at 06:50 SGT on 2026-08-02
+  so automatic public prime finishes before the 07:15 event, and restore min/desired
+  1 at 18:00 SGT. Both were read back and verified on
   2026-07-30. The provisioner accepts flexible ISO timestamps through
   `VCS_STAGING_PREWARM_AT` and `VCS_STAGING_SCALE_DOWN_AT`, requires both, and rejects
   an end time that is not later than the start. Rerun with `-Apply` to change AWS;
@@ -263,6 +275,11 @@ redundant student-entry warm-up burst.
   turn-one audio for 60/100 and completed 59/100; successful first-audio averages were
   24.23/1.85/1.87s. The hot 150-user follow-up completed 150/150 at
   7.04/3.01/2.81s. Deep localhost warming did not improve cold public traffic.
+- During the v17 acceptance recycle, recently deleted 49x500-GiB volumes temporarily
+  left stale quota accounting and EC2 rejected launches against the 50-TiB gp3 quota;
+  the visible live inventory was already 3.42 TiB and launches resumed after accounting
+  cleared. Verify gp3 headroom before 06:50 and avoid a mass recycle immediately before
+  the event.
 
 Detailed per-turn timing definitions, the complete test ledger, warm-up ownership,
 burst interpretation, and evaluated future options with downsides are maintained in

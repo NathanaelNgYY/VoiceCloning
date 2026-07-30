@@ -1,19 +1,11 @@
 # Active TODO
 
-- [ ] Before 2026-08-02 07:15 SGT, finish staging fleet rollout: immutable
-  per-session voices, shared Full state, bounded queues, two tested same-model slots per
-  GPU, GI chatbot UI, Target Optimizer, final AMI/launch template, ASG, one fresh
-  instance, rule-3 cutover, max-192 ceiling, and paired 50-GPU 07:15/18:00 SGT
-  actions are complete and verified live.
-  Corrected route-warm testing passed 50/50 on 32 GPUs; the 100-user run completed
-  first-turn voice for 100/100 and all three turns for 98/100. True zero-capacity
-  scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. The 2026-07-30
-  50-GPU rehearsals remain unreliable: v14 completed 68/100 immediately after warm;
-  v15's 10-round deep warm completed only 59/100, while its hot follow-up passed
-  150/150. The fixed +10 policy previously scaled 50->60 and route-warmed 60 passed
-  150/150 once; earlier 80 also passed 150/150. Decide whether to raise event prewarm
-  above 50, replace localhost-only readiness with a routed readiness experiment, then
-  run the 60-minute soak and one target termination rehearsal.
+- [ ] Before 2026-08-02 06:50 SGT, verify gp3 headroom, LT v17/default, the paired
+  06:50/18:00 actions, one healthy v17 baseline, rejection alarm/actions, and a public
+  smoke. Auto-public-primed v17 passed fresh 100/100; hot 150 delivered turn one to
+  150/150 and completed 148/150 with two later WebSocket 1006 closures and no TTS
+  failure. Still run the 60-minute soak and one target termination rehearsal if time
+  and cost allow; one passing rehearsal is not a guarantee.
 - [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
   from `vcs-stg-opt-3103` and terminate it, and terminate stopped v15 validator
   `i-0eb2ca68edb88d6d7`; this role is denied the required actions.
