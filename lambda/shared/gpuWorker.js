@@ -136,6 +136,7 @@ export async function gpuPostBinary(routePath, body = {}) {
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
     contentType: response.headers.get('content-type') || 'application/octet-stream',
+    queueWaitMs: response.headers.get('x-synthesis-queue-wait-ms'),
   };
 }
 

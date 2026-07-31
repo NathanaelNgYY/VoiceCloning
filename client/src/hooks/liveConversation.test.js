@@ -14,6 +14,7 @@ import {
   splitLiveReplyChunks,
   splitLiveReplyPhrases,
   shortenFirstFastPhrase,
+  takeCompleteStreamedSentence,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
@@ -183,6 +184,44 @@ test('shortenFirstFastPhrase does not split when a half would be too short', () 
   // than producing a clipped-sounding fragment.
   const phrases = ['Yes, the inference server is fully warmed up and ready to synthesize now.'];
   assert.deepEqual(shortenFirstFastPhrase(phrases), phrases);
+});
+
+test('takeCompleteStreamedSentence waits for the following sentence to begin', () => {
+  assert.equal(
+    takeCompleteStreamedSentence('The first sentence is complete.'),
+    null,
+  );
+  assert.deepEqual(
+    takeCompleteStreamedSentence('The first sentence is complete. The next one is streaming'),
+    {
+      completeText: 'The first sentence is complete.',
+      remainderText: 'The next one is streaming',
+    },
+  );
+});
+
+test('takeCompleteStreamedSentence does not split after a title abbreviation', () => {
+  assert.equal(
+    takeCompleteStreamedSentence('Please ask Dr. Smith to review this result'),
+    null,
+  );
+});
+
+test('takeCompleteStreamedSentence supports question and full-width boundaries', () => {
+  assert.deepEqual(
+    takeCompleteStreamedSentence('Could this be bleeding? Yes, it could.'),
+    {
+      completeText: 'Could this be bleeding?',
+      remainderText: 'Yes, it could.',
+    },
+  );
+  assert.deepEqual(
+    takeCompleteStreamedSentence('这是第一句话。 这是第二句话'),
+    {
+      completeText: '这是第一句话。',
+      remainderText: '这是第二句话',
+    },
+  );
 });
 
 test('splitLiveReplyChunks restores the saved sentence limit for Dean Live Fast', () => {

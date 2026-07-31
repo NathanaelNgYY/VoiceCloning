@@ -23,8 +23,10 @@ export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
   postBinary = inferencePostBinary,
   post = inferencePost,
+  now = () => performance.now(),
 } = {}) {
   return async function handler(event) {
+    const requestStartedAt = now();
     if (event.requestContext?.http?.method === 'OPTIONS') {
       return preflight(event);
     }
@@ -58,11 +60,12 @@ export function createHandler({
     const replyToken = readReplyToken(event);
     try {
       const resolvedBody = await resolveSynthesisBody(body);
+      const profileResolvedAt = now();
       if (!resolvedBody.ref_audio_path) {
         return err(400, 'ref_audio_path is required');
       }
 
-      const { buffer, contentType } = await postBinary('/inference/tts', {
+      const { buffer, contentType, queueWaitMs } = await postBinary('/inference/tts', {
         ...resolvedBody,
         text: `${resolvedBody.text.trim()} `,
         text_split_method: 'cut0',
@@ -76,6 +79,18 @@ export function createHandler({
         // Lets barge-in free this clip if it is still queued on the worker.
         ...(replyToken ? { [REPLY_TOKEN_HEADER]: replyToken } : {}),
       });
+      const workerCompletedAt = now();
+      const profileResolveMs = Math.max(0, profileResolvedAt - requestStartedAt);
+      const workerRoundTripMs = Math.max(0, workerCompletedAt - profileResolvedAt);
+      const lambdaTotalMs = Math.max(0, workerCompletedAt - requestStartedAt);
+      const timingHeaders = {
+        'X-VCS-Profile-Resolve-Ms': profileResolveMs.toFixed(1),
+        'X-VCS-Worker-Round-Trip-Ms': workerRoundTripMs.toFixed(1),
+        'X-VCS-Lambda-Total-Ms': lambdaTotalMs.toFixed(1),
+        ...(queueWaitMs != null && queueWaitMs !== ''
+          ? { 'X-VCS-GPU-Queue-Wait-Ms': String(queueWaitMs) }
+          : {}),
+      };
 
       return {
         statusCode: 200,
@@ -83,6 +98,8 @@ export function createHandler({
         headers: {
           'Content-Type': contentType || 'audio/wav',
           'Content-Length': String(buffer.length),
+          'Access-Control-Expose-Headers': Object.keys(timingHeaders).join(', '),
+          ...timingHeaders,
           ...corsHeaders,
         },
         body: buffer.toString('base64'),

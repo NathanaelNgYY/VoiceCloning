@@ -43,6 +43,7 @@ import {
   resolveSpeakingContinuation,
   shortenFirstFastPhrase,
   splitLiveReplyChunks,
+  takeCompleteStreamedSentence,
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
@@ -192,6 +193,7 @@ export function useLiveSpeech({
   const gatePrerollRef = useRef([]);
   const turnVoicedFramesRef = useRef(0);
   const assistantTextRef = useRef('');
+  const streamedFastReplyRef = useRef(null);
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
   // A typed question waiting for the session to come up. The Realtime session
@@ -302,6 +304,17 @@ export function useLiveSpeech({
     );
   }
 
+  function appendAudioParts(messageId, parts) {
+    if (!Array.isArray(parts) || parts.length === 0) return;
+    setMessagesSync((prev) =>
+      prev.map((message) => (
+        message.id === messageId
+          ? { ...message, audioParts: [...(message.audioParts || []), ...parts] }
+          : message
+      ))
+    );
+  }
+
   function appendMessage(message) {
     setMessagesSync((prev) => [...prev, message]);
   }
@@ -358,6 +371,7 @@ export function useLiveSpeech({
     activeUserMessageIdRef.current = '';
     activeAssistantMessageIdRef.current = '';
     currentSynthesisMessageIdRef.current = '';
+    streamedFastReplyRef.current = null;
     pendingInputAudioRef.current = false;
     setBargeInArmed(false);
     bargeInFramesRef.current = 0;
@@ -730,6 +744,129 @@ export function useLiveSpeech({
         currentSynthesisMessageIdRef.current = '';
       }
     }
+  }
+
+  function streamedFastReplyIsStale(state) {
+    return (
+      isCancelledRef.current
+      || state.runId !== runIdRef.current
+      || cancelledReplyIdsRef.current.has(state.messageId)
+    );
+  }
+
+  function failStreamedFastReply(state, err) {
+    if (state.failed || streamedFastReplyIsStale(state)) return;
+    state.failed = true;
+    patchMessage(state.messageId, {
+      status: 'error',
+      error: err.message || 'Voice generation failed',
+    });
+    if (!isVoiceStoppedMessage(state.messageId)) {
+      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+      setSelectedReplyId('');
+      const nextPhase = socketRef.current ? 'listening' : 'idle';
+      setPhase(nextPhase);
+      syncOpenAiInputWithMic(nextPhase);
+    }
+  }
+
+  function queueStreamedFastText(state, text) {
+    let phrases = splitLiveReplyChunks(text, {
+      maxChunkWords: fastMaxChunkWordsRef.current,
+      maxSentencesPerChunk: fastMaxSentencesPerChunkRef.current,
+    });
+    if (state.partCount === 0) {
+      phrases = shortenFirstFastPhrase(phrases);
+    }
+    if (phrases.length === 0) return;
+
+    const queuedParts = phrases.map((phrase) => {
+      state.partCount += 1;
+      return {
+        id: `${state.messageId}-part-${state.partCount}`,
+        index: state.partCount,
+        text: phrase,
+        status: 'queued',
+        audioUrl: null,
+        error: null,
+      };
+    });
+    appendAudioParts(state.messageId, queuedParts);
+
+    for (const part of queuedParts) {
+      state.chain = state.chain.then(async () => {
+        if (state.failed || streamedFastReplyIsStale(state)) return;
+        patchAudioPart(state.messageId, part.id, { status: 'generating', error: null });
+        const { blob } = await synthesizeForEngine(
+          state.synthesis.engine,
+          buildLiveSentenceParams(part.text, state.activeRefParams, liveLanguage, {
+            skipVerify: part.index === 1,
+          }),
+          { replyToken: replyTokenFor(state.messageId) },
+        );
+        if (streamedFastReplyIsStale(state)) return;
+        const url = URL.createObjectURL(blob);
+        patchAudioPart(state.messageId, part.id, {
+          status: 'ready',
+          audioUrl: url,
+          error: null,
+        });
+      }).catch((err) => failStreamedFastReply(state, err));
+    }
+  }
+
+  function startStreamedFastReply(messageId, completeText, runId) {
+    if (streamedFastReplyRef.current || !isPhraseMode) return null;
+    const synthesis = getActiveSynthesisSnapshot();
+    if (synthesis.engine === 'full' || !synthesis.refParams) return null;
+
+    const state = {
+      messageId,
+      runId,
+      synthesis,
+      activeRefParams: synthesis.refParams,
+      consumedText: completeText,
+      partCount: 0,
+      chain: Promise.resolve(),
+      failed: false,
+      finalized: false,
+    };
+    streamedFastReplyRef.current = state;
+    currentSynthesisMessageIdRef.current = messageId;
+    cancelledReplyIdsRef.current.delete(messageId);
+    pauseOpenAiInput();
+    clearReplySelectionUnlessPlaying();
+    setPhase('speaking');
+    patchMessage(messageId, {
+      status: 'generating_voice',
+      error: null,
+      audioParts: [],
+    });
+    queueStreamedFastText(
+      state,
+      fixSpeechPronunciation(cleanLiveText(completeText)),
+    );
+    return state;
+  }
+
+  function finishStreamedFastReply(state, remainingText) {
+    if (!state || state.finalized) return;
+    state.finalized = true;
+    queueStreamedFastText(
+      state,
+      fixSpeechPronunciation(cleanLiveText(remainingText)),
+    );
+    state.chain.finally(() => {
+      if (!state.failed && !streamedFastReplyIsStale(state)) {
+        patchMessage(state.messageId, { status: 'ready' });
+      }
+      if (streamedFastReplyRef.current === state) {
+        streamedFastReplyRef.current = null;
+      }
+      if (currentSynthesisMessageIdRef.current === state.messageId) {
+        currentSynthesisMessageIdRef.current = '';
+      }
+    });
   }
 
   async function synthesizeFullQueuedAssistantReply(messageId, text, runId, synthesis, activeRefParams) {
@@ -1400,21 +1537,44 @@ export function useLiveSpeech({
       case 'assistant.text.delta': {
         const id = ensureAssistantMessage();
         assistantTextRef.current += event.text || '';
-        patchMessage(id, { text: assistantTextRef.current, status: 'thinking' });
+        const streamedState = streamedFastReplyRef.current;
+        patchMessage(id, {
+          text: assistantTextRef.current,
+          status: streamedState ? 'generating_voice' : 'thinking',
+        });
         setInterimTranscript(assistantTextRef.current);
+        if (!streamedState) {
+          const completed = takeCompleteStreamedSentence(assistantTextRef.current);
+          if (completed) {
+            startStreamedFastReply(id, completed.completeText, runId);
+          }
+        }
         break;
       }
 
       case 'assistant.text.cancelled': {
         // OpenAI cancelled this reply mid-generation (the user spoke over it and
-        // a fresh reply is coming). Keep any partial text as a quiet
-        // "interrupted" bubble for context — never send it to TTS — and drop the
-        // bubble entirely if nothing had streamed yet.
+        // a fresh reply is coming). Keep any partial text as an interrupted bubble
+        // for context and cancel an early first-sentence clip if one already began.
         const partialText = cleanLiveText(assistantTextRef.current || event.text || '');
         const id = activeAssistantMessageIdRef.current;
+        const streamedState = streamedFastReplyRef.current;
         assistantTextRef.current = '';
         activeAssistantMessageIdRef.current = '';
         setInterimTranscript('');
+        if (streamedState) {
+          cancelledReplyIdsRef.current.add(streamedState.messageId);
+          const replyToken = replyTokensRef.current.get(streamedState.messageId);
+          if (replyToken) cancelLiveReply(replyToken).catch(() => {});
+          streamedFastReplyRef.current = null;
+          if (currentSynthesisMessageIdRef.current === streamedState.messageId) {
+            currentSynthesisMessageIdRef.current = '';
+          }
+          setSelectedReplyId('');
+          const nextPhase = socketRef.current ? 'listening' : 'idle';
+          setPhase(nextPhase);
+          syncOpenAiInputWithMic(nextPhase);
+        }
         if (id) {
           if (partialText) {
             patchMessage(id, { text: partialText, status: 'interrupted' });
@@ -1429,15 +1589,24 @@ export function useLiveSpeech({
         // Display the clean model text (the streamed raw, e.g. "GI bleeding",
         // "6.7 percent"); speak the gateway-preprocessed text with dragged
         // initialisms rejoined for smooth pronunciation ("G I" -> "gee eye").
-        const displayText = cleanLiveText(assistantTextRef.current || event.text || '');
+        const rawDisplayText = assistantTextRef.current || event.text || '';
+        const displayText = cleanLiveText(rawDisplayText);
         const speechText = fixSpeechPronunciation(cleanLiveText(event.text || assistantTextRef.current || ''));
+        const streamedState = streamedFastReplyRef.current;
         assistantTextRef.current = '';
         setInterimTranscript('');
         if (speechText) {
           const id = ensureAssistantMessage();
           activeAssistantMessageIdRef.current = '';
           patchMessage(id, { text: displayText || speechText, status: 'generating_voice' });
-          synthesizeAssistantReply(id, speechText, runId);
+          if (streamedState?.messageId === id) {
+            const remainingText = rawDisplayText
+              .slice(streamedState.consumedText.length)
+              .trimStart();
+            finishStreamedFastReply(streamedState, remainingText);
+          } else {
+            synthesizeAssistantReply(id, speechText, runId);
+          }
         } else if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }

@@ -5,7 +5,9 @@ import { createHandler, handler } from './index.js';
 
 test('live tts handler resolves voiceProfileId to a saved full profile before synthesis', async () => {
   const calls = [];
+  const timestamps = [100, 103, 118];
   const handler = createHandler({
+    now: () => timestamps.shift(),
     resolveSynthesisBody: async (body) => ({
       ...body,
       ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
@@ -24,6 +26,7 @@ test('live tts handler resolves voiceProfileId to a saved full profile before sy
       return {
         buffer: Buffer.from('RIFFdemo'),
         contentType: 'audio/wav',
+        queueWaitMs: '4',
       };
     },
   });
@@ -39,6 +42,11 @@ test('live tts handler resolves voiceProfileId to a saved full profile before sy
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers['Content-Type'], 'audio/wav');
+  assert.equal(response.headers['X-VCS-Profile-Resolve-Ms'], '3.0');
+  assert.equal(response.headers['X-VCS-Worker-Round-Trip-Ms'], '15.0');
+  assert.equal(response.headers['X-VCS-Lambda-Total-Ms'], '18.0');
+  assert.equal(response.headers['X-VCS-GPU-Queue-Wait-Ms'], '4');
+  assert.match(response.headers['Access-Control-Expose-Headers'], /X-VCS-GPU-Queue-Wait-Ms/u);
   assert.equal('X-Word-Timestamps' in response.headers, false);
   assert.equal(Buffer.from(response.body, 'base64').toString('utf-8'), 'RIFFdemo');
   assert.deepEqual(calls, [

@@ -333,11 +333,21 @@ Begin that sentence exactly with "${marker}."`;
           const audioResponse = Buffer.from(await response.arrayBuffer());
           const chunkDoneAt = performance.now();
           if (chunkIndex === 0) currentTurn.firstVoiceAt = chunkDoneAt;
+          const numericHeader = (name) => {
+            const value = Number(response.headers.get(name));
+            return Number.isFinite(value) ? value : null;
+          };
           chunkResults.push({
             index: chunkIndex + 1,
             status: response.status,
             bytes: audioResponse.length,
             latencyMs: chunkDoneAt - chunkStartedAt,
+            backendTimingMs: {
+              profileResolve: numericHeader('x-vcs-profile-resolve-ms'),
+              workerRoundTrip: numericHeader('x-vcs-worker-round-trip-ms'),
+              lambdaTotal: numericHeader('x-vcs-lambda-total-ms'),
+              gpuQueueWait: numericHeader('x-vcs-gpu-queue-wait-ms'),
+            },
             ok: response.ok
               && response.headers.get('content-type')?.startsWith('audio/wav')
               && audioResponse.subarray(0, 4).toString('ascii') === 'RIFF',
@@ -367,6 +377,7 @@ Begin that sentence exactly with "${marker}."`;
           ttsStatus: chunkResults.map((chunk) => chunk.status),
           ttsBytes: chunkResults.reduce((sum, chunk) => sum + chunk.bytes, 0),
           chunkLatencyMs: chunkResults.map((chunk) => Math.round(chunk.latencyMs)),
+          chunkBackendTimingMs: chunkResults.map((chunk) => chunk.backendTimingMs),
           timingsMs: {
             speechToTranscript: currentTurn.transcriptAt == null
               || currentTurn.speechEndedAt == null
@@ -517,6 +528,26 @@ const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
       speechToFirstVoice: metric('speechToFirstVoice'),
       firstVoiceChunk: summarize(
         turnResults.map((item) => item.chunkLatencyMs?.[0]).filter(Number.isFinite),
+      ),
+      firstVoiceProfileResolve: summarize(
+        turnResults
+          .map((item) => item.chunkBackendTimingMs?.[0]?.profileResolve)
+          .filter(Number.isFinite),
+      ),
+      firstVoiceWorkerRoundTrip: summarize(
+        turnResults
+          .map((item) => item.chunkBackendTimingMs?.[0]?.workerRoundTrip)
+          .filter(Number.isFinite),
+      ),
+      firstVoiceLambdaTotal: summarize(
+        turnResults
+          .map((item) => item.chunkBackendTimingMs?.[0]?.lambdaTotal)
+          .filter(Number.isFinite),
+      ),
+      firstVoiceGpuQueueWait: summarize(
+        turnResults
+          .map((item) => item.chunkBackendTimingMs?.[0]?.gpuQueueWait)
+          .filter(Number.isFinite),
       ),
       voiceSynthesis: metric('voiceSynthesis'),
       endToEnd: metric('endToEnd'),

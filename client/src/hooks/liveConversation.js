@@ -338,9 +338,42 @@ const FAST_FIRST_PHRASE_MAX_CHARS = 70;
 const FAST_PHRASE_MIN_CHARS = 24;
 const FAST_PHRASE_MIN_WORDS = 3;
 const CLAUSE_BREAK_RE = /[,;:，；：]/u;
+const STREAMED_SENTENCE_BOUNDARY_RE = /[.!?。！？](?:["'”’)\]]*)\s+(?=\S)/gu;
+const NON_TERMINAL_PERIOD_RE = /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e)\.$/iu;
+const STREAMED_SENTENCE_MIN_CHARS = 18;
+const STREAMED_SENTENCE_MIN_CJK_CHARS = 6;
 
 function countWords(text) {
   return (String(text).trim().match(/\S+/gu) || []).length;
+}
+
+// A streamed period is not enough evidence that a sentence is complete: the next
+// delta may turn "Dr." into "Dr. Smith" or append more words. Wait until at least
+// one non-space character from the following sentence has arrived, then return the
+// completed prefix. This lets Live Fast start TTS while OpenAI streams the remainder
+// without guessing from an unfinished clause.
+export function takeCompleteStreamedSentence(text, {
+  minChars = STREAMED_SENTENCE_MIN_CHARS,
+  minCjkChars = STREAMED_SENTENCE_MIN_CJK_CHARS,
+} = {}) {
+  const source = String(text || '');
+  STREAMED_SENTENCE_BOUNDARY_RE.lastIndex = 0;
+  let match;
+  while ((match = STREAMED_SENTENCE_BOUNDARY_RE.exec(source)) !== null) {
+    const completeText = source.slice(0, match.index + match[0].trimEnd().length).trim();
+    const cjkChars = (completeText.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu) || []).length;
+    if (
+      (completeText.length < minChars && cjkChars < minCjkChars)
+      || NON_TERMINAL_PERIOD_RE.test(completeText)
+    ) {
+      continue;
+    }
+    return {
+      completeText,
+      remainderText: source.slice(STREAMED_SENTENCE_BOUNDARY_RE.lastIndex).trimStart(),
+    };
+  }
+  return null;
 }
 
 // Live Fast plays the first clip the moment it is ready, so a long opening phrase
