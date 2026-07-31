@@ -21,14 +21,16 @@ Last updated: 2026-07-30
 ## Live AWS State
 - Account/region/role: `329599637774` / `ap-northeast-2` / `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
 - Live ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192.
-- Healthy baseline instance after the rehearsal: `i-02ed1e071bbf085d2`.
-- Final AMI `ami-0ffe20a0a5986a0cb` contains commit `2ab26ee`.
-- Launch template `lt-07728350a25e691a4` defaults to v13.
+- Healthy baseline instance after the rehearsal: `i-096eb75d9a4560973` (v17).
+- Current AMI `ami-021aeb72894b8c79b` contains commit `330d329`.
+- Launch template `lt-07728350a25e691a4` defaults to v17; user data is commit `4d06d14`.
 - Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
 - Private subnet `subnet-0c1937ef298f54500`, GPU SG `sg-03a2f3dddf4eff21c`,
   instance profile `VoiClo_GPU`. Fleet is single-AZ.
-- Live event schedule: 50 at 07:15 SGT, back to 1 at 18:00 SGT on
-  2026-08-02. Both scheduled actions were read back and verified on 2026-07-30.
+- Live event schedule: begin preparing 50 at 06:50 SGT, event ready by 07:15,
+  back to 1 at 18:00 SGT on 2026-08-02. Actions were verified live.
+- Final cleanup: ELB health authority restored; rejection alarm OK/actions enabled;
+  one public RIFF smoke passed in 3.27s.
 ## Access Procedure
 Export fresh `VCS_AWS_ACCESS_KEY_ID`, `VCS_AWS_SECRET_ACCESS_KEY`, and
 `VCS_AWS_SESSION_TOKEN` into Codex. Map to `AWS_*`, assume the role, verify account
@@ -46,33 +48,27 @@ Use per-instance `ssm:GetCommandInvocation`.
 - Fixed ALB SG egress for ports 3103/3004; missing egress caused health timeouts.
 - Added `scripts/load-test-staging-tts.mjs`: concurrent public requests count only
   HTTP 200 `audio/wav` RIFF output as success.
-- Added `scripts/warm-staging-deanvoice.sh`: check/load weights, cache main plus five
-  auxiliary references, make a throwaway clip, validate readiness, and log timings.
+- v17 runs 10 local two-slot rounds, blocks Target Optimizer behind restart-safe warm,
+  then every new node sends two realistic public primes and waits for backend settle.
 - Added event controls to `scripts/provision-staging-autoscaling.ps1`.
-  `VCS_STAGING_EVENT=true` selects 32; paired prewarm/scale-down times are mandatory.
-- LT v13 starts Target Optimizer only after weights, references, and a valid RIFF from
-  the real `/inference/tts` route have warmed.
+  `VCS_STAGING_EVENT=true` selects 50; paired prewarm/scale-down times are mandatory.
 - GI students do not call model selection/warm on page entry; each ASG node performs
   that preparation once before advertising capacity, avoiding a user-entry warm burst.
-- Scale-out is +60% after one minute sampled with zero optimizer capacity plus rejected
-  traffic. Any sampled free slot blocks scale-out. Idle scale-in removes one after
-  15 quiet minutes; warmup/grace 10m, cooldown 5m, drain 2m, floor 1.
+- Live scale-out adds 10 GPUs after at least one rejection in a one-minute period.
+  Both values are repository/env-configurable. Idle scale-in is -1 after 15 quiet
+  minutes; floor 1 outside event mode.
 - Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
   priority over normal entries in each GPU's local queue.
 ## Test Evidence
-- Corrected route-warm, 32 GPUs/50 users/3 turns: 50/50 complete; median first voice
-  7.57/3.79/4.11s; median totals 31.05/27.80/29.02s.
-- 32 GPUs/100 users/3 turns: all 100 completed first-turn voice, 98 completed all
-  turns; five free slots remained at the busiest sample, so desired correctly stayed 32.
-- Closed-loop 100 users for 120s with verification skipped: 2,427/2,427 valid WAVs, p50/p95 3.86/11.31s;
-  two free slots remained. Retry rejects and free capacity can coexist because
-  rejected Lambdas sleep before retry while slots finish work.
-- A deliberate 192-user trigger produced a zero-capacity minute at 20:20 SGT. Alarm
-  entered at 20:23:43, desired went 32->51, launches began 20:23:56, and all 19 new
-  nodes passed cloud-init/route-warm/service checks by 20:28:31.
-- Hot 51-GPU full flow: 100/100 completed all three turns; median first voice
-  5.02/3.34/3.40s and totals 23.54/19.04/17.15s. A subsequent 50/50 run had median
-  first voice 5.69/4.10/4.30s. Two users/GPU showed no first-audio penalty here.
+- Stable v16 still failed fresh 100/50 at 48/100; Lambda cold starts averaged only
+  126.7ms while duration p95/max was 30.36/37.89s and Target Optimizer rejected 21.
+- A realistic 100-request public prime absorbed 45 expected 504s; the following
+  full flow passed 100/100. v17 automates that prime.
+- Fresh auto-primed v17 50 GPUs passed 100/100. First-audio averages by turn:
+  6.51/2.16/2.03s. Hot 150 delivered turn one to 150/150 and completed 148/150;
+  two later WebSockets closed 1006 and no TTS request failed.
+- This is one passing event rehearsal, not a guarantee. Verify schedule, quota,
+  target health, cloud-init prime completion, and alarm state before the event.
 - Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
   `node scripts/load-test-staging-chatbot.mjs 50` for WebSocket->OpenAI->DeanVoice.
 
@@ -80,14 +76,9 @@ Use per-instance `ssm:GetCommandInvocation`.
 The old “352 seconds” was one combined warm-script timer, not ordinary EC2 boot or
 voice generation. Commit `62f86ff` added phase timing.
 
-- Initialized node: 13s = GPT check 5s, SoVITS check 4s, pair 1s, ref/warm synth 3s.
-- Old fresh v10 node: 378s warm command and 442s boot-to-cloud-init completion.
-- Fresh breakdown: cache 9s, Python/GPT/SoVITS/BERT/CNHuBERT load 273s,
-  reference preparation plus first synthesis 96s.
-- The fresh-only delay is consistent with first reads of snapshot-backed EBS blocks;
-  it was not S3 downloads because cache checks took only 8-9s.
-- Final v13 scale-out nodes completed full cloud-init and real-route warm about
-  272-275s after launch, substantially faster than the earlier v10 measurement.
+- Old fresh v10: 442s cloud-init; 273s was Python/model load and 96s ref/first synth.
+- Fresh v15: 20 local syntheses in 26s and cloud-init in 256s.
+- v16 proved localhost readiness still did not warm the public burst; v17 adds it.
 
 ## Incidents and Recovery
 - LT v9 AMI `ami-0b06a87a36a68328d` captured the worker entry file as zero bytes.
@@ -96,21 +87,24 @@ voice generation. Commit `62f86ff` added phase timing.
 - The old completed-request policy reacted to small sustained traffic and could scale
   despite available capacity. It is neutralized live because the role cannot delete it;
   the new zero-capacity policy is authoritative.
-- Min/desired 1 is restored after the 32->51 rehearsal; `i-02ed1e071bbf085d2` is the
-  healthy target.
-- Health must mean usable synthesis, not only a listening Node service; LT v13 gates
+- Min/desired 1 was restored after the 50->80 rehearsal.
+- Health must mean usable synthesis, not only a listening Node service; LT v14 gates
   the ALB-facing Target Optimizer until the full warm completes.
+- v15 first-boot `unattended-upgrade` restarted warmed services and erased readiness.
+  v16/v17 mask update units and rerun full warm on every worker restart.
+- Validator `i-015de451bff24a73b` is stopped but remains registered as unused; an admin
+  must deregister it from `vcs-stg-opt-3103` and terminate it because this role is denied.
+- Stopped v15 validator `i-0eb2ca68edb88d6d7` also needs administrator termination.
 
 ## Event Plan and Next Session
-- Live event actions for 2026-08-02 are 50 at 07:15 and back to 1 at
-  18:00 SGT.
+- Live actions start 50-GPU preparation at 06:50, target readiness by 07:15, and
+  return to 1 at 18:00 SGT.
 - Times are flexible via `VCS_STAGING_PREWARM_AT` and `VCS_STAGING_SCALE_DOWN_AT`;
   set both, rerun with `-Apply`, then verify AWS. Env changes alone do not reschedule.
 - Repo/live max is 192. Max 200 exceeds the audited 768-vCPU On-Demand quota;
   usage, cost, and single-AZ capacity still apply.
-- The corrected 32-GPU route-warm passed 50/50 but the 100-user run completed 98/100
-  sessions. Event prewarm is live at 50; next run a 60-minute soak, one target
-  termination, and the two-browser exact-revision race.
+- v17 public-prime rehearsal passed fresh 100/100 and hot turn one 150/150. Remaining
+  work: public smoke, gp3 headroom check, 60-minute soak, and target termination test.
 - Next session: read the three sources, check Git, assume the role, live-describe
   LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
   health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;

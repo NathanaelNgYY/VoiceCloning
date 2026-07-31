@@ -2,10 +2,62 @@
 
 ## 2026-07-30
 
+- Verified two independent fresh-fleet failure layers. First-boot unattended upgrades
+  restarted warmed v15 services and erased model readiness; commit `407ab93` and LT
+  v16 mask update units and gate every worker restart on full warm. Stable v16 still
+  completed only 48/100 fresh users, proving service restart was not the sole cause.
+- Added automatic realistic public-route priming in commit `4d06d14` and promoted LT
+  v17 on AMI `ami-021aeb72894b8c79b`. Each new node deep-warms locally, starts Target
+  Optimizer, waits 90 seconds, sends two public first-clip syntheses, and waits 45
+  seconds for backend work hidden by CloudFront 504 to finish.
+- Fresh auto-primed v17 50 GPUs completed 100/100 three-turn users with first-audio
+  averages 6.51/2.16/2.03s. Hot 150 delivered turn one to 150/150 and completed
+  148/150; two later WebSockets closed 1006 and no TTS request failed. The August 2
+  scale-up now starts 06:50 SGT so preparation completes before 07:15; scale-down
+  remains 18:00.
+- Tests: PowerShell parse/dry-run, embedded Bash syntax, JSON/diff checks, v16 canary
+  restart audit, 50-target health audits, manual public-prime A/B, v17 canary prime,
+  fresh v17 100-user full flow, and hot v17 150-user full flow. Raw JSON is ignored
+  under `.tmp/`; full timing and evidence are in repo `docs/staging-architecture.md`.
 - Changed the requested 2026-08-02 staging event prewarm from 32 to 50 GPUs in
   `scripts/staging-autoscaling.config.json` and the deployment documentation.
   Applied the live Auto Scaling scheduled action and read back min/desired 50,
   max 192 at 07:15 SGT; the paired 18:00 action remains min/desired 1, max 192.
+- Ran public three-turn WebSocket→OpenAI→DeanVoice rehearsals. Newly warm 50 GPUs
+  completed 48/100 sessions; hot 50 GPUs completed 129/150; a real zero-capacity
+  alarm scaled 50→80; route-warmed 80 GPUs completed 150/150. Restored min/desired 1.
+  Raw JSON remains under ignored `.tmp/`; detailed timing is in repo
+  `docs/staging-architecture.md`. No application code changed.
+- Changed the provisioned scale-out condition from zero sampled capacity plus rejects
+  to a configurable rejection threshold and fixed GPU increment; live/default is one
+  rejection in 60 seconds adding 10 GPUs. Exact 30-second triggering is unavailable
+  from the standard ALB metric. Updated route warm
+  to launch two concurrent same-model TTS calls and require two RIFF results. Bash
+  concurrency/syntax and PowerShell/JSON parsing pass. The live alarm/policy were read
+  back successfully.
+- Baked the two-slot gate into AMI `ami-0a2618372e7f8b8da` from commit `fff074c`
+  and promoted launch-template v14. A fresh validator completed both route syntheses
+  in 3 seconds and cloud-init warm-up in 206 seconds, became healthy through Target
+  Optimizer, and passed public RIFF synthesis. It is stopped but requires an admin to
+  deregister and terminate it because this role is denied those actions.
+- Repeated the public three-turn event rehearsal on v14. Newly warmed 50 GPUs
+  completed 68/100 users (32 first-chunk 504s); hot 50 completed 144/150 (six
+  WebSocket 1006 closures after turn-one voice). A real 226-rejection minute proved
+  fixed scale-out 50->60, and fully route-warmed 60 GPUs completed 150/150 with no
+  failures. Raw JSON is ignored under `.tmp/`; detailed audio-only timing is in repo
+  `docs/staging-architecture.md`. The fleet was restored to one after testing.
+- Strengthened `scripts/warm-staging-deanvoice.sh` from one two-request pair to 10
+  configurable two-slot rounds (20 syntheses per GPU), cycling representative medical
+  chunks through first-chunk and verified later-chunk paths before Target Optimizer
+  starts. Sequential mocks verified 20 calls, mode distribution, non-RIFF failure,
+  invalid-round rejection, and Bash syntax.
+- Deployed that deep warm from commit `330d329`, baked AMI
+  `ami-021aeb72894b8c79b`/snapshot `snap-09cf487a09a2c82f3`, and promoted launch
+  template v15. A fresh validator completed the 10 rounds in 26 seconds and total
+  cloud-init warm in 256 seconds before Target Optimizer started. The mitigation
+  failed its public proof: newly warmed 50 GPUs completed 59/100 sessions (40
+  first-turn 504s and one later WebSocket 1006), while the same hot fleet completed
+  150/150. This disproves more localhost synthesis as a sufficient readiness fix.
 
 ## 2026-07-29
 

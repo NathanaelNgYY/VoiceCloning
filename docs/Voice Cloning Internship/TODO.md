@@ -1,14 +1,14 @@
 # Active TODO
 
-- [ ] Before 2026-08-02 07:15 SGT, finish staging fleet rollout: immutable
-  per-session voices, shared Full state, bounded queues, two tested same-model slots per
-  GPU, GI chatbot UI, Target Optimizer, final AMI/launch template, ASG, one fresh
-  instance, rule-3 cutover, max-192 ceiling, and paired 50-GPU 07:15/18:00 SGT
-  actions are complete and verified live.
-  Corrected route-warm testing passed 50/50 on 32 GPUs; the 100-user run completed
-  first-turn voice for 100/100 and all three turns for 98/100. True zero-capacity
-  scaling 32->51 and a hot 51-GPU 100/100 three-turn flow are verified. Then run the
-  60-minute soak and one target termination rehearsal.
+- [ ] Before 2026-08-02 06:50 SGT, verify gp3 headroom, LT v17/default, the paired
+  06:50/18:00 actions, one healthy v17 baseline, rejection alarm/actions, and a public
+  smoke. Auto-public-primed v17 passed fresh 100/100; hot 150 delivered turn one to
+  150/150 and completed 148/150 with two later WebSocket 1006 closures and no TTS
+  failure. Still run the 60-minute soak and one target termination rehearsal if time
+  and cost allow; one passing rehearsal is not a guarantee.
+- [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
+  from `vcs-stg-opt-3103` and terminate it, and terminate stopped v15 validator
+  `i-0eb2ca68edb88d6d7`; this role is denied the required actions.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,
@@ -18,7 +18,7 @@
   publish occupied/total synthesis slots every 10 seconds and try 50-75% utilization
   for three consecutive samples, a scale-out cooldown, and slow scale-in. Compare
   first-audio latency, rejected requests, false scale-outs, and GPU-hours before
-  changing the live one-minute zero-capacity alarm; use 10-30 busy GPUs only as an
+  comparing against the planned one-minute rejection alarm; use 10-30 busy GPUs only as an
   optional minimum guard, not the primary threshold.
 - [ ] Make Live Full horizontally correct before increasing its concurrency: add a
   distributed session lease/fencing token, conditional manifest revisions,

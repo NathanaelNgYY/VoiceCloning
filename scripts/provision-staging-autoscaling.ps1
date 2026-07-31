@@ -10,6 +10,12 @@ param(
   [int]$MaxCapacity = $(if ($env:VCS_STAGING_MAX_CAPACITY) {
     [int]$env:VCS_STAGING_MAX_CAPACITY
   } else { -1 }),
+  [int]$ScaleOutRejectsPerMinute = $(if ($env:VCS_STAGING_SCALE_OUT_REJECTS_PER_MINUTE) {
+    [int]$env:VCS_STAGING_SCALE_OUT_REJECTS_PER_MINUTE
+  } else { -1 }),
+  [int]$ScaleOutAddCapacity = $(if ($env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY) {
+    [int]$env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY
+  } else { -1 }),
   [switch]$Apply,
   [switch]$SwitchListener
 )
@@ -20,6 +26,12 @@ if ($cfg.environment -ne 'staging') { throw 'This script is staging-only.' }
 if ($AmiId -notmatch '^ami-[0-9a-f]+$') { throw 'AmiId must be an AMI id.' }
 if ($DesiredCapacity -lt 0) { $DesiredCapacity = [int]$cfg.desiredCapacity }
 if ($MaxCapacity -lt 0) { $MaxCapacity = [int]$cfg.maxSize }
+if ($ScaleOutRejectsPerMinute -lt 0) {
+  $ScaleOutRejectsPerMinute = [int]$cfg.scaleOutRejectsPerMinute
+}
+if ($ScaleOutAddCapacity -lt 0) {
+  $ScaleOutAddCapacity = [int]$cfg.scaleOutAddCapacity
+}
 
 $eventEnabled = [bool]($Event -and $Event.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on'))
 if ($PreWarmCapacity -lt 0) {
@@ -54,6 +66,31 @@ if ($PreWarmCapacity -gt $MaxCapacity) {
 }
 if ($DesiredCapacity -gt $MaxCapacity) {
   throw "DesiredCapacity $DesiredCapacity cannot exceed MaxCapacity $MaxCapacity."
+}
+if ($ScaleOutRejectsPerMinute -lt 1) {
+  throw 'ScaleOutRejectsPerMinute must be at least 1.'
+}
+if ($ScaleOutAddCapacity -lt 1 -or $ScaleOutAddCapacity -gt $MaxCapacity) {
+  throw "ScaleOutAddCapacity must be from 1 to MaxCapacity $MaxCapacity."
+}
+if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeUrl) -or
+  [string]$cfg.publicPrimeUrl -notmatch '^https://') {
+  throw 'publicPrimeUrl must be an HTTPS URL.'
+}
+if ([int]$cfg.publicPrimeDelaySeconds -lt 0 -or
+  [int]$cfg.publicPrimeDelaySeconds -gt 600) {
+  throw 'publicPrimeDelaySeconds must be from 0 to 600.'
+}
+if ([int]$cfg.publicPrimeRequestsPerInstance -lt 1 -or
+  [int]$cfg.publicPrimeRequestsPerInstance -gt 10) {
+  throw 'publicPrimeRequestsPerInstance must be from 1 to 10.'
+}
+if ([int]$cfg.publicPrimeSettleSeconds -lt 0 -or
+  [int]$cfg.publicPrimeSettleSeconds -gt 300) {
+  throw 'publicPrimeSettleSeconds must be from 0 to 300.'
+}
+if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeText)) {
+  throw 'publicPrimeText must not be empty.'
 }
 $effectiveMinSize = if ($eventEnabled -and -not $PreWarmAt) {
   $PreWarmCapacity
@@ -91,19 +128,94 @@ function Invoke-AwsJson {
   return $raw | ConvertFrom-Json
 }
 
+$publicPrimeBody = @{
+  voiceProfileId = 'deanvoice-v1'
+  text = [string]$cfg.publicPrimeText
+  skip_verify = $true
+} | ConvertTo-Json -Compress
+$publicPrimeBodyB64 = [Convert]::ToBase64String(
+  [Text.Encoding]::UTF8.GetBytes($publicPrimeBody)
+)
+
 $userData = @'
 #cloud-config
+write_files:
+  - path: /etc/systemd/system/gpu-inference-worker.service.d/staging-warm.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Service]
+      ExecStartPost=/home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh
+      TimeoutStartSec=900
+  - path: /usr/local/sbin/vcs-prime-public-route.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -u
+
+      prime_url='__PUBLIC_PRIME_URL__'
+      prime_body_b64='__PUBLIC_PRIME_BODY_B64__'
+      delay_seconds=__PUBLIC_PRIME_DELAY_SECONDS__
+      request_count=__PUBLIC_PRIME_REQUESTS__
+      settle_seconds=__PUBLIC_PRIME_SETTLE_SECONDS__
+
+      sleep "${delay_seconds}"
+      prime_body="$(printf '%s' "${prime_body_b64}" | base64 --decode)"
+      pids=()
+      for request_index in $(seq 1 "${request_count}"); do
+        (
+          status="$(
+            curl --silent --show-error \
+              --max-time 60 \
+              --output "/tmp/vcs-public-prime-${request_index}.response" \
+              --write-out '%{http_code}' \
+              --header 'Content-Type: application/json' \
+              --header 'Cache-Control: no-cache' \
+              --data-binary "${prime_body}" \
+              "${prime_url}?instancePrime=$(date +%s)-${request_index}" \
+              || true
+          )"
+          echo "public_prime request=${request_index} status=${status:-000}"
+          rm -f "/tmp/vcs-public-prime-${request_index}.response"
+        ) &
+        pids+=("$!")
+      done
+      for pid in "${pids[@]}"; do
+        wait "${pid}" || true
+      done
+
+      # CloudFront can return 504 before Lambda/the GPU stops working. Let those
+      # accepted syntheses finish so the public route is hot before cloud-init ends.
+      sleep "${settle_seconds}"
+      echo 'public_prime completed'
 bootcmd:
   - [systemctl, disable, gpu-worker.service]
   - [systemctl, disable, target-optimizer-inference.service]
+  - [systemctl, mask, --now, apt-daily.service, apt-daily-upgrade.service, apt-daily.timer, apt-daily-upgrade.timer, unattended-upgrades.service, packagekit.service]
 runcmd:
   - [systemctl, disable, --now, gpu-worker.service]
   - [systemctl, disable, --now, target-optimizer-inference.service]
   - [systemctl, daemon-reload]
-  - [systemctl, enable, --now, gpu-inference-worker.service]
-  - [sudo, -u, ubuntu, /home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh]
+  - [systemctl, enable, gpu-inference-worker.service]
+  - [systemctl, restart, gpu-inference-worker.service]
   - [systemctl, enable, --now, target-optimizer-inference.service]
+  - [/usr/local/sbin/vcs-prime-public-route.sh]
 '@
+$userData = $userData.Replace('__PUBLIC_PRIME_URL__', [string]$cfg.publicPrimeUrl)
+$userData = $userData.Replace('__PUBLIC_PRIME_BODY_B64__', $publicPrimeBodyB64)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_DELAY_SECONDS__',
+  [string][int]$cfg.publicPrimeDelaySeconds
+)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_REQUESTS__',
+  [string][int]$cfg.publicPrimeRequestsPerInstance
+)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_SETTLE_SECONDS__',
+  [string][int]$cfg.publicPrimeSettleSeconds
+)
 $userDataB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($userData))
 
 $tg = Invoke-AwsJson -AllowNotFound elbv2 describe-target-groups --region $cfg.region --names $cfg.targetGroupName
@@ -247,11 +359,10 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --policy-name vcs-staging-inference-all-capacity-busy `
     --policy-type StepScaling `
-    --adjustment-type PercentChangeInCapacity `
-    --min-adjustment-magnitude 1 `
+    --adjustment-type ChangeInCapacity `
     --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
     --metric-aggregation-type Maximum `
-    --step-adjustments "MetricIntervalLowerBound=0,ScalingAdjustment=$($cfg.scaleOutPercentWhenFull)"
+    --step-adjustments "MetricIntervalLowerBound=0,ScalingAdjustment=$ScaleOutAddCapacity"
 
   $scaleInPolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
@@ -262,53 +373,16 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --metric-aggregation-type Maximum `
     --step-adjustments 'MetricIntervalUpperBound=0,ScalingAdjustment=-1'
 
-  $capacityAlarmMetrics = @(
-    @{
-      Id = 'free'
-      MetricStat = @{
-        Metric = @{
-          Namespace = 'AWS/ApplicationELB'
-          MetricName = 'TargetControlWorkQueueLength'
-          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
-        }
-        Period = 60
-        Stat = 'Sum'
-      }
-      ReturnData = $false
-    },
-    @{
-      Id = 'rejected'
-      MetricStat = @{
-        Metric = @{
-          Namespace = 'AWS/ApplicationELB'
-          MetricName = 'TargetControlRequestRejectCount'
-          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
-        }
-        Period = 60
-        Stat = 'Sum'
-      }
-      ReturnData = $false
-    },
-    @{
-      Id = 'full'
-      Label = 'All Target Optimizer capacity busy with rejected traffic'
-      Expression = 'IF((FILL(free,0)<=0)*(FILL(rejected,0)>0),1,0)'
-      ReturnData = $true
-    }
-  ) | ConvertTo-Json -Depth 8 -Compress
-  $capacityAlarmMetricsPath = Join-Path $env:TEMP 'vcs-staging-capacity-alarm-metrics.json'
-  [IO.File]::WriteAllText(
-    $capacityAlarmMetricsPath,
-    $capacityAlarmMetrics,
-    (New-Object Text.UTF8Encoding($false))
-  )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-all-capacity-busy-1m `
-    --alarm-description 'Scale out only when no Target Optimizer work capacity is advertised and requests are rejected for one minute.' `
+    --alarm-description "Add $ScaleOutAddCapacity GPUs when Target Optimizer rejects at least $ScaleOutRejectsPerMinute requests in a one-minute CloudWatch period." `
+    --namespace AWS/ApplicationELB `
+    --metric-name TargetControlRequestRejectCount `
+    --dimensions "Name=LoadBalancer,Value=$albResource" `
+    --statistic Sum --period 60 `
     --evaluation-periods 1 --datapoints-to-alarm 1 `
-    --threshold 1 --comparison-operator GreaterThanOrEqualToThreshold `
+    --threshold $ScaleOutRejectsPerMinute --comparison-operator GreaterThanOrEqualToThreshold `
     --treat-missing-data notBreaching `
-    --metrics "file://$capacityAlarmMetricsPath" `
     --alarm-actions $scaleOutPolicy.PolicyARN
 
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
@@ -367,4 +441,4 @@ if ($ScaleDownAt) {
     --min-size $cfg.minSize --max-size $MaxCapacity --desired-capacity $cfg.desiredCapacity
 }
 
-Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity PreWarmAt=$PreWarmAt"
+Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity RejectsPerMinute=$ScaleOutRejectsPerMinute ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"

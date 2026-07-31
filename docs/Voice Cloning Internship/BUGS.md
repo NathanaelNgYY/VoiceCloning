@@ -2,6 +2,10 @@
 
 ## Active
 
+- 2026-07-30: intermittent WebSocket 1006 remains under high concurrency after TTS
+  succeeds. The final v17 hot 150-user run delivered turn-one voice to 150/150 but two
+  sessions closed before turns two/three, leaving 148/150 complete. No TTS request
+  failed. Investigate gateway/client close telemetry separately from GPU capacity.
 - 2026-07-29: the corrected real-route warm made the 32-GPU/50-user chatbot flow pass
   50/50, but a 100-user three-turn run completed 98/100 sessions; two WebSockets closed
   with code 1006 after turn 1. A separate 128-user sustained TTS run produced 34
@@ -11,6 +15,16 @@
 
 ## Recently Fixed
 
+- 2026-07-30: local warm and target health did not make a fresh event fleet public-
+  burst ready. Stable v16 completed only 48/100; Lambda init averaged 126.7ms while
+  synthesis duration p95/max reached 30.36/37.89s and Target Optimizer rejected 21.
+  A realistic public prime absorbed the cold work, after which full flow passed
+  100/100. LT v17 now automates two public first-clip primes per new instance plus
+  backend settle; the fresh 50-GPU v17 acceptance run completed 100/100.
+- 2026-07-30: first-boot `unattended-upgrade` restarted the warmed v15 inference and
+  Target Optimizer services, leaving Node listening with model readiness false and
+  causing ALB 503 churn. v16/v17 mask automatic-update units and gate every worker
+  restart on the full warm before Target Optimizer can start.
 - 2026-07-29: completed-request target tracking could scale from small sustained
   traffic even while optimizer capacity was free. Scale-out now requires a sampled
   zero-capacity minute plus rejected traffic; 100 and 128 sequential users correctly
