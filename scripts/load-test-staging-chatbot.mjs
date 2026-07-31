@@ -26,14 +26,38 @@ const ttsUrl = process.env.VCS_CHATBOT_TTS_URL
   || 'https://d25sg72wp8oj5g.cloudfront.net/api/live/tts-sentence';
 const origin = process.env.VCS_CHATBOT_ORIGIN
   || 'https://d25sg72wp8oj5g.cloudfront.net';
-const audioPath = process.env.VCS_CHATBOT_AUDIO_WAV
-  || new URL('../.tmp/chatbot-load-question.wav', import.meta.url);
+const fixedAudioPath = process.env.VCS_CHATBOT_AUDIO_WAV || '';
+const QUESTION_POOL = [
+  'What is gastrointestinal bleeding?',
+  'How should I prepare for a gastroscopy?',
+  'What are the warning signs of internal bleeding that I should watch for?',
+  'How long does the endoscopy procedure usually take?',
+  'Can you explain what happens after the doctor finds the source of the bleeding?',
+];
 const timeoutMs = Number.parseInt(process.env.VCS_CHATBOT_TIMEOUT_MS || '180000', 10);
 const keepAliveIntervalMs = 15_000;
 const audioFrameMs = Number.parseInt(process.env.VCS_CHATBOT_AUDIO_FRAME_MS || '100', 10);
 const turnCount = Number.parseInt(process.env.VCS_CHATBOT_TURNS || '1', 10);
-const thinkTimeMs = Number.parseInt(process.env.VCS_CHATBOT_THINK_MS || '250', 10);
+const fixedThinkMs = process.env.VCS_CHATBOT_THINK_MS
+  ? Number.parseInt(process.env.VCS_CHATBOT_THINK_MS, 10)
+  : null;
+const thinkMsMin = fixedThinkMs
+  ?? Number.parseInt(process.env.VCS_CHATBOT_THINK_MS_MIN || '2000', 10);
+const thinkMsMax = fixedThinkMs
+  ?? Number.parseInt(process.env.VCS_CHATBOT_THINK_MS_MAX || '6000', 10);
+const rampSeconds = Number.parseInt(process.env.VCS_CHATBOT_RAMP_SECONDS || '0', 10);
 const paceAudio = process.env.VCS_CHATBOT_PACE_AUDIO !== 'false';
+const pacePlayback = process.env.VCS_CHATBOT_PACE_PLAYBACK !== 'false';
+const prefetchLeadMs = Number.parseInt(process.env.VCS_CHATBOT_PREFETCH_LEAD_MS || '750', 10);
+const bucketMs = Number.parseInt(process.env.VCS_CHATBOT_BUCKET_MS || '15000', 10);
+const sloFirstVoiceP95Ms = Number.parseInt(
+  process.env.VCS_CHATBOT_SLO_FIRST_VOICE_P95_MS || '0',
+  10,
+);
+const sloErrorRate = Number.parseFloat(process.env.VCS_CHATBOT_SLO_ERROR_RATE || '0');
+const PCM_BYTES_PER_SECOND = 24_000 * 2;
+const MAX_PLAYBACK_PACE_MS = 30_000;
+const PLAYBACK_TIMEOUT_ALLOWANCE_MS = pacePlayback ? 90_000 : 0;
 const manualCommit = process.env.VCS_CHATBOT_MANUAL_COMMIT === 'true';
 const voiceProfileId = process.env.VCS_CHATBOT_VOICE_PROFILE_ID || 'deanvoice-v1';
 const reportFile = process.env.VCS_CHATBOT_REPORT_FILE || '';
@@ -53,8 +77,18 @@ if (!Number.isInteger(audioFrameMs) || audioFrameMs < 20 || audioFrameMs > 1000)
 if (!Number.isInteger(turnCount) || turnCount < 1 || turnCount > 10) {
   throw new Error('VCS_CHATBOT_TURNS must be from 1 to 10.');
 }
-if (!Number.isInteger(thinkTimeMs) || thinkTimeMs < 0 || thinkTimeMs > 60_000) {
-  throw new Error('VCS_CHATBOT_THINK_MS must be from 0 to 60000.');
+if (!Number.isInteger(thinkMsMin) || !Number.isInteger(thinkMsMax)
+  || thinkMsMin < 0 || thinkMsMax < thinkMsMin || thinkMsMax > 60_000) {
+  throw new Error('Think time bounds must satisfy 0 <= min <= max <= 60000.');
+}
+if (!Number.isInteger(rampSeconds) || rampSeconds < 0 || rampSeconds > 3600) {
+  throw new Error('VCS_CHATBOT_RAMP_SECONDS must be from 0 to 3600.');
+}
+if (!Number.isInteger(prefetchLeadMs) || prefetchLeadMs < 0 || prefetchLeadMs > 10_000) {
+  throw new Error('VCS_CHATBOT_PREFETCH_LEAD_MS must be from 0 to 10000.');
+}
+if (!Number.isInteger(bucketMs) || bucketMs < 1000 || bucketMs > 300_000) {
+  throw new Error('VCS_CHATBOT_BUCKET_MS must be from 1000 to 300000.');
 }
 
 function percentile(sorted, fraction) {
@@ -81,7 +115,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function ensureLoadTestAudio(pathOrUrl) {
+function ensureLoadTestAudio(pathOrUrl, questionText) {
   const path = pathOrUrl instanceof URL ? fileURLToPath(pathOrUrl) : pathOrUrl;
   if (existsSync(path)) return;
   if (process.platform !== 'win32') {
@@ -108,14 +142,33 @@ function ensureLoadTestAudio(pathOrUrl) {
         '$synth = [System.Speech.Synthesis.SpeechSynthesizer]::new()',
         'try {',
         '  $synth.SetOutputToWaveFile($env:VCS_CHATBOT_GENERATED_WAV, $format)',
-        "  $synth.Speak('What is gastrointestinal bleeding?')",
+        '  $synth.Speak($env:VCS_CHATBOT_GENERATED_TEXT)',
         '} finally {',
         '  $synth.Dispose()',
         '}',
       ].join('\n'),
     ],
-    { env: { ...process.env, VCS_CHATBOT_GENERATED_WAV: path } },
+    {
+      env: {
+        ...process.env,
+        VCS_CHATBOT_GENERATED_WAV: path,
+        VCS_CHATBOT_GENERATED_TEXT: questionText,
+      },
+    },
   );
+}
+
+function buildAudioPool() {
+  if (fixedAudioPath) {
+    return [readPcmWav(fixedAudioPath)];
+  }
+  return QUESTION_POOL.map((questionText, index) => {
+    const path = fileURLToPath(
+      new URL(`../.tmp/chatbot-load-question-${index + 1}.wav`, import.meta.url),
+    );
+    ensureLoadTestAudio(path, questionText);
+    return readPcmWav(path);
+  });
 }
 
 function readPcmWav(pathOrUrl) {
@@ -207,7 +260,7 @@ function containsUserMarker(text, userNumber) {
   ).test(text);
 }
 
-function makeSession(index, audio, productionPrompt, synthesisProfile) {
+function makeSession(index, audioPool, productionPrompt, synthesisProfile) {
   const marker = markerFor(index);
   const createdAt = performance.now();
   const ready = deferred();
@@ -253,9 +306,10 @@ function makeSession(index, audio, productionPrompt, synthesisProfile) {
     error: error instanceof Error ? error.message : String(error),
   });
 
+  const sessionBudgetMs = (timeoutMs + PLAYBACK_TIMEOUT_ALLOWANCE_MS) * turnCount;
   const timer = setTimeout(
-    () => fail(new Error(`Session timed out after ${timeoutMs * turnCount} ms`)),
-    timeoutMs * turnCount,
+    () => fail(new Error(`Session timed out after ${sessionBudgetMs} ms`)),
+    sessionBudgetMs,
   );
 
   socket.on('open', () => {
@@ -315,7 +369,12 @@ Begin that sentence exactly with "${marker}."`;
         const requestedChunks = firstChunkOnly ? chunks.slice(0, 1) : chunks;
         const ttsStartedAt = performance.now();
         const chunkResults = [];
+        let playbackEndsAt = null;
         for (let chunkIndex = 0; chunkIndex < requestedChunks.length; chunkIndex += 1) {
+          if (pacePlayback && chunkIndex > 0 && playbackEndsAt != null) {
+            const waitMs = playbackEndsAt - prefetchLeadMs - performance.now();
+            if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+          }
           const chunkStartedAt = performance.now();
           const response = await fetch(
             `${ttsUrl}?chatbotLoadTest=${Date.now()}-${index}-${turnIndex}-${chunkIndex}`,
@@ -337,6 +396,11 @@ Begin that sentence exactly with "${marker}."`;
           const audioResponse = Buffer.from(await response.arrayBuffer());
           const chunkDoneAt = performance.now();
           if (chunkIndex === 0) currentTurn.firstVoiceAt = chunkDoneAt;
+          const chunkPlaybackMs = Math.min(
+            MAX_PLAYBACK_PACE_MS,
+            (audioResponse.length / PCM_BYTES_PER_SECOND) * 1000,
+          );
+          playbackEndsAt = Math.max(playbackEndsAt ?? chunkDoneAt, chunkDoneAt) + chunkPlaybackMs;
           const numericHeader = (name) => {
             const rawValue = response.headers.get(name);
             if (rawValue == null || rawValue.trim() === '') return null;
@@ -381,6 +445,7 @@ Begin that sentence exactly with "${marker}."`;
 
         const turnResult = {
           turn: turnIndex + 1,
+          atSec: Math.round((ttsDoneAt - wallStartedAt) / 1000),
           ok: validWavs && foreignMarkers.length === 0,
           transcript: currentTurn.transcript || '',
           responseWords: currentTurn.assistantText.split(/\s+/u).filter(Boolean).length,
@@ -434,7 +499,8 @@ Begin that sentence exactly with "${marker}."`;
             sessionReadyMs: Math.round(readyAt - createdAt),
           });
         } else {
-          await new Promise((resolve) => setTimeout(resolve, thinkTimeMs));
+          const pauseMs = thinkMsMin + Math.random() * (thinkMsMax - thinkMsMin);
+          await new Promise((resolve) => setTimeout(resolve, pauseMs));
           await startNextTurn();
         }
       } catch (error) {
@@ -455,6 +521,7 @@ Begin that sentence exactly with "${marker}."`;
   async function startNextTurn() {
     if (settled) return;
     turnIndex += 1;
+    const audio = audioPool[Math.floor(Math.random() * audioPool.length)];
     currentTurn = {
       inputStartedAt: performance.now(),
       assistantFirstTokenAt: null,
@@ -557,8 +624,7 @@ async function loadSynthesisProfile(index) {
   return synthesisSnapshotFromProfile(await response.json());
 }
 
-ensureLoadTestAudio(audioPath);
-const audio = readPcmWav(audioPath);
+const audioPool = buildAudioPool();
 const productionPrompt = loadProductionSystemPrompt();
 const profileWarmupStartedAt = performance.now();
 const synthesisProfiles = await Promise.all(
@@ -567,16 +633,38 @@ const synthesisProfiles = await Promise.all(
 const profileWarmupMs = performance.now() - profileWarmupStartedAt;
 const startedAt = new Date().toISOString();
 const wallStartedAt = performance.now();
-const sessions = Array.from(
-  { length: concurrency },
-  (_, index) => makeSession(index, audio, productionPrompt, synthesisProfiles[index]),
-);
-const readyStates = await Promise.all(sessions.map((session) => session.ready));
+const readyStates = new Array(concurrency).fill(false);
+let results;
+if (rampSeconds > 0) {
+  // Staggered joins: each virtual user connects at an evenly spaced, jittered
+  // offset across the ramp window and starts speaking as soon as its own
+  // session is ready — no global barrier, like a real crowd arriving.
+  const spacingMs = (rampSeconds * 1000) / concurrency;
+  results = await Promise.all(
+    Array.from({ length: concurrency }, async (_, index) => {
+      const joinDelayMs = index * spacingMs + Math.random() * spacingMs;
+      await new Promise((resolve) => setTimeout(resolve, joinDelayMs));
+      const session = makeSession(index, audioPool, productionPrompt, synthesisProfiles[index]);
+      readyStates[index] = await session.ready;
+      if (readyStates[index]) await session.start();
+      return session.result;
+    }),
+  );
+} else {
+  // Legacy barrier mode: connect everyone, wait for all sessions to be ready,
+  // then start every turn at once (deliberate connection-storm test).
+  const sessions = Array.from(
+    { length: concurrency },
+    (_, index) => makeSession(index, audioPool, productionPrompt, synthesisProfiles[index]),
+  );
+  const states = await Promise.all(sessions.map((session) => session.ready));
+  states.forEach((state, index) => { readyStates[index] = state; });
+  await Promise.all(
+    sessions.map((session, index) => (readyStates[index] ? session.start() : undefined)),
+  );
+  results = await Promise.all(sessions.map((session) => session.result));
+}
 const readyCount = readyStates.filter(Boolean).length;
-await Promise.all(
-  sessions.map((session, index) => (readyStates[index] ? session.start() : undefined)),
-);
-const results = await Promise.all(sessions.map((session) => session.result));
 const wallMs = performance.now() - wallStartedAt;
 const finishedAt = new Date().toISOString();
 const successful = results.filter((item) => item.ok);
@@ -650,6 +738,52 @@ const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
   };
 });
 
+const allTurns = results.flatMap((item) => item.turns ?? []);
+const bucketCount = Math.max(1, Math.ceil(wallMs / bucketMs));
+const timeline = Array.from({ length: bucketCount }, (_, index) => {
+  const bucketTurns = allTurns.filter(
+    (turn) => Number.isFinite(turn.atSec)
+      && turn.atSec * 1000 >= index * bucketMs
+      && (turn.atSec * 1000 < (index + 1) * bucketMs || index === bucketCount - 1),
+  );
+  return {
+    bucket: index + 1,
+    fromSec: Math.round((index * bucketMs) / 1000),
+    toSec: Math.round(Math.min(wallMs, (index + 1) * bucketMs) / 1000),
+    turnsCompleted: bucketTurns.filter((turn) => turn.ok).length,
+    turnsFailed: bucketTurns.filter((turn) => !turn.ok).length,
+    speechToFirstVoiceMs: summarize(
+      bucketTurns.map((turn) => turn.timingsMs?.speechToFirstVoice).filter(Number.isFinite),
+    ),
+    lambdaColdStarts: bucketTurns.filter((turn) => turn.chunkLambdaColdStart?.[0]).length,
+  };
+});
+
+const firstVoiceOverall = summarize(
+  allTurns.map((turn) => turn.timingsMs?.speechToFirstVoice).filter(Number.isFinite),
+);
+const turnErrorRate = allTurns.length === 0
+  ? 1
+  : allTurns.filter((turn) => !turn.ok).length / allTurns.length;
+const slo = {};
+if (sloFirstVoiceP95Ms > 0) {
+  slo.speechToFirstVoiceP95Ms = {
+    threshold: sloFirstVoiceP95Ms,
+    actual: firstVoiceOverall.p95,
+    pass: firstVoiceOverall.p95 != null && firstVoiceOverall.p95 <= sloFirstVoiceP95Ms,
+  };
+}
+if (sloErrorRate > 0) {
+  slo.turnErrorRate = {
+    threshold: sloErrorRate,
+    actual: Number(turnErrorRate.toFixed(4)),
+    pass: turnErrorRate <= sloErrorRate,
+  };
+}
+const sloChecks = Object.values(slo);
+const sloPass = sloChecks.length === 0 ? null : sloChecks.every((check) => check.pass);
+if (sloPass === false) process.exitCode = 1;
+
 const report = {
   wsUrl,
   ttsUrl,
@@ -657,7 +791,11 @@ const report = {
   finishedAt,
   concurrency,
   turnCount,
-  thinkTimeMs,
+  rampSeconds,
+  thinkMs: { min: thinkMsMin, max: thinkMsMax },
+  pacePlayback,
+  prefetchLeadMs,
+  audioPoolSize: audioPool.length,
   keepAliveIntervalMs,
   keepAliveMessagesSent: results.reduce(
     (sum, item) => sum + (Number.isInteger(item.keepAliveSent) ? item.keepAliveSent : 0),
@@ -672,6 +810,8 @@ const report = {
   failed: failures.length,
   wallMs: Math.round(wallMs),
   turnSummaries,
+  timeline,
+  ...(sloPass == null ? {} : { slo: { pass: sloPass, ...slo } }),
   isolation: {
     ownMarker: results.filter((item) => item.ownMarker).length,
     foreignMarker: results.filter((item) => item.foreignMarkers?.length > 0).length,
