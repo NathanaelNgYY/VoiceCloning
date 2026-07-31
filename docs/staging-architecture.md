@@ -15,7 +15,8 @@ Browser
   │
   ├─ https://d1qh0ebsvevhy3.cloudfront.net   (training UI)      CF EC2SYT1OKGW9Q
   ├─ https://dfzrfr93t2ruf.cloudfront.net    (live-fast UI)     CF E3DE2SRSU9JAEG
-  └─ https://d25sg72wp8oj5g.cloudfront.net   (chatbot UI)       CF E3MLIO4CZFOPEO
+  ├─ https://d25sg72wp8oj5g.cloudfront.net   (chatbot UI, gi)   CF E3MLIO4CZFOPEO
+  └─ https://d3k2rz0hqm8nxi.cloudfront.net   (chatbot UI, kiosk) CF E38A3666CJ7FVJ
         │ static assets        → S3 echolect-staging/dist-*
         │ /api/* (control)     → Lambda Function URL (start/stop GPU, model list, presign…)
         │ GPU paths (below)    → ALB voice-gpu-alb-staging → GPU instance ports 3001-3003
@@ -33,7 +34,23 @@ On-demand lifecycle: the Lambda **starts** the GPU when a user needs it; an Even
 |---|---|---|---|
 | training | d1qh0ebsvevhy3.cloudfront.net | `EC2SYT1OKGW9Q` | `echolect-staging/dist-training` |
 | live-fast | dfzrfr93t2ruf.cloudfront.net | `E3DE2SRSU9JAEG` | `echolect-staging/dist-live-fast` |
-| chatbot | d25sg72wp8oj5g.cloudfront.net | `E3MLIO4CZFOPEO` | `echolect-staging/dist-chatbot` |
+| chatbot | d25sg72wp8oj5g.cloudfront.net | `E3MLIO4CZFOPEO` | `echolect-staging/dist-gi` |
+| chatbot-text | d3k2rz0hqm8nxi.cloudfront.net | `E38A3666CJ7FVJ` | `echolect-staging/dist-chatbot-text` |
+
+⚠️ The `chatbot` distro's live S3 origin path is `/echolect-staging/dist-gi`, **not**
+`dist-chatbot` — it was repointed when the staging kiosk was rebuilt in GI mode
+(see below). The `dist-chatbot` prefix is still mounted as an orphaned origin that
+no cache behavior targets; writing there deploys nothing.
+
+`chatbot-text` (created 2026-07-31) is the second kiosk distribution: the same
+staging Lambda/ALB/GPU backend, but serving the `chatbot` build mode — the
+"Live Voice Chat" kiosk UI (engine toggle, Assistant-instructions sidebar,
+Reference documents) with the typed-question composer from `c70bf7d`. It was
+cloned from `E3MLIO4CZFOPEO`'s live config minus the gi lesson-video origin and
+its `/videos/*` behavior. Deploy with
+`scripts/deploy-client.ps1 -Env staging -Mode chatbot-text`; its client env
+(`client/env/staging/chatbot-text.env`) leaves every origin URL blank so the
+artifact is origin-agnostic and all `/api/*` traffic stays same-origin.
 
 Each distro has three origin types: S3 (static, via OAC; bucket policy on the shared bucket includes all 3 distro ARNs), the staging Lambda Function URL (API/control paths), and the staging ALB (GPU paths). Full origin/behavior JSON snapshots: `docs/aws-snapshots/cf-*-staging.json` (note: snapshots are of the *original* distros used as templates — verify against live config before relying on them).
 
@@ -41,7 +58,7 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 
 | Environment | GPU EC2 | Lambda | Training | Live TTS | Chatbot | S3 application prefix |
 |---|---|---|---|---|---|---|
-| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
+| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net (gi) + d3k2rz0hqm8nxi.cloudfront.net (kiosk) | `echolect-staging/` |
 | dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
 
 `d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot, not the dev
@@ -164,7 +181,13 @@ All three expose `GET /healthz` for the ALB health checks. Direct-to-worker endp
 ## 7. S3 layout
 
 Bucket `interns2026-small-projects-bucket-shared` (**ap-southeast-1**, not Seoul), prefix `echolect-staging/`:
-`dist-training/`, `dist-live-fast/`, `dist-chatbot/` (frontend bundles) · `models/` (incl. `models/user-models/gpt|sovits/`) · ref audio, artifacts — mirrors `echolect/` (dev). Bucket policy grants the 3 staging CF distro ARNs read via OAC.
+`dist-training/`, `dist-live-fast/`, `dist-gi/`, `dist-chatbot-text/` (frontend bundles served today) · `dist-chatbot/` (orphaned — no behavior points at it) · `models/` (incl. `models/user-models/gpt|sovits/`) · ref audio, artifacts — mirrors `echolect/` (dev). Bucket policy grants the 4 staging CF distro ARNs read via OAC.
+
+The bucket is **shared with other interns' projects** and its policy is a single
+`AllowCloudFrontServicePrincipal` statement with an explicit `AWS:SourceArn`
+allowlist (14 distribution ARNs as of 2026-07-31). A new distribution serves 403
+on every object until its ARN is appended — edit that list additively, never
+rebuild it, or you take down other projects' distributions.
 
 ## 8. Git branches ↔ environments
 

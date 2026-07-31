@@ -1,13 +1,30 @@
 // In S3 mode the client identifies models by S3 key while the worker reports the
-// local file it downloaded the key to (model_cache/<basename of the key>), so the
-// same loaded weights carry two different paths. The download preserves the key's
-// basename, making filename equality the reliable identity across both modes.
+// local file it downloaded the key to (model_cache/…), so the same loaded weights
+// carry two different paths and identity has to come from the filename.
+//
+// The old /models/download path kept the key's basename verbatim. Per-conversation
+// voice isolation resolves weights through a different one
+// (gpu-inference-worker/src/services/requestVoiceModel.js), which caches as
+// `<basename>-<12 hex digest><ext>` so two S3 keys with the same basename cannot
+// collide on disk. Comparing raw basenames therefore stopped matching: the page
+// never recognised its own model as loaded and sat on "Loading the voice" while
+// re-issuing the load forever. Tolerate that one digest suffix on either side.
+const CACHE_DIGEST_SUFFIX = /-[0-9a-f]{12}$/u;
+
+function canonicalWeightName(value) {
+  const base = String(value || '').trim().split(/[\\/]/).pop() || '';
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const extension = dot > 0 ? base.slice(dot) : '';
+  return `${stem.replace(CACHE_DIGEST_SUFFIX, '')}${extension}`;
+}
+
 export function sameLoadedWeights(selectedPath, loadedPath) {
   const selected = String(selectedPath || '').trim();
   const loaded = String(loadedPath || '').trim();
   if (!selected || !loaded) return false;
   if (selected === loaded) return true;
-  return selected.split(/[\\/]/).pop() === loaded.split(/[\\/]/).pop();
+  return canonicalWeightName(selected) === canonicalWeightName(loaded);
 }
 
 export function isSelectedModelLoaded({

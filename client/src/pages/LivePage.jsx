@@ -3600,6 +3600,37 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     stopping: 'Stopping',
   }[liveSpeech.phase] || 'Start';
 
+  // Typing and the mic share one composer row — the same treatment the gi
+  // composer got in 81fd3c7. The mic is a 44px circle matching the send button
+  // instead of the old 64px hero stacked above the input, so the two ways of
+  // asking read as equal and the transcript gets the height back.
+  const micButton = (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex size-11 shrink-0 items-center justify-center rounded-full transition active:scale-95',
+        buttonDisabled
+          ? 'cursor-not-allowed bg-slate-100 text-slate-300'
+          : isListening
+            // Listening is the one state that must read as live at this size,
+            // so it keeps a ring now that the old pulsing halo is gone.
+            ? 'text-white shadow-sm ring-2 ring-red-300/50 [background:linear-gradient(135deg,hsl(0,84%,60%)_0%,hsl(340,82%,55%)_100%)]'
+            : isConversationActive
+              ? 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+              : 'text-white shadow-sm shadow-primary/35 hover:opacity-90 [background:linear-gradient(135deg,hsl(224,85%,58%)_0%,hsl(250,80%,62%)_100%)]'
+      )}
+      onClick={liveSpeech.toggle}
+      disabled={buttonDisabled}
+      aria-pressed={liveSpeech.isMicInputEnabled}
+      title={phaseLabel}
+    >
+      <span className="sr-only">{phaseLabel}</span>
+      {liveSpeech.isMicInputEnabled || liveSpeech.phase === 'idle'
+        ? <Mic size={18} />
+        : <MicOff size={18} />}
+    </button>
+  );
+
   const statusText = liveSpeech.notice
     || (!liveSpeech.isMicInputEnabled && isConversationActive && liveSpeech.phase !== 'speaking' ? 'Mic off — voice chat still open.' : '')
     || {
@@ -4621,73 +4652,45 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <MicLevelMeter level={liveSpeech.audioLevel} active={meterActive} />
           </div>
 
-          {/* Mic row: flanking actions + centered large mic button */}
-          <div className="flex items-center justify-center gap-5">
-            <div className="flex w-28 justify-end">
-              {playbackReady && (
-                <button
-                  type="button"
-                  onClick={liveSpeech.stopVoicePlayback}
-                  title="Stop voice"
-                  className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800"
-                >
-                  <VolumeX size={13} />Stop voice
-                </button>
-              )}
-            </div>
-
-            {/* Mic button — primary focal element */}
-            <div className="relative flex items-center justify-center">
-              {/* Pulsing ring when listening */}
-              {isListening && (
-                <span className="absolute h-20 w-20 animate-ping rounded-full bg-red-400/20" />
-              )}
-              {/* Soft glow ring when idle + ready */}
-              {!isListening && !buttonDisabled && !isConversationActive && (
-                <span className="absolute h-[84px] w-[84px] rounded-full bg-gradient-to-br from-primary/15 to-violet-400/15" />
-              )}
-              <button
-                type="button"
-                className={cn(
-                  'relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full transition-all duration-200 active:scale-95',
-                  buttonDisabled
-                    ? 'cursor-not-allowed bg-slate-100 text-slate-300'
-                    : isListening
-                      ? 'text-white shadow-lg shadow-red-300/60 [background:linear-gradient(135deg,hsl(0,84%,60%)_0%,hsl(340,82%,55%)_100%)]'
-                      : isConversationActive
-                        ? 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-                        : 'text-white shadow-lg shadow-primary/35 hover:opacity-90 [background:linear-gradient(135deg,hsl(224,85%,58%)_0%,hsl(250,80%,62%)_100%)]'
+          <div className="mx-auto flex w-full max-w-lg flex-col items-center gap-2">
+            {/* Session controls ride above the composer row rather than flanking
+                the mic: the row keeps the same shape whether or not a
+                conversation is running, so the input never shifts sideways
+                mid-sentence as these appear and disappear between clips. */}
+            {(playbackReady || isConversationActive) && (
+              <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+                {playbackReady && (
+                  <button
+                    type="button"
+                    onClick={liveSpeech.stopVoicePlayback}
+                    title="Stop voice"
+                    className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800"
+                  >
+                    <VolumeX size={13} />Stop voice
+                  </button>
                 )}
-                onClick={liveSpeech.toggle}
-                disabled={buttonDisabled}
-                aria-pressed={liveSpeech.isMicInputEnabled}
-                title={phaseLabel}
-              >
-                <span className="sr-only">{phaseLabel}</span>
-                {liveSpeech.isMicInputEnabled || liveSpeech.phase === 'idle'
-                  ? <Mic size={22} />
-                  : <MicOff size={22} />}
-              </button>
-            </div>
 
-            <div className="flex w-28 justify-start">
-              {isConversationActive && (
-                <button
-                  type="button"
-                  onClick={liveSpeech.stop}
-                  className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800"
-                >
-                  <Square size={11} />End
-                </button>
-              )}
-            </div>
-          </div>
+                {isConversationActive && (
+                  <button
+                    type="button"
+                    onClick={liveSpeech.stop}
+                    className="flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800"
+                  >
+                    <Square size={11} />End
+                  </button>
+                )}
+              </div>
+            )}
 
-          {/* Type instead of speaking — for visitors whose machine has no
-              microphone, or who would rather not talk out loud. The reply is
-              still spoken in the cloned voice. */}
-          <div className="mx-auto mt-4 max-w-lg">
-            <ChatTextInput onSend={liveSpeech.sendTextMessage} disabled={!canSendText} />
+            {/* Typing and the mic share one row, with no Voice/Text toggle:
+                a visitor whose microphone does not work should not have to find
+                a setting before they can ask anything. Either control opens the
+                conversation on its own. */}
+            <ChatTextInput
+              onSend={liveSpeech.sendTextMessage}
+              disabled={!canSendText}
+              trailing={micButton}
+            />
           </div>
 
           {/* Status text — centered below mic */}

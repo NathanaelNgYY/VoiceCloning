@@ -5,6 +5,7 @@ import {
   extractModelSelectWarmedReferenceSelection,
   isSelectedModelLoaded,
   resolveInferenceStatusState,
+  sameLoadedWeights,
   shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
 } from './modelLoading.js';
@@ -298,4 +299,52 @@ test('one transient not-ready status does not flash a loaded model as missing', 
     hasKnownLoadedModel: true,
     consecutiveNotReady: 2,
   }), false);
+});
+
+// The inference worker's per-conversation voice isolation caches weights as
+// `<basename>-<12 hex digest><ext>` (gpu-inference-worker requestVoiceModel.js),
+// so the path it reports as loaded no longer equals the S3 key's basename. These
+// are the real filenames observed on the staging fleet; before the digest was
+// tolerated the page never saw its own model as loaded and looped forever on
+// "Loading the voice — this may take a moment."
+test('sameLoadedWeights matches an S3 key against the worker digest-suffixed cache file', () => {
+  assert.equal(sameLoadedWeights(
+    'models/user-models/gpt/DeanVoice-e25.ckpt',
+    '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice-e25-1203a84d89c6.ckpt',
+  ), true);
+
+  assert.equal(sameLoadedWeights(
+    'models/user-models/sovits/DeanVoice_e20_s2260.pth',
+    '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice_e20_s2260-77cb04370df3.pth',
+  ), true);
+});
+
+test('sameLoadedWeights still distinguishes different models sharing a digest shape', () => {
+  assert.equal(sameLoadedWeights(
+    'models/user-models/gpt/DeanVoice-e25.ckpt',
+    '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice-e20-1203a84d89c6.ckpt',
+  ), false);
+
+  assert.equal(sameLoadedWeights(
+    'models/user-models/gpt/Deanv2-e25.ckpt',
+    '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice-e25-1203a84d89c6.ckpt',
+  ), false);
+});
+
+test('sameLoadedWeights does not strip a suffix that is not a 12-char hex digest', () => {
+  // `-e20_s2260` and friends are real model-name segments, not cache digests.
+  assert.equal(sameLoadedWeights(
+    'models/user-models/gpt/Voice-notahexdigest.ckpt',
+    '/cache/Voice.ckpt',
+  ), false);
+});
+
+test('isSelectedModelLoaded reports ready once the digest suffix is accounted for', () => {
+  assert.equal(isSelectedModelLoaded({
+    serverReady: true,
+    selectedGPT: 'models/user-models/gpt/DeanVoice-e25.ckpt',
+    selectedSoVITS: 'models/user-models/sovits/DeanVoice_e20_s2260.pth',
+    loadedGPTPath: '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice-e25-1203a84d89c6.ckpt',
+    loadedSoVITSPath: '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice_e20_s2260-77cb04370df3.pth',
+  }), true);
 });

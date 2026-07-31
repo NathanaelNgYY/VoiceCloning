@@ -59,7 +59,11 @@ export function ChatTextInput({
         aria-label="Type your question"
         enterKeyHint="send"
         className={cn(
-          'h-11 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-5 text-sm text-slate-700',
+          // 16px on phones is deliberate: iOS Safari zooms the page when a
+          // focused input is under 16px, and that zoom is what pushed the mic
+          // and the newest bubble off the right edge while someone was typing.
+          // Back to 14px from sm up, where no browser does this.
+          'h-11 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-5 text-base sm:text-sm text-slate-700',
           'shadow-sm outline-none transition placeholder:text-slate-400',
           'focus:border-primary/40 focus:ring-2 focus:ring-primary/20',
           'disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400'

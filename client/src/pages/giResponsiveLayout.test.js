@@ -101,3 +101,25 @@ test("the gi composer keeps Stop voice and End alongside the typing row", () => 
   assert.match(composerSource, /onClick=\{onStop\}/);
   assert.match(composerSource, /onClick=\{active \? onToggleMute : onStart\}/);
 });
+
+const chatTextInputSource = readFileSync(
+  new URL("../components/ChatTextInput.jsx", import.meta.url),
+  "utf8",
+);
+
+test("the chat input is at least 16px on phones so iOS does not zoom on focus", () => {
+  // Safari zooms the whole page when a focused input is under 16px, and the
+  // zoom is what clipped the mic button and the newest bubble off the right
+  // edge while the keyboard was open. `text-sm` alone would reintroduce it.
+  assert.match(
+    chatTextInputSource,
+    /className=\{cn\([\s\S]*?text-base sm:text-sm/,
+  );
+});
+
+test("the gi kiosk sizes itself to the dynamic viewport, not 100vh", () => {
+  // On iOS `vh` is the toolbars-retracted height and ignores the on-screen
+  // keyboard, which pushed the composer below the fold exactly when typing.
+  assert.match(giChatPageSource, /className="gi-root[^"]*h-\[100dvh\]/);
+  assert.doesNotMatch(giChatPageSource, /className="gi-root[^"]*\bh-screen\b/);
+});

@@ -122,7 +122,11 @@ export default function GiChatPage() {
   );
 
   return (
-    <div className="gi-root relative flex h-screen bg-surface text-ink">
+    // 100dvh, not 100vh: on iOS Safari `vh` is the toolbars-retracted height and
+    // never shrinks for the on-screen keyboard, so the composer dropped below
+    // the fold exactly when someone opened the keyboard to type. LessonPage
+    // already switched for the same reason.
+    <div className="gi-root relative flex h-[100dvh] overflow-hidden bg-surface text-ink">
       <div className="flex min-h-0 flex-1 flex-row">
         {sidebarOpen && (
           <div

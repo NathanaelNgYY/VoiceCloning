@@ -1,24 +1,33 @@
 param(
   [Parameter(Mandatory)][ValidateSet('dev','staging')] [string]$Env,
-  [Parameter(Mandatory)][ValidateSet('training','live-fast','chatbot')] [string]$Mode,
+  [Parameter(Mandatory)][ValidateSet('training','live-fast','chatbot','chatbot-text')] [string]$Mode,
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 $cfg = (Get-Content "$PSScriptRoot\deploy.config.json" -Raw | ConvertFrom-Json).$Env
 $repo = Resolve-Path "$PSScriptRoot\.."
-$buildMode = if ($Mode -eq 'chatbot' -and $cfg.chatbotBuildMode) {
+# 'chatbot' is the original kiosk target and its build mode is configurable per
+# environment (both environments currently ship the gi build there).
+# 'chatbot-text' is the second kiosk distribution and always ships the chatbot
+# build: the Live Voice Chat UI with the typed-question composer.
+$buildMode = if ($Mode -eq 'chatbot-text') {
+  'chatbot'
+} elseif ($Mode -eq 'chatbot' -and $cfg.chatbotBuildMode) {
   [string]$cfg.chatbotBuildMode
 } else {
   $Mode
 }
-$envSrc = "$repo\client\env\$Env\$buildMode.env"
+# chatbot-text shares its build mode with chatbot but needs different origins
+# baked in, so its env override is named after the target, not the build mode.
+$envName = if ($Mode -eq 'chatbot-text') { 'chatbot-text' } else { $buildMode }
+$envSrc = "$repo\client\env\$Env\$envName.env"
 $envDst = "$repo\client\.env.$buildMode.local"
 $dist = "$repo\client\dist-$buildMode"
 $target = $cfg.clientTargets.$Mode
 $distro = $cfg.distributions.$Mode
 
-# chatbot mode must be built from the chatbot branch's client tree
-if ($Mode -eq 'chatbot') {
+# kiosk modes must be built from the chatbot branch's client tree
+if ($Mode -eq 'chatbot' -or $Mode -eq 'chatbot-text') {
   Push-Location $repo
   $current = (git branch --show-current).Trim()
   Pop-Location

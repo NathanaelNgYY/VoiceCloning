@@ -26,11 +26,12 @@
       "currentInstanceId": "i-096eb75d9a4560973",
       "listenerCutover": true
     },
-    "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO" },
+    "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO", "chatbot-text": "E38A3666CJ7FVJ" },
     "clientTargets": {
       "training": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-training",
       "live-fast": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-live-fast",
-      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-gi"
+      "chatbot": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-gi",
+      "chatbot-text": "s3://interns2026-small-projects-bucket-shared/echolect-staging/dist-chatbot-text"
     }
   },
   "dev": {
