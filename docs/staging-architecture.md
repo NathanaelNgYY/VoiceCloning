@@ -1146,9 +1146,10 @@ A simultaneous burst can also be slower than a short ramp. Separate EC2 GPUs do 
 share compute with each other, but two requests placed on one `g6.xlarge` share that
 GPU's compute and memory bandwidth. With 50 users and 32 two-slot GPUs, up to 18 GPUs
 may temporarily carry a second user while the remainder carry one. Staggering arrivals
-by one or two seconds lets early jobs use more of their GPU before later jobs overlap,
-usually improving first-audio p95 and retry pressure at the cost of a longer arrival
-window. This should be measured with a controlled 2-5 second ramp rather than assumed.
+lets early jobs use more of their GPU before later jobs overlap, usually improving
+first-audio p95 and retry pressure at the cost of a longer arrival window. The next
+comparison must keep the simultaneous 150-user burst as the stress case and repeat the
+same workload with arrivals distributed across 30-60 seconds.
 
 Target Optimizer is a concurrency gate, not a durable queue. A request rejected at
 zero advertised capacity waits inside Lambda before retrying. A slot can finish during
@@ -1156,6 +1157,25 @@ that wait and appear free until the retry returns. ALB/Target Optimizer does not
 global retry priority; `X-VCS-Capacity-Retry` only moves an admitted retry ahead of
 normal entries in that selected worker's local queue. Do not describe the current
 system as end-to-end priority.
+
+### Next capacity experiment
+
+Treat the following as one coordinated experiment rather than independent tuning:
+
+1. Publish fleet occupied slots, total slots, no-capacity responses, and pending
+   admissions every 10 seconds. Scale-out should consider no-capacity/pending demand
+   directly instead of depending only on averaged occupied-slot percentage.
+2. Evaluate a shorter jittered retry sequence against a centralized fair admission
+   queue. Require bounded waiting, FIFO/fairness evidence, no retry storm, and no
+   starvation before replacing the current backoff.
+3. For a known 150-user simultaneous event, schedule and strictly warm more capacity
+   than the current 50-GPU rehearsal floor. Do not wait for reactive scale-out, which
+   cannot prepare new GPUs before a short burst ends.
+4. Run the same 150-user, three-turn workload twice: once as a simultaneous burst and
+   once with arrivals spread over 30-60 seconds. Compare first-audio p50/p95/max,
+   no-capacity counts, pending admissions, retry sleep, errors, and GPU-hours.
+5. Keep the simultaneous result as the worst-case capacity test and use the ramped
+   result as the more realistic arrival model; do not substitute one for the other.
 
 ### Candidate improvements and tradeoffs
 
