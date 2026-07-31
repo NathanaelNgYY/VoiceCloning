@@ -2,12 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildSavedVoiceModelSnapshot,
   buildSavedVoiceProfileRestoreKey,
   findSavedVoiceProfileKey,
   hasRestorableSavedVoiceProfile,
   matchesSavedVoiceProfileReferenceSelection,
   matchesSavedVoiceProfileSelection,
 } from './savedVoiceProfile.js';
+
+test('buildSavedVoiceModelSnapshot pins both model refs and the profile revision', () => {
+  assert.deepEqual(buildSavedVoiceModelSnapshot({
+    voiceProfileId: 'lecturer-a-v1',
+    gptKey: 'models/user-models/gpt/lecturer-a.ckpt',
+    sovitsPath: 'models/user-models/sovits/lecturer-a.pth',
+    updatedAt: '2026-07-31T12:00:00.000Z',
+  }), {
+    voiceProfileId: 'lecturer-a-v1',
+    gptRef: 'models/user-models/gpt/lecturer-a.ckpt',
+    sovitsRef: 'models/user-models/sovits/lecturer-a.pth',
+    revision: '2026-07-31T12:00:00.000Z',
+  });
+
+  assert.equal(buildSavedVoiceModelSnapshot({
+    voiceProfileId: 'lecturer-a-v1',
+    gptKey: 'models/user-models/gpt/lecturer-a.ckpt',
+  }), null);
+});
 
 test('matchesSavedVoiceProfileSelection requires the same voiceProfileId and model refs', () => {
   const profile = {

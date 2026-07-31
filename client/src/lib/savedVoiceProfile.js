@@ -43,6 +43,24 @@ export function matchesSavedVoiceProfileSelection({
   );
 }
 
+export function buildSavedVoiceModelSnapshot(profile = null) {
+  const voiceProfileId = String(profile?.voiceProfileId || '').trim();
+  const gptRef = normalizeModelRef(profile?.gptKey || profile?.gptPath);
+  const sovitsRef = normalizeModelRef(profile?.sovitsKey || profile?.sovitsPath);
+  if (!voiceProfileId || !gptRef || !sovitsRef) {
+    return null;
+  }
+
+  return {
+    voiceProfileId,
+    gptRef,
+    sovitsRef,
+    revision: String(
+      profile?.updatedAt || profile?.revision || profile?.activatedAt || '',
+    ).trim(),
+  };
+}
+
 export function hasRestorableSavedVoiceProfile(profile = null) {
   const refAudioPath = String(profile?.ref_audio_path || '').trim();
   const auxRefAudioPaths = normalizeReferencePathList(profile?.aux_ref_audio_paths, { excludePath: refAudioPath });

@@ -39,6 +39,7 @@ const voiceProfileId = process.env.VCS_CHATBOT_VOICE_PROFILE_ID || 'deanvoice-v1
 const reportFile = process.env.VCS_CHATBOT_REPORT_FILE || '';
 const skipFirstVerify = process.env.VCS_CHATBOT_SKIP_FIRST_VERIFY === 'true';
 const firstChunkOnly = process.env.VCS_CHATBOT_FIRST_CHUNK_ONLY === 'true';
+const pinVoiceSnapshot = process.env.VCS_CHATBOT_PIN_VOICE_SNAPSHOT !== 'false';
 
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 200) {
   throw new Error('Concurrency must be an integer from 1 to 200.');
@@ -206,7 +207,7 @@ function containsUserMarker(text, userNumber) {
   ).test(text);
 }
 
-function makeSession(index, audio, productionPrompt) {
+function makeSession(index, audio, productionPrompt, synthesisProfile) {
   const marker = markerFor(index);
   const createdAt = performance.now();
   const ready = deferred();
@@ -325,7 +326,7 @@ Begin that sentence exactly with "${marker}."`;
                 'Cache-Control': 'no-cache',
               },
               body: JSON.stringify({
-                voiceProfileId,
+                ...synthesisProfile,
                 text: requestedChunks[chunkIndex],
                 ...(chunkIndex === 0 && skipFirstVerify ? { skip_verify: true } : {}),
               }),
@@ -505,14 +506,70 @@ Begin that sentence exactly with "${marker}."`;
   };
 }
 
+function synthesisSnapshotFromProfile(profile) {
+  const profileId = String(profile?.voiceProfileId || '').trim();
+  const gptRef = String(profile?.gptKey || profile?.gptPath || '').trim();
+  const sovitsRef = String(profile?.sovitsKey || profile?.sovitsPath || '').trim();
+  const refAudioPath = String(profile?.ref_audio_path || '').trim();
+  if (!profileId || !gptRef || !sovitsRef || !refAudioPath) {
+    throw new Error('Active voice profile is missing its id, model refs, or reference audio.');
+  }
+  if (voiceProfileId && profileId !== voiceProfileId) {
+    throw new Error(`Expected active voice profile ${voiceProfileId}; received ${profileId}.`);
+  }
+
+  const defaults = profile.defaults || {};
+  return {
+    voiceProfileId: profileId,
+    ref_audio_path: refAudioPath,
+    prompt_text: String(profile.prompt_text || ''),
+    prompt_lang: String(profile.prompt_lang || 'en'),
+    text_lang: String(profile.text_lang || profile.prompt_lang || 'en'),
+    aux_ref_audio_paths: Array.isArray(profile.aux_ref_audio_paths)
+      ? profile.aux_ref_audio_paths.filter(Boolean).slice(0, 5)
+      : [],
+    voice_model: {
+      voiceProfileId: profileId,
+      gptRef,
+      sovitsRef,
+      revision: String(profile.updatedAt || profile.revision || profile.activatedAt || ''),
+    },
+    speed_factor: Number(defaults.speed ?? defaults.speed_factor ?? 1),
+    top_k: Number(defaults.topK ?? defaults.top_k ?? 5),
+    top_p: Number(defaults.topP ?? defaults.top_p ?? 0.85),
+    temperature: Number(defaults.temperature ?? 0.7),
+    repetition_penalty: Number(defaults.repPenalty ?? defaults.repetition_penalty ?? 1.35),
+  };
+}
+
+async function loadSynthesisProfile(index) {
+  if (!pinVoiceSnapshot) return { voiceProfileId };
+  const profileUrl = new URL('/api/voice-profile/active', ttsUrl);
+  profileUrl.searchParams.set('full', '1');
+  profileUrl.searchParams.set('chatbotProfileWarmup', `${Date.now()}-${index}`);
+  const response = await fetch(profileUrl, {
+    headers: { 'Cache-Control': 'no-cache' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`Active voice profile warmup failed (${response.status}).`);
+  }
+  return synthesisSnapshotFromProfile(await response.json());
+}
+
 ensureLoadTestAudio(audioPath);
 const audio = readPcmWav(audioPath);
 const productionPrompt = loadProductionSystemPrompt();
+const profileWarmupStartedAt = performance.now();
+const synthesisProfiles = await Promise.all(
+  Array.from({ length: concurrency }, (_, index) => loadSynthesisProfile(index)),
+);
+const profileWarmupMs = performance.now() - profileWarmupStartedAt;
 const startedAt = new Date().toISOString();
 const wallStartedAt = performance.now();
 const sessions = Array.from(
   { length: concurrency },
-  (_, index) => makeSession(index, audio, productionPrompt),
+  (_, index) => makeSession(index, audio, productionPrompt, synthesisProfiles[index]),
 );
 const readyStates = await Promise.all(sessions.map((session) => session.ready));
 const readyCount = readyStates.filter(Boolean).length;
@@ -608,6 +665,8 @@ const report = {
   ),
   skipFirstVerify,
   firstChunkOnly,
+  pinVoiceSnapshot,
+  profileWarmupMs: Math.round(profileWarmupMs),
   ready: readyCount,
   success: successful.length,
   failed: failures.length,

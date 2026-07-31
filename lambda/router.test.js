@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { findRoute } from './router.js';
+import { findRoute, getRouteHandler } from './router.js';
+import { handler as liveHandler } from './live/index.js';
+
+test('router eagerly prepares the latency-sensitive Live handler', async () => {
+  const route = findRoute('POST', '/api/live/tts-sentence');
+
+  assert.equal(await getRouteHandler(route), liveHandler);
+});
 
 test('router resolves voice profile activation and active-summary routes', () => {
   assert.deepEqual(

@@ -16,6 +16,7 @@ import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { matchesPinnedVoice, resolvePinnedVoiceKey } from '@/lib/giVoicePin';
+import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
@@ -121,6 +122,11 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     [activeProfile]
   );
 
+  const voiceModel = useMemo(
+    () => buildSavedVoiceModelSnapshot(activeProfile),
+    [activeProfile]
+  );
+
   const liveSpeech = useLiveSpeech({
     refParams,
     fullRefParams: null,
@@ -128,6 +134,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     replyMode: 'phrases',
     language: activeProfile?.text_lang || 'en',
     voiceProfileId: activeProfile?.voiceProfileId || '',
+    voiceModel,
     systemPrompt,
     fastMaxChunkWords: fastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: fastSettings.maxSentencesPerChunk,

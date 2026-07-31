@@ -1,4 +1,5 @@
 import { applyCors, err, preflight } from './shared/cors.js';
+import { handler as liveHandler } from './live/index.js';
 
 export const ROUTES = [
   { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
@@ -16,7 +17,12 @@ export const ROUTES = [
   { name: 'InstanceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/instance\/(?:status|start|idle-check)\/?$/u, modulePath: './instance/index.js' },
 ];
 
-const handlerCache = new Map();
+// Live TTS has the largest dependency tree and is latency-sensitive. Load it while
+// the Lambda environment initializes so a warmup through any route also prepares
+// Live, rather than charging the first student for a lazy dynamic import.
+const handlerCache = new Map([
+  ['./live/index.js', Promise.resolve(liveHandler)],
+]);
 
 export function getMethod(event) {
   return String(event?.requestContext?.http?.method || event?.httpMethod || 'GET').toUpperCase();
