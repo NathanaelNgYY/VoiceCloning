@@ -53,6 +53,9 @@ export function LessonPage() {
   const [courseLoading, setCourseLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("transcript");
+  // The blurb is context, not the lesson — it opens clamped so it cannot push
+  // the video and the panel off the fold.
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   // The furthest point playback has reached, which is what the transcript is
   // revealed against. Keyed to `currentTime` instead, seeking back to an
@@ -120,6 +123,10 @@ export function LessonPage() {
 
   const topics = course?.topics ?? [];
   const transcriptSegments = course?.transcriptSegments ?? [];
+  // Two clamped lines is roughly this many characters — below it the toggle
+  // would expand nothing, so it is not offered.
+  const DESCRIPTION_CLAMP_CHARS = 140;
+  const isDescriptionLong = (course?.description ?? "").length > DESCRIPTION_CLAMP_CHARS;
   const topicThumbnails = useVideoTopicThumbnails(course?.videoUrl ?? "", topics);
 
   // Timestamped transcript handed to the chatbot so students can ask about
@@ -236,7 +243,11 @@ export function LessonPage() {
   const followFrontier = useCallback(() => {
     const panel = transcriptScrollRef.current;
     const frontier = frontierRef.current;
-    if (!panel || !frontier) return;
+    // `offsetParent` is null while the phone layout has the transcript behind
+    // the chatbot tab, where scrolling it would be discarded anyway. Desktop
+    // shows both columns at once, so visibility — not the active tab — is what
+    // decides whether the reveal is worth following.
+    if (!panel || !frontier || panel.offsetParent === null) return;
 
     const panelBox = panel.getBoundingClientRect();
     const frontierBox = frontier.getBoundingClientRect();
@@ -252,7 +263,6 @@ export function LessonPage() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "transcript") return;
     followFrontier();
   }, [reachedTime, activeTab, followFrontier]);
 
@@ -262,7 +272,7 @@ export function LessonPage() {
     if (activeTab !== "transcript") return;
 
     const frontier = frontierRef.current;
-    if (frontier) frontier.scrollIntoView({ block: "nearest" });
+    if (frontier?.offsetParent) frontier.scrollIntoView({ block: "nearest" });
   }, [activeTab]);
 
   // Still needed for movement that happens without a frame loop running:
@@ -274,7 +284,7 @@ export function LessonPage() {
   };
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-surface text-ink">
+    <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-surface text-ink">
       <header className="relative z-[60] flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white pl-2 pr-4 lg:pl-3 lg:pr-6">
         {!sidebarOpen ? (
           <button
@@ -418,38 +428,75 @@ export function LessonPage() {
           ) : null}
         </aside>
 
-        <main className="flex flex-1 min-h-0 flex-col overflow-y-auto bg-slate-50 p-4 pb-32 sm:p-6 sm:pb-40">
-          <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6">
+        {/* The lesson is a fixed-height app shell, not a scrolling document: the
+            video stays put and the only thing that scrolls is the panel the
+            student is actually reading. */}
+        <main className="flex flex-1 min-h-0 flex-col overflow-hidden bg-slate-50">
+          <div className="mx-auto flex w-full min-h-0 max-w-7xl flex-1 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:flex-row lg:items-stretch lg:gap-6 lg:p-6">
             {courseLoading ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+              <div className="w-full self-start rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
                 Loading lesson...
               </div>
             ) : courseError ? (
-              <div className="rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
+              <div className="w-full self-start rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
                 <p className="text-sm text-red-600">{courseError}</p>
               </div>
             ) : course ? (
               <>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-sm leading-relaxed text-slate-600">
-                    {course.description}
-                  </p>
-                </div>
+                {/* Video, blurb and transcript stay stacked as one column; the
+                    chatbot is the column beside them on desktop and the other
+                    half of the tab pair on phones. */}
+                <div
+                  className={cn(
+                    "flex min-h-0 flex-col gap-3 lg:min-w-0 lg:flex-1",
+                    activeTab === "transcript" ? "flex-1" : "shrink-0",
+                  )}
+                >
+                  {/* Capped in viewport units, and the 16:9 cap is expressed as a
+                      max-width so the box keeps its ratio instead of letterboxing
+                      the video inside a too-wide frame. */}
+                  <div className="relative mx-auto aspect-video w-full max-w-[calc(36dvh*16/9)] shrink-0 overflow-hidden rounded-2xl border border-slate-200/50 bg-black shadow-xl lg:max-w-[calc(44dvh*16/9)]">
+                    <video
+                      ref={videoRef}
+                      src={course.videoUrl}
+                      crossOrigin="anonymous"
+                      controls
+                      playsInline
+                      onTimeUpdate={handleTimeUpdate}
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
 
-                <div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-slate-200/50 bg-black shadow-xl">
-                  <video
-                    ref={videoRef}
-                    src={course.videoUrl}
-                    crossOrigin="anonymous"
-                    controls
-                    playsInline
-                    onTimeUpdate={handleTimeUpdate}
-                    className="h-full w-full object-contain"
-                  />
-                </div>
+                  {course.description ? (
+                    <div className="mx-auto w-full max-w-[calc(36dvh*16/9)] shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm lg:max-w-[calc(44dvh*16/9)]">
+                      <p
+                        className={cn(
+                          "text-xs leading-relaxed text-slate-600 sm:text-sm",
+                          descriptionOpen
+                            ? // Expanded, a long blurb scrolls in place rather
+                              // than pushing the panel off the screen.
+                              "max-h-[20dvh] overflow-y-auto"
+                            : "line-clamp-2",
+                        )}
+                      >
+                        {course.description}
+                      </p>
+                      {isDescriptionLong ? (
+                        <button
+                          type="button"
+                          onClick={() => setDescriptionOpen((open) => !open)}
+                          className="mt-1 text-[11px] font-semibold text-primary transition hover:underline cursor-pointer"
+                        >
+                          {descriptionOpen ? "Show less" : "Show more"}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
 
-                <div className="flex h-[clamp(20rem,45dvh,34rem)] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-                  <div className="flex shrink-0 border-b border-slate-100 bg-slate-50/50 p-2">
+                  {/* Phones cannot show both at once, so they keep the tab pair.
+                      Desktop shows the transcript here and the chatbot beside
+                      it, which is why this bar disappears at lg. */}
+                  <div className="flex shrink-0 lg:hidden">
                     <div className="grid w-full grid-cols-2 rounded-lg bg-slate-100 p-1 sm:flex sm:w-auto">
                       <button
                         type="button"
@@ -480,13 +527,20 @@ export function LessonPage() {
                     </div>
                   </div>
 
-                  <div className="flex flex-1 min-h-0 flex-col">
+                  <div
+                    className={cn(
+                      "min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm lg:flex",
+                      activeTab === "transcript" ? "flex" : "hidden",
+                    )}
+                  >
+                    <div className="hidden shrink-0 items-center gap-1.5 border-b border-slate-100 bg-slate-50/50 px-4 py-2 text-xs font-semibold text-slate-500 lg:flex">
+                      <FileText className="size-3.5" />
+                      Transcript
+                    </div>
+
                     <div
                       ref={transcriptScrollRef}
-                      className={cn(
-                        "lesson-transcript-scrollbar flex-1 space-y-4 overscroll-contain overflow-y-auto p-3 sm:p-5",
-                        activeTab !== "transcript" && "hidden",
-                      )}
+                      className="lesson-transcript-scrollbar min-h-0 flex-1 space-y-4 overscroll-contain overflow-y-auto p-3 sm:p-5"
                     >
                         {isTranscriptIdle && (
                           <p className="px-3 text-xs italic text-slate-400">
@@ -559,27 +613,31 @@ export function LessonPage() {
                         })}
 
                     </div>
-
-                    {/* Kept mounted across tab switches. Unmounting tears down the
-                        live voice session and cuts reply audio mid-sentence. */}
-                    <div
-                      className={cn(
-                        "flex min-h-0 flex-1 flex-col",
-                        activeTab === "transcript" && "hidden",
-                      )}
-                    >
-                      <GiChatPanel
-                        emptyHint="Ask about this lesson — click the mic to start"
-                        lessonContext={lessonContext}
-                        getVideoPosition={videoPositionEnabled ? getVideoPosition : null}
-                      />
-                    </div>
                   </div>
+                </div>
+
+                {/* Kept mounted across tab switches. Unmounting tears down the
+                    live voice session and cuts reply audio mid-sentence. */}
+                <div
+                  className={cn(
+                    "min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm",
+                    "lg:flex lg:w-[27rem] lg:min-w-[22rem] lg:max-w-[32rem] lg:flex-none",
+                    activeTab === "chatbot" ? "flex" : "hidden",
+                  )}
+                >
+                  <div className="hidden shrink-0 items-center gap-1.5 border-b border-slate-100 bg-slate-50/50 px-4 py-2 text-xs font-semibold text-slate-500 lg:flex">
+                    <MessageSquare className="size-3.5" />
+                    AI Chatbot
+                  </div>
+
+                  <GiChatPanel
+                    emptyHint="Ask about this lesson — click the mic to start"
+                    lessonContext={lessonContext}
+                    getVideoPosition={videoPositionEnabled ? getVideoPosition : null}
+                  />
                 </div>
               </>
             ) : null}
-
-            <div className="h-48 shrink-0 sm:h-64" aria-hidden="true" />
           </div>
         </main>
       </div>

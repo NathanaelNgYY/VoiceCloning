@@ -35,12 +35,38 @@ test("transcript tabs share the full phone width evenly", () => {
 });
 
 test("transcript has a bounded viewport with independent vertical scrolling", () => {
+  // The panel is bounded by the shell rather than by a fixed height: it fills
+  // what the video leaves and scrolls inside itself.
   assert.match(
     lessonPageSource,
-    /className="[^"]*h-\[clamp\([^"]*\)[^"]*overflow-hidden[^"]*"/,
+    /"min-h-0 flex-1 flex-col overflow-hidden rounded-2xl[^"]*"/,
   );
   assert.match(
     lessonPageSource,
     /"[^"]*overscroll-contain[^"]*overflow-y-auto[^"]*"/,
   );
+});
+
+test("the lesson fits the viewport instead of scrolling as a page", () => {
+  assert.match(lessonPageSource, /className="relative flex h-\[100dvh\][^"]*overflow-hidden/);
+  assert.match(lessonPageSource, /<main className="[^"]*min-h-0[^"]*overflow-hidden/);
+  // No trailing dead space to scroll past to reach the panel.
+  assert.doesNotMatch(lessonPageSource, /className="h-48 shrink-0 sm:h-64"/);
+});
+
+test("the lesson video is capped in viewport height so the panel keeps its share", () => {
+  assert.match(lessonPageSource, /aspect-video[^"]*max-w-\[calc\(36dvh\*16\/9\)\]/);
+});
+
+test("video and study panel sit side by side on desktop", () => {
+  assert.match(lessonPageSource, /className="mx-auto flex w-full min-h-0[^"]*lg:flex-row/);
+  assert.match(lessonPageSource, /lg:w-\[27rem\][^"]*lg:flex-none/);
+});
+
+test("desktop shows transcript under the video and the chatbot beside it", () => {
+  // The tab pair is a phone-only fallback for a screen too narrow for both.
+  assert.match(lessonPageSource, /<div className="flex shrink-0 lg:hidden">/);
+  // Both panels render at lg regardless of which tab the phone layout selected.
+  const desktopVisible = lessonPageSource.match(/"[^"]*lg:flex[^"]*",\s*\n\s*activeTab === "(transcript|chatbot)" \? "flex" : "hidden"/g);
+  assert.equal(desktopVisible?.length, 2);
 });

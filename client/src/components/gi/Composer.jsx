@@ -25,12 +25,14 @@ export function Composer({
       : 'Start voice conversation';
 
   return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="flex items-center justify-center gap-3">
+    <div className="flex shrink-0 flex-col items-center gap-2">
+      <div className="flex shrink-0 items-center justify-center gap-3">
         {/* Fixed-width flankers keep the mic circle centred, so the row does not
-            shift sideways as Stop voice appears and disappears between clips. */}
+            shift sideways as Stop voice appears and disappears between clips.
+            `shrink-0` throughout: in a narrow panel the row would otherwise be
+            compressed into a squashed oval with its labels clipped away. */}
         {active && (
-          <div className="flex w-28 justify-end">
+          <div className="flex w-24 shrink-0 sm:w-28 justify-end">
             {playbackReady && (
               <button
                 type="button"
@@ -60,7 +62,7 @@ export function Composer({
           </button>
         )}
 
-        <div className={cn(active && 'flex w-28 justify-start')}>
+        <div className={cn('shrink-0', active && 'flex w-24 justify-start sm:w-28')}>
           <button
             type="button"
             aria-label={label}

@@ -26,7 +26,7 @@ export function DisclaimerBanner() {
   };
 
   return (
-    <div className="flex items-center justify-center gap-2 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800">
+    <div className="flex shrink-0 items-center justify-center gap-2 bg-amber-50 px-3 py-1 text-center text-[11px] leading-snug text-amber-800">
       <p>This chatbot provides educational information about GI bleeding only.</p>
       <button
         type="button"
