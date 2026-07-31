@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-07-31
+
+- Replaced rejection-driven scale-out with a live one-minute occupied-slot percentage:
+  occupied optimizer slots / (`HealthyHostCount * 2`). At 70% the ASG adds exactly
+  10 and re-evaluates later samples; it is active outside event mode. The old
+  rejection alarm remains telemetry-only with actions disabled.
+- Promoted launch-template v19. Public prime retries now require HTTP 200 plus RIFF;
+  the old `skip_verify` path was removed. Added an SSM-batched event-readiness gate
+  and verified a 50/50 fleet through health, services, cloud-init, and prime markers.
+- Rescheduled live actions to 2026-08-03 08:30/17:00 SGT. Enabled the Lambda GPU
+  schedule flag and verified its in-window decision, but EventBridge creation was
+  denied; the timer is not operational. The fixed gateway remained running/healthy.
+- Ran the real WebSocket -> OpenAI -> chunked DeanVoice flow at 50 GPUs/two slots.
+  The 100-user run completed 99/100 three-turn sessions; the 150-user run completed
+  130/150. Failures were WebSocket 1006, not failed completed TTS chunks. Occupancy
+  triggered 50->60 after the approximately 160-second 150-user wave, too late to
+  rescue it. Three slots were not tested because safe canary isolation was denied.
+- Returned the inference ASG to min/desired 1. PowerShell parsing and the 50-target
+  readiness run passed; raw JSON reports remain ignored in `.tmp/`.
+- Repeated the v17 public event rehearsal without replacing prior evidence. Verified
+  3.0 TiB visible gp3 usage against the 50-TiB quota, LT/default v17, the paired
+  August 2 actions, the armed rejection alarm, and all 50 initial nodes through ALB
+  health plus independent cloud-init/public-prime/service checks.
+- The measured 100-user three-turn run completed 100/100 in 95.29s. The hot
+  150-user run delivered turn one to 150/150 and completed 147/150 in 134.77s;
+  three WebSockets closed code 1006 before turn two and no TTS chunk failed.
+- The 150-user wave produced 379/777/171 optimizer rejects across three one-minute
+  buckets and triggered the configured fixed step from 50 to 60. All 10 added GPUs
+  joined the target group and completed public prime. They became ready after the
+  short burst, confirming that scheduled prewarm is still required.
+- Diagnosed an excluded 0/100 setup attempt: the separate staging control instance
+  owning the live gateway was stopped, so every WebSocket received 503. Starting it
+  restored the route and a full-flow smoke passed. The event runbook/TODO now require
+  explicitly starting and health-checking that gateway because the inference ASG
+  schedule does not control it.
+- Restored ASG min/desired 1 and max 192, preserved the August 2 schedule, restored
+  the live-gateway instance to its original stopped state, and passed a final public
+  TTS RIFF smoke in 3.15s. Raw reports remain ignored under `.tmp/`.
+- Code files changed: none. Markdown changed: repo `docs/staging-architecture.md`
+  plus mirrored `HANDOFF.md`, `TODO.md`, `BUGS.md`, `CHANGELOG.md`, and
+  `docs/deployment.md`.
+- Later the same day, added `scripts/ensure-staging-live-gateway.ps1`. It starts the
+  fixed gateway only when necessary, waits for its exact port-3002 target to become
+  healthy, and has no stop/schedule behavior. Live verification passed and the gateway
+  was left running. The stored 07-23 Singapore schedule was audited but is disabled.
+- Corrected the chatbot harness to use the deployed browser's chunking and short-first-
+  phrase helpers. First-chunk verification now defaults on; capacity-only runs must set
+  and report `VCS_CHATBOT_SKIP_FIRST_VERIFY=true`. Parser/dry-run checks, 32 helper
+  tests, and a verified one-user public flow passed.
+
 ## 2026-07-30
 
 - Verified two independent fresh-fleet failure layers. First-boot unattended upgrades

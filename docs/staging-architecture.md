@@ -450,12 +450,14 @@ the filesystem, then validated from a fresh v10 instance before cutover.
 only the GPU endpoint. Every virtual user opens an independent WebSocket to the exact
 staging hostname, waits for `session.ready`, and then all ready users begin together.
 Each user streams the same real 24 kHz PCM question at real-time pace, receives an
-OpenAI response, splits that response into speakable chunks, and sends the chunks
-sequentially through the public DeanVoice endpoint. The harness requires HTTP 200,
-`audio/wav`, and a RIFF header for every chunk. Per-user markers in the system prompt
-detect response mixing across WebSockets. A user sends the next turn only after all
-voice chunks for the current turn finish, matching the website rather than submitting
-hundreds of requests at once.
+OpenAI response, uses the browser's `splitLiveReplyChunks` and
+`shortenFirstFastPhrase` helpers, and sends the chunks sequentially through the public
+DeanVoice endpoint. First-chunk verification is enabled by default, matching the
+deployed browser; `VCS_CHATBOT_SKIP_FIRST_VERIFY=true` is capacity-only and must be
+stated with the result. The harness requires HTTP 200, `audio/wav`, and a RIFF header
+for every chunk. Per-user markers in the system prompt detect response mixing across
+WebSockets. A user sends the next turn only after all voice chunks for the current
+turn finish.
 
 The normal complete-flow command is:
 
@@ -470,6 +472,19 @@ For 100 or 150 synchronized virtual users, replace the last argument with `100` 
 manual timing, and unsynchronized starts make that a poor load test. Use one to three
 real browser tabs only for human listening/UI checks; use the harness for repeatable
 capacity measurements.
+
+Before a complete-flow rehearsal, run the standalone gateway preflight. It starts
+the fixed control instance only when needed and waits for that exact instance to be
+healthy in `vcs-staging-tg-3002`; it never stops the instance or creates a schedule:
+
+```powershell
+.\scripts\ensure-staging-live-gateway.ps1 -Apply
+```
+
+The live Lambda contains 07:00-23:00 Singapore schedule values and
+`GPU_SCHEDULE_ENABLED=true` was applied on 2026-07-31. A direct in-window invocation
+returned `in-window-running`, but no EventBridge caller is present in its Lambda policy
+and `events:PutRule` was denied. The decision logic works; the automatic timer does not.
 
 `scripts/load-test-staging-tts.mjs` isolates the public TTS path. With no duration it
 sends one request per virtual user. With `VCS_LOAD_TEST_DURATION_MS`, every virtual
@@ -660,6 +675,44 @@ for hot 150. The first run had no failures. The second had no TTS failure and tw
 WebSocket 1006 closures after successful turn-one audio, leaving 148/150 complete.
 This proves one fresh 50-GPU v17 rehearsal, not a universal capacity guarantee.
 
+The 2026-07-31 repeat preserved those results and added a second independent v17
+rehearsal. Before the measured runs, a 100-client attempt returned 100 WebSocket 503s
+in 1.84 seconds because the separate control instance
+`i-0f0da8be59367f7a8`, which owns the live gateway, was stopped. This was a gateway
+precondition failure, not an inference-capacity result, and is excluded below. After
+starting that instance, one complete-flow smoke passed. All 50 inference instances
+had already passed target health plus independent SSM checks for cloud-init,
+`public_prime completed`, and both inference services active.
+
+| 2026-07-31 v17 fleet / users | Turn | Heard / users | First audio fastest / average / p50 / p95 / slowest | Average full voice |
+|---|---:|---:|---:|---:|
+| Auto-public-primed 50 / 100 | 1 | 100/100 | 3.54 / 8.90 / 10.43 / 11.91 / 13.51 s | 24.88 s |
+| Auto-public-primed 50 / 100 | 2 | 100/100 | 2.26 / 3.10 / 2.98 / 4.27 / 4.71 s | 17.08 s |
+| Auto-public-primed 50 / 100 | 3 | 100/100 | 2.01 / 3.22 / 3.16 / 4.31 / 5.52 s | 15.81 s |
+| Same hot 50 / 150 | 1 | 150/150 | 4.50 / 8.56 / 6.14 / 16.07 / 19.26 s | 31.73 s |
+| Same hot 50 / 150 | 2 | 147/150 | 2.41 / 4.42 / 4.18 / 7.09 / 8.71 s | 25.01 s |
+| Same hot 50 / 150 | 3 | 147/150 | 2.26 / 3.95 / 3.91 / 5.26 / 7.85 s | 20.93 s |
+
+The 100-user wall time was 95.29 seconds and all 100 sessions completed with no
+non-200 TTS chunks. Across each user's three `endToEnd` turn timings, the total was
+41.74 / 57.77 / 56.72 / 71.36 / 92.83 seconds
+(fastest / average / p50 / p95 / slowest). The 150-user wall time was 134.77 seconds.
+All 150 heard turn one, 147 completed all turns, and three WebSockets closed code
+1006 before turn two; no TTS chunk failed. For the 147 complete sessions, the
+three-turn total was 51.81 / 76.87 / 74.68 / 111.09 / 131.37 seconds in the same
+order. These totals sum the three per-turn `endToEnd` measurements; they exclude
+connection setup and the harness's two 250 ms think intervals.
+
+The 150-user burst also independently verified reactive scaling. Target Optimizer
+reported 379, 777, and 171 rejected routing attempts in the 09:22-09:24 SGT
+one-minute buckets. The armed alarm changed desired capacity 50->60 at 09:25:29;
+all 10 instances launched at 09:25:43, all 60 targets were healthy by 09:31:06,
+and independent SSM checks showed `public_prime completed` on every added node by
+09:33:59. The routing rejects include Lambda retries and are not failed-user counts.
+The extra capacity became ready after the 134.77-second burst ended, so this proves
+the scaling mechanism but also proves reactive scale-out cannot protect the same
+short burst. Scheduled prewarming remains mandatory.
+
 The August 2 scheduled expansion now starts at 06:50 SGT so local warm, the converged
 98-request public prime from the 49 new nodes, and backend settle finish before the
 07:15 event. Scale-down remains 18:00. During the acceptance recycle, recent volume
@@ -671,6 +724,65 @@ relaunch immediately before 06:50.
 Final cleanup restored min/desired 1, ELB health authority, and the rejection alarm
 in OK state with actions enabled. Retained v17 instance `i-096eb75d9a4560973` was
 healthy and a final public RIFF smoke completed in 3.27 seconds.
+
+#### Final v19 occupancy-policy rehearsal (2026-07-31)
+
+This run preserves the earlier v14-v17 results above. LT v19 removed public-prime
+`skip_verify` and requires HTTP 200 plus a RIFF body before writing
+`public_prime completed with verified public RIFF responses`. The readiness script
+observed 50/50 desired, InService, healthy targets with the per-instance marker.
+Each instance originates a real public request without operator credentials. Because
+ALB can route that request to any healthy target, the marker proves every instance
+issued and received public RIFF responses, but it does not cryptographically prove
+that a request returned to its originating backend.
+
+The load generator ran the real WebSocket -> OpenAI -> browser-equivalent chunking ->
+public DeanVoice flow from one machine. It peaked at 22.1% of one CPU core and
+193.1 MiB working set, so it was not CPU-saturated. Results below are seconds and use
+all finite timings; complete-conversation totals include only sessions completing all
+three turns.
+
+| Users / turn | Heard | First audio fastest / average / p50 / p95 / slowest | Complete response fastest / average / p50 / p95 / slowest |
+|---|---:|---:|---:|
+| 100 / 1 | 100 | 4.85 / 6.39 / 6.44 / 7.69 / 8.05 | 30.15 / 46.25 / 45.33 / 60.87 / 72.33 |
+| 100 / 2 | 99 | 2.36 / 3.82 / 3.78 / 5.37 / 6.29 | 10.57 / 25.77 / 27.10 / 43.62 / 49.39 |
+| 100 / 3 | 99 | 2.49 / 4.06 / 3.98 / 5.35 / 6.85 | 10.45 / 28.69 / 28.81 / 41.69 / 51.09 |
+| 150 / 1 | 150 | 5.25 / 7.91 / 7.51 / 12.25 / 18.71 | 25.65 / 53.07 / 52.83 / 75.40 / 93.54 |
+| 150 / 2 | 132 | 2.70 / 4.88 / 4.70 / 7.39 / 8.50 | 13.40 / 34.19 / 35.45 / 55.74 / 67.19 |
+| 150 / 3 | 130 | 2.79 / 4.64 / 4.61 / 6.06 / 9.05 | 13.19 / 34.18 / 34.44 / 48.50 / 53.36 |
+
+| Users | Complete sessions | Three-turn total fastest / average / p50 / p95 / slowest | Harness wall time |
+|---:|---:|---:|---:|
+| 100 | 99/100 | 64.86 / 100.44 / 98.97 / 131.38 / 153.88 s | 156.18 s |
+| 150 | 130/150 | 69.72 / 118.04 / 117.22 / 146.72 / 157.58 s | 160.18 s |
+
+The 100-user run had one WebSocket 1006 after turn one. The 150-user run had 20
+WebSocket 1006 closures; turn completion was 149/132/130. No completed TTS chunk
+failed. This is a fail for a 100% session-completion acceptance criterion.
+
+The new alarm measures occupied slots as
+`100 * (1 - freeSlots / (HealthyHostCount * 2))`, triggers at 70% for one 60-second
+point, and adds exactly 10. The 100-user run peaked at 67% and correctly did not
+scale. The 150-user run sampled approximately 94%, alarmed at 11:53:34 SGT, changed
+desired 50->60, and launched the added instances at 11:53:42. The approximately
+160-second load wave had already ended. The following occupancy sample fell below
+70%, so there was no second +10. The mechanism works outside event mode, but a
+one-minute alarm plus EC2 boot/warm cannot rescue a short burst; scheduled prewarm is
+the event safeguard.
+
+Three slots per GPU was not tested or promoted. The role was denied
+`autoscaling:SuspendProcesses`, so a single-target restart could not be isolated from
+ASG replacement. Given the 130/150 result at two slots, switching 50 live targets to
+three without a canary would be an unsafe capacity claim. The fixed GPU was also
+verified serving training (3001), gateway (3002), and legacy inference (3003), with
+an inference Python process holding about 952 MiB GPU memory. Removing legacy
+inference reduces contention risk for training/gateway, but the optimized chatbot TTS
+route uses the ASG and therefore does not directly become faster.
+
+Current live actions now set min/desired 50 at 08:30 SGT on 2026-08-03 and restore
+min/desired 1 at 17:00. After testing the ASG was returned to min/desired 1, the 70%
+occupancy alarm was enabled/OK, the rejection alarm was telemetry-only, and
+`vcs-staging-tg-3002` remained healthy.
 
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid

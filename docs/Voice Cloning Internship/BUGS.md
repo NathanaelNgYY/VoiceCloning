@@ -5,7 +5,17 @@
 - 2026-07-30: intermittent WebSocket 1006 remains under high concurrency after TTS
   succeeds. The final v17 hot 150-user run delivered turn-one voice to 150/150 but two
   sessions closed before turns two/three, leaving 148/150 complete. No TTS request
-  failed. Investigate gateway/client close telemetry separately from GPU capacity.
+  failed. A 2026-07-31 independent repeat delivered turn one to 150/150 but three
+  sessions closed 1006 before turn two, leaving 147/150; again no TTS chunk failed.
+  The final v19/two-slot run completed 99/100 and only 130/150, with 20 WebSocket
+  1006 closures in the latter despite no failed completed TTS chunk. This is an active
+  event risk and is not evidence that three synthesis slots are safe. Investigate
+  gateway/client close telemetry separately from GPU capacity.
+- 2026-07-31: setting `GPU_SCHEDULE_ENABLED=true` enables the staging Lambda's
+  07:00-23:00 Singapore decision logic, and a direct in-window idle-check invocation
+  returned `in-window-running`. It does not create a timer. No EventBridge rule or
+  Lambda permission invokes the route, and this role is denied `events:PutRule`;
+  automatic fixed-GPU scheduling remains inactive until an administrator creates it.
 - 2026-07-29: the corrected real-route warm made the 32-GPU/50-user chatbot flow pass
   50/50, but a 100-user three-turn run completed 98/100 sessions; two WebSockets closed
   with code 1006 after turn 1. A separate 128-user sustained TTS run produced 34

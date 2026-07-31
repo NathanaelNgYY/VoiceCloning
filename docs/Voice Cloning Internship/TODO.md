@@ -1,11 +1,16 @@
 # Active TODO
 
-- [ ] Before 2026-08-02 06:50 SGT, verify gp3 headroom, LT v17/default, the paired
-  06:50/18:00 actions, one healthy v17 baseline, rejection alarm/actions, and a public
-  smoke. Auto-public-primed v17 passed fresh 100/100; hot 150 delivered turn one to
-  150/150 and completed 148/150 with two later WebSocket 1006 closures and no TTS
-  failure. Still run the 60-minute soak and one target termination rehearsal if time
-  and cost allow; one passing rehearsal is not a guarantee.
+- [ ] Before 2026-08-03 08:30 SGT, verify LT v19/default, the paired 08:30/17:00
+  actions, occupancy alarm/actions, and gateway health. Run
+  `ensure-staging-live-gateway.ps1 -Apply`, then
+  `wait-staging-event-ready.ps1 -ExpectedCapacity 50` before users enter. The final
+  two-slot run completed 99/100 and 130/150; 150 triggered 50->60 only after the
+  burst and had 20 WebSocket 1006 closures. Do not use three slots without a safe
+  isolated canary. Still run the 60-minute soak and one target-loss rehearsal.
+- [ ] Ask an administrator to create the 07:00-23:00 SGT EventBridge invocation for
+  the staging Lambda idle-check route and its Lambda resource permission.
+  `GPU_SCHEDULE_ENABLED=true` is verified by direct invocation, but the timer itself
+  does not exist and this role is denied `events:PutRule`.
 - [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
   from `vcs-stg-opt-3103` and terminate it, and terminate stopped v15 validator
   `i-0eb2ca68edb88d6d7`; this role is denied the required actions.
@@ -14,12 +19,10 @@
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,
   cancellation, progress, quotas, cost/startup measurements, and explicit model
   activation before choosing.
-- [ ] Rehearse proactive inference scaling with a fleet-wide high-resolution metric:
-  publish occupied/total synthesis slots every 10 seconds and try 50-75% utilization
-  for three consecutive samples, a scale-out cooldown, and slow scale-in. Compare
-  first-audio latency, rejected requests, false scale-outs, and GPU-hours before
-  comparing against the planned one-minute rejection alarm; use 10-30 busy GPUs only as an
-  optional minimum guard, not the primary threshold.
+- [ ] Improve scale-out detection latency. The live one-minute 70% occupied-slot
+  alarm correctly added 10 GPUs, but did so after a short 150-user burst ended.
+  Evaluate a fleet-wide 10-second occupied/total metric for three consecutive samples
+  against false scale-outs and GPU-hours; keep scheduled prewarm as the event control.
 - [ ] Make Live Full horizontally correct before increasing its concurrency: add a
   distributed session lease/fencing token, conditional manifest revisions,
   idempotency keys, durable resumable progress, and worker-loss/concurrent-edit tests.
