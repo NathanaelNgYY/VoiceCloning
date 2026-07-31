@@ -923,6 +923,52 @@ Suggestion verdicts:
 - First-sentence streaming: later authorised and deployed to staging as described
   below. The existing conservative first-phrase shortening remains unchanged.
 
+#### Verified text-done-to-first-audio event rehearsal (2026-07-31 evening)
+
+This rehearsal measured only the interval from `assistant.text.done` until the first
+TTS chunk returned as a valid RIFF WAV. It excludes microphone upload, transcription,
+and OpenAI generation. First-chunk verification remained enabled. Raw per-session JSON
+is ignored under `.tmp/`.
+
+| Effective fleet / users | Turn | Heard | First WAV fastest / average / p50 / p95 / slowest |
+|---|---:|---:|---:|---:|
+| 50 GPUs / 100 | 1 | 100 | 3.54 / 6.36 / 4.89 / 10.29 / 12.56 s |
+| 50 GPUs / 100 | 2 | 100 | 1.29 / 2.08 / 1.99 / 2.97 / 7.76 s |
+| 50 GPUs / 100 | 3 | 100 | 1.24 / 1.86 / 1.70 / 2.82 / 5.71 s |
+| 50 GPUs / 150 | 1 | 149 | 3.05 / 6.45 / 4.45 / 14.43 / 20.55 s |
+| 50 GPUs / 150 | 2 | 149 | 1.35 / 3.10 / 2.80 / 5.43 / 10.48 s |
+| 50 GPUs / 150 | 3 | 149 | 1.28 / 2.64 / 2.51 / 4.76 / 9.22 s |
+| 60 GPUs / 150 | 1 | 150 | 2.76 / 10.96 / 10.48 / 19.55 / 21.28 s |
+| 60 GPUs / 150 | 2 | 150 | 1.56 / 2.42 / 2.34 / 3.16 / 4.08 s |
+| 60 GPUs / 150 | 3 | 150 | 1.20 / 2.14 / 2.07 / 3.34 / 4.12 s |
+| 60 GPUs / 100 | 1 | 100 | 1.91 / 3.56 / 3.42 / 4.69 / 14.61 s |
+| 60 GPUs / 100 | 2 | 100 | 1.24 / 1.79 / 1.69 / 2.66 / 2.85 s |
+| 60 GPUs / 100 | 3 | 100 | 1.22 / 1.92 / 1.73 / 2.90 / 6.95 s |
+
+Across all three turns, average/p50/p95 first-WAV latency was 3.44/2.22/9.81 s
+for 50/100, 4.06/3.14/10.47 s for 50/150, 5.18/2.65/11.82 s for 60/150, and
+2.42/2.02/4.19 s for 60/100. Completion was 100/100, 149/150, 150/150, and
+100/100 respectively. The one failed 50/150 session produced no completed turn and
+timed out after 720 seconds; the other 149 sessions completed. Keepalive counts were
+448, 857, 865, and 381. OpenAI response lengths and routing varied, so the slower
+60/150 turn one is a real sample and not evidence that adding GPUs always lowers
+latency.
+
+The 150-user pre-scale wave produced an 82% occupancy point at 18:45 SGT. CloudWatch
+entered ALARM at 18:48:48, desired changed 50->60 at 18:48:51, and all 60 targets
+passed health plus per-instance cloud-init/service/public-prime proof at 18:57:38.
+Neither post-scale wave crossed 70%, so no second +10 occurred.
+
+The quiet scale-in alarm was broken before this rehearsal: missing request metrics
+could move the alarm to ALARM, but Step Scaling received no numeric breach value and
+performed no adjustment. The provisioner and live alarm now use
+`FILL(requests,0)`, threshold `<1`. In a controlled min-1/desired-3 test, the last
+request was at 19:03, the alarm triggered 3->2 at 19:21:26, and the continuously
+alarmed policy triggered 2->1 at 19:32:38. The floor is correct, but the conservative
+`-1` policy plus target drain/cooldown means additional removals take about 11 minutes
+each after the initial 15-minute quiet window. A final public verified TTS smoke on
+the baseline route returned HTTP 200 RIFF in 6.28 seconds.
+
 #### First-complete-sentence staging rollout (2026-07-31)
 
 The deployed source/Lambda commit is `fc99271`; the initial rollout documentation

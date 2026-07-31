@@ -562,17 +562,45 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --treat-missing-data notBreaching `
     --alarm-actions $baselineScalePolicy.PolicyARN
 
+  # Target Optimizer emits no request-count datapoint during a completely quiet
+  # minute. Treating missing data as breaching changes the alarm state, but gives
+  # Step Scaling no numeric breach value and therefore performs no adjustment.
+  # Fill missing minutes with an explicit zero so the -1 policy can execute.
+  $idleRequestQueries = @(
+    @{
+      Id = 'requests'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'TargetControlRequestCount'
+          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
+        }
+        Period = 60
+        Stat = 'Sum'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'filledrequests'
+      Expression = 'FILL(requests,0)'
+      Label = 'Target Optimizer requests (missing=0)'
+      ReturnData = $true
+    }
+  ) | ConvertTo-Json -Depth 8 -Compress
+  $idleRequestQueriesPath = Join-Path $env:TEMP 'vcs-staging-idle-request-queries.json'
+  [IO.File]::WriteAllText(
+    $idleRequestQueriesPath,
+    $idleRequestQueries,
+    (New-Object Text.UTF8Encoding($false))
+  )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-no-traffic-15m `
     --alarm-description 'Scale in one instance after fifteen consecutive minutes with no Target Optimizer requests.' `
-    --namespace AWS/ApplicationELB `
-    --metric-name TargetControlRequestCount `
-    --dimensions "Name=LoadBalancer,Value=$albResource" `
-    --statistic Sum --period 60 `
+    --metrics "file://$idleRequestQueriesPath" `
     --evaluation-periods $cfg.scaleInIdleMinutes `
     --datapoints-to-alarm $cfg.scaleInIdleMinutes `
-    --threshold 0 --comparison-operator LessThanOrEqualToThreshold `
-    --treat-missing-data breaching `
+    --threshold 1 --comparison-operator LessThanThreshold `
+    --treat-missing-data missing `
     --alarm-actions $scaleInPolicy.PolicyARN
 
   $disabledLegacyTracking = @{
