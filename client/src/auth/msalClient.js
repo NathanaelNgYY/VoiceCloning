@@ -74,7 +74,7 @@ function getAccountUsername(account) {
 }
 
 export function isMsalAuthEnabled() {
-  return config.authMode === "msal";
+  return config.giAuthEnabled && config.authMode === "msal";
 }
 
 export function getAllowedEmailDomains() {

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Search, LogOut, ArrowRight, BookOpenText } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/useAuth";
+import { config } from "@/config";
 
 export function SearchPage() {
   const navigate = useNavigate();
@@ -61,15 +62,17 @@ export function SearchPage() {
 
       {/* Header with Logout */}
       <header className="relative z-10 flex h-16 items-center justify-end px-6">
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-red-50/50 hover:text-red-600"
-          title="Sign out"
-        >
-          <LogOut className="size-4" />
-          <span>Sign out</span>
-        </button>
+        {config.giAuthEnabled && auth.isAuthenticated ? (
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-red-50/50 hover:text-red-600"
+            title="Sign out"
+          >
+            <LogOut className="size-4" />
+            <span>Sign out</span>
+          </button>
+        ) : null}
       </header>
 
       {/* Center Search Input */}

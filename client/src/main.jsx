@@ -7,6 +7,7 @@ import { APP_BASENAME } from '@/lib/runtimeConfig';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { AppProviders } from '@/AppProviders.jsx';
 import { initializeMsal, isMsalAuthEnabled } from '@/auth/msalClient';
+import { config } from '@/config';
 
 // Only the gi build carries the lesson/auth surface. Every other mode renders
 // exactly as before — no auth context, no MSAL bootstrap, no async gate.
@@ -14,7 +15,7 @@ async function bootstrap() {
   let msalInstance = null;
   let bootstrapError = null;
 
-  if (APP_MODE_CONFIG.gi && isMsalAuthEnabled()) {
+  if (APP_MODE_CONFIG.gi && config.giAuthEnabled && isMsalAuthEnabled()) {
     try {
       msalInstance = await initializeMsal();
     } catch (error) {

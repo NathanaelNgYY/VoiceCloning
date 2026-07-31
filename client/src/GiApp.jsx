@@ -7,10 +7,15 @@ import { SearchPage } from '@/pages/SearchPage.jsx';
 import GiChatPage from '@/pages/GiChatPage.jsx';
 import { consumeStoredPostLoginPath } from '@/auth/msalClient';
 import { useAuth } from '@/auth/useAuth';
+import { config } from '@/config';
 
 function ProtectedRoute({ children }) {
   const auth = useAuth();
   const location = useLocation();
+
+  if (!config.giAuthEnabled) {
+    return children;
+  }
 
   if (auth.isLoading) {
     return (
@@ -34,6 +39,11 @@ function PostLoginRedirectHandler() {
   const handledRef = useRef(false);
 
   useEffect(() => {
+    if (!config.giAuthEnabled) {
+      handledRef.current = false;
+      return;
+    }
+
     if (!auth.isAuthenticated) {
       handledRef.current = false;
       return;
@@ -80,7 +90,12 @@ export default function GiApp() {
       <PostLoginRedirectHandler />
 
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/login"
+          element={
+            config.giAuthEnabled ? <LoginPage /> : <Navigate to="/" replace />
+          }
+        />
         <Route
           path="/"
           element={

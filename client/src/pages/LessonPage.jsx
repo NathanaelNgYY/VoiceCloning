@@ -20,6 +20,7 @@ import {
 } from "@/lib/lessonVideoContext";
 import { useVideoTopicThumbnails } from "@/hooks/useVideoTopicThumbnails";
 import { isRevealIdle, revealedSegmentCount } from "@/lib/transcriptReveal";
+import { config } from "@/config";
 
 function formatTimestamp(totalSeconds) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
@@ -304,15 +305,19 @@ export function LessonPage() {
           {course?.title ?? "Lesson"}
         </h1>
 
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="rounded-lg p-1.5 text-ink-muted transition hover:bg-red-50/50 hover:text-red-600 cursor-pointer"
-          title="Sign out"
-          aria-label="Sign out"
-        >
-          <LogOut className="size-5" />
-        </button>
+        {config.giAuthEnabled && auth.isAuthenticated ? (
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="rounded-lg p-1.5 text-ink-muted transition hover:bg-red-50/50 hover:text-red-600 cursor-pointer"
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut className="size-5" />
+          </button>
+        ) : (
+          <span className="size-8" aria-hidden="true" />
+        )}
       </header>
 
       <div className="relative flex flex-1 min-h-0 flex-row">

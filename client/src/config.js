@@ -22,6 +22,9 @@ export const config = {
   apiAuthMode: import.meta.env.VITE_API_AUTH_MODE ?? "none",
   demoMode: (import.meta.env.VITE_DEMO_MODE ?? "true") !== "false",
   enableAvatar: (import.meta.env.VITE_ENABLE_AVATAR ?? "false") === "true",
+  // Authentication remains available by default. Individual deployments can
+  // expose the GI lesson surface publicly without removing the SSO code.
+  giAuthEnabled: (import.meta.env.VITE_GI_AUTH_ENABLED ?? "true") !== "false",
   authMode: import.meta.env.VITE_AUTH_MODE ?? "mock",
   entraClientId: import.meta.env.VITE_ENTRA_CLIENT_ID ?? "",
   entraTenantAuthority:
