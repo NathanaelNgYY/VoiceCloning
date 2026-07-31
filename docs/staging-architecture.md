@@ -1126,6 +1126,22 @@ The remaining 150-user tail is capacity admission: first-turn retry count/sleep 
 7/9.75 seconds at p95. One-minute occupied-slot samples peaked at 55%, so the 70%
 autoscaling alarm correctly did not fire and no post-scale rerun was applicable.
 
+Snapshot behavior remains request-scoped. The GI change added the full saved-model
+snapshot to the lecturer chatbot conversation. The regular Live page already sends
+its selected GPT/SoVITS snapshot for both Fast and Full modes. Direct inference/TTS
+callers that provide only `voiceProfileId`, or omit a complete model/reference
+snapshot, still use the saved-profile resolver. This avoids repeated S3 reads when a
+caller already has an immutable selection without disabling normal profile resolution.
+
+The 150-user first-turn p95 was 12.82 seconds: 12.30 seconds was inside the
+Lambda/worker path and 9.75 seconds of that was capacity-retry sleep. The 22.35-second
+maximum retried 12 times and slept 19.75 seconds; it was warm and resolved no profile.
+Turn three also had two distinct transit outliers. The 18.72-second maximum spent only
+2.17 seconds in Lambda/worker and 16.55 seconds in client/CloudFront/response transit;
+the next transit outlier spent 9.50 seconds outside Lambda. Treat capacity admission as
+the p95 problem and investigate those rare transit outliers separately. Provisioned
+concurrency cannot remove either tail.
+
 A simultaneous burst can also be slower than a short ramp. Separate EC2 GPUs do not
 share compute with each other, but two requests placed on one `g6.xlarge` share that
 GPU's compute and memory bandwidth. With 50 users and 32 two-slot GPUs, up to 18 GPUs
