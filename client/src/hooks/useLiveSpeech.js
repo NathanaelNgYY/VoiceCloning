@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   cancelGeneration,
+  cancelLiveReply,
   getInferenceChunk,
   startGeneration,
   synthesize,
@@ -181,6 +182,10 @@ export function useLiveSpeech({
   const activeAssistantMessageIdRef = useRef('');
   const currentSynthesisMessageIdRef = useRef('');
   const cancelledReplyIdsRef = useRef(new Set());
+  // messageId -> per-reply token sent with every clip of that reply, so barge-in
+  // can tell the worker to release clips still queued for the GPU. Must be unique
+  // across users, not just within this tab.
+  const replyTokensRef = useRef(new Map());
   const userTextBuffersRef = useRef(new Map());
   const userTranscriptTimersRef = useRef(new Map());
   const voiceGateRef = useRef(createVoiceGateState());
@@ -240,10 +245,10 @@ export function useLiveSpeech({
     return getActiveSynthesisSnapshot().refParams;
   }
 
-  function synthesizeForEngine(engine, params) {
+  function synthesizeForEngine(engine, params, options = {}) {
     return engine === 'full'
       ? synthesizeWithRetry(params)
-      : synthesizeSentenceWithRetry(params);
+      : synthesizeSentenceWithRetry(params, options);
   }
 
   function setPhase(phase) {
@@ -358,6 +363,7 @@ export function useLiveSpeech({
     bargeInFramesRef.current = 0;
     lastBargeInAtRef.current = 0;
     cancelledReplyIdsRef.current = new Set();
+    replyTokensRef.current = new Map();
     userTextBuffersRef.current = new Map();
     clearAllUserTranscriptTimers();
   }
@@ -510,11 +516,11 @@ export function useLiveSpeech({
     throw lastError;
   }
 
-  async function synthesizeSentenceWithRetry(params) {
+  async function synthesizeSentenceWithRetry(params, options = {}) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        return await synthesizeSentence(params);
+        return await synthesizeSentence(params, options);
       } catch (err) {
         lastError = err;
         if (!shouldRetrySynthesis(err) || attempt === 2) {
@@ -524,6 +530,19 @@ export function useLiveSpeech({
       }
     }
     throw lastError;
+  }
+
+  // Stable for the life of a reply: every clip of that reply carries the same
+  // token, so one cancel frees all of its queued clips.
+  function replyTokenFor(messageId) {
+    const existing = replyTokensRef.current.get(messageId);
+    if (existing) return existing;
+
+    const token = globalThis.crypto?.randomUUID
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    replyTokensRef.current.set(messageId, token);
+    return token;
   }
 
   function isVoiceStoppedMessage(messageId) {
@@ -657,7 +676,8 @@ export function useLiveSpeech({
           buildLiveSentenceParams(phrases[index], activeRefParams, liveLanguage, {
             // First clip gates time-to-first-audio — play it unverified.
             skipVerify: index === 0,
-          })
+          }),
+          { replyToken: replyTokenFor(messageId) }
         );
 
         if (
@@ -680,7 +700,17 @@ export function useLiveSpeech({
         patchMessage(messageId, { status: 'ready' });
       }
     } catch (err) {
-      if (isCancelledRef.current || runId !== runIdRef.current) return;
+      // A barged-in reply is already marked 'interrupted', and the worker now
+      // rejects its in-flight clip outright (499). That is the cancel working, not
+      // a failure — reporting it would both paint a false error and tear down the
+      // phase of the replacement reply that is already starting.
+      if (
+        isCancelledRef.current
+        || runId !== runIdRef.current
+        || cancelledReplyIdsRef.current.has(messageId)
+      ) {
+        return;
+      }
 
       patchMessage(messageId, {
         status: 'error',
@@ -940,6 +970,12 @@ export function useLiveSpeech({
     for (const messageId of new Set([currentReplyId, synthesizingId].filter(Boolean))) {
       if (cancelPendingSynthesis) {
         cancelledReplyIdsRef.current.add(messageId);
+        // Free this reply's queued clips on the worker. Best-effort and fire-and-
+        // forget: the local loop has already stopped either way, and a failed
+        // cancel must never surface as a conversation error. Deliberately not done
+        // for a plain Stop voice, whose clips keep generating by design.
+        const replyToken = replyTokensRef.current.get(messageId);
+        if (replyToken) cancelLiveReply(replyToken).catch(() => {});
         patchMessage(messageId, { status: 'interrupted' });
       } else {
         patchMessage(messageId, { voiceStopped: true });

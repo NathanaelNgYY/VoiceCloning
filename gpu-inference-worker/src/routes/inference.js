@@ -57,6 +57,13 @@ export function synthesisBusy() {
     || hasActiveInferenceSession();
 }
 
+// Identifies the reply a live clip belongs to, so barge-in can drop that reply's
+// queued clips. Sent as a header rather than in the body: the body is forwarded
+// verbatim to the GPT-SoVITS Python API, which must not see unknown fields.
+export function replyCancelKey(req) {
+  return String(req.get('X-VCS-Reply-Token') || '').trim();
+}
+
 async function acquireSynthesisLease(req, res) {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -67,6 +74,7 @@ async function acquireSynthesisLease(req, res) {
       modelKey: voiceModelKey(req.body),
       signal: controller.signal,
       priority: Number.parseInt(req.get('X-VCS-Capacity-Retry') || '0', 10) > 0,
+      cancelKey: replyCancelKey(req),
     });
     req.off('aborted', abort);
     res.set('X-Synthesis-Queue-Wait-Ms', String(lease.queueWaitMs));
@@ -590,6 +598,19 @@ router.post('/inference/tts', async (req, res) => {
   } finally {
     lease?.release();
   }
+});
+
+// Barge-in: the user talked over this reply, so free any of its clips still waiting
+// for the GPU and refuse any that are still in transit. A clip already synthesizing
+// cannot be stopped — the GPT-SoVITS call is blocking — so `freed` is 0 when the
+// phrase had already reached the GPU. Idempotent: repeat cancels are harmless.
+router.post('/live/cancel', (req, res) => {
+  const replyToken = String(req.body?.replyToken || '').trim();
+  if (!replyToken) {
+    return res.status(400).json({ error: 'replyToken is required' });
+  }
+  const freed = synthesisScheduler.cancel(replyToken);
+  return res.json({ freed, queue: synthesisScheduler.getStats() });
 });
 
 // Scan the input text for words the running engine would pronounce by NEURAL GUESS

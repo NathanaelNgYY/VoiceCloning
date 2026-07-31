@@ -17,6 +17,19 @@ function normalizedModelKey(value) {
   return String(value || '').trim() || '__current_model__';
 }
 
+function normalizedCancelKey(value) {
+  return String(value || '').trim();
+}
+
+// A reply the user barged in on is dead, but its clip may still be sitting in the
+// queue holding a slot that live callers are waiting for. Cancelling only ever
+// frees a QUEUED request — once a phrase reaches the GPU the Python call runs to
+// completion and nothing can stop it (see routes/inference.js). Cancelled keys are
+// also remembered briefly, because a cancel routed straight to the worker can
+// overtake the clip request it cancels (that request is still crossing the Lambda
+// hop); without this the clip would arrive after the cancel and queue anyway.
+const CANCELLED_KEY_TTL_MS = 30_000;
+
 export class SynthesisScheduler {
   constructor({
     maxConcurrency = SYNTHESIS_MAX_CONCURRENCY,
@@ -31,6 +44,36 @@ export class SynthesisScheduler {
     this.active = 0;
     this.activeModelKey = '';
     this.queue = [];
+    this.cancelledKeys = new Map();
+  }
+
+  pruneCancelledKeys() {
+    const cutoff = this.now();
+    for (const [key, expiresAt] of this.cancelledKeys) {
+      if (expiresAt <= cutoff) this.cancelledKeys.delete(key);
+    }
+  }
+
+  isCancelledKey(cancelKey) {
+    if (!cancelKey) return false;
+    this.pruneCancelledKeys();
+    return this.cancelledKeys.has(cancelKey);
+  }
+
+  // Drop every queued request belonging to a dead reply and remember the key, so a
+  // clip request still in transit is rejected the moment it arrives. Returns how
+  // many queued requests were actually freed.
+  cancel(cancelKey) {
+    const key = normalizedCancelKey(cancelKey);
+    if (!key) return 0;
+
+    this.pruneCancelledKeys();
+    this.cancelledKeys.set(key, this.now() + CANCELLED_KEY_TTL_MS);
+
+    const doomed = this.queue.filter((entry) => entry.cancelKey === key);
+    for (const entry of doomed) entry.onCancel();
+    if (doomed.length > 0) this.drain();
+    return doomed.length;
   }
 
   getStats() {
@@ -49,10 +92,16 @@ export class SynthesisScheduler {
     return this.active === 0 || this.activeModelKey === modelKey;
   }
 
-  acquire({ modelKey, signal, priority = false } = {}) {
+  acquire({ modelKey, signal, priority = false, cancelKey = '' } = {}) {
     const normalizedKey = normalizedModelKey(modelKey);
+    const replyKey = normalizedCancelKey(cancelKey);
     if (signal?.aborted) {
       return Promise.reject(new SynthesisQueueError(499, 'Request was cancelled while waiting for the GPU', 'QUEUE_ABORTED'));
+    }
+    // The reply this clip belongs to was already abandoned — never take a GPU slot
+    // for it, even if one is free right now.
+    if (this.isCancelledKey(replyKey)) {
+      return Promise.reject(new SynthesisQueueError(499, 'Reply was cancelled before synthesis started', 'REPLY_CANCELLED'));
     }
 
     // Preserve FIFO once anyone is waiting. New arrivals must not continually skip
@@ -71,12 +120,14 @@ export class SynthesisScheduler {
     return new Promise((resolve, reject) => {
       const entry = {
         modelKey: normalizedKey,
+        cancelKey: replyKey,
         priority: priority === true,
         enqueuedAt: this.now(),
         resolve,
         reject,
         timeout: null,
         onAbort: null,
+        onCancel: null,
       };
       const remove = () => {
         const index = this.queue.indexOf(entry);
@@ -98,6 +149,13 @@ export class SynthesisScheduler {
         clearTimeout(entry.timeout);
         reject(new SynthesisQueueError(499, 'Request was cancelled while waiting for the GPU', 'QUEUE_ABORTED'));
         this.drain();
+      };
+      // Driven by cancel(), which drains once for the whole batch it frees.
+      entry.onCancel = () => {
+        remove();
+        clearTimeout(entry.timeout);
+        signal?.removeEventListener('abort', entry.onAbort);
+        reject(new SynthesisQueueError(499, 'Reply was cancelled while waiting for the GPU', 'REPLY_CANCELLED'));
       };
       signal?.addEventListener('abort', entry.onAbort, { once: true });
       if (entry.priority) {

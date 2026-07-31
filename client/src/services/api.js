@@ -376,10 +376,14 @@ export async function synthesize(params) {
   };
 }
 
-export async function synthesizeSentence(params) {
+// `replyToken` travels as a header, never in `params`: the body is forwarded
+// verbatim to the GPT-SoVITS Python API, which must not receive unknown fields.
+// It lets barge-in release this clip's GPU queue slot (see cancelLiveReply).
+export async function synthesizeSentence(params, { replyToken = '' } = {}) {
   const res = await api.post('/live/tts-sentence', params, {
     responseType: 'blob',
     validateStatus: () => true,
+    ...(replyToken ? { headers: { 'X-VCS-Reply-Token': replyToken } } : {}),
   });
 
   if (res.status !== 200) {
@@ -574,6 +578,13 @@ export function getInferenceChunkVersionUrl(sessionId, index, versionId) {
 
 export function cancelGeneration(sessionId) {
   return api.post('/inference/cancel', { sessionId });
+}
+
+// Barge-in: drop any clips of an abandoned reply that are still queued for the GPU.
+// Best-effort — a clip already synthesizing cannot be stopped, and a failed cancel
+// costs one wasted clip, so callers must never surface an error from this.
+export function cancelLiveReply(replyToken) {
+  return api.post('/live/cancel', { replyToken });
 }
 
 export function getInferenceStatus() {

@@ -23,7 +23,7 @@ export function resolveCorsOrigin(requestOrigin = '', configuredOrigin = CORS_OR
 export function buildCorsHeaders(eventOrOrigin) {
   return {
     'Access-Control-Allow-Origin': resolveCorsOrigin(getRequestOrigin(eventOrOrigin)),
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-amz-content-sha256',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-amz-content-sha256,X-VCS-Reply-Token',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
     Vary: 'Origin',
   };

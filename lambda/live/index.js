@@ -1,15 +1,32 @@
-import { corsHeaders, err, preflight, parseJsonBody } from '../shared/cors.js';
-import { inferencePostBinary } from '../shared/gpuWorker.js';
+import { corsHeaders, err, ok, preflight, parseJsonBody } from '../shared/cors.js';
+import { inferencePost, inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
 import { demoHeaders } from '../shared/demoOrigin.js';
+
+const REPLY_TOKEN_HEADER = 'X-VCS-Reply-Token';
+
+// Header names arrive lower-cased on Function URL events, but casing is not
+// guaranteed across invoke paths — match case-insensitively.
+export function readReplyToken(event) {
+  const headers = event?.headers || {};
+  const key = Object.keys(headers)
+    .find((name) => name.toLowerCase() === REPLY_TOKEN_HEADER.toLowerCase());
+  return key ? String(headers[key] || '').trim() : '';
+}
+
+function isCancelPath(event) {
+  const path = event?.rawPath || event?.requestContext?.http?.path || '';
+  return /\/api\/live\/cancel\/?$/u.test(path);
+}
 
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
   postBinary = inferencePostBinary,
+  post = inferencePost,
 } = {}) {
   return async function handler(event) {
     if (event.requestContext?.http?.method === 'OPTIONS') {
-      return preflight();
+      return preflight(event);
     }
 
     let body;
@@ -19,10 +36,26 @@ export function createHandler({
       return err(400, 'Invalid JSON body');
     }
 
+    // Barge-in cancel. Deliberately does no voice-profile resolution: it must be
+    // as cheap as possible, since it races the clip request it is cancelling.
+    if (isCancelPath(event)) {
+      const replyToken = String(body.replyToken || '').trim();
+      if (!replyToken) {
+        return err(400, 'replyToken is required', event);
+      }
+      try {
+        return ok(await post('/live/cancel', { replyToken }), {}, event);
+      } catch (error) {
+        // A cancel that fails costs one wasted clip, never a broken conversation.
+        return ok({ freed: 0, error: error.message }, {}, event);
+      }
+    }
+
     if (!body.text?.trim()) {
       return err(400, 'text is required');
     }
 
+    const replyToken = readReplyToken(event);
     try {
       const resolvedBody = await resolveSynthesisBody(body);
       if (!resolvedBody.ref_audio_path) {
@@ -38,7 +71,11 @@ export function createHandler({
         split_bucket: true,
         parallel_infer: false,
         fragment_interval: 0.1,
-      }, demoHeaders(event));
+      }, {
+        ...demoHeaders(event),
+        // Lets barge-in free this clip if it is still queued on the worker.
+        ...(replyToken ? { [REPLY_TOKEN_HEADER]: replyToken } : {}),
+      });
 
       return {
         statusCode: 200,

@@ -68,3 +68,71 @@ test('capacity retries are FIFO within a priority lane ahead of normal queued wo
   await Promise.all([normal, retryOne, retryTwo]);
   assert.deepEqual(order, ['retry-one', 'retry-two', 'normal']);
 });
+
+test('barge-in frees only the abandoned reply\'s queued clips', async () => {
+  const scheduler = new SynthesisScheduler({ maxConcurrency: 1, maxQueueDepth: 5, maxWaitMs: 1000 });
+  const active = await scheduler.acquire({ modelKey: 'dean' });
+  const doomed = scheduler.acquire({ modelKey: 'dean', cancelKey: 'reply-a' });
+  const survivor = scheduler.acquire({ modelKey: 'dean', cancelKey: 'reply-b' });
+  assert.equal(scheduler.getStats().queued, 2);
+
+  assert.equal(scheduler.cancel('reply-a'), 1);
+  await assert.rejects(
+    doomed,
+    (error) => error instanceof SynthesisQueueError
+      && error.statusCode === 499
+      && error.code === 'REPLY_CANCELLED',
+  );
+  assert.equal(scheduler.getStats().queued, 1);
+
+  active.release();
+  (await survivor).release();
+});
+
+test('a cancel that overtakes its own clip request rejects it on arrival', async () => {
+  // The cancel goes straight to the worker while the clip it cancels is still
+  // crossing the Lambda hop, so the clip can arrive after the cancel.
+  const scheduler = new SynthesisScheduler({ maxConcurrency: 1, maxQueueDepth: 5, maxWaitMs: 1000 });
+  scheduler.cancel('reply-a');
+
+  await assert.rejects(
+    scheduler.acquire({ modelKey: 'dean', cancelKey: 'reply-a' }),
+    (error) => error instanceof SynthesisQueueError
+      && error.statusCode === 499
+      && error.code === 'REPLY_CANCELLED',
+  );
+  // An idle GPU must still be handed to everyone else.
+  assert.equal(scheduler.getStats().active, 0);
+  (await scheduler.acquire({ modelKey: 'dean', cancelKey: 'reply-b' })).release();
+});
+
+test('cancelling cannot stop a clip already synthesizing on the GPU', async () => {
+  // GPT-SoVITS synthesis is a blocking call: once a clip holds a lease, barge-in
+  // can only stop the clips behind it.
+  const scheduler = new SynthesisScheduler({ maxConcurrency: 1, maxQueueDepth: 5, maxWaitMs: 1000 });
+  const running = await scheduler.acquire({ modelKey: 'dean', cancelKey: 'reply-a' });
+
+  assert.equal(scheduler.cancel('reply-a'), 0);
+  assert.equal(scheduler.getStats().active, 1);
+  running.release();
+});
+
+test('cancelled reply keys are pruned once their TTL lapses', async () => {
+  let now = 0;
+  const scheduler = new SynthesisScheduler({ maxConcurrency: 1, maxQueueDepth: 5, maxWaitMs: 1000, now: () => now });
+  scheduler.cancel('reply-a');
+  assert.equal(scheduler.isCancelledKey('reply-a'), true);
+
+  now = 30_001;
+  assert.equal(scheduler.isCancelledKey('reply-a'), false);
+  assert.equal(scheduler.cancelledKeys.size, 0);
+});
+
+test('cancelling without a token is a no-op and never blocks untagged work', async () => {
+  const scheduler = new SynthesisScheduler({ maxConcurrency: 1, maxQueueDepth: 5, maxWaitMs: 1000 });
+  assert.equal(scheduler.cancel(''), 0);
+  assert.equal(scheduler.cancel(undefined), 0);
+  assert.equal(scheduler.isCancelledKey(''), false);
+
+  (await scheduler.acquire({ modelKey: 'dean' })).release();
+});
