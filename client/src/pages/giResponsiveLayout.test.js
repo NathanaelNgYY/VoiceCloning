@@ -4,6 +4,11 @@ import test from "node:test";
 
 const searchPageSource = readFileSync(new URL("./SearchPage.jsx", import.meta.url), "utf8");
 const lessonPageSource = readFileSync(new URL("./LessonPage.jsx", import.meta.url), "utf8");
+const giChatPageSource = readFileSync(new URL("./GiChatPage.jsx", import.meta.url), "utf8");
+const giChatPanelSource = readFileSync(
+  new URL("../components/gi/GiChatPanel.jsx", import.meta.url),
+  "utf8",
+);
 
 test("home search form has deliberate space below the supporting text", () => {
   assert.match(
@@ -69,4 +74,19 @@ test("desktop shows transcript under the video and the chatbot beside it", () =>
   // Both panels render at lg regardless of which tab the phone layout selected.
   const desktopVisible = lessonPageSource.match(/"[^"]*lg:flex[^"]*",\s*\n\s*activeTab === "(transcript|chatbot)" \? "flex" : "hidden"/g);
   assert.equal(desktopVisible?.length, 2);
+});
+
+test("both gi chat surfaces offer typing alongside the mic", () => {
+  // Someone on a machine with no microphone must be able to ask a question,
+  // so the text input is wired on the standalone kiosk and the lesson panel.
+  assert.match(giChatPageSource, /onSendText=\{chat\.sendText\}/);
+  assert.match(giChatPanelSource, /onSendText=\{chat\.sendText\}/);
+});
+
+test("the composer's voice chip stays clear of the text input row", () => {
+  // The composer is two rows now (mic, then the full-width text field). A chip
+  // centred on the whole block would land on top of the text field, so it is
+  // pinned to the mic row instead.
+  assert.match(giChatPanelSource, /className="absolute left-3 top-7[^"]*sm:left-4"/);
+  assert.doesNotMatch(giChatPanelSource, /absolute left-3 top-1\/2[^"]*-translate-y-1\/2/);
 });

@@ -92,6 +92,33 @@ export function buildVideoPositionItem(seconds, { paused = false } = {}) {
   };
 }
 
+// A typed question from someone without a microphone. It enters the
+// conversation as an ordinary user turn, so the reply comes back through the
+// same assistant.text.* path a spoken turn uses and is spoken in the cloned
+// voice like any other.
+// The cap keeps one paste from pushing a wall of text into the Realtime
+// context. (Client counterpart: client/src/hooks/liveConversation.js —
+// duplicated because the gateway is a separate deployable with no shared
+// package.)
+export const MAX_USER_TEXT_LENGTH = 2000;
+
+export function normalizeUserText(value) {
+  // Strings only — this reads straight off a client WebSocket frame, and
+  // coercing an object here would put "[object Object]" in the conversation.
+  return typeof value === 'string' ? value.trim().slice(0, MAX_USER_TEXT_LENGTH) : '';
+}
+
+export function buildUserTextItem(text) {
+  return {
+    type: 'conversation.item.create',
+    item: {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text }],
+    },
+  };
+}
+
 function responseKey(event) {
   return event.response_id || event.item_id || event.event_id || 'default';
 }

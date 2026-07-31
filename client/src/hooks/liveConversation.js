@@ -139,6 +139,15 @@ export function cleanLiveText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
+// A question typed instead of spoken. The cap keeps one paste from pushing a
+// wall of text into the Realtime conversation; the gateway enforces the same
+// limit (live-gateway/src/services/openaiRealtimeEvents.js).
+export const MAX_TYPED_MESSAGE_LENGTH = 2000;
+
+export function normalizeTypedMessage(value) {
+  return String(value ?? '').trim().slice(0, MAX_TYPED_MESSAGE_LENGTH);
+}
+
 function englishNumberWordsToDigits(match) {
   const words = match.toLowerCase().split(/[-\s]+/u).filter(Boolean);
   if (words.length === 1) {

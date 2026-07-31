@@ -10,7 +10,7 @@ import { useGiReplyAudio } from '@/hooks/useGiReplyAudio.js';
 import { useStickToBottom } from '@/hooks/useStickToBottom.js';
 import { chatGrowthKey } from '@/lib/chatScroll';
 
-const EMPTY_HINT = 'Start a conversation — click the mic';
+const EMPTY_HINT = 'Start a conversation — click the mic, or type your question';
 
 /**
  * The gi chat surface (messages + notices + voice composer), driven by the
@@ -100,9 +100,13 @@ export function GiChatPanel({
             voice has stopped being a question. */}
         <div className="relative flex items-center justify-center px-3 pb-3 pt-2 sm:px-4">
           {/* The chip stops 3rem short of centre so it cannot reach the mic
-              circle, however narrow the panel gets. */}
+              circle, however narrow the panel gets. It is pinned to the top of
+              the block rather than centred on it: the composer's second row is
+              the full-width text field, and a centred chip would land on top
+              of it. `top-7` optically centres the chip against the 64px idle
+              mic circle beside it — the only state in which it renders. */}
           {chat.activeVoiceLabel && !chat.voiceActive && (
-            <div className="absolute left-3 top-1/2 max-w-[calc(50%-3rem)] -translate-y-1/2 sm:left-4">
+            <div className="absolute left-3 top-7 max-w-[calc(50%-3rem)] sm:left-4">
               <VoiceIndicator label={chat.activeVoiceLabel} compact />
             </div>
           )}
@@ -117,6 +121,8 @@ export function GiChatPanel({
             onToggleMute={chat.toggleMute}
             playbackReady={chat.playbackReady}
             onStopVoice={chat.stopVoicePlayback}
+            onSendText={chat.sendText}
+            canSendText={chat.canSendText}
           />
         </div>
       </div>

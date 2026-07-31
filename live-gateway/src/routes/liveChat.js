@@ -89,6 +89,12 @@ export function handleBrowserMessage(bridge, data) {
     return;
   }
 
+  // A question typed instead of spoken — for people with no microphone.
+  if (message.type === 'user.text') {
+    bridge.sendText(message.text);
+    return;
+  }
+
   if (message.type === 'input.pause') {
     bridge.pauseInput();
     return;

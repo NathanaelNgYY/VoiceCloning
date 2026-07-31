@@ -100,6 +100,65 @@ test('injectVideoPosition sends nothing until a position is known', () => {
   assert.deepEqual(sent, []);
 });
 
+test('sendText adds a typed question as a user turn and asks for the reply', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+
+  assert.equal(bridge.sendText('  What causes an upper GI bleed?  '), true);
+
+  assert.deepEqual(sent.map((message) => message.type), [
+    'conversation.item.create',
+    'response.create',
+  ]);
+  assert.deepEqual(sent[0].item, {
+    type: 'message',
+    role: 'user',
+    content: [{ type: 'input_text', text: 'What causes an upper GI bleed?' }],
+  });
+});
+
+test('sendText ignores an empty message and a closed bridge', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+
+  assert.equal(bridge.sendText('   '), false);
+  assert.equal(bridge.sendText(null), false);
+  // A non-string frame field must not be coerced into the conversation.
+  assert.equal(bridge.sendText({ text: 'nested' }), false);
+  assert.equal(bridge.sendText(42), false);
+
+  bridge.closed = true;
+  assert.equal(bridge.sendText('hello'), false);
+  assert.deepEqual(sent, []);
+});
+
+test('sendText drops audio captured while the user was typing', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+
+  bridge.sendAudio('half-an-utterance');
+  bridge.sendText('Actually, let me type it.');
+
+  assert.deepEqual(sent.map((message) => message.type), [
+    'input_audio_buffer.append',
+    'conversation.item.create',
+    'input_audio_buffer.clear',
+    'response.create',
+  ]);
+  // The stale audio must not be committable onto the next turn.
+  assert.equal(bridge.commitInput(), false);
+});
+
+test('sendText carries the lesson video position into a typed turn', () => {
+  const { bridge, sent } = createBridgeWithOpenSocket();
+  bridge.setVideoPosition({ seconds: 512.4, paused: true });
+
+  bridge.sendText('What does she mean here?');
+
+  const items = sent.filter((message) => message.type === 'conversation.item.create');
+  assert.equal(items.length, 2);
+  assert.equal(items[0].item.role, 'system');
+  assert.match(items[0].item.content[0].text, /paused at 8:32/);
+  assert.equal(items[1].item.role, 'user');
+});
+
 test('speech_started injects the video position as a hidden system note', () => {
   const { bridge, sent } = createBridgeWithOpenSocket();
   bridge.setVideoPosition({ seconds: 512.4, paused: true });

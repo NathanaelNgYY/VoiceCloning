@@ -116,6 +116,8 @@ export default function GiChatPage() {
       onToggleMute={chat.toggleMute}
       playbackReady={chat.playbackReady}
       onStopVoice={chat.stopVoicePlayback}
+      onSendText={chat.sendText}
+      canSendText={chat.canSendText}
     />
   );
 
@@ -196,8 +198,9 @@ export default function GiChatPage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
-              {/* The source's Voice/Text toggle is omitted — this build is
-                  voice-only (see Task 3 Step 10). */}
+              {/* No Voice/Text mode toggle: typing and the mic are both live in
+                  the composer at once, so nobody has to pick a mode before
+                  they can ask anything. */}
               <div className="flex shrink-0 rounded-full bg-slate-100 p-1 lg:hidden">
                 <button
                   type="button"
@@ -251,7 +254,8 @@ export default function GiChatPage() {
                 <h2 className="text-lg font-semibold">GI Bleeding Chatbot</h2>
                 <p className="mx-auto max-w-sm text-sm text-ink-muted">
                   Ask me about GI bleeding education material. Tap the voice button to start a
-                  conversation, then just speak — tap again to end it.
+                  conversation, then just speak — tap again to end it. No microphone? Type your
+                  question instead; I'll still answer out loud.
                 </p>
               </div>
             </section>
@@ -279,7 +283,9 @@ export default function GiChatPage() {
                   />
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-                    <p className="text-sm text-ink-muted">Start a conversation — click the mic</p>
+                    <p className="text-sm text-ink-muted">
+                      Start a conversation — click the mic, or type your question
+                    </p>
                   </div>
                 )}
               </div>

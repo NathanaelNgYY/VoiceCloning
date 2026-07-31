@@ -20,6 +20,8 @@ import {
   nextAudioErrorAction,
   isBenignRealtimeError,
   fixSpeechPronunciation,
+  normalizeTypedMessage,
+  MAX_TYPED_MESSAGE_LENGTH,
   interClipGapMs,
   INTER_CLIP_GAP_MS,
   canReuseActiveUserMessage,
@@ -54,6 +56,22 @@ test('isBenignRealtimeError keeps real errors visible', () => {
   assert.equal(isBenignRealtimeError('Live chat connection failed.'), false);
   assert.equal(isBenignRealtimeError(''), false);
   assert.equal(isBenignRealtimeError(undefined), false);
+});
+
+test('normalizeTypedMessage trims a typed question and rejects whitespace-only input', () => {
+  assert.equal(normalizeTypedMessage('  What causes an upper GI bleed?  '), 'What causes an upper GI bleed?');
+  assert.equal(normalizeTypedMessage('   '), '');
+  assert.equal(normalizeTypedMessage(null), '');
+  assert.equal(normalizeTypedMessage(undefined), '');
+});
+
+test('normalizeTypedMessage keeps line breaks inside a multi-line question', () => {
+  assert.equal(normalizeTypedMessage('First line\nSecond line'), 'First line\nSecond line');
+});
+
+test('normalizeTypedMessage caps a pasted wall of text', () => {
+  const pasted = 'a'.repeat(MAX_TYPED_MESSAGE_LENGTH + 500);
+  assert.equal(normalizeTypedMessage(pasted).length, MAX_TYPED_MESSAGE_LENGTH);
 });
 
 test('nextAudioErrorAction ignores errors with no source (teardown)', () => {

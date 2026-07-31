@@ -49,6 +49,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { ChatTextInput } from '@/components/ChatTextInput.jsx';
 import { MicLevelMeter } from '@/components/MicLevelMeter';
 import {
   chooseBestReferenceSet,
@@ -3586,6 +3587,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const meterActive = (liveSpeech.isMicInputEnabled && (liveSpeech.phase === 'listening' || liveSpeech.phase === 'thinking'))
     || (canBargeIn && liveSpeech.phase === 'speaking');
   const buttonDisabled = !isReady || liveSpeech.phase === 'connecting' || liveSpeech.phase === 'stopping';
+  // Typing is the way in for anyone without a working microphone. Sending opens
+  // the conversation by itself, so it is live from idle too; it only closes off
+  // while a reply is being generated or the session is coming up or going down.
+  const canSendText = isReady && !['connecting', 'thinking', 'stopping'].includes(liveSpeech.phase);
 
   const phaseLabel = {
     idle: 'Start', connecting: 'Connecting',
@@ -4582,7 +4587,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 <p className="text-base font-semibold text-slate-800">Ready to listen</p>
               <p className="mt-1.5 max-w-xs text-sm text-slate-400">
                 {isReady
-                  ? `Press the mic and speak in ${liveLanguageConfig.label}.`
+                  ? `Press the mic and speak in ${liveLanguageConfig.label} — or type your question below.`
                   : 'Select a voice model above to get started.'}
               </p>
             </div>
@@ -4676,6 +4681,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Type instead of speaking — for visitors whose machine has no
+              microphone, or who would rather not talk out loud. The reply is
+              still spoken in the cloned voice. */}
+          <div className="mx-auto mt-4 max-w-lg">
+            <ChatTextInput onSend={liveSpeech.sendTextMessage} disabled={!canSendText} />
           </div>
 
           {/* Status text — centered below mic */}

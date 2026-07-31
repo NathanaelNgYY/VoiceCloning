@@ -10,8 +10,10 @@ import {
   RealtimeEventMapper,
   buildClientEvent,
   buildRealtimeSessionUpdate,
+  buildUserTextItem,
   buildVideoPositionItem,
   getMissingOpenAiConfigMessage,
+  normalizeUserText,
 } from './openaiRealtimeEvents.js';
 
 export const REALTIME_URL = 'wss://api.openai.com/v1/realtime';
@@ -211,6 +213,33 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     }
 
     return sent;
+  }
+
+  // A typed turn. Unlike audio, there is no VAD to decide the turn is over, so
+  // this asks for the response itself.
+  sendText(text) {
+    const value = normalizeUserText(text);
+    if (this.closed || !value) {
+      return false;
+    }
+
+    // A typed turn is still a turn: the student's video position has to reach
+    // the model here, exactly as it does when speech starts.
+    this.injectVideoPosition();
+
+    if (!this.sendOpenAi(buildUserTextItem(value))) {
+      return false;
+    }
+
+    // Whatever the mic half-captured while they were typing is not part of this
+    // turn, and must not be committed on top of it.
+    if (this.hasPendingAudio) {
+      this.hasPendingAudio = false;
+      this.sendOpenAi({ type: 'input_audio_buffer.clear' });
+    }
+
+    this.sendOpenAi({ type: 'response.create' });
+    return true;
   }
 
   pauseInput() {

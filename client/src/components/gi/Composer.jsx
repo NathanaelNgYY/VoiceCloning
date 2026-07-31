@@ -1,4 +1,5 @@
 import { Loader2, Mic, MicOff, Square, VolumeX } from 'lucide-react';
+import { ChatTextInput } from '@/components/ChatTextInput.jsx';
 import { cn } from '@/lib/utils';
 
 // Shared treatment for the two labelled pills that flank the mic while a
@@ -17,6 +18,8 @@ export function Composer({
   onToggleMute,
   playbackReady = false,
   onStopVoice,
+  onSendText,
+  canSendText = false,
 }) {
   const label = loading
     ? 'Connecting to voice assistant'
@@ -25,7 +28,7 @@ export function Composer({
       : 'Start voice conversation';
 
   return (
-    <div className="flex shrink-0 flex-col items-center gap-2">
+    <div className="mx-auto flex w-full max-w-lg shrink-0 flex-col items-center gap-2">
       <div className="flex shrink-0 items-center justify-center gap-3">
         {/* Fixed-width flankers keep the mic circle centred, so the row does not
             shift sideways as Stop voice appears and disappears between clips.
@@ -94,6 +97,14 @@ export function Composer({
       </div>
 
       {loading && <span className="text-[10px] text-ink-muted">Connecting…</span>}
+
+      {/* Typing is offered alongside the mic rather than behind a mode toggle:
+          a kiosk visitor with no working microphone should not have to find a
+          setting before they can ask anything. Sending opens the conversation
+          on its own, so this is live even before the mic is pressed. */}
+      {onSendText && (
+        <ChatTextInput onSend={onSendText} disabled={!canSendText} className="mt-1" />
+      )}
     </div>
   );
 }

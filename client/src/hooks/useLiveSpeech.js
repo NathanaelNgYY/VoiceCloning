@@ -37,6 +37,7 @@ import {
   fixSpeechPronunciation,
   interClipGapMs,
   normalizeLiveLanguage,
+  normalizeTypedMessage,
   resolvePendingTranscriptPatch,
   resolveSpeakingContinuation,
   shortenFirstFastPhrase,
@@ -188,6 +189,10 @@ export function useLiveSpeech({
   const assistantTextRef = useRef('');
   const noticeTimeoutRef = useRef(null);
   const pendingInputAudioRef = useRef(false);
+  // A typed question waiting for the session to come up. The Realtime session
+  // cannot accept a turn before session.ready, so a message sent from a cold
+  // start is held here and flushed by that event.
+  const pendingTextRef = useRef('');
   const inferenceEventSourceRef = useRef(null);
   const activeInferenceSessionIdRef = useRef('');
   const conversationSynthesisRef = useRef(null);
@@ -902,6 +907,7 @@ export function useLiveSpeech({
 
   function endConversationFromSocket() {
     socketRef.current = null;
+    pendingTextRef.current = '';
     stopKeepAlive();
     stopMicCapture();
     conversationSynthesisRef.current = null;
@@ -1191,14 +1197,85 @@ export function useLiveSpeech({
       : 'Mic off. Conversation stays open.');
   }
 
+  // Put a typed question on the wire and show it as the user's own bubble. No
+  // transcription is involved, so the bubble is final the moment it appears.
+  function deliverTextMessage(text) {
+    // The mic may have picked up room noise while they were typing; that audio
+    // is not part of this turn and must not commit alongside it.
+    pauseOpenAiInput();
+    pendingInputAudioRef.current = false;
+
+    if (!socketRef.current?.send({ type: 'user.text', text })) {
+      setError('The live connection dropped before your message was sent. Please try again.');
+      return false;
+    }
+
+    appendMessage(createChatMessage({
+      id: nextMessageId('user'),
+      role: 'user',
+      text,
+      status: 'done',
+    }));
+    setPhase('thinking');
+    setInterimTranscript('Thinking...');
+    return true;
+  }
+
+  function flushPendingTextMessage() {
+    const text = pendingTextRef.current;
+    if (!text) return;
+    pendingTextRef.current = '';
+    deliverTextMessage(text);
+  }
+
+  // Ask by typing instead of speaking. Opens the conversation first if none is
+  // running, so someone with no microphone never has to press the mic button.
+  async function sendTextMessage(rawText) {
+    const text = normalizeTypedMessage(rawText);
+    if (!text) return false;
+
+    const phaseAtSend = phaseRef.current;
+    // A reply is already being generated — a second one would be rejected by
+    // the Realtime session anyway.
+    if (phaseAtSend === 'thinking' || phaseAtSend === 'stopping') return false;
+    // An earlier message is still waiting for the session to come up. Refusing
+    // this one keeps the caller's draft intact rather than silently replacing
+    // the queued message with it.
+    if (pendingTextRef.current) return false;
+
+    // Typing while the assistant is talking means the same thing as speaking
+    // over it: stop the voice and answer this instead.
+    if (phaseAtSend === 'speaking') {
+      interruptPlayback();
+    }
+
+    if (phaseAtSend === 'idle') {
+      const opened = await openSession({ useMic: false });
+      // Queued only after the session is confirmed opening — openSession clears
+      // this ref on entry, so setting it first would drop the message.
+      if (opened) pendingTextRef.current = text;
+      return opened;
+    }
+
+    // The socket is open but the Realtime session has not reported ready yet.
+    if (phaseAtSend === 'connecting') {
+      pendingTextRef.current = text;
+      return true;
+    }
+
+    return deliverTextMessage(text);
+  }
+
   function handleSocketEvent(event, runId) {
     if (runId !== runIdRef.current || isCancelledRef.current) return;
 
     switch (event.type) {
       case 'session.ready':
         setPhase('listening');
-        setInterimTranscript('Listening...');
+        // A text-only session has no mic, so "Listening..." would be a lie.
+        setInterimTranscript(micInputEnabledRef.current ? 'Listening...' : '');
         setNotice('');
+        flushPendingTextMessage();
         break;
 
       case 'user.speech.started': {
@@ -1355,8 +1432,14 @@ export function useLiveSpeech({
     }
   }
 
-  async function start() {
-    if (phaseRef.current !== 'idle') return;
+  // `useMic: false` opens the same live session without ever calling
+  // getUserMedia — the path for someone typing on a machine with no microphone
+  // (or no permission to use one). Everything downstream is identical: the
+  // reply still streams back and is still spoken in the cloned voice.
+  // Returns whether the session actually opened, so a queued typed message
+  // knows not to wait for a session that never came up.
+  async function openSession({ useMic = true } = {}) {
+    if (phaseRef.current !== 'idle') return false;
     const conversationSynthesis = createLiveSynthesisSnapshot({
       engine: engineRef.current,
       refParams: refParamsRef.current,
@@ -1366,13 +1449,14 @@ export function useLiveSpeech({
     });
     if (!conversationSynthesis.refParams) {
       setError('No reference audio configured. Go to the Inference page first.');
-      return;
+      return false;
     }
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
     isCancelledRef.current = false;
     messageSeqRef.current = 0;
     assistantTextRef.current = '';
+    pendingTextRef.current = '';
     cleanupConversation();
     // Freeze voice, references, model profile id, and engine for this socket
     // conversation. UI/profile changes take effect only after the user ends it.
@@ -1383,27 +1467,29 @@ export function useLiveSpeech({
     setInterimTranscript('');
     setPhase('connecting');
 
-    let stream;
-    try {
-      stream = await requestMicStream();
-    } catch (err) {
-      conversationSynthesisRef.current = null;
-      setPhase('idle');
-      setError(err.message === 'This browser does not support live microphone recording.'
-        ? err.message
-        : 'Microphone access denied. Please allow microphone access and try again.');
-      return;
-    }
+    if (useMic) {
+      let stream;
+      try {
+        stream = await requestMicStream();
+      } catch (err) {
+        conversationSynthesisRef.current = null;
+        setPhase('idle');
+        setError(err.message === 'This browser does not support live microphone recording.'
+          ? err.message
+          : 'Microphone access denied. Please allow microphone access and try again.');
+        return false;
+      }
 
-    try {
-      streamRef.current = stream;
-      startMicCapture(stream);
-    } catch (err) {
-      conversationSynthesisRef.current = null;
-      stopMicCapture();
-      setPhase('idle');
-      setError(err.message);
-      return;
+      try {
+        streamRef.current = stream;
+        startMicCapture(stream);
+      } catch (err) {
+        conversationSynthesisRef.current = null;
+        stopMicCapture();
+        setPhase('idle');
+        setError(err.message);
+        return false;
+      }
     }
 
     const socket = createLiveChatSocket({
@@ -1430,6 +1516,14 @@ export function useLiveSpeech({
     socketRef.current = socket;
     startKeepAlive();
     startVideoPositionSync();
+    return true;
+  }
+
+  // The mic button's entry point. Kept as a zero-argument wrapper because it is
+  // wired straight to onClick handlers, which would otherwise pass a MouseEvent
+  // as the options object.
+  function start() {
+    return openSession({ useMic: true });
   }
 
   function stop() {
@@ -1437,6 +1531,7 @@ export function useLiveSpeech({
 
     isCancelledRef.current = true;
     runIdRef.current += 1;
+    pendingTextRef.current = '';
     setPhase('stopping');
     setInterimTranscript('');
     closeSocket();
@@ -1610,6 +1705,7 @@ export function useLiveSpeech({
     start,
     stop,
     toggle,
+    sendTextMessage,
     enableMicInput,
     disableMicInput,
     interruptPlayback,

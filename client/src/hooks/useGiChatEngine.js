@@ -153,6 +153,12 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
 
   const error = liveSpeech.error || profileError;
 
+  // True only once an activated voice profile has produced usable reference
+  // params — gates the controls so a fresh deployment with no cloned voice
+  // can't reach useLiveSpeech's "Go to the Inference page first" dead end
+  // (gi mode has no Inference page to go to).
+  const voiceReady = refParams !== null && !voiceMismatch;
+
   return {
     status: toGiStatus(liveSpeech.phase, { hasError: Boolean(error) }),
     messages: visibleMessages,
@@ -165,12 +171,17 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     startConversation: liveSpeech.start,
     stopConversation: liveSpeech.stop,
     newChat,
+    // Typing is the alternative to the mic, for students on a machine without
+    // one. Sending from a standing start opens the conversation by itself, so
+    // this stays available while idle — it is only closed off while a reply is
+    // already being generated, or while the session is coming up or going down.
+    sendText: liveSpeech.sendTextMessage,
+    canSendText:
+      voiceReady
+      && backendQueryable
+      && !['connecting', 'thinking', 'stopping'].includes(liveSpeech.phase),
     activeVoiceLabel,
-    // True only once an activated voice profile has produced usable reference
-    // params — gates the mic button so a fresh deployment with no cloned
-    // voice can't reach useLiveSpeech's "Go to the Inference page first"
-    // dead end (gi mode has no Inference page to go to).
-    voiceReady: refParams !== null && !voiceMismatch,
+    voiceReady,
     // The pinned voice is not the one the backend has active. Surfaced so the
     // UI can say so specifically instead of the generic "no voice set up".
     voiceMismatch,

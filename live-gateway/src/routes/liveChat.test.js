@@ -133,6 +133,18 @@ test('handleBrowserMessage forwards a video position to the bridge', () => {
   assert.deepEqual(calls, [{ seconds: 512.4, paused: true }]);
 });
 
+test('handleBrowserMessage forwards a typed question to the bridge', () => {
+  const calls = [];
+  const bridge = { sendText: (text) => calls.push(text) };
+
+  handleBrowserMessage(bridge, Buffer.from(JSON.stringify({
+    type: 'user.text',
+    text: 'What causes an upper GI bleed?',
+  })));
+
+  assert.deepEqual(calls, ['What causes an upper GI bleed?']);
+});
+
 test('handleBrowserMessage ignores message types it does not know', () => {
   const bridge = {
     setVideoPosition: () => assert.fail('should not be called'),
