@@ -68,6 +68,9 @@ Use per-instance `ssm:GetCommandInvocation`.
   is telemetry-only. Idle scale-in remains -1 after 15 quiet minutes; floor 1.
 - Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
   priority over normal entries in each GPU's local queue.
+- Staging Live Fast phrase mode starts TTS after the first confirmed complete streamed
+  sentence; staging Lambda exposes profile/worker/total timing headers. Live Full and
+  non-phrase modes are unchanged.
 ## Test Evidence
 - Three slots per GPU was rejected before user load: only 39/50 targets passed the
   mandatory 10-round concurrent deep-warm gate; 11 worker restarts failed. Two slots
@@ -85,6 +88,10 @@ Use per-instance `ssm:GetCommandInvocation`.
   target health, cloud-init prime completion, and alarm state before the event.
 - Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
   `node scripts/load-test-staging-chatbot.mjs 50` for WebSocket->OpenAI->DeanVoice.
+- Deployed browser smoke observed first audio at 12.42 s for a new session and
+  3.26/2.96 s for warm turns. One scripted control measured 2.06 s to completed text,
+  3.40 s first TTS HTTP chunk, and 5.46 s speech-to-first-audio. This is not a
+  multi-user p50/p95 A/B.
 
 ## Incidents and Recovery
 - Historical cold-start and rollout incidents are preserved in `BUGS.md` and

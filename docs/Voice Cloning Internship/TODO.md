@@ -27,6 +27,10 @@
   high-resolution occupied/total metric every 10 seconds and test three consecutive
   samples against false scale-outs and GPU-hours; changing the standard metric's
   alarm period alone cannot create 10-second source data.
+- [ ] Run a controlled staging A/B for early-sentence voice with comparable
+  multi-sentence answers. Record OpenAI first token/text done, TTS start, first audio,
+  profile resolution, worker round trip, and p50/p95; current browser checks are
+  functional smoke evidence only.
 - [ ] Design a dedicated warm target group/hidden public route. Exercise each exact
   new target through the public stack, then promote it to the production target
   group; current ALB health preceded public-prime completion by about two minutes,

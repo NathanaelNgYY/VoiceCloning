@@ -920,8 +920,53 @@ Suggestion verdicts:
 - Fast Snapshot Restore/gp3 tuning: plausible, but the 5m26s launch-to-health time
   does not isolate EBS reads from Python/CUDA/model initialization. Benchmark disk
   throughput and one canary before enabling per-AZ FSR cost.
-- First-sentence streaming and shorter chunks: not already implemented, but deferred
-  because they change the explicitly out-of-scope Live Fast conversation behavior.
+- First-sentence streaming: later authorised and deployed to staging as described
+  below. The existing conservative first-phrase shortening remains unchanged.
+
+#### First-complete-sentence staging rollout (2026-07-31)
+
+Staging Live Fast phrase mode now starts the first TTS request once the streamed
+assistant text contains a complete sentence and the following sentence has begun.
+It no longer always waits for `assistant.text.done`. The boundary waits for following
+text, rejects common title abbreviations, and retains the existing first-clip
+`skip_verify`, reply cancellation, ordered playback, and full-response fallback.
+Live Full and non-phrase modes are unchanged.
+
+The staging Lambda now exposes voice-profile resolution, worker round-trip, and total
+Lambda timing headers. The load harness records them separately. The GPU worker's
+existing queue-wait header did not survive the public Target Optimizer path, so queue
+wait remains unknown rather than being reported as zero.
+
+Verification:
+
+- 79/79 conversation-helper tests, the full Lambda suite, 55/55 live-gateway tests,
+  syntax checks, and the GI production build passed.
+- Staging Lambda update completed successfully at 08:38:42 UTC. A public request
+  returned HTTP 200, RIFF, 1.50 s profile resolution, 3.08 s worker round trip, and
+  4.58 s Lambda total. Memory stayed 128 MB because 24-hour metrics showed no
+  throttles/errors and request duration is dominated by the upstream synthesis wait.
+- CloudFront invalidation `IONUVY9UTZQMX6G7BH74G7841` completed and staging served
+  `assets/index-DJ5lJmLS.js`.
+- A real deployed-browser typed conversation played first audio in 12.42 s on the
+  new session and 3.26/2.96 s on two warm turns. These are smoke observations, not a
+  population benchmark or proof of improved p95.
+- A one-user real WebSocket -> OpenAI -> public TTS run completed successfully. It
+  measured 2.06 s speech-to-text-complete, 3.40 s first TTS chunk, and 5.46 s
+  speech-to-first-audio. The first chunk contained 0.40 s profile resolution and
+  2.42 s worker round trip. This harness still waits for full text, so it is a
+  backend timing control rather than an early-sentence A/B.
+
+Autoscaling detection was not changed by this rollout. Live behavior remains a
+one-minute 70% occupied-slot alarm: below five healthy GPUs it sets exact capacity
+five, and at five or more it adds ten. The observed 3m48s detection and 11m46s
+load-to-strict-readiness remain current evidence. Scheduled prewarm is still required
+for a sudden event burst.
+
+The SSM polling fix is unrelated to speed. It only retries a readiness question while
+the instance is still answering instead of falsely labelling that instance failed.
+Strict exact-target public priming also remains future work: it requires a warm target
+group/promotion lifecycle because the production ALB can route a public probe to a
+different healthy target.
 
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid

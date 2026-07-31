@@ -334,7 +334,9 @@ Begin that sentence exactly with "${marker}."`;
           const chunkDoneAt = performance.now();
           if (chunkIndex === 0) currentTurn.firstVoiceAt = chunkDoneAt;
           const numericHeader = (name) => {
-            const value = Number(response.headers.get(name));
+            const rawValue = response.headers.get(name);
+            if (rawValue == null || rawValue.trim() === '') return null;
+            const value = Number(rawValue);
             return Number.isFinite(value) ? value : null;
           };
           chunkResults.push({

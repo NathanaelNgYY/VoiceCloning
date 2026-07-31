@@ -25,7 +25,10 @@ always read and live-verify it before AWS work.
 `d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot.
 
 As of 2026-07-29, staging chatbot serves the GI build from `staging-chatbot` commit
-`846893e`, bundle `assets/index-DfcO_k9s.js`, with fixed profile `deanvoice-v1`.
+`fc99271`, bundle `assets/index-DJ5lJmLS.js`, with fixed profile `deanvoice-v1`.
+Staging Live Fast starts multi-sentence voice after the first confirmed completed
+streamed sentence. The staging Lambda exposes profile-resolution, worker-round-trip,
+and total timing headers; memory remains 128 MB.
 The lesson video is preserved under `echolect-staging/dist-chatbot/videos/`. The three staging
 CloudFront distributions use static-behavior SPA rewrites rather than global 404-to-200
 fallbacks, so API errors preserve their real status.

@@ -23,6 +23,10 @@
 
 ## Recently Fixed
 
+- 2026-07-31: Live Fast phrase replies always waited for `assistant.text.done` before
+  starting TTS. Staging now begins after the first confirmed complete streamed
+  sentence for multi-sentence replies. A deployed browser completed cloned playback,
+  but population-level latency improvement is not yet measured.
 - 2026-07-31: the load harness omitted the browser's 15-second WebSocket keepalive.
   Long-answer controls completed only 33/100 and 13/150 with code 1006. With the
   keepalive, 50-GPU runs completed 100/100 and 150/150, and fully primed 60-GPU

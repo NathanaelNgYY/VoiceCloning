@@ -2,6 +2,16 @@
 
 ## 2026-07-31
 
+- Deployed staging Live Fast early-sentence voice: multi-sentence replies can begin
+  TTS after the first confirmed complete streamed sentence instead of always waiting
+  for the full OpenAI response. Live Full/non-phrase behavior is unchanged.
+- Deployed staging Lambda timing headers and load-harness collection for profile
+  resolution, worker round trip, and Lambda total. Target Optimizer did not preserve
+  the worker queue header, so the harness now keeps missing queue time as null.
+- Verified 79 client helper tests, full Lambda tests, 55 gateway tests, GI build,
+  public RIFF/timing smoke, deployed bundle `assets/index-DJ5lJmLS.js`, real browser
+  playback (12.42 s new session; 3.26/2.96 s warm turns), and one successful scripted
+  full-flow control. No population p50/p95 A/B was run.
 - Added the browser-equivalent 15-second WebSocket keepalive to the complete-flow
   harness, explicit report timestamps, and keepalive counts. Corrected readiness to
   retry pending SSM command distribution instead of false-failing a warm fleet.
