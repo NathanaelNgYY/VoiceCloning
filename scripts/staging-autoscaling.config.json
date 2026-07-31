@@ -28,6 +28,7 @@
   "scaleOutAddCapacity": 10,
   "scaleOutOccupancyPercent": 70,
   "scaleOutEvaluationPeriods": 1,
+  "baselineScaleCapacity": 5,
   "synthesisSlotsPerInstance": 2,
   "scaleInIdleMinutes": 15,
   "defaultPreWarmCapacity": 2,

@@ -169,8 +169,9 @@ rejects a chatbot build from another branch.
 
    The gateway preflight starts the fixed control instance only when necessary,
    waits for it in `vcs-staging-tg-3002`, and never stops it or creates a schedule.
-   `GPU_SCHEDULE_ENABLED=true` is live, but it does not self-invoke: an administrator
-   must still create the EventBridge timer and Lambda permission.
+   `GPU_SCHEDULE_ENABLED=true` is live. CloudWatch showed one Lambda invocation every
+   five minutes, including quiet hours, so an automatic invoker exists. This role
+   cannot inspect that scheduler resource; verify the actual 07:00/23:00 transitions.
    Review the dry run, then repeat with `-Apply`. Use `-SwitchListener` only when an
    intentional listener cutover is required. Environment variables do not update AWS
    until the provisioner is applied.
@@ -181,7 +182,8 @@ rejects a chatbot build from another branch.
    ```
 
    It requires desired capacity, InService/healthy target coverage, and every
-   instance's verified public-RIFF prime marker. The instances perform model warm and
+   instance's verified public-RIFF prime marker newer than the current worker start.
+   A worker restart therefore fails closed until public prime is repeated. The instances perform model warm and
    public prime themselves using their instance roles; operator credentials are used
    only to inspect/control AWS from this script.
 10. For a scale rehearsal, raise min/desired explicitly, record request start, metric
@@ -206,15 +208,16 @@ redundant student-entry warm-up burst.
 ## Staging ASG State (2026-07-31)
 
 - Current image `ami-021aeb72894b8c79b` contains commit `330d329`; launch template
-  `lt-07728350a25e691a4` default version 19 uses `g6.xlarge`, `VoiClo_GPU`, and the
+  `lt-07728350a25e691a4` default version 20 uses `g6.xlarge`, `VoiClo_GPU`, and the
   staging GPU security group.
 - ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy baseline
   `i-0b8ce19b5fe17d751` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
-- Live scale-out adds 10 GPUs when occupied synthesis slots reach 70% of
-  `HealthyHostCount * 2` for one one-minute metric point. It re-evaluates subsequent
-  samples and works outside event mode. The old rejection alarm is telemetry-only.
+- Live scale-out uses occupied synthesis slots / (`HealthyHostCount * 2`) and works
+  outside event mode. Below five healthy GPUs, one 70% minute sets exact capacity
+  five; at five or more it adds ten and re-evaluates subsequent samples. The old
+  rejection alarm is telemetry-only.
   Scale-in removes one instance after fifteen no-traffic minutes.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
   2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below

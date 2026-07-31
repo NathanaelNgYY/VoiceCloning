@@ -26,7 +26,11 @@ Browser
         └─ S3 via gateway endpoint vpce-0386d983dfdff41dc
 ```
 
-On-demand lifecycle: the Lambda **starts** the GPU when a user needs it; an EventBridge rule (pending — see §10) POSTs `/api/instance/idle-check` every 5 min so the Lambda **stops** it after `GPU_IDLE_STOP_MINUTES=90` of inactivity. Until that rule exists, stop the instance manually.
+On-demand lifecycle: the Lambda **starts** the GPU when a user needs it. CloudWatch
+shows an automatic Lambda invocation every five minutes; the invoker resource is not
+visible to this role. With `GPU_SCHEDULE_ENABLED=true`, the Lambda applies the
+07:00-23:00 Singapore window plus the idle-stop decision. Verify the actual boundary
+transition because invocation frequency alone does not prove the event payload.
 
 ## 2. CloudFront distributions
 
@@ -483,8 +487,10 @@ healthy in `vcs-staging-tg-3002`; it never stops the instance or creates a sched
 
 The live Lambda contains 07:00-23:00 Singapore schedule values and
 `GPU_SCHEDULE_ENABLED=true` was applied on 2026-07-31. A direct in-window invocation
-returned `in-window-running`, but no EventBridge caller is present in its Lambda policy
-and `events:PutRule` was denied. The decision logic works; the automatic timer does not.
+returned `in-window-running`. CloudWatch later showed exactly one Lambda invocation
+every five minutes, including quiet hours, so an automatic invoker exists. This role
+cannot list the scheduler resource and the Lambda policy does not identify a classic
+EventBridge rule; the exact owner and 07:00/23:00 transition remain unverified.
 
 `scripts/load-test-staging-tts.mjs` isolates the public TTS path. With no duration it
 sends one request per virtual user. With `VCS_LOAD_TEST_DURATION_MS`, every virtual
@@ -784,6 +790,56 @@ min/desired 1 at 17:00. After testing the ASG was returned to min/desired 1, the
 occupancy alarm was enabled/OK, the rejection alarm was telemetry-only, and
 `vcs-staging-tg-3002` remained healthy.
 
+#### LT v20 baseline tier and temporary three-slot experiment (2026-07-31)
+
+This experiment preserves all earlier results. The occupancy policy is now tiered:
+while fewer than five targets are healthy, a 70% one-minute sample sets exact
+capacity five. At five or more healthy targets, the separate fleet policy adds ten.
+This prevents two overlapping baseline requests from changing desired capacity 1->11
+while keeping +10 increments for a meaningful fleet. Both policies were applied and
+read back; actions were disabled during the fixed-50 A/B measurements.
+
+The warm script was generalized to the configured concurrency. One three-slot canary
+passed ten rounds, but only 38/49 remaining targets passed the same mandatory gate.
+Including the canary, readiness was 39/50; 11 worker restarts failed during deep warm.
+No three-slot user load was run because a fleet that fails readiness is already a
+failed candidate. Two slots were restored and passed 50/50.
+
+The restart also exposed a safety-check flaw: the old readiness probe accepted a
+boot-time public-prime line even if the worker had restarted later. An immediate
+100-user control consequently failed before a fresh public route proof. The probe now
+requires the public-prime log timestamp to be at least as new as the current worker
+start, so stale evidence fails closed. A dedicated public re-prime then returned
+100/100 verified WAVs in 12.20 seconds (p50/p95 6.22/9.74 seconds).
+
+After re-prime, the fixed 50-GPU/two-slot real-flow controls produced:
+
+| Users / turn | Heard | First audio fastest / average / p50 / p95 / slowest | Complete response fastest / average / p50 / p95 / slowest |
+|---|---:|---:|---:|
+| 100 / 1 | 100 | 3.38 / 6.61 / 5.69 / 11.17 / 13.20 | 33.36 / 70.84 / 69.70 / 98.79 / 113.51 |
+| 100 / 2 | 43 | 2.76 / 4.70 / 4.16 / 9.20 / 11.21 | 13.80 / 41.80 / 40.60 / 70.97 / 74.25 |
+| 100 / 3 | 35 | 3.03 / 5.50 / 4.79 / 9.16 / 9.21 | 24.62 / 46.78 / 47.92 / 65.64 / 65.80 |
+| 150 / 1 | 138 | 5.69 / 14.39 / 13.29 / 33.59 / 33.69 | 33.86 / 84.02 / 87.22 / 119.08 / 136.48 |
+| 150 / 2 | 22 | 3.25 / 7.02 / 5.52 / 12.50 / 19.25 | 26.99 / 59.34 / 55.65 / 90.30 / 100.94 |
+| 150 / 3 | 15 | 3.08 / 5.25 / 4.19 / 9.22 / 9.22 | 14.91 / 47.63 / 47.25 / 76.78 / 76.78 |
+
+| Users | Complete sessions | Three-turn total fastest / average / p50 / p95 / slowest | Harness wall |
+|---:|---:|---:|---:|
+| 100 | 33/100 | 96.09 / 136.12 / 136.29 / 172.51 / 177.37 s | 190.64 s |
+| 150 | 13/150 | 112.09 / 152.69 / 155.33 / 182.49 / 182.49 s | 185.08 s |
+
+The 100-user run had 67 WebSocket 1006 closures and no TTS HTTP failures. The
+150-user run had 125 WebSocket 1006 closures plus twelve first-turn 504s. The ALB
+idle timeout is 60 seconds, while turn-one completion p50 was 69.70/87.22 seconds.
+The gateway process was not CPU-bound. This strongly implicates a silent WebSocket
+during long TTS playback, but it is not proved until a heartbeat or increased-idle-
+timeout A/B is run. These responses were much longer than earlier runs, so they are
+also evidence that fixed OpenAI output length is required for capacity comparisons.
+
+Verdict: retain two slots. Three slots failed readiness, and two-slot event reliability
+is still blocked by WebSocket lifecycle behavior for long answers. Fix and A/B the
+heartbeat/idle timeout before treating another 100/150-user burst as acceptance.
+
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
 turn-one voice and later closed WebSocket code 1006; they were not TTS capacity
@@ -1026,7 +1082,10 @@ is at least 64 vCPUs for the proposed 16 x `g6.xlarge` event fleet.
 
 ## 11. Known gaps / pending admin work (updated 2026-07-28)
 
-1. **Idle-stop EventBridge rule `vcs-staging-gpu-idle-stop` does not exist yet** — GPU must be stopped manually (g6.xlarge ≈ $1/hr). Admin commands (`events:*` is denied for our role):
+1. **Automatic idle-check invocation exists but its resource is not auditable by this
+   role.** CloudWatch showed exactly one Lambda invocation every five minutes. The
+   commands below are retained as a reference for a classic EventBridge rule only;
+   do not create a duplicate until an administrator identifies the existing invoker.
 ```powershell
 aws events put-rule --region ap-northeast-2 --name vcs-staging-gpu-idle-stop --schedule-expression "rate(5 minutes)"
 aws lambda add-permission --region ap-northeast-2 --function-name Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging --statement-id AllowEventBridgeGpuIdleStop --action lambda:InvokeFunction --principal events.amazonaws.com --source-arn arn:aws:events:ap-northeast-2:329599637774:rule/vcs-staging-gpu-idle-stop

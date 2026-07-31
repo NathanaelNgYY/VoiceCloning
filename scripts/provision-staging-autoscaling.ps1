@@ -16,6 +16,9 @@ param(
   [int]$ScaleOutAddCapacity = $(if ($env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY) {
     [int]$env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY
   } else { -1 }),
+  [int]$SynthesisSlotsPerInstance = $(if ($env:VCS_STAGING_SYNTHESIS_SLOTS_PER_INSTANCE) {
+    [int]$env:VCS_STAGING_SYNTHESIS_SLOTS_PER_INSTANCE
+  } else { -1 }),
   [switch]$Apply,
   [switch]$SwitchListener
 )
@@ -31,6 +34,9 @@ if ($ScaleOutRejectsPerMinute -lt 0) {
 }
 if ($ScaleOutAddCapacity -lt 0) {
   $ScaleOutAddCapacity = [int]$cfg.scaleOutAddCapacity
+}
+if ($SynthesisSlotsPerInstance -lt 0) {
+  $SynthesisSlotsPerInstance = [int]$cfg.synthesisSlotsPerInstance
 }
 
 $eventEnabled = [bool]($Event -and $Event.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on'))
@@ -81,9 +87,13 @@ if ([int]$cfg.scaleOutEvaluationPeriods -lt 1 -or
   [int]$cfg.scaleOutEvaluationPeriods -gt 5) {
   throw 'scaleOutEvaluationPeriods must be from 1 to 5.'
 }
-if ([int]$cfg.synthesisSlotsPerInstance -lt 1 -or
-  [int]$cfg.synthesisSlotsPerInstance -gt 10) {
-  throw 'synthesisSlotsPerInstance must be from 1 to 10.'
+if ([int]$cfg.baselineScaleCapacity -lt 2 -or
+  [int]$cfg.baselineScaleCapacity -gt $MaxCapacity) {
+  throw "baselineScaleCapacity must be from 2 to MaxCapacity $MaxCapacity."
+}
+if ($SynthesisSlotsPerInstance -lt 1 -or
+  $SynthesisSlotsPerInstance -gt 10) {
+  throw 'SynthesisSlotsPerInstance must be from 1 to 10.'
 }
 if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeUrl) -or
   [string]$cfg.publicPrimeUrl -notmatch '^https://') {
@@ -391,6 +401,15 @@ if ($Apply -and $targetGroupArn) {
   )
 }
 if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
+  $baselineScalePolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
+    --auto-scaling-group-name $cfg.autoScalingGroupName `
+    --policy-name vcs-staging-inference-baseline-to-five `
+    --policy-type StepScaling `
+    --adjustment-type ExactCapacity `
+    --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --metric-aggregation-type Maximum `
+    --step-adjustments "MetricIntervalLowerBound=0,ScalingAdjustment=$($cfg.baselineScaleCapacity)"
+
   $scaleOutPolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
     --policy-name vcs-staging-inference-occupancy-step-out `
@@ -422,9 +441,7 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --threshold $ScaleOutRejectsPerMinute --comparison-operator GreaterThanOrEqualToThreshold `
     --treat-missing-data notBreaching --no-actions-enabled
 
-  $occupancyExpression = 'IF(FILL(free,0)<healthy*{0},100*(1-FILL(free,0)/(healthy*{0})),0)' -f (
-    [int]$cfg.synthesisSlotsPerInstance
-  )
+  $occupancyExpression = 'IF(FILL(free,0)<healthy*{0},100*(1-FILL(free,0)/(healthy*{0})),0)' -f $SynthesisSlotsPerInstance
   $occupancyQueries = @(
     @{
       Id = 'free'
@@ -456,9 +473,15 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
       ReturnData = $false
     },
     @{
-      Id = 'occupancy'
+      Id = 'rawoccupancy'
       Expression = $occupancyExpression
-      Label = 'Occupied synthesis slots percent'
+      Label = 'Raw occupied synthesis slots percent'
+      ReturnData = $false
+    },
+    @{
+      Id = 'fleetoccupancy'
+      Expression = "IF(healthy>=$($cfg.baselineScaleCapacity),rawoccupancy,0)"
+      Label = 'Fleet occupied synthesis slots percent'
       ReturnData = $true
     }
   ) | ConvertTo-Json -Depth 8 -Compress
@@ -470,7 +493,7 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-occupancy-70pct-1m `
-    --alarm-description "Add $ScaleOutAddCapacity GPUs while occupied synthesis slots are at least $($cfg.scaleOutOccupancyPercent)%." `
+    --alarm-description "Add $ScaleOutAddCapacity GPUs at or above $($cfg.baselineScaleCapacity) healthy GPUs while occupied synthesis slots are at least $($cfg.scaleOutOccupancyPercent)%." `
     --metrics "file://$occupancyQueriesPath" `
     --evaluation-periods $cfg.scaleOutEvaluationPeriods `
     --datapoints-to-alarm $cfg.scaleOutEvaluationPeriods `
@@ -478,6 +501,66 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --comparison-operator GreaterThanOrEqualToThreshold `
     --treat-missing-data notBreaching `
     --alarm-actions $scaleOutPolicy.PolicyARN
+
+  $baselineOccupancyQueries = @(
+    @{
+      Id = 'free'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'TargetControlWorkQueueLength'
+          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
+        }
+        Period = 60
+        Stat = 'Sum'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'healthy'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'HealthyHostCount'
+          Dimensions = @(
+            @{ Name = 'LoadBalancer'; Value = $albResource },
+            @{ Name = 'TargetGroup'; Value = $targetGroupResource }
+          )
+        }
+        Period = 60
+        Stat = 'Average'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'rawoccupancy'
+      Expression = $occupancyExpression
+      Label = 'Raw occupied synthesis slots percent'
+      ReturnData = $false
+    },
+    @{
+      Id = 'baselineoccupancy'
+      Expression = "IF(healthy<$($cfg.baselineScaleCapacity),rawoccupancy,0)"
+      Label = 'Baseline occupied synthesis slots percent'
+      ReturnData = $true
+    }
+  ) | ConvertTo-Json -Depth 8 -Compress
+  $baselineOccupancyQueriesPath = Join-Path $env:TEMP 'vcs-staging-baseline-occupancy-queries.json'
+  [IO.File]::WriteAllText(
+    $baselineOccupancyQueriesPath,
+    $baselineOccupancyQueries,
+    (New-Object Text.UTF8Encoding($false))
+  )
+  Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
+    --alarm-name vcs-staging-inference-baseline-occupancy-70pct-1m `
+    --alarm-description "Set capacity to $($cfg.baselineScaleCapacity) below that healthy count when occupied synthesis slots reach $($cfg.scaleOutOccupancyPercent)%." `
+    --metrics "file://$baselineOccupancyQueriesPath" `
+    --evaluation-periods $cfg.scaleOutEvaluationPeriods `
+    --datapoints-to-alarm $cfg.scaleOutEvaluationPeriods `
+    --threshold $cfg.scaleOutOccupancyPercent `
+    --comparison-operator GreaterThanOrEqualToThreshold `
+    --treat-missing-data notBreaching `
+    --alarm-actions $baselineScalePolicy.PolicyARN
 
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-no-traffic-15m `
@@ -535,4 +618,4 @@ if ($ScaleDownAt) {
     --min-size $cfg.minSize --max-size $MaxCapacity --desired-capacity $cfg.desiredCapacity
 }
 
-Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity Occupancy=$($cfg.scaleOutOccupancyPercent)% Slots=$($cfg.synthesisSlotsPerInstance) ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"
+Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity Occupancy=$($cfg.scaleOutOccupancyPercent)% Slots=$SynthesisSlotsPerInstance BaselineTarget=$($cfg.baselineScaleCapacity) ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"

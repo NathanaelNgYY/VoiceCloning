@@ -13,7 +13,7 @@
       "sourceAmiId": "ami-021aeb72894b8c79b",
       "launchTemplateName": "vcs-staging-gpu-inference",
       "launchTemplateId": "lt-07728350a25e691a4",
-      "launchTemplateVersion": 19,
+      "launchTemplateVersion": 20,
       "autoScalingGroupName": "vcs-staging-gpu-inference",
       "serviceLinkedRoleReady": true,
       "created": true,

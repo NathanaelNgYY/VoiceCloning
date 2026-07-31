@@ -1,16 +1,16 @@
 # Active TODO
 
-- [ ] Before 2026-08-03 08:30 SGT, verify LT v19/default, the paired 08:30/17:00
+- [ ] Before 2026-08-03 08:30 SGT, verify LT v20/default, the paired 08:30/17:00
   actions, occupancy alarm/actions, and gateway health. Run
   `ensure-staging-live-gateway.ps1 -Apply`, then
   `wait-staging-event-ready.ps1 -ExpectedCapacity 50` before users enter. The final
-  two-slot run completed 99/100 and 130/150; 150 triggered 50->60 only after the
-  burst and had 20 WebSocket 1006 closures. Do not use three slots without a safe
-  isolated canary. Still run the 60-minute soak and one target-loss rehearsal.
-- [ ] Ask an administrator to create the 07:00-23:00 SGT EventBridge invocation for
-  the staging Lambda idle-check route and its Lambda resource permission.
-  `GPU_SCHEDULE_ENABLED=true` is verified by direct invocation, but the timer itself
-  does not exist and this role is denied `events:PutRule`.
+  two-slot control later completed only 33/100 and 13/150 when long turn-one responses
+  exceeded the 60-second ALB WebSocket idle timeout. Fix/verify heartbeat or increase
+  the idle timeout before the soak. Do not use three slots: its warm gate passed only
+  39/50 targets. Still run the 60-minute soak and one target-loss rehearsal.
+- [ ] Verify the 07:00 and 23:00 SGT scheduled boundary transitions. CloudWatch proves
+  one Lambda invocation every five minutes, but this role cannot inspect the invoker
+  resource, so its exact ownership/configuration remains unknown.
 - [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
   from `vcs-stg-opt-3103` and terminate it, and terminate stopped v15 validator
   `i-0eb2ca68edb88d6d7`; this role is denied the required actions.

@@ -43,7 +43,7 @@ if ([string]::IsNullOrWhiteSpace($targetGroupArn)) {
 
 $probeParameters = @{
   commands = @(
-    "if grep -Fq 'public_prime completed with verified public RIFF responses' /var/log/cloud-init-output.log && cloud-init status --wait | grep -Fq 'status: done' && systemctl is-active --quiet gpu-inference-worker.service && systemctl is-active --quiet target-optimizer-inference.service; then echo VCS_EVENT_READY=1; else echo VCS_EVENT_READY=0; fi"
+    "worker_started=`$(systemctl show gpu-inference-worker.service --property=ActiveEnterTimestamp --value); worker_started_epoch=`$(date -d `"`$worker_started`" +%s 2>/dev/null || echo 0); prime_log_epoch=`$(stat -c %Y /var/log/cloud-init-output.log 2>/dev/null || echo 0); if grep -Fq 'public_prime completed with verified public RIFF responses' /var/log/cloud-init-output.log && [ `"`$prime_log_epoch`" -ge `"`$worker_started_epoch`" ] && cloud-init status --wait | grep -Fq 'status: done' && systemctl is-active --quiet gpu-inference-worker.service && systemctl is-active --quiet target-optimizer-inference.service; then echo VCS_EVENT_READY=1; else echo VCS_EVENT_READY=0; fi"
   )
 } | ConvertTo-Json -Depth 3 -Compress
 $probePath = Join-Path $env:TEMP 'vcs-staging-event-ready-probe.json'

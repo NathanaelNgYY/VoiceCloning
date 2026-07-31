@@ -11,11 +11,18 @@
   1006 closures in the latter despite no failed completed TTS chunk. This is an active
   event risk and is not evidence that three synthesis slots are safe. Investigate
   gateway/client close telemetry separately from GPU capacity.
+- 2026-07-31: a hot two-slot repeat with longer OpenAI responses completed only
+  33/100 and 13/150 sessions. Most failures were WebSocket 1006; median turn-one
+  completion was 69.70/87.22 seconds while the ALB WebSocket idle timeout is 60
+  seconds. A heartbeat/idle-timeout experiment is still required to establish cause.
+- 2026-07-31: worker restarts could leave the boot-time public-prime log marker in
+  place, allowing readiness to accept stale evidence. The readiness probe now fails
+  closed unless the prime log is at least as new as the current worker start.
 - 2026-07-31: setting `GPU_SCHEDULE_ENABLED=true` enables the staging Lambda's
   07:00-23:00 Singapore decision logic, and a direct in-window idle-check invocation
-  returned `in-window-running`. It does not create a timer. No EventBridge rule or
-  Lambda permission invokes the route, and this role is denied `events:PutRule`;
-  automatic fixed-GPU scheduling remains inactive until an administrator creates it.
+  returned `in-window-running`. CloudWatch later showed exactly one Lambda invocation
+  every five minutes, including quiet hours, proving an automatic invoker exists.
+  This role cannot list its resource; the exact boundary transition remains unverified.
 - 2026-07-29: the corrected real-route warm made the 32-GPU/50-user chatbot flow pass
   50/50, but a 100-user three-turn run completed 98/100 sessions; two WebSockets closed
   with code 1006 after turn 1. A separate 128-user sustained TTS run produced 34
@@ -24,6 +31,13 @@
   decide whether to remove the public 30-second timeout exposure.
 
 ## Recently Fixed
+
+- 2026-07-31: baseline occupancy previously could make two overlapping requests scale
+  a one-GPU fleet directly to 11. Below five healthy GPUs, the 70% alarm now sets
+  exact capacity five; the separate fleet alarm keeps +10 increments from five onward.
+- 2026-07-31: three slots per GPU failed its mandatory rollout gate: only 39/50
+  targets completed ten concurrent rounds. It was not user-load-tested or promoted;
+  two slots were restored and passed 50/50.
 
 - 2026-07-30: local warm and target health did not make a fresh event fleet public-
   burst ready. Stable v16 completed only 48/100; Lambda init averaged 126.7ms while

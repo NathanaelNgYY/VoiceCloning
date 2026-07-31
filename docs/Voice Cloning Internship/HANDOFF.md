@@ -23,7 +23,7 @@ Last updated: 2026-07-31
 - Healthy baseline is selected by the ASG; describe it live instead of relying on a
   saved instance ID.
 - Current AMI `ami-021aeb72894b8c79b` contains commit `330d329`.
-- Launch template `lt-07728350a25e691a4` defaults to v19. New nodes require verified
+- Launch template `lt-07728350a25e691a4` defaults to v20. New nodes require verified
   HTTP 200 + RIFF public-prime responses before writing the event-ready marker.
 - Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
 - Private subnet `subnet-0c1937ef298f54500`, GPU SG `sg-03a2f3dddf4eff21c`,
@@ -31,9 +31,9 @@ Last updated: 2026-07-31
 - Live event schedule: min/desired 50 at 08:30 SGT and back to min/desired 1 at
   17:00 SGT on 2026-08-03. Actions were read back from AWS.
 - Live gateway `i-0f0da8be59367f7a8` is running and healthy in `vcs-staging-tg-3002`.
-  `GPU_SCHEDULE_ENABLED=true` and a direct in-window Lambda invocation kept it
-  running, but no EventBridge rule/permission exists; the automatic 07:00-23:00
-  invocation is still blocked on admin IAM.
+  `GPU_SCHEDULE_ENABLED=true`. CloudWatch recorded one Lambda invocation every five
+  minutes, including quiet hours, so an automatic invoker exists; this role cannot
+  list its scheduler resource, and the exact 07:00/23:00 transition is unverified.
 - Final cleanup: ASG min/desired 1; occupancy alarm enabled/OK; rejection alarm is
   telemetry-only with actions disabled.
 ## Access Procedure
@@ -52,7 +52,7 @@ Use per-instance `ssm:GetCommandInvocation`.
   immutable voice snapshots, S3-backed Live Full state, and Lambda capacity retries.
 - Created Target Optimizer target group/services, launch template, ASG, target
   tracking, listener cutover, and staging SG rules.
-- v19 runs local two-slot rounds, blocks Target Optimizer behind restart-safe warm,
+- v20 runs configurable concurrent local rounds, blocks Target Optimizer behind restart-safe warm,
   then requires successful real public synthesis responses with RIFF validation.
 - Added `wait-staging-event-ready.ps1`: it checks desired/InService/healthy coverage
   and the per-node deep/public-prime marker in SSM batches of at most 50.
@@ -61,31 +61,31 @@ Use per-instance `ssm:GetCommandInvocation`.
 - GI students do not call model selection/warm on page entry; each ASG node performs
   that preparation once before advertising capacity, avoiding a user-entry warm burst.
 - Live scale-out is always active, including outside event mode. A one-minute
-  metric computes occupied synthesis slots / (`HealthyHostCount * 2`); at 70% it
-  adds exactly 10 GPUs, then evaluates later samples again. The old rejection alarm
+  metric computes occupied synthesis slots / (`HealthyHostCount * 2`); below five
+  healthy GPUs, 70% sets capacity to five rather than adding ten. At five or more,
+  70% adds exactly 10 GPUs, then evaluates later samples again. The old rejection alarm
   is telemetry-only. Idle scale-in remains -1 after 15 quiet minutes; floor 1.
 - Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
   priority over normal entries in each GPU's local queue.
 ## Test Evidence
-- Stable v16 still failed fresh 100/50 at 48/100; Lambda cold starts averaged only
-  126.7ms while duration p95/max was 30.36/37.89s and Target Optimizer rejected 21.
-- A realistic 100-request public prime absorbed 45 expected 504s; the following
-  full flow passed 100/100. v17 automates that prime.
 - Fresh auto-primed v17 50 GPUs passed 100/100. First-audio averages by turn:
   6.51/2.16/2.03s. Hot 150 delivered turn one to 150/150 and completed 148/150;
   two later WebSockets closed 1006 and no TTS request failed.
-- A 2026-07-31 repeat passed 100/100 in 95.29s. Hot 150 delivered turn one to
-  150/150 and completed 147/150 in 134.77s; three WebSockets closed 1006 and no
-  TTS chunk failed. Rejections triggered 50->60; all 10 added nodes completed
-  public prime. Reactive capacity arrived after the burst, so prewarm is still required.
 - The final v19 50-GPU, two-slot real-flow test completed 99/100 three-turn sessions
   (one WebSocket 1006) and 130/150 (20 WebSocket 1006). No completed TTS chunk failed.
   First-audio p50/p95 was 6.44/7.69s for 100-user turn one and 7.51/12.25s for
   150-user turn one. The 150 wave crossed occupancy, then desired changed 50->60
   after the approximately 160-second wave; reactive EC2 scale-out was too late to
   rescue it.
-- Three slots per GPU was not promoted or load-tested. The required isolated-canary
-  protection operation was denied, and 20/150 sessions already failed at two slots.
+- Three slots per GPU was rejected before user load: only 39/50 targets passed the
+  mandatory 10-round concurrent deep-warm gate; 11 worker restarts failed. Two slots
+  were restored and passed the same gate 50/50.
+- A later two-slot hot run exposed a separate gateway risk. At 100 users only 33/100
+  sessions completed; at 150 only 13/150 completed. Most failures were WebSocket 1006
+  while ALB WebSocket idle timeout was 60 seconds and median turn-one completion was
+  69.70/87.22 seconds. This is strong correlation, not yet heartbeat-verified causation.
+- Readiness now rejects a public-prime marker older than the current worker start.
+  A post-boot worker restart therefore requires a fresh public route proof.
 - This is one passing event rehearsal, not a guarantee. Verify schedule, quota,
   target health, cloud-init prime completion, and alarm state before the event.
 - Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
@@ -106,8 +106,9 @@ Use per-instance `ssm:GetCommandInvocation`.
   usage, cost, and single-AZ capacity still apply.
 - Before admitting users, run `ensure-staging-live-gateway.ps1 -Apply`, then
   `wait-staging-event-ready.ps1 -ExpectedCapacity 50`; do not treat route health alone
-  as event readiness. Remaining work: admin-create the gateway EventBridge timer,
-  60-minute soak, and target termination test.
+  as event readiness. Remaining work: fix/verify WebSocket heartbeat or raise the
+  ALB idle timeout, verify the scheduled boundary transition, 60-minute soak, and
+  target termination test.
 - Next session: read the three sources, check Git, assume the role, live-describe
   LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
   health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;

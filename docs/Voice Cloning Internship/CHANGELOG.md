@@ -2,6 +2,25 @@
 
 ## 2026-07-31
 
+- Added tiered occupancy scaling. Below five healthy GPUs, 70% occupancy sets exact
+  capacity five; at five or more, the existing policy adds ten. This prevents a
+  one-GPU baseline from jumping directly to eleven.
+- Generalized local deep-warm to the configured 1-4 synthesis slots. A temporary
+  three-slot fleet rollout passed only 39/50 mandatory gates and was rejected before
+  user load. Restoring two slots passed 50/50.
+- Hardened event readiness so a boot-time public-prime log cannot be reused after a
+  worker restart. Promoted launch-template v20 metadata and retained two slots.
+- Re-primed the public route with 100/100 valid WAVs, then ran hot real-flow controls.
+  The 100-user run completed 33/100 sessions; 150 completed 13/150. Most failures were
+  WebSocket 1006 while turn-one completion exceeded the ALB's 60-second idle timeout.
+  This is an active gateway reliability issue, not evidence for three-slot capacity.
+- Corrected the schedule record: CloudWatch showed one Lambda invocation every five
+  minutes, proving an automatic invoker exists, although this role cannot inspect it
+  or verify the exact 07:00/23:00 transition.
+- Tests: JSON parse, PowerShell parse/dry run, Bash syntax, three-slot canary/fleet
+  warm gates, two-slot 50/50 restore gate, public 100-request RIFF prime, and real
+  100/150-user three-turn flows. Final AWS cleanup could not be re-read after the
+  separate PowerShell credentials stopped being inherited by Codex.
 - Replaced rejection-driven scale-out with a live one-minute occupied-slot percentage:
   occupied optimizer slots / (`HealthyHostCount * 2`). At 70% the ASG adds exactly
   10 and re-evaluates later samples; it is active outside event mode. The old

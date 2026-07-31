@@ -3,9 +3,15 @@ set -euo pipefail
 
 worker_url="${VCS_WORKER_URL:-http://127.0.0.1:3003}"
 route_warm_rounds="${VCS_ROUTE_WARM_ROUNDS:-10}"
+synthesis_concurrency="${SYNTHESIS_MAX_CONCURRENCY:-1}"
 if ! [[ "${route_warm_rounds}" =~ ^[0-9]+$ ]] \
   || ((route_warm_rounds < 1 || route_warm_rounds > 20)); then
   echo 'VCS_ROUTE_WARM_ROUNDS must be an integer from 1 to 20.' >&2
+  exit 1
+fi
+if ! [[ "${synthesis_concurrency}" =~ ^[0-9]+$ ]] \
+  || ((synthesis_concurrency < 1 || synthesis_concurrency > 4)); then
+  echo 'SYNTHESIS_MAX_CONCURRENCY must be an integer from 1 to 4.' >&2
   exit 1
 fi
 total_started_at="${SECONDS}"
@@ -121,7 +127,7 @@ cleanup_route_warm() {
 }
 trap cleanup_route_warm EXIT
 
-# Exercise both configured same-model synthesis slots concurrently in every round
+# Exercise every configured same-model synthesis slot concurrently in every round
 # before Target Optimizer starts. Every response must be a real WAV. The first item
 # in each three-text cycle matches the production first-chunk skip-verification path;
 # the remaining items exercise the verified later-chunk path.
@@ -137,30 +143,30 @@ for ((route_warm_round = 1; route_warm_round <= route_warm_rounds; route_warm_ro
       "${route_warm_texts[route_warm_index]}" \
       "${route_warm_skip_verify}"
   )"
-  route_warm_path_1="/tmp/vcs-staging-deanvoice-route-warm-${route_warm_round}-1.wav"
-  route_warm_path_2="/tmp/vcs-staging-deanvoice-route-warm-${route_warm_round}-2.wav"
-  route_warm_paths+=("${route_warm_path_1}" "${route_warm_path_2}")
-
   route_warm_round_started_at="${SECONDS}"
-  post_json /inference/tts 300 "${route_warm_body}" > "${route_warm_path_1}" &
-  route_warm_pid_1="$!"
-  post_json /inference/tts 300 "${route_warm_body}" > "${route_warm_path_2}" &
-  route_warm_pid_2="$!"
+  route_warm_round_paths=()
+  route_warm_round_pids=()
+  for ((route_warm_slot = 1; route_warm_slot <= synthesis_concurrency; route_warm_slot += 1)); do
+    route_warm_path="/tmp/vcs-staging-deanvoice-route-warm-${route_warm_round}-${route_warm_slot}.wav"
+    route_warm_paths+=("${route_warm_path}")
+    route_warm_round_paths+=("${route_warm_path}")
+    post_json /inference/tts 300 "${route_warm_body}" > "${route_warm_path}" &
+    route_warm_round_pids+=("$!")
+  done
   route_warm_failed=0
-  if ! wait "${route_warm_pid_1}"; then
-    route_warm_failed=1
-  fi
-  if ! wait "${route_warm_pid_2}"; then
-    route_warm_failed=1
-  fi
+  for route_warm_pid in "${route_warm_round_pids[@]}"; do
+    if ! wait "${route_warm_pid}"; then
+      route_warm_failed=1
+    fi
+  done
   if [[ "${route_warm_failed}" -ne 0 ]]; then
-    echo "DeanVoice two-slot route warm round ${route_warm_round} failed." >&2
+    echo "DeanVoice ${synthesis_concurrency}-slot route warm round ${route_warm_round} failed." >&2
     exit 1
   fi
 
-  for route_warm_path in "${route_warm_path_1}" "${route_warm_path_2}"; do
+  for route_warm_path in "${route_warm_round_paths[@]}"; do
     if [[ "$(head -c 4 "${route_warm_path}")" != "RIFF" ]]; then
-      echo "DeanVoice two-slot route warm did not return RIFF for ${route_warm_path}." >&2
+      echo "DeanVoice ${synthesis_concurrency}-slot route warm did not return RIFF for ${route_warm_path}." >&2
       exit 1
     fi
     rm -f "${route_warm_path}"
@@ -168,7 +174,7 @@ for ((route_warm_round = 1; route_warm_round <= route_warm_rounds; route_warm_ro
   echo "warm_timing route_warm_round=${route_warm_round} seconds=$((SECONDS - route_warm_round_started_at))"
 done
 trap - EXIT
-finish_phase "route_level_two_slot_synthesis"
+finish_phase "route_level_${synthesis_concurrency}_slot_synthesis"
 
 status="$(curl --fail --silent --show-error "${worker_url}/inference/status")"
 if [[ "${status}" != *'"ready":true'* ]]; then

@@ -155,7 +155,8 @@
   - Starts the fixed live-gateway instance when needed and requires target-group health.
 - `scripts/wait-staging-event-ready.ps1`
   - Requires requested ASG capacity, healthy target coverage, and every target's
-    verified public-prime marker; batches SSM checks at the 50-target API limit.
+    verified public-prime marker newer than its current worker start; batches SSM
+    checks at the 50-target API limit.
 - `scripts/warm-staging-deanvoice.sh`
   - Loads the pinned model/references and validates the real TTS route before optimizer startup.
 - `scripts/provision-staging-autoscaling.ps1` / `scripts/staging-autoscaling.config.json`
