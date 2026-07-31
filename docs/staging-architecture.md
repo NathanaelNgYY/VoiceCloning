@@ -1091,11 +1091,40 @@ and before the Live handler timer starts. A `/api/config` warmup does not load t
 route, and provisioned concurrency alone would not execute the lazy import.
 
 A reversible memory A/B reduced the cold no-GPU Lambda duration from 4.618 seconds at
-128 MB to 1.071 seconds at 512 MB (77%); warm duration remained about 2 ms. Staging was
-restored to 128 MB after the test. Before changing the baseline, compare 512 MB plus a
-full voice snapshot against an eager Live import/provisioned-concurrency alias. The GI
-client currently sends `voiceProfileId` without both pinned model refs, so cold profile
-resolution also costs about 1.7 seconds and performs S3 work on every new environment.
+128 MB to 1.071 seconds at 512 MB (77%). Commit `b44e4d2` then made 512 MB the staging
+baseline, eagerly imports the Live handler during Lambda environment initialization,
+and makes GI freeze/send the active profile's GPT/SoVITS refs for the conversation.
+Any request that initializes the router now loads Live; the existing GPU bootstrap
+public prime also continues to call the real TTS route. Provisioned concurrency remains
+a future option and is not configured.
+
+The deployed eager-import no-GPU probe took 0.716 seconds client-side and 15.71 ms in
+the first invocation, versus 5.220 seconds and 4.618 seconds before. Its immediate
+repeat took 0.242 seconds client-side and 1.85 ms in Lambda. A pinned real-flow smoke
+measured zero profile-resolution time, 3.04 seconds to the first complete playable WAV,
+and 1.71 seconds on the next turn.
+
+After 50/50 strict GPU readiness, browser-parity three-turn reruns completed 100/100
+and 150/150. Timing below is completed assistant text to completed playable first WAV;
+it is not physical speaker-onset timing. Session totals sum the three first-WAV values.
+
+| Users | Turn | Average / fastest / slowest | p50 / p95 |
+|---:|---:|---:|---:|
+| 100 | 1 | 3.61 / 2.49 / 5.74 s | 3.49 / 4.78 s |
+| 100 | 2 | 1.87 / 1.02 / 6.05 s | 1.79 / 2.72 s |
+| 100 | 3 | 1.88 / 1.08 / 2.92 s | 1.84 / 2.71 s |
+| 100 | three-turn sum | 7.36 / 5.15 / 11.35 s | 7.26 / 9.22 s |
+| 150 | 1 | 5.08 / 1.47 / 22.35 s | 4.01 / 12.82 s |
+| 150 | 2 | 3.15 / 1.83 / 12.11 s | 2.72 / 6.00 s |
+| 150 | 3 | 2.83 / 1.03 / 18.72 s | 2.54 / 5.23 s |
+| 150 | three-turn sum | 11.07 / 6.92 / 29.37 s | 9.80 / 19.28 s |
+
+Profile resolution was 0 ms p50 on every turn and at most 1 ms on first-turn p95.
+Cold-marked and warm first-turn Lambda environments had similar non-handler p50
+(about 0.25-0.27 seconds), proving the old 4.6-second lazy-import block was removed.
+The remaining 150-user tail is capacity admission: first-turn retry count/sleep reached
+7/9.75 seconds at p95. One-minute occupied-slot samples peaked at 55%, so the 70%
+autoscaling alarm correctly did not fire and no post-scale rerun was applicable.
 
 A simultaneous burst can also be slower than a short ramp. Separate EC2 GPUs do not
 share compute with each other, but two requests placed on one `g6.xlarge` share that
