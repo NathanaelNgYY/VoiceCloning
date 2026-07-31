@@ -330,6 +330,7 @@ Begin that sentence exactly with "${marker}."`;
               signal: AbortSignal.timeout(timeoutMs),
             },
           );
+          const responseHeadersAt = performance.now();
           const audioResponse = Buffer.from(await response.arrayBuffer());
           const chunkDoneAt = performance.now();
           if (chunkIndex === 0) currentTurn.firstVoiceAt = chunkDoneAt;
@@ -344,12 +345,19 @@ Begin that sentence exactly with "${marker}."`;
             status: response.status,
             bytes: audioResponse.length,
             latencyMs: chunkDoneAt - chunkStartedAt,
+            requestToHeadersMs: responseHeadersAt - chunkStartedAt,
+            bodyTransferMs: chunkDoneAt - responseHeadersAt,
             backendTimingMs: {
               profileResolve: numericHeader('x-vcs-profile-resolve-ms'),
               workerRoundTrip: numericHeader('x-vcs-worker-round-trip-ms'),
               lambdaTotal: numericHeader('x-vcs-lambda-total-ms'),
               gpuQueueWait: numericHeader('x-vcs-gpu-queue-wait-ms'),
+              capacityRetryCount: numericHeader('x-vcs-capacity-retry-count'),
+              capacityRetrySleep: numericHeader('x-vcs-capacity-retry-sleep-ms'),
             },
+            lambdaColdStart: response.headers.get('x-vcs-lambda-cold-start') === '1',
+            lambdaEnvironmentId: response.headers.get('x-vcs-lambda-environment-id'),
+            lambdaRequestId: response.headers.get('x-vcs-lambda-request-id'),
             ok: response.ok
               && response.headers.get('content-type')?.startsWith('audio/wav')
               && audioResponse.subarray(0, 4).toString('ascii') === 'RIFF',
@@ -379,7 +387,12 @@ Begin that sentence exactly with "${marker}."`;
           ttsStatus: chunkResults.map((chunk) => chunk.status),
           ttsBytes: chunkResults.reduce((sum, chunk) => sum + chunk.bytes, 0),
           chunkLatencyMs: chunkResults.map((chunk) => Math.round(chunk.latencyMs)),
+          chunkRequestToHeadersMs: chunkResults.map((chunk) => Math.round(chunk.requestToHeadersMs)),
+          chunkBodyTransferMs: chunkResults.map((chunk) => Math.round(chunk.bodyTransferMs)),
           chunkBackendTimingMs: chunkResults.map((chunk) => chunk.backendTimingMs),
+          chunkLambdaColdStart: chunkResults.map((chunk) => chunk.lambdaColdStart),
+          chunkLambdaEnvironmentId: chunkResults.map((chunk) => chunk.lambdaEnvironmentId),
+          chunkLambdaRequestId: chunkResults.map((chunk) => chunk.lambdaRequestId),
           timingsMs: {
             speechToTranscript: currentTurn.transcriptAt == null
               || currentTurn.speechEndedAt == null
@@ -531,6 +544,12 @@ const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
       firstVoiceChunk: summarize(
         turnResults.map((item) => item.chunkLatencyMs?.[0]).filter(Number.isFinite),
       ),
+      firstVoiceRequestToHeaders: summarize(
+        turnResults.map((item) => item.chunkRequestToHeadersMs?.[0]).filter(Number.isFinite),
+      ),
+      firstVoiceBodyTransfer: summarize(
+        turnResults.map((item) => item.chunkBodyTransferMs?.[0]).filter(Number.isFinite),
+      ),
       firstVoiceProfileResolve: summarize(
         turnResults
           .map((item) => item.chunkBackendTimingMs?.[0]?.profileResolve)
@@ -551,9 +570,23 @@ const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
           .map((item) => item.chunkBackendTimingMs?.[0]?.gpuQueueWait)
           .filter(Number.isFinite),
       ),
+      firstVoiceCapacityRetryCount: summarize(
+        turnResults
+          .map((item) => item.chunkBackendTimingMs?.[0]?.capacityRetryCount)
+          .filter(Number.isFinite),
+      ),
+      firstVoiceCapacityRetrySleep: summarize(
+        turnResults
+          .map((item) => item.chunkBackendTimingMs?.[0]?.capacityRetrySleep)
+          .filter(Number.isFinite),
+      ),
       voiceSynthesis: metric('voiceSynthesis'),
       endToEnd: metric('endToEnd'),
     },
+    lambdaColdStarts: turnResults.filter((item) => item.chunkLambdaColdStart?.[0]).length,
+    lambdaEnvironments: new Set(
+      turnResults.map((item) => item.chunkLambdaEnvironmentId?.[0]).filter(Boolean),
+    ).size,
   };
 });
 

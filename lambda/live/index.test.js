@@ -27,6 +27,8 @@ test('live tts handler resolves voiceProfileId to a saved full profile before sy
         buffer: Buffer.from('RIFFdemo'),
         contentType: 'audio/wav',
         queueWaitMs: '4',
+        capacityRetryCount: 2,
+        capacityRetrySleepMs: 750,
       };
     },
   });
@@ -38,7 +40,7 @@ test('live tts handler resolves voiceProfileId to a saved full profile before sy
       text: 'Hello there.',
       voiceProfileId: 'lecturer-a-v1',
     }),
-  });
+  }, { awsRequestId: 'request-123' });
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers['Content-Type'], 'audio/wav');
@@ -46,6 +48,11 @@ test('live tts handler resolves voiceProfileId to a saved full profile before sy
   assert.equal(response.headers['X-VCS-Worker-Round-Trip-Ms'], '15.0');
   assert.equal(response.headers['X-VCS-Lambda-Total-Ms'], '18.0');
   assert.equal(response.headers['X-VCS-GPU-Queue-Wait-Ms'], '4');
+  assert.equal(response.headers['X-VCS-Lambda-Cold-Start'], '1');
+  assert.equal(response.headers['X-VCS-Lambda-Request-Id'], 'request-123');
+  assert.equal(response.headers['X-VCS-Capacity-Retry-Count'], '2');
+  assert.equal(response.headers['X-VCS-Capacity-Retry-Sleep-Ms'], '750');
+  assert.ok(response.headers['X-VCS-Lambda-Environment-Id']);
   assert.match(response.headers['Access-Control-Expose-Headers'], /X-VCS-GPU-Queue-Wait-Ms/u);
   assert.equal('X-Word-Timestamps' in response.headers, false);
   assert.equal(Buffer.from(response.body, 'base64').toString('utf-8'), 'RIFFdemo');
@@ -119,6 +126,28 @@ test('live tts handler proxies synthesis through the inference worker URL', asyn
       process.env.GPU_WORKER_URL = previousGpuWorkerUrl;
     }
   }
+});
+
+test('live tts marks only the first invocation in one Lambda environment as cold', async () => {
+  const invocationState = { cold: true, environmentId: 'environment-a' };
+  const localHandler = createHandler({
+    invocationState,
+    resolveSynthesisBody: async (body) => ({ ...body, ref_audio_path: 'ref.wav' }),
+    postBinary: async () => ({ buffer: Buffer.from('RIFF'), contentType: 'audio/wav' }),
+  });
+  const event = {
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    body: JSON.stringify({ text: 'Hello.' }),
+  };
+
+  const first = await localHandler(event);
+  const second = await localHandler(event);
+
+  assert.equal(first.headers['X-VCS-Lambda-Cold-Start'], '1');
+  assert.equal(second.headers['X-VCS-Lambda-Cold-Start'], '0');
+  assert.equal(first.headers['X-VCS-Lambda-Environment-Id'], 'environment-a');
+  assert.equal(second.headers['X-VCS-Lambda-Environment-Id'], 'environment-a');
 });
 
 test('live tts preserves worker busy status for multi-user feedback', async () => {

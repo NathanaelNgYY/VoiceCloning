@@ -63,6 +63,12 @@ async function wait(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const capacityRetryMetadata = new WeakMap();
+
+export function getCapacityRetryMetadata(response) {
+  return capacityRetryMetadata.get(response) || { retryCount: 0, retrySleepMs: 0 };
+}
+
 export async function fetchInferenceWithCapacityRetry(routePath, options, {
   fetchImpl = fetch,
   waitImpl = wait,
@@ -71,6 +77,7 @@ export async function fetchInferenceWithCapacityRetry(routePath, options, {
   const startedAt = now();
   const budgetMs = capacityRetryBudgetMs();
   let attempt = 0;
+  let retrySleepMs = 0;
   while (true) {
     const response = await fetchImpl(`${inferenceBaseUrl()}${routePath}`, {
       ...options,
@@ -79,7 +86,10 @@ export async function fetchInferenceWithCapacityRetry(routePath, options, {
         ...(attempt > 0 ? { 'X-VCS-Capacity-Retry': String(attempt) } : {}),
       },
     });
-    if (!isCapacityStatus(response.status)) return response;
+    if (!isCapacityStatus(response.status)) {
+      capacityRetryMetadata.set(response, { retryCount: attempt, retrySleepMs });
+      return response;
+    }
 
     const elapsed = now() - startedAt;
     const retryAfterSeconds = Number(response.headers.get('retry-after'));
@@ -87,11 +97,15 @@ export async function fetchInferenceWithCapacityRetry(routePath, options, {
     const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
       ? Math.min(5_000, retryAfterSeconds * 1_000)
       : exponentialMs;
-    if (elapsed + delayMs > budgetMs) return response;
+    if (elapsed + delayMs > budgetMs) {
+      capacityRetryMetadata.set(response, { retryCount: attempt, retrySleepMs });
+      return response;
+    }
 
     // Consume the response before retrying so Node can reuse the ALB connection.
     await response.arrayBuffer();
     await waitImpl(delayMs);
+    retrySleepMs += delayMs;
     attempt += 1;
   }
 }
@@ -177,9 +191,13 @@ export async function inferencePostBinary(routePath, body = {}, extraHeaders = {
     const data = await parseResponse(response);
     throw upstreamError(data.error || data.message || `Inference Worker POST ${routePath} failed (${response.status})`, response.status);
   }
+  const { retryCount, retrySleepMs } = getCapacityRetryMetadata(response);
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
     contentType: response.headers.get('content-type') || 'application/octet-stream',
+    queueWaitMs: response.headers.get('x-synthesis-queue-wait-ms'),
+    capacityRetryCount: retryCount,
+    capacityRetrySleepMs: retrySleepMs,
   };
 }
 

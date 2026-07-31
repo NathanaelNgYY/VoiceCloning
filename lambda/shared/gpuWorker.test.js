@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fetchInferenceWithCapacityRetry } from './gpuWorker.js';
+import { fetchInferenceWithCapacityRetry, getCapacityRetryMetadata } from './gpuWorker.js';
 
 function response(status, retryAfter = '') {
   return {
@@ -35,6 +35,10 @@ test('capacity retry marks only retry attempts for worker priority', async () =>
     assert.equal(requests[0].headers['X-VCS-Capacity-Retry'], undefined);
     assert.equal(requests[1].headers['X-VCS-Capacity-Retry'], '1');
     assert.equal(requests[2].headers['X-VCS-Capacity-Retry'], '2');
+    assert.deepEqual(getCapacityRetryMetadata(result), {
+      retryCount: 2,
+      retrySleepMs: 750,
+    });
   } finally {
     if (previousUrl == null) delete process.env.INFERENCE_WORKER_URL;
     else process.env.INFERENCE_WORKER_URL = previousUrl;

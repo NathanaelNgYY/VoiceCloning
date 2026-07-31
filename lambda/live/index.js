@@ -2,6 +2,7 @@ import { corsHeaders, err, ok, preflight, parseJsonBody } from '../shared/cors.j
 import { inferencePost, inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
 import { demoHeaders } from '../shared/demoOrigin.js';
+import { randomUUID } from 'node:crypto';
 
 const REPLY_TOKEN_HEADER = 'X-VCS-Reply-Token';
 
@@ -24,8 +25,11 @@ export function createHandler({
   postBinary = inferencePostBinary,
   post = inferencePost,
   now = () => performance.now(),
+  invocationState = { cold: true, environmentId: randomUUID() },
 } = {}) {
-  return async function handler(event) {
+  return async function handler(event, context = {}) {
+    const coldStart = invocationState.cold;
+    invocationState.cold = false;
     const requestStartedAt = now();
     if (event.requestContext?.http?.method === 'OPTIONS') {
       return preflight(event);
@@ -65,7 +69,13 @@ export function createHandler({
         return err(400, 'ref_audio_path is required');
       }
 
-      const { buffer, contentType, queueWaitMs } = await postBinary('/inference/tts', {
+      const {
+        buffer,
+        contentType,
+        queueWaitMs,
+        capacityRetryCount = 0,
+        capacityRetrySleepMs = 0,
+      } = await postBinary('/inference/tts', {
         ...resolvedBody,
         text: `${resolvedBody.text.trim()} `,
         text_split_method: 'cut0',
@@ -87,6 +97,13 @@ export function createHandler({
         'X-VCS-Profile-Resolve-Ms': profileResolveMs.toFixed(1),
         'X-VCS-Worker-Round-Trip-Ms': workerRoundTripMs.toFixed(1),
         'X-VCS-Lambda-Total-Ms': lambdaTotalMs.toFixed(1),
+        'X-VCS-Lambda-Cold-Start': coldStart ? '1' : '0',
+        'X-VCS-Lambda-Environment-Id': invocationState.environmentId,
+        'X-VCS-Capacity-Retry-Count': String(capacityRetryCount),
+        'X-VCS-Capacity-Retry-Sleep-Ms': String(capacityRetrySleepMs),
+        ...(context.awsRequestId
+          ? { 'X-VCS-Lambda-Request-Id': String(context.awsRequestId) }
+          : {}),
         ...(queueWaitMs != null && queueWaitMs !== ''
           ? { 'X-VCS-GPU-Queue-Wait-Ms': String(queueWaitMs) }
           : {}),
