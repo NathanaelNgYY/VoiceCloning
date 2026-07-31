@@ -73,6 +73,18 @@ if ($ScaleOutRejectsPerMinute -lt 1) {
 if ($ScaleOutAddCapacity -lt 1 -or $ScaleOutAddCapacity -gt $MaxCapacity) {
   throw "ScaleOutAddCapacity must be from 1 to MaxCapacity $MaxCapacity."
 }
+if ([int]$cfg.scaleOutOccupancyPercent -lt 1 -or
+  [int]$cfg.scaleOutOccupancyPercent -gt 99) {
+  throw 'scaleOutOccupancyPercent must be from 1 to 99.'
+}
+if ([int]$cfg.scaleOutEvaluationPeriods -lt 1 -or
+  [int]$cfg.scaleOutEvaluationPeriods -gt 5) {
+  throw 'scaleOutEvaluationPeriods must be from 1 to 5.'
+}
+if ([int]$cfg.synthesisSlotsPerInstance -lt 1 -or
+  [int]$cfg.synthesisSlotsPerInstance -gt 10) {
+  throw 'synthesisSlotsPerInstance must be from 1 to 10.'
+}
 if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeUrl) -or
   [string]$cfg.publicPrimeUrl -notmatch '^https://') {
   throw 'publicPrimeUrl must be an HTTPS URL.'
@@ -84,6 +96,10 @@ if ([int]$cfg.publicPrimeDelaySeconds -lt 0 -or
 if ([int]$cfg.publicPrimeRequestsPerInstance -lt 1 -or
   [int]$cfg.publicPrimeRequestsPerInstance -gt 10) {
   throw 'publicPrimeRequestsPerInstance must be from 1 to 10.'
+}
+if ([int]$cfg.publicPrimeMaxAttempts -lt 1 -or
+  [int]$cfg.publicPrimeMaxAttempts -gt 30) {
+  throw 'publicPrimeMaxAttempts must be from 1 to 30.'
 }
 if ([int]$cfg.publicPrimeSettleSeconds -lt 0 -or
   [int]$cfg.publicPrimeSettleSeconds -gt 300) {
@@ -131,7 +147,6 @@ function Invoke-AwsJson {
 $publicPrimeBody = @{
   voiceProfileId = 'deanvoice-v1'
   text = [string]$cfg.publicPrimeText
-  skip_verify = $true
 } | ConvertTo-Json -Compress
 $publicPrimeBodyB64 = [Convert]::ToBase64String(
   [Text.Encoding]::UTF8.GetBytes($publicPrimeBody)
@@ -158,6 +173,7 @@ write_files:
       prime_body_b64='__PUBLIC_PRIME_BODY_B64__'
       delay_seconds=__PUBLIC_PRIME_DELAY_SECONDS__
       request_count=__PUBLIC_PRIME_REQUESTS__
+      max_attempts=__PUBLIC_PRIME_MAX_ATTEMPTS__
       settle_seconds=__PUBLIC_PRIME_SETTLE_SECONDS__
 
       sleep "${delay_seconds}"
@@ -165,30 +181,46 @@ write_files:
       pids=()
       for request_index in $(seq 1 "${request_count}"); do
         (
-          status="$(
-            curl --silent --show-error \
-              --max-time 60 \
-              --output "/tmp/vcs-public-prime-${request_index}.response" \
-              --write-out '%{http_code}' \
-              --header 'Content-Type: application/json' \
-              --header 'Cache-Control: no-cache' \
-              --data-binary "${prime_body}" \
-              "${prime_url}?instancePrime=$(date +%s)-${request_index}" \
-              || true
-          )"
-          echo "public_prime request=${request_index} status=${status:-000}"
-          rm -f "/tmp/vcs-public-prime-${request_index}.response"
+          response_path="/tmp/vcs-public-prime-${request_index}.response"
+          for attempt in $(seq 1 "${max_attempts}"); do
+            status="$(
+              curl --silent --show-error \
+                --max-time 60 \
+                --output "${response_path}" \
+                --write-out '%{http_code}' \
+                --header 'Content-Type: application/json' \
+                --header 'Cache-Control: no-cache' \
+                --data-binary "${prime_body}" \
+                "${prime_url}?instancePrime=$(date +%s)-${request_index}-${attempt}" \
+                || true
+            )"
+            riff="$(head -c 4 "${response_path}" 2>/dev/null || true)"
+            echo "public_prime request=${request_index} attempt=${attempt} status=${status:-000} riff=${riff}"
+            if [[ "${status}" == '200' && "${riff}" == 'RIFF' ]]; then
+              rm -f "${response_path}"
+              exit 0
+            fi
+            rm -f "${response_path}"
+            sleep $((attempt < 5 ? attempt : 5))
+          done
+          echo "public_prime request=${request_index} exhausted ${max_attempts} attempts" >&2
+          exit 1
         ) &
         pids+=("$!")
       done
+      failed=0
       for pid in "${pids[@]}"; do
-        wait "${pid}" || true
+        if ! wait "${pid}"; then
+          failed=1
+        fi
       done
+      if [[ "${failed}" -ne 0 ]]; then
+        echo 'public_prime failed; target is not event-ready' >&2
+        exit 1
+      fi
 
-      # CloudFront can return 504 before Lambda/the GPU stops working. Let those
-      # accepted syntheses finish so the public route is hot before cloud-init ends.
       sleep "${settle_seconds}"
-      echo 'public_prime completed'
+      echo 'public_prime completed with verified public RIFF responses'
 bootcmd:
   - [systemctl, disable, gpu-worker.service]
   - [systemctl, disable, target-optimizer-inference.service]
@@ -211,6 +243,10 @@ $userData = $userData.Replace(
 $userData = $userData.Replace(
   '__PUBLIC_PRIME_REQUESTS__',
   [string][int]$cfg.publicPrimeRequestsPerInstance
+)
+$userData = $userData.Replace(
+  '__PUBLIC_PRIME_MAX_ATTEMPTS__',
+  [string][int]$cfg.publicPrimeMaxAttempts
 )
 $userData = $userData.Replace(
   '__PUBLIC_PRIME_SETTLE_SECONDS__',
@@ -357,7 +393,7 @@ if ($Apply -and $targetGroupArn) {
 if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   $scaleOutPolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
-    --policy-name vcs-staging-inference-all-capacity-busy `
+    --policy-name vcs-staging-inference-occupancy-step-out `
     --policy-type StepScaling `
     --adjustment-type ChangeInCapacity `
     --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `
@@ -373,15 +409,73 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     --metric-aggregation-type Maximum `
     --step-adjustments 'MetricIntervalUpperBound=0,ScalingAdjustment=-1'
 
+  # Keep the old rejection alarm as telemetry, but remove its action. A single
+  # transient rejection previously scaled the quiet baseline from 1 to 11.
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-all-capacity-busy-1m `
-    --alarm-description "Add $ScaleOutAddCapacity GPUs when Target Optimizer rejects at least $ScaleOutRejectsPerMinute requests in a one-minute CloudWatch period." `
+    --alarm-description 'Telemetry only: Target Optimizer rejected at least one request in a one-minute CloudWatch period.' `
     --namespace AWS/ApplicationELB `
     --metric-name TargetControlRequestRejectCount `
     --dimensions "Name=LoadBalancer,Value=$albResource" `
     --statistic Sum --period 60 `
     --evaluation-periods 1 --datapoints-to-alarm 1 `
     --threshold $ScaleOutRejectsPerMinute --comparison-operator GreaterThanOrEqualToThreshold `
+    --treat-missing-data notBreaching --no-actions-enabled
+
+  $occupancyExpression = 'IF(FILL(free,0)<healthy*{0},100*(1-FILL(free,0)/(healthy*{0})),0)' -f (
+    [int]$cfg.synthesisSlotsPerInstance
+  )
+  $occupancyQueries = @(
+    @{
+      Id = 'free'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'TargetControlWorkQueueLength'
+          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
+        }
+        Period = 60
+        Stat = 'Sum'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'healthy'
+      MetricStat = @{
+        Metric = @{
+          Namespace = 'AWS/ApplicationELB'
+          MetricName = 'HealthyHostCount'
+          Dimensions = @(
+            @{ Name = 'LoadBalancer'; Value = $albResource },
+            @{ Name = 'TargetGroup'; Value = $targetGroupResource }
+          )
+        }
+        Period = 60
+        Stat = 'Average'
+      }
+      ReturnData = $false
+    },
+    @{
+      Id = 'occupancy'
+      Expression = $occupancyExpression
+      Label = 'Occupied synthesis slots percent'
+      ReturnData = $true
+    }
+  ) | ConvertTo-Json -Depth 8 -Compress
+  $occupancyQueriesPath = Join-Path $env:TEMP 'vcs-staging-occupancy-queries.json'
+  [IO.File]::WriteAllText(
+    $occupancyQueriesPath,
+    $occupancyQueries,
+    (New-Object Text.UTF8Encoding($false))
+  )
+  Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
+    --alarm-name vcs-staging-inference-occupancy-70pct-1m `
+    --alarm-description "Add $ScaleOutAddCapacity GPUs while occupied synthesis slots are at least $($cfg.scaleOutOccupancyPercent)%." `
+    --metrics "file://$occupancyQueriesPath" `
+    --evaluation-periods $cfg.scaleOutEvaluationPeriods `
+    --datapoints-to-alarm $cfg.scaleOutEvaluationPeriods `
+    --threshold $cfg.scaleOutOccupancyPercent `
+    --comparison-operator GreaterThanOrEqualToThreshold `
     --treat-missing-data notBreaching `
     --alarm-actions $scaleOutPolicy.PolicyARN
 
@@ -441,4 +535,4 @@ if ($ScaleDownAt) {
     --min-size $cfg.minSize --max-size $MaxCapacity --desired-capacity $cfg.desiredCapacity
 }
 
-Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity RejectsPerMinute=$ScaleOutRejectsPerMinute ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"
+Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity Occupancy=$($cfg.scaleOutOccupancyPercent)% Slots=$($cfg.synthesisSlotsPerInstance) ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"

@@ -156,28 +156,43 @@ rejects a chatbot build from another branch.
    without `-Apply` first:
 
    ```powershell
+   .\scripts\ensure-staging-live-gateway.ps1 -Apply
    $env:VCS_STAGING_EVENT='true'
    $env:VCS_STAGING_PREWARM_CAPACITY='50'
    $env:VCS_STAGING_MAX_CAPACITY='192'
-   $env:VCS_STAGING_SCALE_OUT_REJECTS_PER_MINUTE='1'
+   $env:VCS_STAGING_SCALE_OUT_OCCUPANCY_PERCENT='70'
    $env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY='10'
-   $env:VCS_STAGING_PREWARM_AT='2026-08-02T07:15:00+08:00'
-   $env:VCS_STAGING_SCALE_DOWN_AT='2026-08-02T18:00:00+08:00'
+   $env:VCS_STAGING_PREWARM_AT='2026-08-03T08:30:00+08:00'
+   $env:VCS_STAGING_SCALE_DOWN_AT='2026-08-03T17:00:00+08:00'
    .\scripts\provision-staging-autoscaling.ps1 -AmiId <verified-ami> -DesiredCapacity 1
    ```
 
+   The gateway preflight starts the fixed control instance only when necessary,
+   waits for it in `vcs-staging-tg-3002`, and never stops it or creates a schedule.
+   `GPU_SCHEDULE_ENABLED=true` is live, but it does not self-invoke: an administrator
+   must still create the EventBridge timer and Lambda permission.
    Review the dry run, then repeat with `-Apply`. Use `-SwitchListener` only when an
    intentional listener cutover is required. Environment variables do not update AWS
    until the provisioner is applied.
-9. For a scale rehearsal, raise min/desired explicitly, record request start, metric
+9. After prewarm, do not admit users until this succeeds:
+
+   ```powershell
+   .\scripts\wait-staging-event-ready.ps1 -ExpectedCapacity 50
+   ```
+
+   It requires desired capacity, InService/healthy target coverage, and every
+   instance's verified public-RIFF prime marker. The instances perform model warm and
+   public prime themselves using their instance roles; operator credentials are used
+   only to inspect/control AWS from this script.
+10. For a scale rehearsal, raise min/desired explicitly, record request start, metric
    minute, alarm transition, desired-capacity change, EC2 launch, cloud-init finish,
    route warm, and optimizer capacity separately. Use per-instance
    `ssm:GetCommandInvocation`; `ssm:ListCommandInvocations` is denied.
-10. Run the complete chatbot harness and the closed-loop TTS harness described in repo
+11. Run the complete chatbot harness and the closed-loop TTS harness described in repo
     `docs/staging-architecture.md`. State whether verification was skipped. Save raw
     JSON under ignored `.tmp/`; copy durable aggregate results into the architecture
     document rather than committing large session transcripts.
-11. Restore min/desired 1 and max 192 after testing. Re-read both scheduled actions,
+12. Restore min/desired 1 and max 192 after testing. Re-read both scheduled actions,
     verify only one healthy `InService` baseline remains, run a public RIFF smoke, then
     update repo architecture/config and vault deployment/handoff/TODO/bugs/changelog.
     Commit and push the code repository. Remove temporary credentials from User scope.
@@ -188,18 +203,19 @@ reference, five auxiliary references, throwaway synthesis, and the real TTS rout
 prepared once by each ASG instance before Target Optimizer starts. This avoids a
 redundant student-entry warm-up burst.
 
-## Staging ASG State (2026-07-30)
+## Staging ASG State (2026-07-31)
 
 - Current image `ami-021aeb72894b8c79b` contains commit `330d329`; launch template
-  `lt-07728350a25e691a4` default version 15 uses `g6.xlarge`, `VoiClo_GPU`, and the
+  `lt-07728350a25e691a4` default version 19 uses `g6.xlarge`, `VoiClo_GPU`, and the
   staging GPU security group.
 - ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy baseline
   `i-0b8ce19b5fe17d751` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
-- Live scale-out adds 10 GPUs after at least one Target Optimizer rejection in a
-  one-minute period. The reject threshold and fixed increment are environment/config
-  settings. Scale-in removes one instance after fifteen no-traffic minutes.
+- Live scale-out adds 10 GPUs when occupied synthesis slots reach 70% of
+  `HealthyHostCount * 2` for one one-minute metric point. It re-evaluates subsequent
+  samples and works outside event mode. The old rejection alarm is telemetry-only.
+  Scale-in removes one instance after fifteen no-traffic minutes.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
   2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below
   50 until the paired scale-down action restores min/desired 1.
@@ -280,6 +296,17 @@ redundant student-entry warm-up burst.
   the visible live inventory was already 3.42 TiB and launches resumed after accounting
   cleared. Verify gp3 headroom before 06:50 and avoid a mass recycle immediately before
   the event.
+- The 2026-07-31 independent v17 repeat verified 3.0 TiB visible gp3 usage against
+  the 50-TiB quota, all 50 initial nodes through target health and public-prime
+  completion, 100/100 complete three-turn users in 95.29s, and 147/150 complete in
+  134.77s with three WebSocket 1006 closures and no failed TTS chunks. The 150-user
+  wave produced 379/777/171 optimizer rejects in three minutes and triggered the
+  fixed step 50->60. All 10 added nodes became healthy and completed public prime,
+  but only after the short wave ended; scheduled prewarming remains required.
+- A separate stopped control instance owns the staging live WebSocket gateway.
+  Full chatbot tests returned uniform 503 until `i-0f0da8be59367f7a8` was started;
+  start and health-check `vcs-staging-tg-3002` before the event or any complete-flow
+  test. The TTS-only inference ASG and its scheduled action do not start this gateway.
 
 Detailed per-turn timing definitions, the complete test ledger, warm-up ownership,
 burst interpretation, and evaluated future options with downsides are maintained in

@@ -9,6 +9,10 @@ import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+import {
+  shortenFirstFastPhrase,
+  splitLiveReplyChunks,
+} from '../client/src/hooks/liveConversation.js';
 
 const requireFromGateway = createRequire(
   new URL('../live-gateway/package.json', import.meta.url),
@@ -32,6 +36,7 @@ const paceAudio = process.env.VCS_CHATBOT_PACE_AUDIO !== 'false';
 const manualCommit = process.env.VCS_CHATBOT_MANUAL_COMMIT === 'true';
 const voiceProfileId = process.env.VCS_CHATBOT_VOICE_PROFILE_ID || 'deanvoice-v1';
 const reportFile = process.env.VCS_CHATBOT_REPORT_FILE || '';
+const skipFirstVerify = process.env.VCS_CHATBOT_SKIP_FIRST_VERIFY === 'true';
 
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 200) {
   throw new Error('Concurrency must be an integer from 1 to 200.');
@@ -199,25 +204,6 @@ function containsUserMarker(text, userNumber) {
   ).test(text);
 }
 
-function splitResponseChunks(text, maxChunkLength = 280) {
-  const sentences = String(text || '')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .match(/[^.!?]+[.!?]+|[^.!?]+$/gu) || [];
-  const chunks = [];
-  for (const rawSentence of sentences) {
-    let sentence = rawSentence.trim();
-    while (sentence.length > maxChunkLength) {
-      let cut = sentence.lastIndexOf(' ', maxChunkLength);
-      if (cut < Math.floor(maxChunkLength * 0.6)) cut = maxChunkLength;
-      chunks.push(sentence.slice(0, cut).trim());
-      sentence = sentence.slice(cut).trim();
-    }
-    if (sentence) chunks.push(sentence);
-  }
-  return chunks;
-}
-
 function makeSession(index, audio, productionPrompt) {
   const marker = markerFor(index);
   const createdAt = performance.now();
@@ -306,7 +292,9 @@ Begin that sentence exactly with "${marker}."`;
       currentTurn.assistantDoneAt = performance.now();
       currentTurn.assistantText = String(message.text || '').trim();
       try {
-        const chunks = splitResponseChunks(currentTurn.assistantText);
+        const chunks = shortenFirstFastPhrase(
+          splitLiveReplyChunks(currentTurn.assistantText),
+        );
         if (chunks.length === 0) throw new Error('Assistant response contained no speakable text.');
         const ttsStartedAt = performance.now();
         const chunkResults = [];
@@ -323,7 +311,7 @@ Begin that sentence exactly with "${marker}."`;
               body: JSON.stringify({
                 voiceProfileId,
                 text: chunks[chunkIndex],
-                ...(chunkIndex === 0 ? { skip_verify: true } : {}),
+                ...(chunkIndex === 0 && skipFirstVerify ? { skip_verify: true } : {}),
               }),
               signal: AbortSignal.timeout(timeoutMs),
             },
@@ -526,6 +514,7 @@ const report = {
   concurrency,
   turnCount,
   thinkTimeMs,
+  skipFirstVerify,
   ready: readyCount,
   success: successful.length,
   failed: failures.length,

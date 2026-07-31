@@ -17,36 +17,28 @@
 ## Frontend (`client/`)
 
 - `src/App.jsx`
-  - Main router.
   - User-facing routes are Training (`/`) and Live Fast (`/live-fast`).
   - Owns the GPU start/status button.
 - `src/pages/TrainingPage.jsx`
   - Upload training audio, start/stop training, read training state.
 - `src/pages/LivePage.jsx`
   - Live chatbot UI, model selection, trained reference selection, cloned voice playback, Text to Speech tab, pronunciation admin panel.
-- `src/hooks/useSSE.js`
-  - Training SSE subscription.
-  - Current training flow exposes 9 steps, including speaker-verification extraction.
+- `src/hooks/useSSE.js` — Nine-step training SSE including speaker verification.
 - `src/hooks/useInferenceSSE.js`
-  - Long-text inference SSE subscription.
+- `src/hooks/useInferenceSSE.js` — Long-text inference SSE.
 - `src/hooks/useLiveSpeech.js`
   - Mic capture, live conversation flow, cloned reply playback, barge-in behavior.
 - `src/hooks/liveConversation.js`
   - Pure helpers for phrase splitting, playback selection, language-specific TTS params.
-- `src/services/api.js`
-  - Main REST client.
-  - Adds `x-amz-content-sha256` for JSON mutating requests.
+- `src/services/api.js` — REST client with signed JSON mutation support.
 - `src/services/liveChatSocket.js`
-  - Browser WebSocket client for `/api/live/chat/realtime`.
+- `src/services/liveChatSocket.js` — WebSocket client for `/api/live/chat/realtime`.
 - `src/lib/runtimeConfig.js`
-  - Resolves REST, SSE, and WebSocket base paths.
-- `src/lib/appMode.js`
-  - Split-build gating for Training vs Live Fast.
+  - Resolves API paths; `src/lib/appMode.js` handles split-build gating.
 - `src/lib/referenceSelection.js`
   - Auto-picks primary and auxiliary reference clips from training audio.
   - Scoring now prefers clean names/transcripts and ideal clip length (~3-9s).
-- `src/lib/pronunciationCsv.js`
-  - CSV import/export helpers for Text to Speech pronunciation dictionary entries.
+- `src/lib/pronunciationCsv.js` — Pronunciation dictionary CSV import/export.
 - `vite.config.js`
   - Local dev server and proxy rules for `/api`, `/train/progress`, `/inference/progress`.
 
@@ -152,14 +144,18 @@
   - GPU worker container entrypoint.
 - `docker/gpu-inference-worker/entrypoint.sh`
   - GPU inference worker container entrypoint.
-- `systemd/gpu-inference-worker.service`
-  - Checked-in systemd unit for inference worker.
+- `systemd/gpu-inference-worker.service` — Checked-in inference worker unit.
 - `systemd/target-optimizer-inference.service`
   - Pinned ALB Target Optimizer proxy; reads inference concurrency and exposes
     data/control ports 3103/3004.
 - `scripts/deploy-client.ps1` / `scripts/deploy.config.json` — environment-aware GI build/deployment map, CloudFront, and S3 targets.
 - `scripts/load-test-staging-chatbot.mjs` / `scripts/load-test-staging-tts.mjs`
   - Complete WebSocket-to-DeanVoice and closed-loop public TTS load rehearsals.
+- `scripts/ensure-staging-live-gateway.ps1`
+  - Starts the fixed live-gateway instance when needed and requires target-group health.
+- `scripts/wait-staging-event-ready.ps1`
+  - Requires requested ASG capacity, healthy target coverage, and every target's
+    verified public-prime marker; batches SSM checks at the 50-target API limit.
 - `scripts/warm-staging-deanvoice.sh`
   - Loads the pinned model/references and validates the real TTS route before optimizer startup.
 - `scripts/provision-staging-autoscaling.ps1` / `scripts/staging-autoscaling.config.json`
@@ -200,7 +196,4 @@
   - `gpu-worker/src/config.js`
   - `gpu-worker/src/services/pipeline.js`
   - `gpu-worker/scripts/score_clips.py`
-- Deployment / routing issue:
-  - `CLOUD_FRONTEND_FLOW_README(Outdated).md`
-  - `docs/complete_ai_handoff(Outdated).md`
-  - `docs/lambda-serverless-gpu-worker-guide.md`
+- Deployment / routing issue: `docs/lambda-serverless-gpu-worker-guide.md`
