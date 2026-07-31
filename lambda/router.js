@@ -43,7 +43,7 @@ export async function getRouteHandler(route) {
   return handlerCache.get(route.modulePath);
 }
 
-export async function dispatch(event) {
+export async function dispatch(event, context) {
   const method = getMethod(event);
   const pathname = getPath(event);
 
@@ -70,5 +70,5 @@ export async function dispatch(event) {
     },
   };
 
-  return applyCors(await handler(normalizedEvent), normalizedEvent);
+  return applyCors(await handler(normalizedEvent, context), normalizedEvent);
 }

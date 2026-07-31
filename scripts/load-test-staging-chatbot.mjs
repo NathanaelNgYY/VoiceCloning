@@ -38,6 +38,7 @@ const manualCommit = process.env.VCS_CHATBOT_MANUAL_COMMIT === 'true';
 const voiceProfileId = process.env.VCS_CHATBOT_VOICE_PROFILE_ID || 'deanvoice-v1';
 const reportFile = process.env.VCS_CHATBOT_REPORT_FILE || '';
 const skipFirstVerify = process.env.VCS_CHATBOT_SKIP_FIRST_VERIFY === 'true';
+const firstChunkOnly = process.env.VCS_CHATBOT_FIRST_CHUNK_ONLY === 'true';
 
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 200) {
   throw new Error('Concurrency must be an integer from 1 to 200.');
@@ -310,9 +311,10 @@ Begin that sentence exactly with "${marker}."`;
           splitLiveReplyChunks(currentTurn.assistantText),
         );
         if (chunks.length === 0) throw new Error('Assistant response contained no speakable text.');
+        const requestedChunks = firstChunkOnly ? chunks.slice(0, 1) : chunks;
         const ttsStartedAt = performance.now();
         const chunkResults = [];
-        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+        for (let chunkIndex = 0; chunkIndex < requestedChunks.length; chunkIndex += 1) {
           const chunkStartedAt = performance.now();
           const response = await fetch(
             `${ttsUrl}?chatbotLoadTest=${Date.now()}-${index}-${turnIndex}-${chunkIndex}`,
@@ -324,7 +326,7 @@ Begin that sentence exactly with "${marker}."`;
               },
               body: JSON.stringify({
                 voiceProfileId,
-                text: chunks[chunkIndex],
+                text: requestedChunks[chunkIndex],
                 ...(chunkIndex === 0 && skipFirstVerify ? { skip_verify: true } : {}),
               }),
               signal: AbortSignal.timeout(timeoutMs),
@@ -373,7 +375,7 @@ Begin that sentence exactly with "${marker}."`;
           (value) => value !== index + 1
             && containsUserMarker(currentTurn.assistantText, value),
         );
-        const validWavs = chunkResults.length === chunks.length
+        const validWavs = chunkResults.length === requestedChunks.length
           && chunkResults.every((chunk) => chunk.ok);
 
         const turnResult = {
@@ -382,6 +384,7 @@ Begin that sentence exactly with "${marker}."`;
           transcript: currentTurn.transcript || '',
           responseWords: currentTurn.assistantText.split(/\s+/u).filter(Boolean).length,
           responseChunks: chunks.length,
+          requestedChunks: requestedChunks.length,
           ownMarker,
           foreignMarkers,
           ttsStatus: chunkResults.map((chunk) => chunk.status),
@@ -604,6 +607,7 @@ const report = {
     0,
   ),
   skipFirstVerify,
+  firstChunkOnly,
   ready: readyCount,
   success: successful.length,
   failed: failures.length,
