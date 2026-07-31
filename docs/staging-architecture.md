@@ -1069,6 +1069,34 @@ It does not pre-create every student's WebSocket, OpenAI session, Lambda executi
 environment, ALB connection, or unique response text. That is why the first production
 turn can be slower even after correct GPU warm-up.
 
+### Lambda cold Live-route diagnosis (2026-07-31)
+
+Request-level timing proved that the large first-turn penalty is not primarily GPU
+capacity. During the 60-GPU/150-user burst, Lambda had 142 cold environments, zero
+throttles, and only 128.7/136.7/144.0 ms init p50/p95/max. The first-turn median still
+contained 5.38 seconds outside the Live handler timer.
+
+A direct Function URL cold test reproduced the delay without CloudFront. Its first
+playable WAV took 11.23 seconds: 1.72 seconds profile resolution, 3.24 seconds worker
+round trip, 4.96 seconds in the Live handler, 0.29 seconds response-body transfer,
+and 5.98 seconds between the request and handler-accounted response work. GPU queue
+wait and Lambda capacity retries were both zero.
+
+The decisive no-GPU probe deployed the same code and posted an invalid Live TTS body.
+The first request took 5.22 seconds client-side and 4.618 seconds in Lambda; the same
+environment's immediate repeat took 0.256 seconds client-side and 1.95 ms in Lambda.
+The cold REPORT recorded only 128.57 ms Init Duration. Therefore about 4.6 seconds is
+the router's first dynamic import of `live/index.js`, which occurs during invocation
+and before the Live handler timer starts. A `/api/config` warmup does not load this
+route, and provisioned concurrency alone would not execute the lazy import.
+
+A reversible memory A/B reduced the cold no-GPU Lambda duration from 4.618 seconds at
+128 MB to 1.071 seconds at 512 MB (77%); warm duration remained about 2 ms. Staging was
+restored to 128 MB after the test. Before changing the baseline, compare 512 MB plus a
+full voice snapshot against an eager Live import/provisioned-concurrency alias. The GI
+client currently sends `voiceProfileId` without both pinned model refs, so cold profile
+resolution also costs about 1.7 seconds and performs S3 work on every new environment.
+
 A simultaneous burst can also be slower than a short ramp. Separate EC2 GPUs do not
 share compute with each other, but two requests placed on one `g6.xlarge` share that
 GPU's compute and memory bandwidth. With 50 users and 32 two-slot GPUs, up to 18 GPUs
