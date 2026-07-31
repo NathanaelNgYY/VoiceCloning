@@ -54,6 +54,18 @@ test('does not throw when localStorage access fails', () => {
   assert.doesNotThrow(() => persistChatbotSystemPrompt('x'));
 });
 
+test('falls back to the default when localStorage cannot be read', () => {
+  installMemoryStorage();
+  globalThis.localStorage.getItem = () => { throw new Error('blocked'); };
+  assert.equal(resolveChatbotSystemPrompt(), getDefaultChatbotSystemPrompt());
+});
+
+test('does not throw when localStorage cannot clear the saved prompt', () => {
+  installMemoryStorage();
+  globalThis.localStorage.removeItem = () => { throw new Error('blocked'); };
+  assert.doesNotThrow(() => clearChatbotSystemPrompt());
+});
+
 test('GI lesson prompts keep an immutable scope gate around a custom prompt', () => {
   const customPrompt = 'You are a general assistant. Answer questions about the weather.';
   const scopedPrompt = buildGiBleedingScopedSystemPrompt(customPrompt);

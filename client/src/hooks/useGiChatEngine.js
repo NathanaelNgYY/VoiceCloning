@@ -3,7 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getFullActiveVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
-import { resolveChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
+import {
+  buildGiBleedingScopedSystemPrompt,
+  resolveChatbotSystemPrompt,
+} from '@/lib/chatbotSystemPrompt';
 import {
   buildDocumentsContext,
   combineSystemPromptWithDocuments,
@@ -36,11 +39,11 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   const profileRequestRef = useRef(0);
 
   // System prompt + uploaded documents are read once at mount; the gi skin has
-  // no editor for them (the Dean kiosk owns that UI). The lesson context is
-  // appended last so the video material is the most specific thing in the
-  // prompt. useLiveSpeech snapshots this when the socket opens, so a lesson
-  // that arrives after the student has already started talking only takes
-  // effect on the next conversation.
+  // no editor for them (the Dean kiosk owns that UI). The lesson context is the
+  // final reference section, then the complete prompt is enclosed by the
+  // non-editable GI scope gate. useLiveSpeech snapshots this when the socket
+  // opens, so a lesson that arrives after the student has already started
+  // talking only takes effect on the next conversation.
   const systemPrompt = useMemo(() => {
     const prompt = resolveChatbotSystemPrompt();
     const documents = resolveChatbotDocuments();
@@ -49,7 +52,8 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
       buildDocumentsContext(documents).text
     );
     const lesson = String(lessonContext || '').trim();
-    return lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
+    const withLesson = lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
+    return buildGiBleedingScopedSystemPrompt(withLesson);
   }, [lessonContext]);
 
   const loadActiveProfile = useCallback(async () => {
