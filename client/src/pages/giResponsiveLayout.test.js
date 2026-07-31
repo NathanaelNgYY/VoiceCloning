@@ -9,6 +9,10 @@ const giChatPanelSource = readFileSync(
   new URL("../components/gi/GiChatPanel.jsx", import.meta.url),
   "utf8",
 );
+const composerSource = readFileSync(
+  new URL("../components/gi/Composer.jsx", import.meta.url),
+  "utf8",
+);
 
 test("home search form has deliberate space below the supporting text", () => {
   assert.match(
@@ -84,9 +88,16 @@ test("both gi chat surfaces offer typing alongside the mic", () => {
 });
 
 test("the composer's voice chip stays clear of the text input row", () => {
-  // The composer is two rows now (mic, then the full-width text field). A chip
-  // centred on the whole block would land on top of the text field, so it is
-  // pinned to the mic row instead.
-  assert.match(giChatPanelSource, /className="absolute left-3 top-7[^"]*sm:left-4"/);
-  assert.doesNotMatch(giChatPanelSource, /absolute left-3 top-1\/2[^"]*-translate-y-1\/2/);
+  // The composer row is a full-width text field, so the chip can no longer be
+  // pinned out of flow beside it — it owns a line above instead.
+  assert.match(giChatPanelSource, /<div className="mb-2 flex justify-center">\s*\n\s*<VoiceIndicator/);
+  assert.doesNotMatch(giChatPanelSource, /<div className="absolute left-3[^"]*">\s*\n\s*<VoiceIndicator/);
+});
+
+test("the gi composer keeps Stop voice and End alongside the typing row", () => {
+  // Typing must not cost the session controls: the mic mutes, and ending stays
+  // a separate deliberate tap.
+  assert.match(composerSource, /onClick=\{onStopVoice\}/);
+  assert.match(composerSource, /onClick=\{onStop\}/);
+  assert.match(composerSource, /onClick=\{active \? onToggleMute : onStart\}/);
 });

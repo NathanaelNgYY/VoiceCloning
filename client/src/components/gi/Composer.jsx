@@ -2,11 +2,11 @@ import { Loader2, Mic, MicOff, Square, VolumeX } from 'lucide-react';
 import { ChatTextInput } from '@/components/ChatTextInput.jsx';
 import { cn } from '@/lib/utils';
 
-// Shared treatment for the two labelled pills that flank the mic while a
-// conversation is live ("Stop voice" and "End").
+// Shared treatment for the two labelled pills that sit above the composer row
+// while a conversation is live ("Stop voice" and "End").
 const PILL_CLASS =
-  'inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border '
-  + 'border-slate-200 bg-white px-3.5 text-xs font-medium shadow-sm transition';
+  'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border '
+  + 'border-slate-200 bg-white px-3 text-xs font-medium shadow-sm transition';
 
 export function Composer({
   disabled,
@@ -21,90 +21,87 @@ export function Composer({
   onSendText,
   canSendText = false,
 }) {
-  const label = loading
+  // Idle, the mic starts the conversation; live, it mutes and unmutes. Ending
+  // is the "End" pill's job, so one tap can never throw away a live session.
+  const micLabel = loading
     ? 'Connecting to voice assistant'
-    : active
-      ? 'End voice conversation'
-      : 'Start voice conversation';
+    : !active
+      ? 'Start voice conversation'
+      : micMuted
+        ? 'Unmute microphone'
+        : 'Mute microphone';
+
+  const micButton = (
+    <button
+      type="button"
+      aria-label={micLabel}
+      aria-busy={loading}
+      onClick={active ? onToggleMute : onStart}
+      disabled={loading || (disabled && !active)}
+      className={cn(
+        'inline-flex size-11 shrink-0 items-center justify-center rounded-full transition',
+        'disabled:cursor-not-allowed disabled:opacity-50',
+        active && micMuted
+          // Muted is the one state that must not read as "ready to listen", so
+          // it steps out of the primary fill entirely.
+          ? 'border border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100'
+          : 'bg-primary text-primary-foreground shadow-sm hover:opacity-90 active:scale-95',
+        active && !micMuted && 'ring-2 ring-primary/30'
+      )}
+    >
+      {loading ? (
+        <Loader2 className="size-5 animate-spin" />
+      ) : active && micMuted ? (
+        <MicOff className="size-5" />
+      ) : (
+        <Mic className="size-5" />
+      )}
+    </button>
+  );
 
   return (
-    <div className="mx-auto flex w-full max-w-lg shrink-0 flex-col items-center gap-2">
-      <div className="flex shrink-0 items-center justify-center gap-3">
-        {/* Fixed-width flankers keep the mic circle centred, so the row does not
-            shift sideways as Stop voice appears and disappears between clips.
-            `shrink-0` throughout: in a narrow panel the row would otherwise be
-            compressed into a squashed oval with its labels clipped away. */}
-        {active && (
-          <div className="flex w-24 shrink-0 sm:w-28 justify-end">
-            {playbackReady && (
-              <button
-                type="button"
-                onClick={onStopVoice}
-                className={cn(PILL_CLASS, 'text-slate-500 hover:border-slate-300 hover:text-slate-800')}
-              >
-                <VolumeX className="size-3.5" />
-                Stop voice
-              </button>
-            )}
-          </div>
-        )}
+    <div className="mx-auto flex w-full max-w-2xl shrink-0 flex-col items-center gap-2">
+      {/* Session controls ride above the composer row rather than inside it:
+          the row itself stays the same shape whether or not a conversation is
+          running, so the input never shifts sideways mid-sentence as these
+          appear and disappear. */}
+      {(active || loading) && (
+        <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+          {playbackReady && (
+            <button
+              type="button"
+              onClick={onStopVoice}
+              className={cn(PILL_CLASS, 'text-slate-500 hover:border-slate-300 hover:text-slate-800')}
+            >
+              <VolumeX className="size-3.5" />
+              Stop voice
+            </button>
+          )}
 
-        {active && (
-          <button
-            type="button"
-            aria-label={micMuted ? 'Unmute microphone' : 'Mute microphone'}
-            onClick={onToggleMute}
-            className={cn(
-              'inline-flex size-11 shrink-0 items-center justify-center rounded-full border transition',
-              micMuted
-                ? 'border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100'
-                : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
-            )}
-          >
-            {micMuted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
-          </button>
-        )}
+          {active && (
+            <button
+              type="button"
+              onClick={onStop}
+              className={cn(PILL_CLASS, 'text-slate-700 hover:bg-slate-50')}
+            >
+              <Square className="size-3" />
+              End
+            </button>
+          )}
 
-        <div className={cn('shrink-0', active && 'flex w-24 justify-start sm:w-28')}>
-          <button
-            type="button"
-            aria-label={label}
-            aria-busy={loading}
-            onClick={active ? onStop : onStart}
-            disabled={loading || (disabled && !active)}
-            className={cn(
-              // ui-v2 button treatment. Idle/connecting is a large circular mic —
-              // this is the only control on a kiosk screen, so it stays a big
-              // centered target. While live it becomes a labelled "End" pill.
-              active
-                ? cn(PILL_CLASS, 'text-slate-700 hover:bg-slate-50 disabled:opacity-50')
-                : 'inline-flex size-16 items-center justify-center rounded-full border border-slate-200 '
-                  + 'bg-white text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50'
-            )}
-          >
-            {loading ? (
-              <Loader2 className="size-6 animate-spin text-slate-400" />
-            ) : active ? (
-              <>
-                <Square className="size-3.5" />
-                End
-              </>
-            ) : (
-              <Mic className="size-6" />
-            )}
-          </button>
+          {loading && <span className="text-[10px] text-ink-muted">Connecting…</span>}
         </div>
-      </div>
-
-      {loading && <span className="text-[10px] text-ink-muted">Connecting…</span>}
-
-      {/* Typing is offered alongside the mic rather than behind a mode toggle:
-          a kiosk visitor with no working microphone should not have to find a
-          setting before they can ask anything. Sending opens the conversation
-          on its own, so this is live even before the mic is pressed. */}
-      {onSendText && (
-        <ChatTextInput onSend={onSendText} disabled={!canSendText} className="mt-1" />
       )}
+
+      {/* Typing and the mic share one row, with no Voice/Text mode toggle: a
+          kiosk visitor whose microphone does not work should not have to find
+          a setting before they can ask anything. Either control opens the
+          conversation on its own. */}
+      <ChatTextInput
+        onSend={onSendText}
+        disabled={!canSendText || !onSendText}
+        trailing={micButton}
+      />
     </div>
   );
 }

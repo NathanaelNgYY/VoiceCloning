@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SendHorizontal } from 'lucide-react';
+import { Send } from 'lucide-react';
 
 import { MAX_TYPED_MESSAGE_LENGTH } from '@/hooks/liveConversation.js';
 import { cn } from '@/lib/utils';
@@ -12,11 +12,15 @@ import { cn } from '@/lib/utils';
  *
  * The reply still comes back as speech in the cloned voice: this replaces the
  * microphone, not the voice.
+ *
+ * `trailing` renders inside the row after the send button, so a caller can put
+ * the mic control on the same line (the gi composer does; see Composer.jsx).
  */
 export function ChatTextInput({
   onSend,
   disabled = false,
-  placeholder = 'Or type your question…',
+  placeholder = 'Ask a question…',
+  trailing = null,
   className,
 }) {
   const [draft, setDraft] = useState('');
@@ -55,9 +59,9 @@ export function ChatTextInput({
         aria-label="Type your question"
         enterKeyHint="send"
         className={cn(
-          'h-10 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-4 text-sm text-slate-700',
+          'h-11 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-5 text-sm text-slate-700',
           'shadow-sm outline-none transition placeholder:text-slate-400',
-          'focus:border-slate-300 focus:ring-2 focus:ring-slate-200',
+          'focus:border-primary/40 focus:ring-2 focus:ring-primary/20',
           'disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400'
         )}
       />
@@ -66,14 +70,15 @@ export function ChatTextInput({
         disabled={!canSubmit}
         aria-label="Send message"
         className={cn(
-          'inline-flex size-10 shrink-0 items-center justify-center rounded-full transition',
+          'inline-flex size-11 shrink-0 items-center justify-center rounded-full transition',
           canSubmit
-            ? 'bg-slate-900 text-white shadow-sm hover:bg-slate-700 active:scale-95'
+            ? 'bg-primary text-primary-foreground shadow-sm hover:opacity-90 active:scale-95'
             : 'cursor-not-allowed bg-slate-100 text-slate-300'
         )}
       >
-        <SendHorizontal className="size-4" />
+        <Send className="size-4" />
       </button>
+      {trailing}
     </form>
   );
 }

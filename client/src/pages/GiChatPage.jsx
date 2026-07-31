@@ -253,9 +253,8 @@ export default function GiChatPage() {
               <div className="mt-4 hidden space-y-1 text-center lg:block">
                 <h2 className="text-lg font-semibold">GI Bleeding Chatbot</h2>
                 <p className="mx-auto max-w-sm text-sm text-ink-muted">
-                  Ask me about GI bleeding education material. Tap the voice button to start a
-                  conversation, then just speak — tap again to end it. No microphone? Type your
-                  question instead; I'll still answer out loud.
+                  Ask me about GI bleeding education material. Tap the mic and just speak, or type
+                  your question if you have no microphone — either way I'll answer out loud.
                 </p>
               </div>
             </section>

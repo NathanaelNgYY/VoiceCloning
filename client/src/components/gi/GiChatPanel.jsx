@@ -92,21 +92,15 @@ export function GiChatPanel({
 
         {chat.notice && <p className="px-4 pt-2 text-center text-xs text-amber-600">{chat.notice}</p>}
 
-        {/* The voice chip rides on the composer row rather than owning a row of
-            its own — in a panel this short, a whole line to name the voice costs
-            a message. It is positioned out of flow so it can never squeeze the
-            controls, and it steps aside once a conversation is live: that is
-            when the row is at its widest (Stop voice + mic + End) and when the
+        {/* The chip gets its own line above the composer. It used to be pinned
+            out of flow beside the mic to save a row, but the composer row is
+            now a full-width text field with nothing to sit beside — and at one
+            row instead of the old mic hero, the panel can afford the line. It
+            still steps aside once a conversation is live, which is when the
             voice has stopped being a question. */}
-        <div className="relative flex items-center justify-center px-3 pb-3 pt-2 sm:px-4">
-          {/* The chip stops 3rem short of centre so it cannot reach the mic
-              circle, however narrow the panel gets. It is pinned to the top of
-              the block rather than centred on it: the composer's second row is
-              the full-width text field, and a centred chip would land on top
-              of it. `top-7` optically centres the chip against the 64px idle
-              mic circle beside it — the only state in which it renders. */}
+        <div className="px-3 pb-3 pt-2 sm:px-4">
           {chat.activeVoiceLabel && !chat.voiceActive && (
-            <div className="absolute left-3 top-7 max-w-[calc(50%-3rem)] sm:left-4">
+            <div className="mb-2 flex justify-center">
               <VoiceIndicator label={chat.activeVoiceLabel} compact />
             </div>
           )}
