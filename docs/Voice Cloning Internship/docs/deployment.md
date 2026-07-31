@@ -24,7 +24,8 @@ always read and live-verify it before AWS work.
 
 `d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot.
 
-As of 2026-07-29, staging chatbot serves the GI build from `staging-chatbot` commit
+As of 2026-07-31, staging chatbot serves the GI build from
+`codex/staging-multi-user-scaling` commit
 `fc99271`, bundle `assets/index-DJ5lJmLS.js`, with fixed profile `deanvoice-v1`.
 Staging Live Fast starts multi-sentence voice after the first confirmed completed
 streamed sentence. The staging Lambda exposes profile-resolution, worker-round-trip,
@@ -113,9 +114,9 @@ Durable deploy order:
 
 Start every staging AWS session by reading repo `docs/staging-architecture.md`, repo
 `scripts/deploy.config.json`, vault `HANDOFF.md`, and vault `TODO.md`. Work from
-`codex/staging-multi-user-scaling` for Lambda/GPU/ASG changes. The deployed GI client
-is built separately from `staging-chatbot`; `scripts/deploy-client.ps1` intentionally
-rejects a chatbot build from another branch.
+`codex/staging-multi-user-scaling` for Lambda/GPU/ASG and GI-client changes.
+`scripts/deploy-client.ps1` intentionally rejects a chatbot build from a branch other
+than the environment's configured `chatbotBranch`.
 
 1. Check `git status` and `git log -3`. Preserve unrelated local changes. Export fresh
    temporary `VCS_AWS_*` credentials outside chat, map them to `AWS_*`, assume the
@@ -133,8 +134,8 @@ rejects a chatbot build from another branch.
    the staging Lambda, wait for `LastUpdateStatus=Successful`, and run the public TTS
    smoke. Capacity retries are implemented in Lambda, so an AMI rebuild alone does not
    deploy retry changes.
-5. For the GI client, switch to `staging-chatbot`, confirm the expected commit and
-   clean tree, then run:
+5. For the GI client, stay on the configured `codex/staging-multi-user-scaling`
+   branch, confirm the expected commit and clean tree, then run:
 
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy-client.ps1 -Env staging -Mode chatbot
@@ -223,8 +224,9 @@ redundant student-entry warm-up burst.
 - Current image `ami-021aeb72894b8c79b` contains commit `330d329`; launch template
   `lt-07728350a25e691a4` default version 20 uses `g6.xlarge`, `VoiClo_GPU`, and the
   staging GPU security group.
-- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. Current healthy baseline
-  `i-0b8ce19b5fe17d751` is in `subnet-0c1937ef298f54500`; min 1 keeps a warm baseline.
+- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. The healthy baseline
+  instance is selected by the ASG; describe it live instead of relying on a saved
+  instance ID. Min 1 keeps a warm baseline in `subnet-0c1937ef298f54500`.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
 - Live scale-out uses occupied synthesis slots / (`HealthyHostCount * 2`) and works

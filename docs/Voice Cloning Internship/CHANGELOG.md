@@ -2,6 +2,10 @@
 
 ## 2026-07-31
 
+- Reconciled the next-session handoff, decisions, API notes, project map, event TODO,
+  and deployment runbook with the deployed `fc99271` bundle and current tiered
+  occupancy policy; removed stale branch, bundle, baseline-ID, and rejection-policy
+  guidance without deleting historical test results.
 - Deployed staging Live Fast early-sentence voice: multi-sentence replies can begin
   TTS after the first confirmed complete streamed sentence instead of always waiting
   for the full OpenAI response. Live Full/non-phrase behavior is unchanged.

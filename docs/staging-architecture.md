@@ -68,9 +68,9 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 `d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot, not the dev
 Dean chatbot.
 
-On 2026-07-29, the staging chatbot was rebuilt in **GI mode** from
-`staging-chatbot` commit `846893e` and deployed as `assets/index-DfcO_k9s.js`
-(invalidation `I43HK3A7U66H6TC7RUUUUW6MLU`). Its fixed staging profile is
+On 2026-07-31, the staging chatbot was rebuilt in **GI mode** from
+`codex/staging-multi-user-scaling` commit `fc99271` and deployed as
+`assets/index-DJ5lJmLS.js`. Its fixed staging profile is
 `deanvoice-v1`; it uses the staging Lambda/ALB/GPU stack. The lesson video is copied
 to `echolect-staging/dist-chatbot/videos/gi-bleeding.mp4` because this distribution
 does not have dev's separate `/videos/*` origin; GI deploy syncs preserve that path.
@@ -200,7 +200,7 @@ rebuild it, or you take down other projects' distributions.
 | `separate-containers-new` | dev (training + live-fast) | active development |
 | `chatbot-live-full` | dev (chatbot) | |
 | `staging` | staging (training + live-fast) | fast-forward from `separate-containers-new` when promoting |
-| `staging-chatbot` | staging (chatbot) | fast-forward from `chatbot-live-full` |
+| `codex/staging-multi-user-scaling` | staging (chatbot and current scaling work) | configured `chatbotBranch`; verify `scripts/deploy.config.json` before deployment |
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; staging worker access = **SSM**, dev = SSH). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
@@ -925,6 +925,9 @@ Suggestion verdicts:
 
 #### First-complete-sentence staging rollout (2026-07-31)
 
+The deployed source/Lambda commit is `fc99271`; the initial rollout documentation
+was pushed as `18d82ef`. Staging serves GI bundle `assets/index-DJ5lJmLS.js`.
+
 Staging Live Fast phrase mode now starts the first TTS request once the streamed
 assistant text contains a complete sentence and the following sentence has begun.
 It no longer always waits for `assistant.text.done`. The boundary waits for following
@@ -1225,14 +1228,14 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. The optimized target group, current AMI `ami-021aeb72894b8c79b`, launch-template v15,
-   ASG, one healthy `InService` instance, and fixed-increment rejection policy are live.
-   The alarm adds 10 GPUs after at least one reject in a minute. Concurrent two-slot
-   deep warm passed fresh-node validation, but the new 50-GPU fleet still failed
-   40/100 first-turn requests; it does not prove public burst readiness.
-   ALB rule 3 routes `/models*`, `/ref-audio*`, and `/inference*` to the optimized
-   target. Live paired actions now prewarm 50 GPUs at 07:15 SGT and scale down to
-   one at 18:00 SGT for 2026-08-02.
+7. Current live inference state is AMI `ami-021aeb72894b8c79b`, launch-template v20,
+   ASG min/desired 1 and max 192, and two slots per GPU. ALB rule 3 routes
+   `/models*`, `/ref-audio*`, and `/inference*` to the optimized target. Occupancy
+   scale-out is tiered: below five healthy GPUs, a 70% one-minute sample sets exact
+   capacity five; at five or more it adds ten. The rejection alarm is telemetry-only.
+   Paired actions launch 50 GPUs at 08:30 SGT and restore one at 17:00 SGT on
+   2026-08-03. Because launch-to-prime has taken several minutes, 08:30 must not also
+   be treated as the user-admission time.
 8. Validation instance `i-015de451bff24a73b` is stopped but remains registered as an
    unused target because this role is denied deregistration and termination. An
    administrator should deregister it from `vcs-stg-opt-3103` and terminate it; the

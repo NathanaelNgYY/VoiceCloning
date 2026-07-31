@@ -56,6 +56,10 @@ Notes:
 - `GET /api/inference/current`
 - `GET /api/inference/status`
 - `POST /api/live/tts-sentence`
+  - Staging timing response headers: `X-VCS-Profile-Resolve-Ms`,
+    `X-VCS-Worker-Round-Trip-Ms`, and `X-VCS-Lambda-Total-Ms`.
+  - `X-VCS-GPU-Queue-Wait-Ms` is optional; it was not observed through the current
+    public Target Optimizer path, so consumers must preserve a missing value as null.
 
 ### Audio browsing and transcription
 

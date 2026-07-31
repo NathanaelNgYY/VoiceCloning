@@ -29,6 +29,10 @@
 - OpenAI Realtime is used for text conversation/transcription behavior.
 - GPT-SoVITS is the only audible assistant voice in Live Fast.
 - Live Fast playback is phrase-based, so punctuation quality in assistant text is operationally important.
+- In staging Live Fast phrase mode, a multi-sentence reply may begin TTS after a
+  conservative streamed boundary: the first sentence is complete and following
+  sentence text has begun. This avoids speaking unstable punctuation. Single-sentence,
+  Live Full, and non-phrase replies retain completion-based behavior.
 
 ## Multi-user GPU Strategy
 
@@ -43,11 +47,12 @@
 - Staging scales the existing EC2 inference service with ALB Target Optimizer and an
   ASG. SageMaker training jobs are not an inference-serving replacement; a SageMaker
   endpoint migration is deferred beyond the 2026-08-03 deadline.
-- Scale-out is rejection-based, not completed-request-rate-based: after a configurable
-  rejection count in one ALB metric minute, add a configurable fixed number of GPUs.
-  Live/default is one rejection and +10. The free-capacity condition was removed
-  because sampled free slots coexisted with real 504s. Measure false scale-outs and
-  GPU-hours; a true 30-second reaction requires a custom high-resolution metric.
+- Scale-out uses occupied synthesis slots divided by tested fleet capacity
+  (`HealthyHostCount * 2`), including the baseline GPU, at a 70% threshold. Below
+  five healthy GPUs, a qualifying one-minute sample sets capacity to five; at five
+  or more, it adds ten and re-evaluates later samples. The former rejection alarm is
+  telemetry-only. A true roughly 30-second reaction requires a custom fleet-wide
+  high-resolution metric; changing the existing alarm period alone is insufficient.
   Idle scale-in removes one instance after fifteen no-traffic minutes.
 - Retry priority is intentionally local, not global. ALB/Target Optimizer chooses a
   target without knowing retry priority. Once an admitted request reaches a worker,
@@ -61,6 +66,9 @@
 - Scheduled prewarming is the event safety mechanism. Reactive scaling is retained for
   sustained unforeseen demand but cannot hide the several-minute GPU launch/model-load
   delay from the burst that triggered it.
+- A public prime marker proves that each node originated and received a valid public
+  synthesis, not that ALB routed that request back to the same node. Strict per-target
+  public readiness requires a separate warm target group/route and promotion lifecycle.
 
 ## Evaluated Scaling Improvements
 

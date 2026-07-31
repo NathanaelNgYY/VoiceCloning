@@ -2,117 +2,108 @@
 
 Last updated: 2026-07-31
 
-## Purpose and Sources
+## Start Here
 
-- Pushed branch: `codex/staging-multi-user-scaling`; use `git log -1` for the latest commit.
-- Full AWS map/history: repo `docs/staging-architecture.md`
-- Machine map: repo `scripts/deploy.config.json`; operations: vault `docs/deployment.md`
-- History: vault `CHANGELOG.md`/`BUGS.md`; active tasks: `TODO.md`
-- Never put credentials or secret values in chat, Git, or Markdown.
-## UI and Application State
-- Staging chatbot: `https://d25sg72wp8oj5g.cloudfront.net/`; dev reference: `https://d2o0cbe2zunqkr.cloudfront.net/`.
-- The correct chatbot build is GI mode, not generic `build:chatbot`.
-- Staging serves `assets/index-DfcO_k9s.js` from `staging-chatbot` commit `846893e`,
-  profile `deanvoice-v1`, with the GI lesson video preserved.
-- Staging Lambda pins GPT, SoVITS, references, profile, and revision per conversation.
-- CloudFront rule 3 sends model/reference/inference paths to the optimized target;
-  training and WebSocket traffic remain on their separate services.
-## Live AWS State
-- Account/region/role: `329599637774` / `ap-northeast-2` / `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
-- Live ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192.
-- Healthy baseline is selected by the ASG; describe it live instead of relying on a
-  saved instance ID.
-- Current AMI `ami-021aeb72894b8c79b` contains commit `330d329`.
-- Launch template `lt-07728350a25e691a4` defaults to v20. New nodes require verified
-  HTTP 200 + RIFF public-prime responses before writing the event-ready marker.
-- Target group `vcs-stg-opt-3103`: ports 3103 data/3004 control, two synthesis slots per `g6.xlarge`.
-- Private subnet `subnet-0c1937ef298f54500`, GPU SG `sg-03a2f3dddf4eff21c`,
-  instance profile `VoiClo_GPU`. Fleet is single-AZ.
-- Live event schedule: min/desired 50 at 08:30 SGT and back to min/desired 1 at
-  17:00 SGT on 2026-08-03. Actions were read back from AWS.
-- Live gateway `i-0f0da8be59367f7a8` is running and healthy in `vcs-staging-tg-3002`.
-  `GPU_SCHEDULE_ENABLED=true`. CloudWatch recorded one Lambda invocation every five
-  minutes, including quiet hours, so an automatic invoker exists; this role cannot
-  list its scheduler resource, and the exact 07:00/23:00 transition is unverified.
-- Final cleanup: ASG min/desired 1; occupancy alarm enabled/OK; rejection alarm is
-  telemetry-only with actions disabled.
-## Access Procedure
-Export fresh `VCS_AWS_ACCESS_KEY_ID`, `VCS_AWS_SECRET_ACCESS_KEY`, and
-`VCS_AWS_SESSION_TOKEN` into Codex. Map to `AWS_*`, assume the role, verify account
-`329599637774`, and never print values.
-Working permissions cover AMI/LT/ASG/ELB, SSM command execution, S3, Lambda, and
-CloudFront. Denied during this work: `ssm:ListCommandInvocations`,
-  `autoscaling:DeletePolicy`, `autoscaling:SetInstanceProtection`,
-  `autoscaling:SuspendProcesses`, `events:PutRule`, Lambda EventBridge permission,
-  `elasticloadbalancing:ModifyLoadBalancerAttributes`, and EC2 reboot.
-Use per-instance `ssm:GetCommandInvocation`.
+- Work only in staging unless the user explicitly expands scope.
+- Repo/branch: `VoiceCloning` / `codex/staging-multi-user-scaling`.
+- Current pushed commits: source/deployment `fc99271`; documentation `18d82ef`.
+- Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
+  `scripts/deploy.config.json` before changing AWS or code.
+- Never print or save credentials, tokens, private URLs, or secret values.
 
-## Work Completed
-- Implemented bounded model-aware queues, two tested same-model slots per GPU,
-  immutable voice snapshots, S3-backed Live Full state, and Lambda capacity retries.
-- Created Target Optimizer target group/services, launch template, ASG, target
-  tracking, listener cutover, and staging SG rules.
-- v20 runs configurable concurrent local rounds, blocks Target Optimizer behind restart-safe warm,
-  then requires successful real public synthesis responses with RIFF validation.
-- Added `wait-staging-event-ready.ps1`: it checks desired/InService/healthy coverage
-  and the per-node deep/public-prime marker in SSM batches of at most 50, retrying
-  SSM distribution instead of treating a pending invocation as failed.
-- Added event controls to `scripts/provision-staging-autoscaling.ps1`.
-  `VCS_STAGING_EVENT=true` selects 50; paired prewarm/scale-down times are mandatory.
-- GI students do not call model selection/warm on page entry; each ASG node performs
-  that preparation once before advertising capacity, avoiding a user-entry warm burst.
-- Live scale-out is always active, including outside event mode. A one-minute
-  metric computes occupied synthesis slots / (`HealthyHostCount * 2`); below five
-  healthy GPUs, 70% sets capacity to five rather than adding ten. At five or more,
-  70% adds exactly 10 GPUs, then evaluates later samples again. The old rejection alarm
-  is telemetry-only. Idle scale-in remains -1 after 15 quiet minutes; floor 1.
-- Lambda capacity retries are bounded to 30 seconds and marked; routed retries receive
-  priority over normal entries in each GPU's local queue.
-- Staging Live Fast phrase mode starts TTS after the first confirmed complete streamed
-  sentence; staging Lambda exposes profile/worker/total timing headers. Live Full and
-  non-phrase modes are unchanged.
-## Test Evidence
-- Three slots per GPU was rejected before user load: only 39/50 targets passed the
-  mandatory 10-round concurrent deep-warm gate; 11 worker restarts failed. Two slots
-  were restored and passed the same gate 50/50.
-- Adding the browser's 15-second keepalive to the harness changed the same long-answer
-  shape from 33/100 and 13/150 to 100/100 and 150/150. On 50 GPUs, turn-one
-  first-audio p50/p95 was 12.72/13.98s and 7.15/14.61s. On fully primed 60 GPUs it
-  was 13.33/22.40s and 7.61/14.20s; answer length was uncontrolled.
-- The 100-user wave sampled 73% at 07:00 UTC. Alarm 07:03:48, launch 07:04:01,
-  all healthy 07:09:27, and all public-prime markers 07:11:30: 11m46s load-start
-  to strict readiness. Post-scale 100/150 peaked at 27.5/47.5%, so no second +10.
-- Readiness now rejects a public-prime marker older than the current worker start.
-  A post-boot worker restart therefore requires a fresh public route proof.
-- This is one passing event rehearsal, not a guarantee. Verify schedule, quota,
-  target health, cloud-init prime completion, and alarm state before the event.
-- Commands: `node scripts/load-test-staging-tts.mjs 50` for TTS-only, or
-  `node scripts/load-test-staging-chatbot.mjs 50` for WebSocket->OpenAI->DeanVoice.
-- Deployed browser smoke observed first audio at 12.42 s for a new session and
-  3.26/2.96 s for warm turns. One scripted control measured 2.06 s to completed text,
-  3.40 s first TTS HTTP chunk, and 5.46 s speech-to-first-audio. This is not a
-  multi-user p50/p95 A/B.
+## Deployed Staging State
 
-## Incidents and Recovery
-- Historical cold-start and rollout incidents are preserved in `BUGS.md` and
-  `docs/staging-architecture.md`; health means verified synthesis, not an open port.
-- Validator `i-015de451bff24a73b` is stopped but remains registered as unused; an admin
-  must deregister it from `vcs-stg-opt-3103` and terminate it because this role is denied.
-- Stopped v15 validator `i-0eb2ca68edb88d6d7` also needs administrator termination.
+- Chatbot: `https://d25sg72wp8oj5g.cloudfront.net/`; GI bundle
+  `assets/index-DJ5lJmLS.js`, built from `fc99271`, fixed profile `deanvoice-v1`.
+- Staging Lambda code from `fc99271` was successfully deployed on 2026-07-31
+  08:38:42 UTC. It remains at 128 MB and 120-second timeout.
+- Live Fast phrase mode starts TTS once a streamed multi-sentence reply has a
+  confirmed complete first sentence and the next sentence has begun. A one-sentence
+  answer still waits for text completion. Live Full and non-phrase modes are unchanged.
+- Lambda returns profile-resolution, worker-round-trip, and total timing headers.
+  The optional GPU queue header is not preserved by the public Target Optimizer path.
+- Browser and complete-flow load harness send a WebSocket keepalive every 15 seconds.
+  ALB idle timeout remains 60 seconds because this role cannot change it.
 
-## Event Plan and Next Session
-- Live actions start 50 GPUs at 08:30 and return to 1 at 17:00 SGT on 2026-08-03.
-- Times are flexible via `VCS_STAGING_PREWARM_AT` and `VCS_STAGING_SCALE_DOWN_AT`;
-  set both, rerun with `-Apply`, then verify AWS. Env changes alone do not reschedule.
-- Repo/live max is 192. Max 200 exceeds the audited 768-vCPU On-Demand quota;
-  usage, cost, and single-AZ capacity still apply.
-- Before admitting users, run `ensure-staging-live-gateway.ps1 -Apply`, then
-  `wait-staging-event-ready.ps1 -ExpectedCapacity 50`; do not treat route health alone
-  as event readiness. Remaining work: admin-apply the optional 300-second ALB timeout,
-  verify the scheduled boundary transition, 60-minute soak, and target termination.
-- Next session: read the three sources, check Git, assume the role, live-describe
-  LT/ASG/targets/schedules, and public-smoke before changes. On failure inspect target
-  health, `warm_timing`, services, entry-file size, and SG egress. Preserve isolation;
-  commit and push all repo changes.
-- Post-event training/Live Full scaling requirements and option downsides are recorded
-  in vault `DECISIONS.md`; exact test methods/timings are in repo architecture docs.
+## Current AWS Operating State
+
+- Region/account/role: Seoul / `329599637774` /
+  `Liu_Teng_Yu_Intern2026`; verify the assumed identity before every mutation.
+- ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192; launch-template
+  `lt-07728350a25e691a4` defaults to v20; two synthesis slots per `g6.xlarge`.
+- Optimized target group is `vcs-stg-opt-3103`. The separate live gateway is running
+  and healthy in `vcs-staging-tg-3002`; do not stop it during event preparation.
+- Event actions set min/desired 50 at 08:30 SGT and return to 1 at 17:00 SGT on
+  2026-08-03. If users are meant to enter at 08:30, this prewarm time is too late:
+  observed strict readiness after launch can take about 8 minutes, and reactive
+  load-to-readiness took 11m46s.
+- `GPU_SCHEDULE_ENABLED=true`. Lambda was observed invoking every five minutes, but
+  this role cannot inspect the invoker and the exact 07:00/23:00 transition remains
+  unverified. Do not create a duplicate scheduler until the existing invoker is known.
+- Final audit: occupancy alarms enabled/OK; rejection alarm telemetry-only; ASG
+  returned to baseline min/desired 1.
+
+## Autoscaling and Readiness
+
+- Scaling works outside event mode. Occupancy is occupied slots divided by
+  `(healthy GPUs * 2)`, sampled in one-minute CloudWatch data.
+- Below five healthy GPUs, one sample at or above 70% sets desired capacity to five.
+  At five or more, one sample at or above 70% adds ten; later samples re-evaluate.
+- Scale-in removes one GPU after 15 no-traffic minutes, with floor one.
+- This is deliberately conservative at baseline but too slow for a sudden event burst.
+  A 73% sample at 07:00 alarmed at 07:03:48; launch began 07:04:01; all targets were
+  healthy at 07:09:27; all public-prime markers completed at 07:11:30.
+- Local deep warm validates each GPU. Public prime validates the fleet's public route,
+  but ALB may send a GPU's probe to another GPU. Exact per-target routed synthesis is
+  not guaranteed. A dedicated warm target group/promotion path remains future work.
+- New nodes become ALB-healthy before their public prime finishes. The event gate
+  therefore requires desired/InService/healthy coverage plus a fresh public-RIFF
+  marker newer than the current worker start.
+- The SSM polling fix only waits and checks again when a command is still pending.
+  It prevents a false failure report; it does not make GPU warming faster.
+
+## Verified Test Evidence
+
+- Two slots passed the 50/50 mandatory deep-warm gate. Three slots was rejected:
+  only 39/50 targets passed; no three-slot user load was run.
+- With browser-equivalent keepalive, real three-turn complete-flow bursts passed:
+  50 GPUs/100 users 100/100; 50/150 150/150; primed 60/100 100/100; 60/150 150/150.
+- Turn-one first-audio p50/p95: 50/100 12.72/13.98 s; 50/150 7.15/14.61 s;
+  60/100 13.33/22.40 s; 60/150 7.61/14.20 s. OpenAI answer length was uncontrolled,
+  so these runs prove completion/reliability, not a clean fleet-size latency comparison.
+- Deployed early-sentence browser smoke: first audio 12.42 s in a new session and
+  3.26/2.96 s on warm turns. One scripted backend control measured text done 2.06 s,
+  first TTS chunk 3.40 s, and speech-to-first-audio 5.46 s. These are functional
+  checks, not population p50/p95 evidence.
+- Relevant checks passed: 79 conversation-helper tests, full Lambda suite, 55
+  live-gateway tests, GI build, public RIFF/timing smokes, and a real browser flow.
+- One passing burst is not production proof. The 60-minute soak and target-loss/
+  draining rehearsal remain undone.
+
+## Event Procedure
+
+1. Refresh credentials outside chat, map them to `AWS_*`, assume the role, and verify
+   account/region without printing secrets.
+2. Check Git status/log and live-describe the ASG, LT default, scheduled actions,
+   alarm actions, target health, quotas, and live gateway.
+3. Run `scripts/ensure-staging-live-gateway.ps1 -Apply`.
+4. After scheduled launch, run
+   `scripts/wait-staging-event-ready.ps1 -ExpectedCapacity 50`.
+5. Admit users only after the strict gate succeeds and a public TTS RIFF smoke passes.
+6. Test the real flow with `node scripts/load-test-staging-chatbot.mjs 100`; use
+   `scripts/load-test-staging-tts.mjs` only for controlled fixed-text capacity tests.
+
+## Next Session Priorities and Blockers
+
+- Run a controlled early-sentence A/B with comparable multi-sentence replies and
+  record OpenAI first text/text done, TTS start, first audio, backend timing, p50/p95.
+  The current Node harness waits for full text, so adapt it or instrument the browser.
+- For faster reactive scaling, build a real fleet-wide high-resolution occupancy
+  publisher every 10 seconds and test three consecutive samples. Merely changing the
+  current alarm period does not create 10-second source data.
+- Do not enable three slots, FSR, a longer CloudFront timeout, or Lambda memory changes
+  without a controlled benchmark. Current evidence does not justify them as baseline.
+- Admin work: optional ALB idle timeout to 300 seconds; deregister/terminate the two
+  stopped validator instances listed in `TODO.md`; consider a second private subnet/AZ.
+- Preserve previous results. Append new runs to repo `docs/staging-architecture.md`
+  and mirror any allowed project-memory change in both vault locations.

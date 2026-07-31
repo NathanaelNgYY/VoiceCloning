@@ -27,7 +27,7 @@
 - `src/hooks/useInferenceSSE.js`
 - `src/hooks/useInferenceSSE.js` — Long-text inference SSE.
 - `src/hooks/useLiveSpeech.js`
-  - Mic capture, live conversation flow, cloned reply playback, barge-in behavior.
+  - Mic capture, streamed first-sentence TTS, cloned reply playback, barge-in behavior.
 - `src/hooks/liveConversation.js`
   - Pure helpers for phrase splitting, playback selection, language-specific TTS params.
 - `src/services/api.js` — REST client with signed JSON mutation support.
@@ -150,7 +150,8 @@
     data/control ports 3103/3004.
 - `scripts/deploy-client.ps1` / `scripts/deploy.config.json` — environment-aware GI build/deployment map, CloudFront, and S3 targets.
 - `scripts/load-test-staging-chatbot.mjs` / `scripts/load-test-staging-tts.mjs`
-  - Complete WebSocket-to-DeanVoice and closed-loop public TTS load rehearsals.
+  - Complete WebSocket-to-DeanVoice and closed-loop public TTS load rehearsals;
+    capture keepalive, first-audio/completion, and backend timing evidence.
 - `scripts/ensure-staging-live-gateway.ps1` / `scripts/set-staging-alb-idle-timeout.ps1`
   - Gateway health/start and admin-only ALB idle-timeout operations.
 - `scripts/wait-staging-event-ready.ps1`

@@ -1,7 +1,9 @@
 # Active TODO
 
-- [ ] Before 2026-08-03 08:30 SGT, verify LT v20/default, the paired 08:30/17:00
-  actions, occupancy alarm/actions, and gateway health. Run
+- [ ] Before the 2026-08-03 event, verify LT v20/default, the paired 08:30/17:00
+  actions, occupancy alarm/actions, and gateway health. The 08:30 action begins GPU
+  launch; it is not an admission-ready timestamp. If users enter at 08:30, move the
+  prewarm earlier and read it back from AWS. Run
   `ensure-staging-live-gateway.ps1 -Apply`, then
   `wait-staging-event-ready.ps1 -ExpectedCapacity 50` before users enter. The final
   browser-equivalent keepalive runs completed 100/100 and 150/150 on both 50 and
@@ -29,8 +31,9 @@
   alarm period alone cannot create 10-second source data.
 - [ ] Run a controlled staging A/B for early-sentence voice with comparable
   multi-sentence answers. Record OpenAI first token/text done, TTS start, first audio,
-  profile resolution, worker round trip, and p50/p95; current browser checks are
-  functional smoke evidence only.
+  profile resolution, worker round trip, and p50/p95. The current Node complete-flow
+  harness waits for full text, so adapt it or use browser instrumentation; current
+  browser checks are functional smoke evidence only.
 - [ ] Design a dedicated warm target group/hidden public route. Exercise each exact
   new target through the public stack, then promote it to the production target
   group; current ALB health preceded public-prime completion by about two minutes,
