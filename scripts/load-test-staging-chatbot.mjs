@@ -29,6 +29,7 @@ const origin = process.env.VCS_CHATBOT_ORIGIN
 const audioPath = process.env.VCS_CHATBOT_AUDIO_WAV
   || new URL('../.tmp/chatbot-load-question.wav', import.meta.url);
 const timeoutMs = Number.parseInt(process.env.VCS_CHATBOT_TIMEOUT_MS || '180000', 10);
+const keepAliveIntervalMs = 15_000;
 const audioFrameMs = Number.parseInt(process.env.VCS_CHATBOT_AUDIO_FRAME_MS || '100', 10);
 const turnCount = Number.parseInt(process.env.VCS_CHATBOT_TURNS || '1', 10);
 const thinkTimeMs = Number.parseInt(process.env.VCS_CHATBOT_THINK_MS || '250', 10);
@@ -215,6 +216,8 @@ function makeSession(index, audio, productionPrompt) {
   let connectedAt = null;
   let readyAt = null;
   let currentTurn = null;
+  let keepAliveTimer = null;
+  let keepAliveSent = 0;
   const completedTurns = [];
 
   const socket = new WebSocket(wsUrl, {
@@ -226,6 +229,10 @@ function makeSession(index, audio, productionPrompt) {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
     ready.resolve(false);
     if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
       socket.close(1000, 'Load-test session complete');
@@ -233,6 +240,7 @@ function makeSession(index, audio, productionPrompt) {
     result.resolve({
       user: index + 1,
       marker,
+      keepAliveSent,
       turns: completedTurns,
       ...payload,
     });
@@ -259,6 +267,12 @@ Begin that sentence exactly with "${marker}."`;
       type: 'session.init',
       systemPrompt,
     }));
+    keepAliveTimer = setInterval(() => {
+      if (!settled && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'keepalive' }));
+        keepAliveSent += 1;
+      }
+    }, keepAliveIntervalMs);
   });
 
   socket.on('message', async (raw) => {
@@ -465,6 +479,7 @@ Begin that sentence exactly with "${marker}."`;
 ensureLoadTestAudio(audioPath);
 const audio = readPcmWav(audioPath);
 const productionPrompt = loadProductionSystemPrompt();
+const startedAt = new Date().toISOString();
 const wallStartedAt = performance.now();
 const sessions = Array.from(
   { length: concurrency },
@@ -477,6 +492,7 @@ await Promise.all(
 );
 const results = await Promise.all(sessions.map((session) => session.result));
 const wallMs = performance.now() - wallStartedAt;
+const finishedAt = new Date().toISOString();
 const successful = results.filter((item) => item.ok);
 const failures = results.filter((item) => !item.ok);
 
@@ -511,9 +527,16 @@ const turnSummaries = Array.from({ length: turnCount }, (_, index) => {
 const report = {
   wsUrl,
   ttsUrl,
+  startedAt,
+  finishedAt,
   concurrency,
   turnCount,
   thinkTimeMs,
+  keepAliveIntervalMs,
+  keepAliveMessagesSent: results.reduce(
+    (sum, item) => sum + (Number.isInteger(item.keepAliveSent) ? item.keepAliveSent : 0),
+    0,
+  ),
   skipFirstVerify,
   ready: readyCount,
   success: successful.length,

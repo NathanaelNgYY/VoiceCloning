@@ -185,7 +185,17 @@ rejects a chatbot build from another branch.
    instance's verified public-RIFF prime marker newer than the current worker start.
    A worker restart therefore fails closed until public prime is repeated. The instances perform model warm and
    public prime themselves using their instance roles; operator credentials are used
-   only to inspect/control AWS from this script.
+   only to inspect/control AWS from this script. Pending SSM command distribution is
+   retried; do not interpret ALB health alone as public-prime completion.
+   The browser and complete-flow harness send a WebSocket keepalive every 15 seconds.
+   Desired ALB defense-in-depth is 300 seconds:
+
+   ```powershell
+   .\scripts\set-staging-alb-idle-timeout.ps1 -Apply
+   ```
+
+   This role is denied `elasticloadbalancing:ModifyLoadBalancerAttributes`, so live
+   staging remains 60 seconds until an administrator runs and verifies that script.
 10. For a scale rehearsal, raise min/desired explicitly, record request start, metric
    minute, alarm transition, desired-capacity change, EC2 launch, cloud-init finish,
    route warm, and optimizer capacity separately. Use per-instance
@@ -222,6 +232,13 @@ redundant student-entry warm-up burst.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
   2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below
   50 until the paired scale-down action restores min/desired 1.
+- A browser-keepalive A/B completed all four real-flow waves: 100/100 and 150/150
+  on 50 effective GPUs, then 100/100 and 150/150 on fully primed 60 GPUs. The earlier
+  33/100 and 13/150 collapse was a harness mismatch, not a demonstrated GPU limit.
+- The 100-user run sampled 73% at 07:00 UTC. Alarm 07:03:48, launch 07:04:01,
+  all target-healthy 07:09:27, and all public-prime logs by 07:11:30. Health therefore
+  preceded strict prime by about two minutes; reactive strict readiness took 11m46s
+  from load start. Post-scale 100/150 peaked at 27.5/47.5%, so no second +10.
 - Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
   a request routed on retry is marked and receives priority in the worker's local
   queue. A slot may be briefly unused while rejected Lambdas sleep before retry.

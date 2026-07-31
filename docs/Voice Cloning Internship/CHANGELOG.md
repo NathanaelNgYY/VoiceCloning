@@ -2,6 +2,20 @@
 
 ## 2026-07-31
 
+- Added the browser-equivalent 15-second WebSocket keepalive to the complete-flow
+  harness, explicit report timestamps, and keepalive counts. Corrected readiness to
+  retry pending SSM command distribution instead of false-failing a warm fleet.
+- Added desired 300-second ALB idle-timeout configuration plus a standalone apply/
+  read-back script. Live apply was denied by IAM, so staging remains 60 seconds;
+  the main provisioner does not depend on that denied permission.
+- Ran four real three-turn flows without changing production OpenAI or Live Fast:
+  50/100, 50/150, fully primed 60/100, and 60/150 all completed 100%. Keepalive
+  removed the earlier 33/100 and 13/150 WebSocket-collapse result.
+- Captured reactive 50->60 timing. A 73% 07:00 occupancy point alarmed 07:03:48;
+  launch 07:04:01, all healthy 07:09:27, and all public-prime markers by 07:11:30.
+  Post-scale 100/150 waves peaked at 27.5/47.5%, so no second increment occurred.
+- Restored min/desired 1, retained max 192 and Aug 3 actions, verified both occupancy
+  alarms enabled/OK, and left `vcs-staging-tg-3002` healthy.
 - Added tiered occupancy scaling. Below five healthy GPUs, 70% occupancy sets exact
   capacity five; at five or more, the existing policy adds ten. This prevents a
   one-GPU baseline from jumping directly to eleven.

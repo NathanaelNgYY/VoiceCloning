@@ -2,19 +2,10 @@
 
 ## Active
 
-- 2026-07-30: intermittent WebSocket 1006 remains under high concurrency after TTS
-  succeeds. The final v17 hot 150-user run delivered turn-one voice to 150/150 but two
-  sessions closed before turns two/three, leaving 148/150 complete. No TTS request
-  failed. A 2026-07-31 independent repeat delivered turn one to 150/150 but three
-  sessions closed 1006 before turn two, leaving 147/150; again no TTS chunk failed.
-  The final v19/two-slot run completed 99/100 and only 130/150, with 20 WebSocket
-  1006 closures in the latter despite no failed completed TTS chunk. This is an active
-  event risk and is not evidence that three synthesis slots are safe. Investigate
-  gateway/client close telemetry separately from GPU capacity.
-- 2026-07-31: a hot two-slot repeat with longer OpenAI responses completed only
-  33/100 and 13/150 sessions. Most failures were WebSocket 1006; median turn-one
-  completion was 69.70/87.22 seconds while the ALB WebSocket idle timeout is 60
-  seconds. A heartbeat/idle-timeout experiment is still required to establish cause.
+- 2026-07-31: ALB target health precedes strict public-prime completion. During
+  reactive 50->60, all targets were healthy at 07:09:27 but public-prime logs
+  completed through 07:11:30. Public requests from a node can also route to another
+  target. Strict per-target public readiness needs a dedicated warm target group/path.
 - 2026-07-31: worker restarts could leave the boot-time public-prime log marker in
   place, allowing readiness to accept stale evidence. The readiness probe now fails
   closed unless the prime log is at least as new as the current worker start.
@@ -31,6 +22,15 @@
   decide whether to remove the public 30-second timeout exposure.
 
 ## Recently Fixed
+
+- 2026-07-31: the load harness omitted the browser's 15-second WebSocket keepalive.
+  Long-answer controls completed only 33/100 and 13/150 with code 1006. With the
+  keepalive, 50-GPU runs completed 100/100 and 150/150, and fully primed 60-GPU
+  comparisons also completed 100%. Live ALB idle timeout remains 60 seconds because
+  this role is denied the optional 300-second attribute change.
+- 2026-07-31: event readiness checked SSM invocations once before command distribution
+  completed, producing false 0/50 and 49/50 summaries. It now retries pending
+  invocations; the final gates passed 50/50 and 60/60.
 
 - 2026-07-31: baseline occupancy previously could make two overlapping requests scale
   a one-GPU fleet directly to 11. Below five healthy GPUs, the 70% alarm now sets

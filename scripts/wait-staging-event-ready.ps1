@@ -101,17 +101,25 @@ do {
       )
       $command = Invoke-AwsJson @sendArgs
       $commandId = [string]$command.Command.CommandId
-      Start-Sleep -Seconds 5
-      foreach ($instanceId in $batchIds) {
-        try {
-          $invocation = Invoke-AwsJson ssm get-command-invocation --region $cfg.region `
-            --command-id $commandId --instance-id $instanceId
-          if ($invocation.Status -eq 'Success' -and
-            [string]$invocation.StandardOutputContent -match 'VCS_EVENT_READY=1') {
-            $ready += 1
+      $pendingIds = [Collections.Generic.List[string]]::new()
+      foreach ($instanceId in $batchIds) { $pendingIds.Add($instanceId) }
+      for ($probeAttempt = 1; $probeAttempt -le 4 -and $pendingIds.Count -gt 0; $probeAttempt += 1) {
+        Start-Sleep -Seconds $(if ($probeAttempt -eq 1) { 10 } else { 5 })
+        foreach ($instanceId in @($pendingIds)) {
+          try {
+            $invocation = Invoke-AwsJson ssm get-command-invocation --region $cfg.region `
+              --command-id $commandId --instance-id $instanceId
+            if ($invocation.Status -eq 'Success') {
+              if ([string]$invocation.StandardOutputContent -match 'VCS_EVENT_READY=1') {
+                $ready += 1
+              }
+              [void]$pendingIds.Remove($instanceId)
+            } elseif ($invocation.Status -in @('Cancelled', 'Failed', 'TimedOut', 'Cancelling')) {
+              [void]$pendingIds.Remove($instanceId)
+            }
+          } catch {
+            # SSM can briefly return InvocationDoesNotExist while distributing a command.
           }
-        } catch {
-          # SSM can briefly return InvocationDoesNotExist while distributing a command.
         }
       }
     }

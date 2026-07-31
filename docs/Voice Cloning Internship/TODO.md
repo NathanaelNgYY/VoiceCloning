@@ -4,10 +4,13 @@
   actions, occupancy alarm/actions, and gateway health. Run
   `ensure-staging-live-gateway.ps1 -Apply`, then
   `wait-staging-event-ready.ps1 -ExpectedCapacity 50` before users enter. The final
-  two-slot control later completed only 33/100 and 13/150 when long turn-one responses
-  exceeded the 60-second ALB WebSocket idle timeout. Fix/verify heartbeat or increase
-  the idle timeout before the soak. Do not use three slots: its warm gate passed only
-  39/50 targets. Still run the 60-minute soak and one target-loss rehearsal.
+  browser-equivalent keepalive runs completed 100/100 and 150/150 on both 50 and
+  fully primed 60 GPUs. Do not use three slots: its warm gate passed only 39/50
+  targets. Still run the 60-minute soak and one target-loss rehearsal.
+- [ ] Ask an administrator to apply and read back the optional 300-second ALB idle
+  timeout with `scripts/set-staging-alb-idle-timeout.ps1 -Apply`; this role is denied
+  `elasticloadbalancing:ModifyLoadBalancerAttributes`. Keep the 15-second client/
+  harness keepalive regardless.
 - [ ] Verify the 07:00 and 23:00 SGT scheduled boundary transitions. CloudWatch proves
   one Lambda invocation every five minutes, but this role cannot inspect the invoker
   resource, so its exact ownership/configuration remains unknown.
@@ -20,9 +23,17 @@
   cancellation, progress, quotas, cost/startup measurements, and explicit model
   activation before choosing.
 - [ ] Improve scale-out detection latency. The live one-minute 70% occupied-slot
-  alarm correctly added 10 GPUs, but did so after a short 150-user burst ended.
-  Evaluate a fleet-wide 10-second occupied/total metric for three consecutive samples
-  against false scale-outs and GPU-hours; keep scheduled prewarm as the event control.
+  alarm saw 73% at 07:00 but alarmed only at 07:03:48. Build a real fleet-wide custom
+  high-resolution occupied/total metric every 10 seconds and test three consecutive
+  samples against false scale-outs and GPU-hours; changing the standard metric's
+  alarm period alone cannot create 10-second source data.
+- [ ] Design a dedicated warm target group/hidden public route. Exercise each exact
+  new target through the public stack, then promote it to the production target
+  group; current ALB health preceded public-prime completion by about two minutes,
+  and a target's public request can be routed to another target.
+- [ ] Audit the exact CloudFront TTS behavior/origin before testing a 60-second origin
+  response timeout, and benchmark gp3 reads/model phases on one canary before paying
+  for Fast Snapshot Restore. Neither change is yet justified as a latency baseline.
 - [ ] Make Live Full horizontally correct before increasing its concurrency: add a
   distributed session lease/fencing token, conditional manifest revisions,
   idempotency keys, durable resumable progress, and worker-loss/concurrent-edit tests.

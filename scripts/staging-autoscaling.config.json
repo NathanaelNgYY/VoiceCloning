@@ -9,6 +9,7 @@
   "securityGroupId": "sg-03a2f3dddf4eff21c",
   "albSecurityGroupId": "sg-0027def934fd4cb8d",
   "albArn": "arn:aws:elasticloadbalancing:ap-northeast-2:329599637774:loadbalancer/app/voice-gpu-alb-staging/781c056e87784609",
+  "albIdleTimeoutSeconds": 300,
   "listenerArn": "arn:aws:elasticloadbalancing:ap-northeast-2:329599637774:listener/app/voice-gpu-alb-staging/781c056e87784609/16873b8d49639f2e",
   "inferenceRulePriority": 3,
   "liveGatewayInstanceId": "i-0f0da8be59367f7a8",

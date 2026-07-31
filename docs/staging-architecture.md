@@ -840,6 +840,89 @@ Verdict: retain two slots. Three slots failed readiness, and two-slot event reli
 is still blocked by WebSocket lifecycle behavior for long answers. Fix and A/B the
 heartbeat/idle timeout before treating another 100/150-user burst as acceptance.
 
+#### Browser-keepalive and 50->60 autoscaling A/B (2026-07-31)
+
+This test preserves every earlier result. The complete-flow harness now matches the
+browser's application-level WebSocket keepalive: each open session sends
+`{"type":"keepalive"}` every 15 seconds while TTS uses separate HTTP requests. The
+gateway deliberately ignores this unknown message, but its traffic keeps the
+CloudFront/ALB WebSocket from being idle. First TTS chunks used the browser's
+`skip_verify` behavior. Production OpenAI prompting, answer length, Live Fast
+chunking, and sequential DeanVoice generation were not changed.
+
+The prior no-keepalive controls completed only 33/100 and 13/150. With keepalive,
+all four new three-turn runs completed every session with no TTS failure or foreign
+user marker:
+
+| Effective fleet / users | Turn | Heard | First audio fastest / average / p50 / p95 / slowest | Complete response fastest / average / p50 / p95 / slowest |
+|---|---:|---:|---:|---:|
+| 50 GPUs / 100 | 1 | 100 | 4.66 / 12.52 / 12.72 / 13.98 / 14.66 | 16.89 / 45.15 / 45.91 / 58.26 / 68.26 |
+| 50 GPUs / 100 | 2 | 100 | 2.42 / 3.88 / 3.82 / 5.04 / 6.62 | 10.46 / 26.56 / 27.22 / 44.62 / 47.48 |
+| 50 GPUs / 100 | 3 | 100 | 2.56 / 4.11 / 4.09 / 5.38 / 6.05 | 9.63 / 29.45 / 28.93 / 42.36 / 48.62 |
+| 60 GPUs / 100 | 1 | 100 | 5.57 / 13.83 / 13.33 / 22.40 / 25.06 | 24.20 / 36.50 / 33.45 / 51.14 / 61.72 |
+| 60 GPUs / 100 | 2 | 100 | 2.17 / 3.26 / 3.18 / 4.53 / 5.23 | 10.42 / 19.01 / 16.49 / 33.44 / 46.69 |
+| 60 GPUs / 100 | 3 | 100 | 2.18 / 3.25 / 3.02 / 4.66 / 5.42 | 10.37 / 19.53 / 16.53 / 36.11 / 40.67 |
+| 50 GPUs / 150 | 1 | 150 | 4.67 / 8.99 / 7.15 / 14.61 / 31.56 | 17.80 / 33.30 / 29.59 / 64.97 / 76.05 |
+| 50 GPUs / 150 | 2 | 150 | 2.34 / 4.22 / 4.09 / 5.74 / 8.63 | 11.51 / 24.04 / 22.99 / 34.14 / 45.53 |
+| 50 GPUs / 150 | 3 | 150 | 2.23 / 4.03 / 3.88 / 5.83 / 8.05 | 9.89 / 21.73 / 21.06 / 30.75 / 39.86 |
+| 60 GPUs / 150 | 1 | 150 | 5.15 / 9.21 / 7.61 / 14.20 / 16.43 | 15.30 / 28.79 / 27.45 / 43.82 / 57.49 |
+| 60 GPUs / 150 | 2 | 150 | 2.17 / 3.64 / 3.61 / 4.62 / 5.96 | 12.83 / 20.99 / 19.82 / 32.49 / 42.55 |
+| 60 GPUs / 150 | 3 | 150 | 2.52 / 3.55 / 3.48 / 4.66 / 6.15 | 9.23 / 19.51 / 18.43 / 29.22 / 39.07 |
+
+| Fleet / users | Complete sessions | Three-turn total fastest / average / p50 / p95 / slowest | Harness wall | Keepalives |
+|---|---:|---:|---:|---:|
+| 50 / 100 | 100/100 | 49.31 / 101.17 / 101.47 / 128.20 / 156.59 s | 159.03 s | 637 |
+| 60 / 100 | 100/100 | 48.33 / 75.04 / 68.01 / 107.01 / 130.82 s | 133.52 s | 465 |
+| 50 / 150 | 150/150 | 55.49 / 79.06 / 75.20 / 113.10 / 136.07 s | 138.40 s | 733 |
+| 60 / 150 | 150/150 | 49.37 / 69.30 / 67.21 / 95.37 / 125.45 s | 128.16 s | 630 |
+
+The tests did not control OpenAI answer length. Average turn-one words were
+176.92, 113.83, 102.60, and 97.31 in table order. Fleet comparisons therefore
+support session reliability and observed throughput, but cannot attribute every
+latency difference to GPU count.
+
+The 50-GPU/100-user run started 06:59:44 UTC and produced a 73% occupancy datapoint
+for 07:00. CloudWatch changed the alarm at 07:03:48 and desired capacity 50->60;
+the ten EC2 launches began 07:04:01. All 60 targets were healthy by 07:09:27, but
+the new targets' public-prime/cloud-init completion ranged through 07:11:30. Reactive
+recovery therefore took 11m46s from load start to strict public readiness:
+
+- metric-bucket timestamp to alarm: 3m48s;
+- alarm to launch: 13s;
+- launch to all targets healthy: 5m26s;
+- launch to all public-prime markers: 7m29s.
+
+The 150-user/50-effective-GPU run started at 07:03:32 and ended at 07:05:50, while
+the added targets were still warming, so it is a valid pre-scale result. After
+60/60 strict readiness, sampled occupancy peaked at 27.5% for the 100-user post run
+and 47.5% for the 150-user post run; neither requested a second +10.
+
+This also directly confirms a readiness gap: added targets were ALB-healthy about
+two minutes before their public-prime markers completed. A future dedicated warm
+target group and hidden warm route should exercise each exact target through the
+public stack, then move it into the production target group. The current ALB cannot
+guarantee that a target's public request routes back to itself.
+
+The repository desired ALB idle timeout is 300 seconds and includes a standalone
+read-back script. Live staging remains 60 seconds because this role was denied
+`elasticloadbalancing:ModifyLoadBalancerAttributes`; an administrator must apply it.
+Keepalive alone removed the observed WebSocket collapse, so 300 seconds is defense
+in depth, not a first-audio improvement.
+
+Suggestion verdicts:
+
+- CloudFront origin timeout: useful for converting marginal 30-second 504s into
+  slow successes, but it does not reduce latency and was not changed without first
+  auditing the exact TTS behavior/origin.
+- Ten-second occupancy: correct direction, but the current AWS Target Optimizer
+  metrics are 60-second standard metrics. A real implementation must publish a
+  custom high-resolution fleet metric; changing the alarm period alone would be fake.
+- Fast Snapshot Restore/gp3 tuning: plausible, but the 5m26s launch-to-health time
+  does not isolate EBS reads from Python/CUDA/model initialization. Benchmark disk
+  throughput and one canary before enabling per-AZ FSR cost.
+- First-sentence streaming and shorter chunks: not already implemented, but deferred
+  because they change the explicitly out-of-scope Live Fast conversation behavior.
+
 The 32-GPU/50-user wall time was 109.51 seconds. The 32-GPU/100-user wall
 time was 122.12 seconds. Both incomplete 100-user sessions had already produced valid
 turn-one voice and later closed WebSocket code 1006; they were not TTS capacity

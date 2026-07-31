@@ -151,12 +151,10 @@
 - `scripts/deploy-client.ps1` / `scripts/deploy.config.json` — environment-aware GI build/deployment map, CloudFront, and S3 targets.
 - `scripts/load-test-staging-chatbot.mjs` / `scripts/load-test-staging-tts.mjs`
   - Complete WebSocket-to-DeanVoice and closed-loop public TTS load rehearsals.
-- `scripts/ensure-staging-live-gateway.ps1`
-  - Starts the fixed live-gateway instance when needed and requires target-group health.
+- `scripts/ensure-staging-live-gateway.ps1` / `scripts/set-staging-alb-idle-timeout.ps1`
+  - Gateway health/start and admin-only ALB idle-timeout operations.
 - `scripts/wait-staging-event-ready.ps1`
-  - Requires requested ASG capacity, healthy target coverage, and every target's
-    verified public-prime marker newer than its current worker start; batches SSM
-    checks at the 50-target API limit.
+  - Requires capacity, target health, and fresh per-target public-prime evidence.
 - `scripts/warm-staging-deanvoice.sh`
   - Loads the pinned model/references and validates the real TTS route before optimizer startup.
 - `scripts/provision-staging-autoscaling.ps1` / `scripts/staging-autoscaling.config.json`
