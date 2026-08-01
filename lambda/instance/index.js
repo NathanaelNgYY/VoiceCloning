@@ -4,6 +4,11 @@ import {
   StartInstancesCommand,
   StopInstancesCommand,
 } from '@aws-sdk/client-ec2';
+import {
+  AutoScalingClient,
+  DescribeAutoScalingGroupsCommand,
+  UpdateAutoScalingGroupCommand,
+} from '@aws-sdk/client-auto-scaling';
 import { ok, err, preflight } from '../shared/cors.js';
 
 function instanceId() {
@@ -12,6 +17,10 @@ function instanceId() {
 
 function instanceRegion() {
   return (process.env.GPU_INSTANCE_REGION || process.env.AWS_REGION || 'ap-northeast-2').trim();
+}
+
+function inferenceAutoScalingGroupName() {
+  return (process.env.GPU_INFERENCE_ASG_NAME || '').trim();
 }
 
 function workerUrl() {
@@ -69,6 +78,51 @@ function withinWindow(hour, startHour, endHour) {
 
 function createEc2Client() {
   return globalThis.__voiceCloningEc2Client || new EC2Client({ region: instanceRegion() });
+}
+
+function createAutoScalingClient() {
+  return globalThis.__voiceCloningAutoScalingClient
+    || new AutoScalingClient({ region: instanceRegion() });
+}
+
+async function syncInferenceFleet(fixedState) {
+  const groupName = inferenceAutoScalingGroupName();
+  if (!groupName || !fixedState) {
+    return { configured: false, changed: false };
+  }
+
+  const enabled = !['stopped', 'stopping', 'shutting-down', 'terminated'].includes(fixedState);
+  const client = createAutoScalingClient();
+  const response = await client.send(new DescribeAutoScalingGroupsCommand({
+    AutoScalingGroupNames: [groupName],
+  }));
+  const group = response?.AutoScalingGroups?.[0];
+  if (!group) {
+    throw new Error(`Inference Auto Scaling group ${groupName} was not found.`);
+  }
+
+  const currentMin = Number(group.MinSize || 0);
+  const currentDesired = Number(group.DesiredCapacity || 0);
+  const targetMin = enabled ? 1 : 0;
+  const targetDesired = enabled ? Math.max(currentDesired, 1) : 0;
+  const changed = currentMin !== targetMin || currentDesired !== targetDesired;
+
+  if (changed) {
+    await client.send(new UpdateAutoScalingGroupCommand({
+      AutoScalingGroupName: groupName,
+      MinSize: targetMin,
+      DesiredCapacity: targetDesired,
+    }));
+  }
+
+  return {
+    configured: true,
+    groupName,
+    enabled,
+    changed,
+    minSize: targetMin,
+    desiredCapacity: targetDesired,
+  };
 }
 
 function unconfiguredStatus() {
@@ -456,11 +510,17 @@ export const handler = async (event) => {
           body: JSON.stringify(result.body),
         };
       }
-      return ok(result.body);
+      if (!inferenceAutoScalingGroupName()) return ok(result.body);
+      return ok({ ...result.body, inferenceFleet: await syncInferenceFleet(result.body.state) });
     }
 
     if ((method === 'POST' || method === 'GET') && routePath.endsWith('/instance/idle-check')) {
-      return ok(await stopInstanceIfIdle());
+      const result = await stopInstanceIfIdle();
+      if (!inferenceAutoScalingGroupName()) return ok(result);
+      return ok({
+        ...result,
+        inferenceFleet: await syncInferenceFleet(result.state),
+      });
     }
 
     return err(404, 'Not found');

@@ -31,6 +31,9 @@ if ($cfg.lambdaMemoryMb) {
     if ($LASTEXITCODE -ne 0) { throw "waiting for function configuration failed" }
   }
 }
-aws lambda update-function-code --region $cfg.region --function-name $cfg.lambdaFunction --zip-file "fileb://$repo/lambda/.dist/voice-cloning-function-url.zip"
+aws lambda update-function-code --region $cfg.region --function-name $cfg.lambdaFunction `
+  --zip-file "fileb://$repo/lambda/.dist/voice-cloning-function-url.zip" `
+  --query '{FunctionName:FunctionName,LastModified:LastModified,CodeSha256:CodeSha256}' `
+  --output json
 if ($LASTEXITCODE -ne 0) { throw "update-function-code failed" }
 Write-Host "Deployed lambda to $Env ($($cfg.lambdaFunction))"

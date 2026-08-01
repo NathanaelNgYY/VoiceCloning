@@ -26,11 +26,11 @@ Browser
         └─ S3 via gateway endpoint vpce-0386d983dfdff41dc
 ```
 
-On-demand lifecycle: the Lambda **starts** the GPU when a user needs it. CloudWatch
-shows an automatic Lambda invocation every five minutes; the invoker resource is not
-visible to this role. With `GPU_SCHEDULE_ENABLED=true`, the Lambda applies the
-07:00-23:00 Singapore window plus the idle-stop decision. Verify the actual boundary
-transition because invocation frequency alone does not prove the event payload.
+On-demand lifecycle: the Lambda **starts** the fixed GPU when a user needs it.
+CloudWatch shows an automatic Lambda invocation every five minutes; the invoker
+resource is not visible to this role. Live `GPU_SCHEDULE_ENABLED=true` applies the
+07:00-19:00 Singapore fixed-GPU window. The inference ASG has matching recurring
+07:00 min/desired 1 and 19:00 min/desired 0 actions, so its off-hours baseline is zero.
 
 ## 2. CloudFront distributions
 
@@ -172,7 +172,8 @@ All three expose `GET /healthz` for the ALB health checks. Direct-to-worker endp
 | GPU_INSTANCE_ID | `i-0f0da8be59367f7a8` ← must track the current staging instance |
 | GPU_INSTANCE_REGION | ap-northeast-2 |
 | GPU_IDLE_STOP_MINUTES | 90 |
-| GPU_SCHEDULE_ENABLED / START / END / TZ | false / 7 / 19 / Singapore |
+| GPU_SCHEDULE_ENABLED / START / END / TZ | true / 7 / 19 / Singapore |
+| GPU_INFERENCE_ASG_NAME | unset; exact fixed-instance state coupling is pending Lambda-role Auto Scaling permissions |
 | INFERENCE_CAPACITY_RETRY_MS | 30000 |
 | GPU_WORKER_URL, INFERENCE_WORKER_URL | `http://voice-gpu-alb-staging-1031778835.ap-northeast-2.elb.amazonaws.com` |
 | GPU_WORKER_PUBLIC_URL | `https://dfzrfr93t2ruf.cloudfront.net` |
@@ -266,10 +267,10 @@ The implemented staging design keeps the public hostnames and separates roles:
    `vcs-staging-gpu-inference`
    (`lt-07728350a25e691a4`, default version 15) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
-   ASG `vcs-staging-gpu-inference` normally runs at desired capacity 1 with baseline
+   ASG `vcs-staging-gpu-inference` runs at desired capacity 1 during 07:00-19:00 with baseline
    `i-0b8ce19b5fe17d751`;
    `AWSServiceRoleForAutoScaling` also exists. Minimum
-   capacity is 1 so public inference always has a warm baseline.
+   capacity 1; recurring scheduled actions set min/desired 0 outside that window.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
@@ -485,12 +486,17 @@ healthy in `vcs-staging-tg-3002`; it never stops the instance or creates a sched
 .\scripts\ensure-staging-live-gateway.ps1 -Apply
 ```
 
-The live Lambda contains 07:00-23:00 Singapore schedule values and
+The live Lambda contains 07:00-19:00 Singapore schedule values and
 `GPU_SCHEDULE_ENABLED=true` was applied on 2026-07-31. A direct in-window invocation
 returned `in-window-running`. CloudWatch later showed exactly one Lambda invocation
 every five minutes, including quiet hours, so an automatic invoker exists. This role
 cannot list the scheduler resource and the Lambda policy does not identify a classic
-EventBridge rule; the exact owner and 07:00/23:00 transition remain unverified.
+EventBridge rule; the exact fixed-GPU invoker remains unverified. On 2026-08-01 the
+inference ASG received verified recurring `vcs-staging-daily-start` (07:00, min/desired
+1) and `vcs-staging-daily-stop` (19:00, min/desired 0) actions in `Asia/Singapore`.
+The deployed Lambda code can couple manual stop/termination to the ASG, but activation
+was rolled back because its execution role lacks `autoscaling:DescribeAutoScalingGroups`
+and `autoscaling:UpdateAutoScalingGroup`.
 
 `scripts/load-test-staging-tts.mjs` isolates the public TTS path. With no duration it
 sends one request per virtual user. With `VCS_LOAD_TEST_DURATION_MS`, every virtual
@@ -1377,7 +1383,8 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
    be treated as the user-admission time.
 8. Validation instance `i-015de451bff24a73b` is stopped but remains registered as an
    unused target because this role is denied deregistration and termination. An
-   administrator should deregister it from `vcs-stg-opt-3103` and terminate it; the
+   administrator should deregister it from `vcs-stg-opt-3103` and terminate it; attempts
+   on 2026-08-01 were denied for both actions, and the
    stopped EBS volume continues to incur storage cost.
 9. Fresh v15 validator `i-0eb2ca68edb88d6d7` is stopped and also requires
    administrator termination because this role was denied `ec2:TerminateInstances`.

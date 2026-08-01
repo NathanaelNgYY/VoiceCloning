@@ -473,6 +473,142 @@ test('schedule mode stops a running GPU outside the window, ignoring activity', 
   }
 });
 
+test('schedule stop scales the inference ASG to zero', async () => {
+  const asgCalls = [];
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      if (command.constructor.name === 'DescribeInstancesCommand') {
+        return { Reservations: [{ Instances: [{ State: { Name: 'running' } }] }] };
+      }
+      return {};
+    },
+  };
+  globalThis.__voiceCloningAutoScalingClient = {
+    async send(command) {
+      asgCalls.push({ name: command.constructor.name, input: command.input });
+      if (command.constructor.name === 'DescribeAutoScalingGroupsCommand') {
+        return { AutoScalingGroups: [{ MinSize: 1, DesiredCapacity: 5 }] };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?asgStop=${Date.now()}`);
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-sched',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_SCHEDULE_ENABLED: 'true',
+      GPU_SCHEDULE_START_HOUR: '9',
+      GPU_SCHEDULE_END_HOUR: '9',
+      GPU_INFERENCE_ASG_NAME: 'vcs-staging-gpu-inference',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(asgCalls.map((call) => call.name), [
+        'DescribeAutoScalingGroupsCommand',
+        'UpdateAutoScalingGroupCommand',
+      ]);
+      assert.equal(asgCalls[1].input.MinSize, 0);
+      assert.equal(asgCalls[1].input.DesiredCapacity, 0);
+      assert.equal(JSON.parse(response.body).inferenceFleet.enabled, false);
+    });
+  } finally {
+    delete globalThis.__voiceCloningEc2Client;
+    delete globalThis.__voiceCloningAutoScalingClient;
+  }
+});
+
+test('terminated fixed GPU keeps the inference ASG at zero', async () => {
+  const asgCalls = [];
+  globalThis.__voiceCloningEc2Client = {
+    async send() {
+      return { Reservations: [{ Instances: [{ State: { Name: 'terminated' } }] }] };
+    },
+  };
+  globalThis.__voiceCloningAutoScalingClient = {
+    async send(command) {
+      asgCalls.push({ name: command.constructor.name, input: command.input });
+      if (command.constructor.name === 'DescribeAutoScalingGroupsCommand') {
+        return { AutoScalingGroups: [{ MinSize: 1, DesiredCapacity: 1 }] };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?asgTerminated=${Date.now()}`);
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-terminated',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_SCHEDULE_ENABLED: 'true',
+      GPU_SCHEDULE_START_HOUR: '0',
+      GPU_SCHEDULE_END_HOUR: '24',
+      GPU_INFERENCE_ASG_NAME: 'vcs-staging-gpu-inference',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(asgCalls[1].input.MinSize, 0);
+      assert.equal(asgCalls[1].input.DesiredCapacity, 0);
+    });
+  } finally {
+    delete globalThis.__voiceCloningEc2Client;
+    delete globalThis.__voiceCloningAutoScalingClient;
+  }
+});
+
+test('starting the fixed GPU restores ASG baseline without shrinking event capacity', async () => {
+  const asgCalls = [];
+  globalThis.__voiceCloningEc2Client = {
+    async send(command) {
+      if (command.constructor.name === 'DescribeInstancesCommand') {
+        return { Reservations: [{ Instances: [{ State: { Name: 'stopped' } }] }] };
+      }
+      return {
+        StartingInstances: [{
+          CurrentState: { Name: 'pending' },
+          PreviousState: { Name: 'stopped' },
+        }],
+      };
+    },
+  };
+  globalThis.__voiceCloningAutoScalingClient = {
+    async send(command) {
+      asgCalls.push({ name: command.constructor.name, input: command.input });
+      if (command.constructor.name === 'DescribeAutoScalingGroupsCommand') {
+        return { AutoScalingGroups: [{ MinSize: 0, DesiredCapacity: 50 }] };
+      }
+      return {};
+    },
+  };
+
+  const { handler } = await import(`./index.js?asgStart=${Date.now()}`);
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-sched',
+      GPU_WORKER_URL: 'http://localhost:3001',
+      GPU_INFERENCE_ASG_NAME: 'vcs-staging-gpu-inference',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/start',
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(asgCalls[1].input.MinSize, 1);
+      assert.equal(asgCalls[1].input.DesiredCapacity, 50);
+    });
+  } finally {
+    delete globalThis.__voiceCloningEc2Client;
+    delete globalThis.__voiceCloningAutoScalingClient;
+  }
+});
+
 test('schedule mode blocks an activity-triggered start outside the window', async () => {
   const calls = [];
   globalThis.__voiceCloningEc2Client = {
