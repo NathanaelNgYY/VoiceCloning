@@ -284,8 +284,8 @@ does not mention one. Worth raising with its owner separately; it is not a block
 ### Gateway env added by step 7
 
 `TRANSCRIPT_TABLE_NAME` (empty disables storage entirely), `TRANSCRIPT_TABLE_REGION`
-(default `ap-northeast-2`), `TRANSCRIPT_TTL_DAYS` (default `0` = no `ttl` attribute, so
-nothing expires while retention is undecided), `TRANSCRIPT_STORE_SYNTHETIC` (default
+(default `ap-northeast-2`), `TRANSCRIPT_TTL_DAYS` (default `90`, per the retention decision
+above; `0` writes no `ttl` attribute and nothing expires), `TRANSCRIPT_STORE_SYNTHETIC` (default
 `false`, so load-test rehearsals are not written).
 
 Transcripts are only recorded on authenticated sessions — with `LIVE_AUTH_ENABLED=false`
