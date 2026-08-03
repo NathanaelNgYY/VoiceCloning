@@ -2,6 +2,7 @@ import { corsHeaders, err, ok, preflight, parseJsonBody } from '../shared/cors.j
 import { inferencePost, inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
 import { demoHeaders } from '../shared/demoOrigin.js';
+import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { randomUUID } from 'node:crypto';
 
 const REPLY_TOKEN_HEADER = 'X-VCS-Reply-Token';
@@ -26,6 +27,7 @@ export function createHandler({
   post = inferencePost,
   now = () => performance.now(),
   invocationState = { cold: true, environmentId: randomUUID() },
+  authGuard = createLiveAuthGuard(),
 } = {}) {
   return async function handler(event, context = {}) {
     const coldStart = invocationState.cold;
@@ -33,6 +35,17 @@ export function createHandler({
     const requestStartedAt = now();
     if (event.requestContext?.http?.method === 'OPTIONS') {
       return preflight(event);
+    }
+
+    // Before any work: synthesis costs GPU time, so an unauthenticated caller
+    // must not get past this point. Cancel is checked too — it takes a
+    // replyToken belonging to someone else's in-flight reply.
+    if (authGuard) {
+      try {
+        await authGuard.authorize(event);
+      } catch (error) {
+        return err(401, 'Sign in to use the voice assistant.', event);
+      }
     }
 
     let body;
