@@ -10,8 +10,11 @@
   The AI treats these only as uncertain review/reflection signals, never proof of
   confusion or mastery. No mock email or client-supplied user identity is stored.
 - Verification: client analytics/context 21/21, Lambda analytics/router 12/12,
-  local gateway 56/56, dev-host gateway 55/55, GI production build, gateway health,
+  local gateway 56/56, dev-host gateway 56/56, GI production build, gateway health,
   public ingest/readback, and automatic browser session events all passed.
+- Reconciled the earlier three-file dev gateway hot patch through Git: preserved the
+  patch in a named stash, fast-forwarded the host from `070a99a` to remote `ce75eab`,
+  reran 56/56 gateway tests, restarted healthy, and dropped only that temporary stash.
 - Recorded the 55-node inference-readiness/autoscaling audit, the fixed SSE relay's
   fail-open health-check mismatch, and staging's missing `resemblyzer` dependency.
   History does not support treating the missing speaker gate as a fleet-wide latency

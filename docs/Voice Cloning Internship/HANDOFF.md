@@ -6,9 +6,9 @@ Last updated: 2026-08-03
 
 - Current scope includes dev parity plus a separately confirmed staging event action.
 - Repo/branch: `VoiceCloning` / `separate-containers-new`.
-- Dev-host application source is `070a99a`; later local/remote commits are operations
-  documentation. GitHub `separate-containers-new` was verified synchronized through
-  `8b963eb`; re-read branch state before deployment and do not replace host code blindly.
+- Dev-host checkout and GitHub `separate-containers-new` are synchronized at `ce75eab`;
+  the gateway restarted and passed 56/56 tests. A recovery backup and two unrelated
+  archives remain untracked on the host; do not remove them as deployment cleanup.
 - Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
   `scripts/deploy.config.json` before changing AWS or code.
 - Never print or save credentials, tokens, private URLs, or secret values.
@@ -17,9 +17,9 @@ Last updated: 2026-08-03
 
 - Dev training/live/GI CloudFront configs match their staging counterparts after
   substituting dev Lambda, ALB, and `echolect/` origins; all three are deployed.
-- Dev Lambda runs source `070a99a`, 512 MB, 120 seconds, and a 30-second inference
+- Dev Lambda includes the `ce75eab` analytics route, 512 MB, 120 seconds, and a 30-second inference
   retry budget. `GPU_SCHEDULE_ENABLED=false` and no inference ASG name is configured.
-- Fixed GPU `VoiClo-GPU-Seoul` runs all three workers from `070a99a`; inference
+- Fixed GPU `VoiClo-GPU-Seoul` checkout is `ce75eab`; inference
   has two synthesis slots, the 100-item/25-second queue, and boot warming enabled.
 - Dev has no ASG, scaling alarms, or ASG scheduled actions. The enabled five-minute
   EventBridge rule invokes idle-check only; activity requests own GPU startup.
