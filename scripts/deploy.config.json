@@ -43,11 +43,12 @@
   },
   "dev": {
     "lambdaFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project",
+    "lambdaMemoryMb": 512,
     "region": "ap-northeast-2",
     "s3Region": "ap-southeast-1",
     "instanceId": "i-03f258d470a2fa73f",
     "branch": "separate-containers-new",
-    "chatbotBranch": "chatbot-live-full",
+    "chatbotBranch": "separate-containers-new",
     "chatbotBuildMode": "gi",
     "workerAccess": "ssh",
     "distributions": { "training": "E2KTGN0G56FW71", "live-fast": "E36CNBL620DMGM", "chatbot": "EYZ4NLNGITY7T" },
