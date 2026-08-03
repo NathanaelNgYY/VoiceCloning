@@ -16,7 +16,9 @@ matching how they would set it up themselves.
 | MFA | Not required for this app |
 | Token lifetime | ~24 h; not a constraint, identity is bound once at WS connect |
 | Access policies | Satisfied — the gi build has no admin surface (`GiApp.jsx` omits admin routes) |
-| **Retention** | **Still open** — see Retention and privacy |
+| Retention | **90 days** on identifiable rows, plus a de-identified export with no expiry. Decided 2026-08-03, pending supervisor confirmation — see Retention and privacy |
+| Purpose | **Research export**, not user-facing history. Research reads the de-identified copy, so no read path is needed |
+| Consent | Notice shown at sign-in. Whether IRB coverage is also required is **still open** |
 
 ## Goal
 
@@ -175,26 +177,41 @@ scriptable from this machine. Confirm this early; it gates the whole feature.
 
 ## Retention and privacy
 
-**Open — the one decision not yet settled.**
+### The decision
 
-The tenant owner's position (2026-08-03) is that no TTL is needed and transcripts can be
-kept indefinitely, on the grounds that the information is not especially sensitive.
+Retention limits apply to data that *identifies* someone, so the two uses are separated
+rather than forced onto one number:
 
-That is true of the *lesson material*, which is not confidential. The concern is what
-students volunteer into a free-text medical Q&A: in a GI-bleeding lesson some will describe
-their own or a relative's symptoms. Tied to a verified NTU identity, that is health-adjacent
-personal data about an identifiable individual, and PDPA's retention limitation says it
-should not be held longer than the purpose requires.
+- **Identifiable rows — 90 days** (`TRANSCRIPT_TTL_DAYS`, which defaults to 90 so that
+  forgetting to configure it cannot mean indefinite retention). Long enough for anything
+  operational: debugging a bad answer, checking what a student was told, handling a complaint.
+- **De-identified export — no expiry.** `scripts/export-transcripts-deidentified.mjs` replaces
+  `oid` with a salted hash and drops session metadata entirely. That output is not personal
+  data, so it carries no retention limit — which gives the research use *more* durability than
+  a flat 12-month policy would, not less.
+- **A notice at sign-in**, naming what is stored, who it is tied to, why, and for how long.
 
-Indefinite retention may still be the right answer — but as a deliberate decision by whoever
-owns the data policy, not as a default. Escalate to the project supervisor if the tenant
-owner does not want to make that call. A TTL costs nothing to set now and is painful to
-retrofit once the table holds real student data.
+**Still pending supervisor confirmation.** The 90 days is a proposal, not an approved policy,
+and the consent question below is genuinely open.
 
-Regardless of the outcome:
+### Why not indefinite
 
-- Confirm whether student consent or IRB coverage is needed **before** any real student data
-  is captured, not after.
+The tenant owner's position (2026-08-03) was that no TTL is needed, on the grounds that the
+information is not especially sensitive. That is true of the *lesson material*, which is not
+confidential. The concern is what students volunteer into a free-text medical Q&A: in a
+GI-bleeding lesson some will describe their own or a relative's symptoms. Tied to a verified
+NTU identity, that is health-adjacent personal data about an identifiable individual, and
+PDPA's retention limitation says it should not be held longer than the purpose requires.
+
+Indefinite may still be someone's call to make — but it should be a decision, not a default,
+and it is the one option that cannot be justified as "as long as we need it".
+
+### Still open
+
+- **Consent / IRB.** The distinction that decides it: are we *studying the students* or
+  *improving the lesson*? Published findings about students are human-subjects research and
+  need IRB coverage; internal quality improvement normally needs only the notice. The
+  supervisor knows which bucket this pilot sits in.
 - Do not log transcript text to CloudWatch alongside the identity; that duplicates the
   personal data into a second store with a different retention policy.
 
@@ -234,11 +251,13 @@ does not mention one. Worth raising with its owner separately; it is not a block
 
 ## Open questions
 
-1. **Purpose** — research export (dump to CSV afterward) or user-facing history (a student
-   re-reads past chats)? The second needs a read API and UI; the first does not.
-2. **Retention period** — becomes the `ttl` value.
-3. **Audio** — text only, or keep the generated WAVs in S3 too?
-4. **Scope** — GI kiosk only, or the chatbot surface as well?
+1. ~~**Purpose**~~ — settled: research export. Research reads the de-identified copy, so no
+   read path or history UI is needed.
+2. ~~**Retention period**~~ — settled at 90 days on identifiable rows, pending supervisor
+   confirmation.
+3. **Audio** — text only, or keep the generated WAVs in S3 too? Currently text only.
+4. ~~**Scope**~~ — settled: GI only.
+5. **Consent / IRB** — with the supervisor; see Retention and privacy.
 
 ## Implementation order
 
@@ -259,7 +278,8 @@ does not mention one. Worth raising with its owner separately; it is not a block
    keys, SDK-free and unit-tested), `services/dynamoTranscriptClient.js` (the only file that
    imports the AWS SDK, client built lazily), tapped off the bridge's `app-event` stream in
    `routes/liveChat.js`. Inert unless `TRANSCRIPT_TABLE_NAME` is set.
-8. Read path, only if open question 1 is "user-facing history".
+8. ~~Read path.~~ Not needed — the purpose question settled as research export, which reads
+   the de-identified copy rather than the table.
 
 ### Gateway env added by step 7
 
