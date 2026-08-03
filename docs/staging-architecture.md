@@ -68,6 +68,14 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 `d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot, not the dev
 Dean chatbot.
 
+**AWS ownership and runtime roles:** both rows are in account `329599637774` and
+are operated by assuming
+`arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`. Both Lambdas use
+`Liu_Teng_Yu_Intern2026-LambdaExecutionRole`; fixed GPU instances and staging ASG
+instances use the `VoiClo_GPU` instance profile. The Auto Scaling service-linked
+role and all ASG policies/actions belong to staging only. There is no dev `-dev`
+Lambda, `echolect-dev/` prefix, or dev ASG.
+
 On 2026-07-31, the staging chatbot was rebuilt in **GI mode** from
 `codex/staging-multi-user-scaling` commit `fc99271` and deployed as
 `assets/index-DJ5lJmLS.js`. Its fixed staging profile is
@@ -198,26 +206,29 @@ rebuild it, or you take down other projects' distributions.
 
 | Branch | Deploys to | Notes |
 |---|---|---|
-| `separate-containers-new` | dev (training + live-fast) | active development |
-| `chatbot-live-full` | dev (chatbot) | |
-| `staging` | staging (training + live-fast) | fast-forward from `separate-containers-new` when promoting |
-| `codex/staging-multi-user-scaling` | staging (chatbot and current scaling work) | configured `chatbotBranch`; verify `scripts/deploy.config.json` before deployment |
+| `separate-containers-new` | dev (all three clients, Lambda, and fixed GPU) | canonical active-development branch |
+| `staging` | staging general worker path | configured `branch`; promotion target, not the dev source |
+| `codex/staging-multi-user-scaling` | staging chatbot/current scaling path | configured `chatbotBranch`; verify `scripts/deploy.config.json` before deployment |
+| `chatbot-live-full` | none | legacy branch; its dev chatbot work is merged into `separate-containers-new` |
 
 Dev parity rollout (2026-08-03): `separate-containers-new` and the fixed
-`VoiClo-GPU-Seoul` host are at `070a99a`. The three dev distributions now
+`VoiClo-GPU-Seoul` host application source are at `070a99a`. The three dev distributions now
 match their staging templates after substituting the dev Lambda, ALB, and
 `echolect/` origins. Dev Lambda is 512 MB with schedule mode false and no ASG
 name. Dev has no ASG or scheduled capacity actions; the five-minute
 `VoiClo-gpu-idle-stop` rule performs idle checks, while user activity starts
 the fixed instance. `WARM_ON_BOOT=true` keeps inference ALB-ready after service
-restarts. GitHub origin is still `14afe68` pending credential repair.
+restarts. The local branch contains additional documentation/operations commits,
+but GitHub origin is still `14afe68` pending credential repair. A fresh clone will
+therefore be stale even though AWS already has application commit `070a99a`.
 
-Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; staging worker access = **SSM**, dev = SSH). Client env vars per environment: `client/env/{staging,dev}/*.env`.
+Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
 ## 9. Access / operations
 
 - **AWS access:** portal creds for identity account 116310094355 → `aws sts assume-role --role-arn arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026` (portal creds ~2 h, role session 1 h). Role denials (console too): `iam:*`, `events:*`, `scheduler:*`, `elasticloadbalancing:Delete*`, `ec2:ReplaceRoute/DeleteRoute/ReplaceRouteTableAssociation`, `ec2:ModifyVpcEndpoint`, `ssm:DescribeInstanceInformation`. `ssm:StartSession` **is** allowed.
-- **Shell on the box:** `aws ssm start-session --region ap-northeast-2 --target i-0f0da8be59367f7a8` then `sudo -iu ubuntu`. No SSH (private subnet).
+- **Shell on staging:** `aws ssm start-session --region ap-northeast-2 --target i-0f0da8be59367f7a8` then `sudo -iu ubuntu`. No SSH (private subnet).
+- **Shell on dev:** `aws ssm start-session --region ap-northeast-2 --target i-03f258d470a2fa73f` then `sudo -iu ubuntu`. The deployment map uses SSM; do not depend on the old workstation SSH path.
 - **Manual stop/start:** EC2 console or `aws ec2 stop-instances/start-instances --instance-ids i-0f0da8be59367f7a8`. Same-instance stop/start preserves TG registration, Lambda config, and IP-independence (everything references the instance ID or ALB DNS).
 - **Smoke test:** `https://d1qh0ebsvevhy3.cloudfront.net/api/models` → 200 JSON; `/api/instance/status` → `workerReady:true` when the box is up; TG health `describe-target-health` all `healthy`.
 
@@ -802,7 +813,10 @@ route uses the ASG and therefore does not directly become faster.
 
 Current live event actions set min/desired 50 at 13:30 SGT on 2026-08-04 and restore
 min/desired 1 at 16:00. The existing 07:00/19:00 recurring baseline actions remain;
-the 70%
+the earlier August 3 event was still live at the 11:36 SGT read-back with min 50 /
+desired 56, and its legacy `vcs-staging-scale-down` action remains scheduled to
+restore min/desired 1 at 17:00 on August 3. The August 3 and August 4 pairs are
+separate. For the active scaling controls, the 70%
 occupancy alarm was enabled/OK, the rejection alarm was telemetry-only, and
 `vcs-staging-tg-3002` remained healthy.
 

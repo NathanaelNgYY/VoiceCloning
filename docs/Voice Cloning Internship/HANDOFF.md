@@ -6,8 +6,9 @@ Last updated: 2026-08-03
 
 - Current scope includes dev parity plus a separately confirmed staging event action.
 - Repo/branch: `VoiceCloning` / `separate-containers-new`.
-- Local and dev-host application source: `070a99a`; GitHub origin remains `14afe68`
-  because both available Git credentials are invalid. Do not overwrite the host.
+- Dev-host application source is `070a99a`; local history also has later operations
+  docs. GitHub origin remains `14afe68` because both HTTPS credentials are invalid
+  and `gh` is absent. Fresh clones are stale; do not overwrite the deployed host.
 - Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
   `scripts/deploy.config.json` before changing AWS or code.
 - Never print or save credentials, tokens, private URLs, or secret values.
@@ -38,9 +39,9 @@ Last updated: 2026-08-03
 - `GPU_SCHEDULE_ENABLED=true` with a live 07:00-19:00 Singapore fixed-GPU window.
   Matching verified ASG actions set 1 at 07:00 and 0 at 19:00. Exact manual-state
   coupling is deployed but disabled pending Lambda-role Auto Scaling permissions.
-- Evening rehearsal temporarily raised the event floor to 50, strictly verified all
-  targets, triggered 50->60 from an 82% occupancy minute, and strictly verified all
-  60 targets. Cleanup restored min/desired 1; re-read live state before relying on it.
+- Live read at 2026-08-03 11:36 SGT found min 50 / desired 56 from today's event;
+  legacy action `vcs-staging-scale-down` restores min/desired 1 at 17:00 today.
+  Tomorrow's 13:30/16:00 actions are separate and remain scheduled as documented.
 
 ## Autoscaling and Readiness
 

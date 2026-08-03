@@ -43,7 +43,35 @@ always read and live-verify it before AWS work.
 | staging | `voice-gpu-staging` | function ending `-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
 | dev | `VoiClo-GPU-Seoul` | function without `-staging` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
 
-`d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot.
+Staging additionally owns kiosk chatbot `d3k2rz0hqm8nxi.cloudfront.net`; dev does
+not need or have its counterpart. `d3fwx6qxeaxfmo.cloudfront.net` is the separate
+GI-bleeding chatbot and is not part of the dev/staging pairing above.
+
+Both environments are in account `329599637774`, primarily in Seoul
+(`ap-northeast-2`). Operators assume
+`arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`. Both Lambdas use
+`Liu_Teng_Yu_Intern2026-LambdaExecutionRole`; fixed GPU instances and staging ASG
+instances use the `VoiClo_GPU` instance profile. The Auto Scaling service-linked
+role belongs to the staging ASG path only.
+
+| Ownership | dev | staging |
+|---|---|---|
+| Branch | `separate-containers-new` for all components | `staging` general worker path; `codex/staging-multi-user-scaling` configured chatbot/current scaling path |
+| Fixed GPU instance | `i-03f258d470a2fa73f` | `i-0f0da8be59367f7a8` |
+| Capacity management | fixed GPU; activity start + five-minute idle-check; no schedule, ASG, scaling alarms, or ASG actions | fixed GPU 07:00-19:00 Singapore schedule plus `vcs-staging-gpu-inference`, recurring ASG actions, reactive policies, and event actions |
+| Worker access | SSM | SSM |
+
+There is no dev `-dev` Lambda, `echolect-dev/` prefix, dev ASG, or separate dev
+chatbot branch. The old repo `docs/dev-environment-duplication-guide.md` proposal was
+replaced with a current-state guide. Always verify `scripts/deploy.config.json` and
+live AWS before mutation.
+
+Latest live read-back (2026-08-03 11:36 SGT): dev and staging fixed GPUs were
+running with the documented `VoiClo_GPU` profile; both Lambdas used the documented
+execution role; dev schedule mode was false with no ASG name, while staging schedule
+mode was true. Staging ASG was min 50 / desired 56 during today's event window;
+`vcs-staging-scale-down` remains scheduled for 17:00 today. This is transient state,
+not a new baseline. The separate August 4 13:30/16:00 actions remain scheduled.
 
 As of 2026-07-31, staging chatbot serves the GI build from
 `codex/staging-multi-user-scaling`; deployed code is `b44e4d2` and the bundle is
@@ -98,8 +126,7 @@ fallbacks, so API errors preserve their real status.
 
 - Target AWS account: `329599637774`
 - Assume role: `arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026`
-- EC2 SSH: `ubuntu@43.203.248.253`
-- PEM: `C:\Users\User\Downloads\PC_SYNC\VoiClo-Gpu-Seoul.pem`
+- EC2 access: SSM target `i-03f258d470a2fa73f` (do not depend on the old workstation SSH path)
 - EC2 repo: `/home/ubuntu/VoiceCloning`
 - Branch: `separate-containers-new`
 - Inference service: `gpu-inference-worker`
@@ -187,8 +214,8 @@ than the environment's configured `chatbotBranch`.
    $env:VCS_STAGING_MAX_CAPACITY='192'
    $env:VCS_STAGING_SCALE_OUT_OCCUPANCY_PERCENT='70'
    $env:VCS_STAGING_SCALE_OUT_ADD_CAPACITY='10'
-   $env:VCS_STAGING_PREWARM_AT='2026-08-03T08:30:00+08:00'
-   $env:VCS_STAGING_SCALE_DOWN_AT='2026-08-03T17:00:00+08:00'
+   $env:VCS_STAGING_PREWARM_AT='2026-08-04T13:30:00+08:00'
+   $env:VCS_STAGING_SCALE_DOWN_AT='2026-08-04T16:00:00+08:00'
    .\scripts\provision-staging-autoscaling.ps1 -AmiId <verified-ami> -DesiredCapacity 1
    ```
 
@@ -379,9 +406,9 @@ as a runbook; do not duplicate raw per-session JSON here.
   changed 3->2 after the 15-minute quiet window and later 2->1. The `-1` policy is
   safe but removes subsequent GPUs only after drain/cooldown completes. The baseline
   public route then returned a verified HTTP 200 RIFF in 6.28 seconds.
-- Live event actions remain August 3 at 08:30/17:00 SGT. Today strict readiness took
-  about eight minutes, so 08:30 is too late if students also enter at 08:30; confirm
-  the real start time before rescheduling.
+- The August 3 08:30/17:00 actions described by this historical rehearsal section
+  were superseded. Current verified one-time actions are August 4 at 13:30/16:00 SGT;
+  strict readiness has taken about eight minutes, so admit users only after the gate.
 
 ## Repo Files Worth Checking First
 

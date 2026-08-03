@@ -1,5 +1,11 @@
 # Dev + Staging Environments Implementation Plan
 
+> **Superseded historical plan. Do not execute these commands.** Dev was ultimately
+> deployed with the existing unsuffixed Lambda, `echolect/` prefix,
+> `separate-containers-new` branch for every component, activity/idle lifecycle, and
+> no nightly schedule or ASG. Use `docs/staging-architecture.md`,
+> `docs/dev-environment-duplication-guide.md`, and `scripts/deploy.config.json`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up a fully separate dev environment (new GPU EC2 + `-dev` Lambda, ALB, CloudFront ×2, S3 prefix) so programmers work on dev while users keep using the existing stack, relabeled staging.

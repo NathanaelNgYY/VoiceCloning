@@ -24,14 +24,12 @@
 - `src/pages/LivePage.jsx`
   - Live chatbot UI, model selection, trained reference selection, cloned voice playback, Text to Speech tab, pronunciation admin panel.
 - `src/hooks/useSSE.js` — Nine-step training SSE including speaker verification.
-- `src/hooks/useInferenceSSE.js`
 - `src/hooks/useInferenceSSE.js` — Long-text inference SSE.
 - `src/hooks/useLiveSpeech.js`
   - Mic capture, streamed first-sentence TTS, cloned reply playback, barge-in behavior.
 - `src/hooks/liveConversation.js`
   - Pure helpers for phrase splitting, playback selection, language-specific TTS params.
 - `src/services/api.js` — REST client with signed JSON mutation support.
-- `src/services/liveChatSocket.js`
 - `src/services/liveChatSocket.js` — WebSocket client for `/api/live/chat/realtime`.
 - `src/lib/runtimeConfig.js`
   - Resolves API paths; `src/lib/appMode.js` handles split-build gating.
@@ -162,6 +160,8 @@
   - Staging ASG provisioning plus its recurring 07:00 start and 19:00 scale-to-zero schedule.
 - `docs/staging-architecture.md`
   - Authoritative live staging/dev resource map, rollout state, tests, and permissions.
+- `docs/dev-environment-duplication-guide.md`
+  - Current dev/staging boundary summary; the former duplication proposal is superseded.
 
 ## Good First Reads By Task
 

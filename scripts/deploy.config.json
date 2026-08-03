@@ -50,7 +50,7 @@
     "branch": "separate-containers-new",
     "chatbotBranch": "separate-containers-new",
     "chatbotBuildMode": "gi",
-    "workerAccess": "ssh",
+    "workerAccess": "ssm",
     "distributions": { "training": "E2KTGN0G56FW71", "live-fast": "E36CNBL620DMGM", "chatbot": "EYZ4NLNGITY7T" },
     "clientTargets": {
       "training": "s3://interns2026-small-projects-bucket-shared/echolect/dist-training",

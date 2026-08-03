@@ -2,6 +2,9 @@
 
 ## 2026-08-03
 
+- Replaced the obsolete dev-duplication proposal with the deployed environment map,
+  documented branch/IAM/runtime-role ownership, changed dev deployment access to SSM,
+  and marked the unpushed GitHub-origin state as a handoff blocker.
 - Created and read back staging event actions for 2026-08-04: min/desired 50 at
   13:30 SGT and min/desired 1 at 16:00 SGT. Existing 07:00/19:00 recurrence and
   exact-capacity five / change-capacity +10 reactive policies remain enabled.
