@@ -19,6 +19,17 @@
 - S3 is the canonical shared storage for uploaded audio, training assets, and model artifacts.
 - GPU EC2 local disk is treated as working cache/scratch space, not source of truth.
 
+## Lesson Behavior Analytics
+
+- Dev GI uses same-origin Lambda ingestion with small client batches written as
+  gzip NDJSON under hourly S3 partitions. Firehose/Kinesis is deferred until measured
+  volume requires buffering; Glue/Athena and a dashboard are separate query-layer work.
+- Current batches are session-anonymous and exclude mock-auth identity. Future SSO
+  identity must be derived from a backend-validated token, not a browser field.
+- Rewinds, skips, and long transcript pauses are ambiguous signals. They may calibrate
+  a relevant chatbot answer or prompt a check for understanding, but cannot establish
+  that a learner is confused, clear, attentive, or has mastered the material.
+
 ## Pronunciation Dictionary
 
 - Admin pronunciation entries require ARPAbet. Legacy `readable` fields remain ignored, but an optional validated `synthesisAlias` may rewrite one exact saved word into a reviewed multi-part English spelling. ASR must verify the rewritten tokens, and strict phoneme mode must score the full alias span against the entry's ARPAbet so aliases cannot bypass verification.

@@ -10,6 +10,12 @@ test('router eagerly prepares the latency-sensitive Live handler', async () => {
   assert.equal(await getRouteHandler(route), liveHandler);
 });
 
+test('router resolves anonymous lesson analytics ingest', () => {
+  const route = findRoute('POST', '/api/analytics/events');
+  assert.equal(route.name, 'AnalyticsFunction');
+  assert.equal(route.modulePath, './analytics/index.js');
+});
+
 test('router resolves voice profile activation and active-summary routes', () => {
   assert.deepEqual(
     findRoute('POST', '/api/voice-profile/activate'),

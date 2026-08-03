@@ -113,6 +113,12 @@ test('shouldSendVideoPosition lets a backwards seek through', () => {
   assert.equal(shouldSendVideoPosition({ seconds: 30, paused: false }, last), true);
 });
 
+test('shouldSendVideoPosition sends a changed learning signal at the same timestamp', () => {
+  const last = { seconds: 100, paused: true, behavior: { rewindCount: 0 } };
+  const next = { seconds: 100, paused: true, behavior: { rewindCount: 1 } };
+  assert.equal(shouldSendVideoPosition(next, last), true);
+});
+
 test('shouldSendVideoPosition ignores an unreadable position', () => {
   assert.equal(shouldSendVideoPosition(null, null), false);
   assert.equal(shouldSendVideoPosition({ seconds: NaN }, null), false);

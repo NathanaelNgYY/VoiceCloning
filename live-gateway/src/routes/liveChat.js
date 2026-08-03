@@ -85,7 +85,13 @@ export function handleBrowserMessage(bridge, data) {
   // ignored above and below, so a client that sends this to an older gateway —
   // or a client that never sends it — both stay working.
   if (message.type === 'video.position') {
-    bridge.setVideoPosition({ seconds: message.seconds, paused: message.paused });
+    bridge.setVideoPosition({
+      seconds: message.seconds,
+      paused: message.paused,
+      ...(message.behavior && typeof message.behavior === 'object'
+        ? { behavior: message.behavior }
+        : {}),
+    });
     return;
   }
 

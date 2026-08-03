@@ -35,6 +35,7 @@ export function shouldSendVideoPosition(next, last) {
   if (!next || !Number.isFinite(Number(next.seconds))) return false;
   if (!last || !Number.isFinite(Number(last.seconds))) return true;
   if (Boolean(next.paused) !== Boolean(last.paused)) return true;
+  if (JSON.stringify(next.behavior || {}) !== JSON.stringify(last.behavior || {})) return true;
   return Math.abs(Number(next.seconds) - Number(last.seconds)) >= VIDEO_POSITION_MIN_DELTA_SECONDS;
 }
 

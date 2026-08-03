@@ -19,6 +19,7 @@ import {
   isVideoPositionSharingEnabled,
 } from "@/lib/lessonVideoContext";
 import { useVideoTopicThumbnails } from "@/hooks/useVideoTopicThumbnails";
+import { useLessonAnalytics } from "@/hooks/useLessonAnalytics";
 import { isRevealIdle, revealedSegmentCount } from "@/lib/transcriptReveal";
 import { config } from "@/config";
 
@@ -129,6 +130,13 @@ export function LessonPage() {
   const DESCRIPTION_CLAMP_CHARS = 140;
   const isDescriptionLong = (course?.description ?? "").length > DESCRIPTION_CLAMP_CHARS;
   const topicThumbnails = useVideoTopicThumbnails(course?.videoUrl ?? "", topics);
+  const { trackNavigation, getBehaviorContext } = useLessonAnalytics({
+    slug,
+    videoRef,
+    transcriptScrollRef,
+    activeTab,
+    videoUrl: course?.videoUrl ?? "",
+  });
 
   // Timestamped transcript handed to the chatbot so students can ask about
   // moments in the video ("at 8:30, what does that mean?").
@@ -140,8 +148,12 @@ export function LessonPage() {
   const getVideoPosition = useCallback(() => {
     const video = videoRef.current;
     if (!video || !Number.isFinite(video.currentTime)) return null;
-    return { seconds: video.currentTime, paused: Boolean(video.paused) };
-  }, []);
+    return {
+      seconds: video.currentTime,
+      paused: Boolean(video.paused),
+      behavior: getBehaviorContext(),
+    };
+  }, [getBehaviorContext]);
   const videoPositionEnabled = isVideoPositionSharingEnabled(import.meta.env);
 
   let activeTopicIndex = 0;
@@ -174,7 +186,8 @@ export function LessonPage() {
     transcriptSegments.length > 0 &&
     (!hasStarted || isRevealIdle(transcriptSegments, reachedTime));
 
-  const seekTo = (seconds) => {
+  const seekTo = (seconds, source = 'unknown') => {
+    trackNavigation(source, seconds);
     advanceTo(seconds);
 
     if (videoRef.current) {
@@ -376,7 +389,7 @@ export function LessonPage() {
                     <button
                       key={`${topic.time}-${topic.label}`}
                       type="button"
-                      onClick={() => seekTo(topic.time)}
+                      onClick={() => seekTo(topic.time, 'outline_topic')}
                       aria-current={isActive ? "true" : undefined}
                       className={cn(
                         "w-full rounded-2xl border p-3 text-left transition-all duration-200 cursor-pointer",
@@ -565,7 +578,7 @@ export function LessonPage() {
                               key={`${segment.time}-${segment.title}`}
                               ref={isFrontier ? frontierRef : undefined}
                               type="button"
-                              onClick={() => seekTo(segment.time)}
+                              onClick={() => seekTo(segment.time, 'transcript_timestamp')}
                               aria-label={`Play video from ${formatTimestamp(segment.time)}: ${segment.title}`}
                               className={cn(
                                 "group block w-full cursor-pointer rounded-xl border border-transparent text-left transition-all duration-200",

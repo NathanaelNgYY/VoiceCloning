@@ -12,6 +12,14 @@ Primary router: `lambda/router.js`
 - `POST /api/upload-ref/presign`
 - `POST /api/upload-ref/confirm`
 
+### Lesson analytics
+
+- `POST /api/analytics/events`
+  - Accepts schema version 1 with 1-50 allowlisted anonymous lesson events.
+  - Client identity fields and unknown properties are discarded/rejected.
+  - Stores one gzip NDJSON batch in hourly S3 partitions under
+    `analytics/events/date=YYYY-MM-DD/hour=HH/` relative to `S3_PREFIX`.
+
 ### Training library
 
 - `GET /api/training-library`

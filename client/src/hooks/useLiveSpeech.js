@@ -1023,11 +1023,13 @@ export function useLiveSpeech({
         type: 'video.position',
         seconds: Number(position.seconds),
         paused: Boolean(position.paused),
+        behavior: position.behavior || undefined,
       });
       if (sent) {
         lastSentVideoPositionRef.current = {
           seconds: Number(position.seconds),
           paused: Boolean(position.paused),
+          behavior: position.behavior || undefined,
         };
       }
     };

@@ -2,6 +2,16 @@
 
 ## 2026-08-03
 
+- Implemented and deployed dev GI behavior analytics. The browser batches lesson,
+  play/pause/seek, navigation, tab, and transcript-scroll events to the new
+  `POST /api/analytics/events` Lambda route; Lambda validates an allowlist and writes
+  gzip NDJSON to `echolect/analytics/events/date=.../hour=.../` in S3.
+- Added two-minute rewind/skip and long transcript-pause context to the live gateway.
+  The AI treats these only as uncertain review/reflection signals, never proof of
+  confusion or mastery. No mock email or client-supplied user identity is stored.
+- Verification: client analytics/context 21/21, Lambda analytics/router 12/12,
+  local gateway 56/56, dev-host gateway 55/55, GI production build, gateway health,
+  public ingest/readback, and automatic browser session events all passed.
 - Recorded the 55-node inference-readiness/autoscaling audit, the fixed SSE relay's
   fail-open health-check mismatch, and staging's missing `resemblyzer` dependency.
   History does not support treating the missing speaker gate as a fleet-wide latency

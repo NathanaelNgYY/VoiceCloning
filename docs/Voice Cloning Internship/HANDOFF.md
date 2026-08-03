@@ -23,7 +23,8 @@ Last updated: 2026-08-03
   has two synthesis slots, the 100-item/25-second queue, and boot warming enabled.
 - Dev has no ASG, scaling alarms, or ASG scheduled actions. The enabled five-minute
   EventBridge rule invokes idle-check only; activity requests own GPU startup.
-- Public root, deep-link, config, model, GI video, and activity-start checks passed.
+- Dev GI now batches anonymous lesson/video events to partitioned S3 through Lambda;
+  the patched gateway also gives uncertain rewind/pause/skip signals to the chatbot.
 
 ## Current AWS Operating State
 

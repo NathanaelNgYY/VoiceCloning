@@ -1,5 +1,9 @@
 # Active TODO
 
+- [ ] Before SSO analytics rollout, validate the access token server-side and enrich
+  stored batches with an immutable subject identifier; never accept a browser-claimed
+  user ID. Add a Glue/Athena table and supervisor dashboard only after event volume
+  and reporting questions justify them; define retention and learner disclosure first.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.

@@ -58,7 +58,9 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.hasPendingAudio = false;
     this.videoPositionSeconds = null;
     this.videoPaused = false;
+    this.videoBehavior = {};
     this.injectedVideoPositionSeconds = null;
+    this.injectedVideoBehavior = '';
   }
 
   connect() {
@@ -148,7 +150,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     }
   }
 
-  setVideoPosition({ seconds, paused = false } = {}) {
+  setVideoPosition({ seconds, paused = false, behavior = {} } = {}) {
     const value = Number(seconds);
     if (!Number.isFinite(value) || value < 0) {
       return false;
@@ -156,6 +158,13 @@ export class OpenAiRealtimeBridge extends EventEmitter {
 
     this.videoPositionSeconds = value;
     this.videoPaused = Boolean(paused);
+    this.videoBehavior = {
+      rewindCount: Math.max(0, Math.min(20, Math.floor(Number(behavior?.rewindCount) || 0))),
+      largestBackwardSeekSeconds: Math.max(0, Math.min(3600, Math.floor(Number(behavior?.largestBackwardSeekSeconds) || 0))),
+      forwardSkipCount: Math.max(0, Math.min(20, Math.floor(Number(behavior?.forwardSkipCount) || 0))),
+      pauseDurationSeconds: Math.max(0, Math.min(3600, Math.floor(Number(behavior?.pauseDurationSeconds) || 0))),
+      transcriptReading: behavior?.transcriptReading === true,
+    };
     return true;
   }
 
@@ -167,18 +176,22 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     }
 
     const previous = this.injectedVideoPositionSeconds;
+    const behaviorSignature = JSON.stringify(this.videoBehavior);
     if (
       previous !== null
       && Math.abs(this.videoPositionSeconds - previous) < VIDEO_POSITION_MIN_DELTA_SECONDS
+      && behaviorSignature === this.injectedVideoBehavior
     ) {
       return false;
     }
 
     const sent = this.sendOpenAi(buildVideoPositionItem(this.videoPositionSeconds, {
       paused: this.videoPaused,
+      behavior: this.videoBehavior,
     }));
     if (sent) {
       this.injectedVideoPositionSeconds = this.videoPositionSeconds;
+      this.injectedVideoBehavior = behaviorSignature;
     }
     return sent;
   }

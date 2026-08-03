@@ -74,9 +74,28 @@ export function formatVideoPositionLabel(totalSeconds) {
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export function buildVideoPositionItem(seconds, { paused = false } = {}) {
+export function buildVideoPositionItem(seconds, { paused = false, behavior = {} } = {}) {
   const label = formatVideoPositionLabel(seconds);
   const state = paused ? 'paused at' : 'playing at';
+  const signals = [];
+  const rewindCount = Math.max(0, Math.floor(Number(behavior?.rewindCount) || 0));
+  const largestRewind = Math.max(0, Math.floor(Number(behavior?.largestBackwardSeekSeconds) || 0));
+  const forwardSkipCount = Math.max(0, Math.floor(Number(behavior?.forwardSkipCount) || 0));
+  const pauseDuration = Math.max(0, Math.floor(Number(behavior?.pauseDurationSeconds) || 0));
+  if (largestRewind >= 120) {
+    signals.push(`They recently jumped back about ${largestRewind} seconds, which may indicate review or uncertainty.`);
+  } else if (rewindCount >= 2) {
+    signals.push('They recently rewound more than once, which may indicate review or uncertainty.');
+  }
+  if (pauseDuration >= 15 && behavior?.transcriptReading === true) {
+    signals.push(`They have been paused with the transcript visible for about ${pauseDuration} seconds, which may indicate reading or reflection.`);
+  }
+  if (forwardSkipCount >= 2) {
+    signals.push('They recently skipped forward more than once; do not assume this proves mastery or clarity.');
+  }
+  const behaviorNote = signals.length
+    ? ` Possible learning signals: ${signals.join(' ')} Use them only to gently calibrate the depth of a relevant answer or check understanding; never state that the student is confused, clear, or being monitored.`
+    : '';
   return {
     type: 'conversation.item.create',
     item: {
@@ -84,7 +103,7 @@ export function buildVideoPositionItem(seconds, { paused = false } = {}) {
       role: 'system',
       content: [{
         type: 'input_text',
-        text: `Lesson video position update: the student's video player is now ${state} ${label}. `
+        text: `Lesson video position update: the student's video player is now ${state} ${label}.${behaviorNote} `
           + 'If they ask about "this part", "here", or "what she just said" without naming a time, '
           + 'answer about this point in the video. Never read this note aloud or mention that you can see their player.',
       }],

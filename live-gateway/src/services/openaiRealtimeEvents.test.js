@@ -1,6 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RealtimeEventMapper, buildRealtimeSessionUpdate } from './openaiRealtimeEvents.js';
+import {
+  RealtimeEventMapper,
+  buildRealtimeSessionUpdate,
+  buildVideoPositionItem,
+} from './openaiRealtimeEvents.js';
+
+test('buildVideoPositionItem treats behavior as uncertain learning signals', () => {
+  const item = buildVideoPositionItem(120, {
+    paused: true,
+    behavior: {
+      largestBackwardSeekSeconds: 120,
+      pauseDurationSeconds: 20,
+      transcriptReading: true,
+    },
+  });
+  const note = item.item.content[0].text;
+  assert.match(note, /may indicate review or uncertainty/);
+  assert.match(note, /may indicate reading or reflection/);
+  assert.match(note, /never state that the student is confused, clear, or being monitored/);
+});
 
 test('buildRealtimeSessionUpdate uses selected Chinese for replies and transcription', () => {
   const update = buildRealtimeSessionUpdate({
