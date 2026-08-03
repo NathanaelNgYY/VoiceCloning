@@ -1,9 +1,91 @@
 import { WebSocket, WebSocketServer } from 'ws';
-import { CORS_ORIGIN } from '../config.js';
+import {
+  CORS_ORIGIN,
+  ENTRA_ALLOWED_EMAIL_DOMAINS,
+  ENTRA_AUDIENCE,
+  ENTRA_TENANT_ID,
+  LIVE_AUTH_ENABLED,
+  LIVE_AUTH_LOADTEST_SECRET,
+  TRANSCRIPT_STORE_SYNTHETIC,
+  TRANSCRIPT_TABLE_NAME,
+  TRANSCRIPT_TABLE_REGION,
+  TRANSCRIPT_TTL_DAYS,
+} from '../config.js';
+import { createDynamoPutItem } from '../services/dynamoTranscriptClient.js';
+import { createEntraVerifier } from '../services/entraToken.js';
+import {
+  AUTH_TIMEOUT_MS,
+  closeCodeForError,
+  createLiveChatAuthenticator,
+  parseAuthFrame,
+} from '../services/liveChatAuth.js';
 import { OpenAiRealtimeBridge } from '../services/openaiRealtimeBridge.js';
 import { normalizeRealtimeLanguage } from '../services/openaiRealtimeEvents.js';
+import { createTranscriptStore } from '../services/transcriptStore.js';
 
 export const LIVE_CHAT_PATH = '/api/live/chat/realtime';
+
+// A client that opens the socket and floods it during verification must not be
+// able to grow this buffer unbounded.
+const MAX_PENDING_MESSAGES = 8;
+
+export function buildConfiguredAuthenticator() {
+  if (!LIVE_AUTH_ENABLED) {
+    return null;
+  }
+
+  // Fail at startup rather than accepting every caller: a gateway that thinks
+  // auth is on but has no tenant configured is the worst of both worlds.
+  if (!ENTRA_TENANT_ID || !ENTRA_AUDIENCE) {
+    throw new Error(
+      'LIVE_AUTH_ENABLED requires ENTRA_TENANT_ID and ENTRA_AUDIENCE to be set.',
+    );
+  }
+
+  return createLiveChatAuthenticator({
+    verifier: createEntraVerifier({
+      tenantId: ENTRA_TENANT_ID,
+      audience: ENTRA_AUDIENCE,
+      allowedEmailDomains: ENTRA_ALLOWED_EMAIL_DOMAINS,
+    }),
+    loadTestSecret: LIVE_AUTH_LOADTEST_SECRET,
+  });
+}
+
+export function buildConfiguredTranscriptStore() {
+  if (!TRANSCRIPT_TABLE_NAME) {
+    return null;
+  }
+
+  return createTranscriptStore({
+    putItem: createDynamoPutItem({
+      tableName: TRANSCRIPT_TABLE_NAME,
+      region: TRANSCRIPT_TABLE_REGION,
+    }),
+    ttlDays: TRANSCRIPT_TTL_DAYS,
+    storeSynthetic: TRANSCRIPT_STORE_SYNTHETIC,
+  });
+}
+
+// Maps the bridge's app-events to transcript turns. Anything not listed here —
+// deltas, status events, errors — is not a completed turn and is not stored.
+export function turnFromAppEvent(payload) {
+  if (payload?.type === 'user.text.done') {
+    return { role: 'user', text: payload.text };
+  }
+
+  if (payload?.type === 'assistant.text.done') {
+    return { role: 'assistant', text: payload.text };
+  }
+
+  // Barge-in: the student heard this much before interrupting, so it belongs in
+  // the transcript, flagged rather than silently recorded as a full reply.
+  if (payload?.type === 'assistant.text.cancelled') {
+    return { role: 'assistant', text: payload.text, cancelled: true };
+  }
+
+  return null;
+}
 
 export function parseRequestUrl(req) {
   const host = req.headers.host || 'localhost';
@@ -138,7 +220,15 @@ export function applyLiveChatInitToBridge(bridge, init) {
   }
 }
 
-export function attachLiveChatSocket(server) {
+export function attachLiveChatSocket(server, options = {}) {
+  const {
+    authenticator = buildConfiguredAuthenticator(),
+    transcriptStore = buildConfiguredTranscriptStore(),
+    // Seams for tests: a stub bridge avoids dialling OpenAI, and a short timeout
+    // keeps the unauthenticated-socket test fast.
+    createBridge = (bridgeOptions) => new OpenAiRealtimeBridge(bridgeOptions),
+    authTimeoutMs = AUTH_TIMEOUT_MS,
+  } = options;
   const wss = new WebSocketServer({ noServer: true });
   const activeClients = new Map();
 
@@ -171,11 +261,17 @@ export function attachLiveChatSocket(server) {
   wss.on('connection', (browserSocket, req) => {
     const url = parseRequestUrl(req);
     const language = getLiveChatLanguage(url);
-    const bridge = new OpenAiRealtimeBridge({ language });
+    const bridge = createBridge({ language });
     activeClients.set(browserSocket, bridge);
 
+    let transcriptSession = null;
     bridge.on('app-event', (payload) => {
       sendBrowser(browserSocket, payload);
+
+      if (transcriptSession) {
+        const turn = turnFromAppEvent(payload);
+        if (turn) transcriptSession.recordTurn(turn);
+      }
     });
 
     bridge.on('close', () => {
@@ -186,6 +282,9 @@ export function attachLiveChatSocket(server) {
     });
 
     let connected = false;
+    let closed = false;
+    let initTimer = null;
+    let authTimer = null;
     const ensureConnected = () => {
       if (connected) return;
       connected = true;
@@ -197,10 +296,18 @@ export function attachLiveChatSocket(server) {
     // client, which waits for session.ready before sending anything) connect
     // promptly; still leaves margin for a chatbot client's session.init,
     // which is sent the instant the socket opens.
-    const initTimer = setTimeout(ensureConnected, 200);
+    const startInitWindow = () => {
+      initTimer = setTimeout(ensureConnected, 200);
+    };
 
-    browserSocket.on('message', (data) => {
+    const handleSessionMessage = (data) => {
       if (!connected) {
+        // A newer client sends session.auth even when this gateway has auth
+        // disabled. Ignore it rather than treating it as the first real message:
+        // that would connect early and drop the session.init behind it, losing
+        // the system prompt whenever client and gateway deploy out of step.
+        if (parseAuthFrame(data)) return;
+
         const init = parseLiveChatInit(data);
         if (init) {
           applyLiveChatInitToBridge(bridge, init);
@@ -211,11 +318,90 @@ export function attachLiveChatSocket(server) {
         ensureConnected();
       }
       handleBrowserMessage(bridge, data);
+    };
+
+    // With no authenticator configured the socket behaves exactly as before.
+    let authenticated = !authenticator;
+    let authInFlight = false;
+    const pendingMessages = [];
+
+    const failAuth = (error) => {
+      clearTimeout(authTimer);
+      pendingMessages.length = 0;
+      sendBrowser(browserSocket, {
+        type: 'session.auth.failed',
+        code: error?.code || 'unauthorized',
+        message: error?.message || 'Authentication failed.',
+      });
+      browserSocket.close(closeCodeForError(error), 'Authentication failed');
+    };
+
+    const runAuth = async (data) => {
+      authInFlight = true;
+      let identity;
+      try {
+        identity = await authenticator.authenticate(parseAuthFrame(data));
+      } catch (error) {
+        authInFlight = false;
+        failAuth(error);
+        return;
+      }
+
+      authInFlight = false;
+      if (closed) return; // Socket went away mid-verification; do not spin up a bridge.
+
+      authenticated = true;
+      clearTimeout(authTimer);
+      // Bound to the socket for its lifetime — every transcript turn written
+      // from this connection is attributed to this identity and no other.
+      bridge.identity = identity;
+      // Storage must never take down a conversation, so a store that refuses to
+      // open leaves the session unrecorded rather than failing the connection.
+      try {
+        transcriptSession = transcriptStore?.openSession(identity) || null;
+      } catch (error) {
+        console.error('[transcript] could not open session', error?.message);
+      }
+      sendBrowser(browserSocket, {
+        type: 'session.authenticated',
+        synthetic: identity.synthetic,
+      });
+      startInitWindow();
+
+      for (const queued of pendingMessages.splice(0)) {
+        handleSessionMessage(queued);
+      }
+    };
+
+    if (authenticated) {
+      startInitWindow();
+    } else {
+      // No bridge is created upstream until this resolves, so an unauthenticated
+      // socket costs us nothing but the connection itself.
+      authTimer = setTimeout(() => {
+        failAuth({ code: 'timeout', message: 'Authentication timed out.' });
+      }, authTimeoutMs);
+    }
+
+    browserSocket.on('message', (data) => {
+      if (!authenticated) {
+        if (authInFlight) {
+          // Clients that send session.init immediately after session.auth must
+          // not lose it, but the queue stays bounded against a flood.
+          if (pendingMessages.length < MAX_PENDING_MESSAGES) pendingMessages.push(data);
+          return;
+        }
+        void runAuth(data);
+        return;
+      }
+      handleSessionMessage(data);
     });
 
     const closeBridge = () => {
+      closed = true;
       activeClients.delete(browserSocket);
       clearTimeout(initTimer);
+      clearTimeout(authTimer);
       bridge.close();
     };
 
