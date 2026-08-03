@@ -1,9 +1,7 @@
 # Active TODO
 
-- [ ] Restore GitHub authentication and push local/dev-host
-  `separate-containers-new` commit `070a99a`; origin remains at `14afe68`.
-- [ ] After the user confirms the interpretation, create the 2026-08-04 staging
-  event prewarm/scale-down actions (proposed: 13:30 SGT to 50, 16:00 SGT to 1).
+- [ ] Install/authenticate GitHub CLI, then push all local
+  `separate-containers-new` commits; origin remains at `14afe68`.
 - [ ] Repair the worker test suites: the compact-formula inference test leaves a
   nested subtest unfinished, and the email mock fails without configured mail env.
 
@@ -21,10 +19,9 @@
   second arrival ramp, reporting p50/p95/max, retries, pending demand, errors, and
   GPU-hours. Separately trace the two requests that spent 9.50-16.55 seconds outside
   Lambda.
-- [ ] Before the 2026-08-03 event, verify LT v20/default, the paired 08:30/17:00
-  actions, occupancy alarm/actions, and gateway health. The 08:30 action begins GPU
-  launch; it is not an admission-ready timestamp. If users enter at 08:30, move the
-  prewarm earlier and read it back from AWS. Run
+- [ ] Before the 2026-08-04 event, re-read LT v20/default, the verified 13:30/16:00
+  actions, occupancy alarms/actions, and gateway health. The 13:30 action begins GPU
+  launch; it is not an admission-ready timestamp. Run
   `ensure-staging-live-gateway.ps1 -Apply`, then
   `wait-staging-event-ready.ps1 -ExpectedCapacity 50` before users enter. The final
   browser-equivalent keepalive runs completed 100/100 and 150/150 on both 50 and

@@ -2,6 +2,9 @@
 
 ## 2026-08-03
 
+- Created and read back staging event actions for 2026-08-04: min/desired 50 at
+  13:30 SGT and min/desired 1 at 16:00 SGT. Existing 07:00/19:00 recurrence and
+  exact-capacity five / change-capacity +10 reactive policies remain enabled.
 - Fast-forwarded dev application source to the staging implementation and deployed
   commit `070a99a` to the fixed dev GPU, Lambda, and all three dev frontends.
 - Made dev CloudFront behavior configs equal to staging after substituting dev-only

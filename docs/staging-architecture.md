@@ -800,8 +800,9 @@ an inference Python process holding about 952 MiB GPU memory. Removing legacy
 inference reduces contention risk for training/gateway, but the optimized chatbot TTS
 route uses the ASG and therefore does not directly become faster.
 
-Current live actions now set min/desired 50 at 08:30 SGT on 2026-08-03 and restore
-min/desired 1 at 17:00. After testing the ASG was returned to min/desired 1, the 70%
+Current live event actions set min/desired 50 at 13:30 SGT on 2026-08-04 and restore
+min/desired 1 at 16:00. The existing 07:00/19:00 recurring baseline actions remain;
+the 70%
 occupancy alarm was enabled/OK, the rejection alarm was telemetry-only, and
 `vcs-staging-tg-3002` remained healthy.
 
@@ -1387,8 +1388,8 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
    `/models*`, `/ref-audio*`, and `/inference*` to the optimized target. Occupancy
    scale-out is tiered: below five healthy GPUs, a 70% one-minute sample sets exact
    capacity five; at five or more it adds ten. The rejection alarm is telemetry-only.
-   Paired actions launch 50 GPUs at 08:30 SGT and restore one at 17:00 SGT on
-   2026-08-03. Because launch-to-prime has taken several minutes, 08:30 must not also
+   Paired actions launch 50 GPUs at 13:30 SGT and restore one at 16:00 SGT on
+   2026-08-04. Because launch-to-prime has taken several minutes, 13:30 must not also
    be treated as the user-admission time.
 8. Validation instance `i-015de451bff24a73b` is stopped but remains registered as an
    unused target because this role is denied deregistration and termination. An

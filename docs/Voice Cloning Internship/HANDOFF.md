@@ -32,10 +32,9 @@ Last updated: 2026-08-03
   `lt-07728350a25e691a4` defaults to v20; two synthesis slots per `g6.xlarge`.
 - Optimized target group is `vcs-stg-opt-3103`. The separate live gateway is running
   and healthy in `vcs-staging-tg-3002`; do not stop it during event preparation.
-- Event actions set min/desired 50 at 08:30 SGT and return to 1 at 17:00 SGT on
-  2026-08-03. If users are meant to enter at 08:30, this prewarm time is too late:
-  observed strict readiness after launch can take about 8 minutes, and reactive
-  load-to-readiness took 11m46s.
+- Verified one-time actions set min/desired 50 at 13:30 SGT and return to 1 at
+  16:00 SGT on 2026-08-04. Do not admit users until strict readiness passes;
+  observed launch-to-readiness can take about 8 minutes.
 - `GPU_SCHEDULE_ENABLED=true` with a live 07:00-19:00 Singapore fixed-GPU window.
   Matching verified ASG actions set 1 at 07:00 and 0 at 19:00. Exact manual-state
   coupling is deployed but disabled pending Lambda-role Auto Scaling permissions.
