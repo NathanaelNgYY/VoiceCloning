@@ -2,6 +2,22 @@
 
 ## Active
 
+- 2026-08-03: the full inference-worker suite has one cancelled nested subtest in
+  the compact-chemical-formula case, and the training-worker suite has one email mock
+  failure when mail env is absent. Lambda, gateway, and client suites pass; deployed
+  worker/public health passes. Do not call the full local worker test matrix green.
+
+- 2026-07-31: the final 150-user run passed every session, but its first-turn p95 was
+  dominated by capacity backoff: 9.75 seconds retry sleep at p95 and 19.75 seconds in
+  the maximum. Two later requests separately spent 9.50-16.55 seconds outside Lambda
+  despite 1.47-2.17 second worker times. Track admission pressure and transit tails as
+  separate issues; neither is a Lambda cold-start/profile-resolution regression.
+
+- 2026-07-31: one of 150 pre-scale keepalive sessions produced no completed turn and
+  timed out after 720 seconds; the other 149 completed all three turns and all
+  post-scale 150 sessions completed. Keepalive prevents idle 1006 collapse but does
+  not guarantee a stalled OpenAI/gateway turn will complete. Preserve timeout/error
+  instrumentation and reproduce under a soak before calling this resolved.
 - 2026-07-31: ALB target health precedes strict public-prime completion. During
   reactive 50->60, all targets were healthy at 07:09:27 but public-prime logs
   completed through 07:11:30. Public requests from a node can also route to another
@@ -23,6 +39,17 @@
 
 ## Recently Fixed
 
+- 2026-07-31: fixed the 4.618-second first Live lazy import by eagerly loading Live at
+  512 MB. GI now sends the pinned GPT/SoVITS snapshot, reducing its synthesis-time
+  profile resolution to 0 ms p50. ID-only callers still resolve normally, and regular
+  Live Fast/Full retains its existing selected-model snapshot behavior. GPU-free first
+  invocation is 15.71 ms; 100/150 three-turn reruns passed.
+
+- 2026-07-31: the 15-minute quiet alarm used missing-data-as-breaching, so it entered
+  ALARM without a numeric datapoint and Step Scaling never applied `-1`; five GPUs
+  remained running for almost an hour. The alarm now evaluates
+  `FILL(TargetControlRequestCount,0) < 1`. A controlled desired-3 run proved 3->2
+  and 2->1 while retaining the min-1 floor.
 - 2026-07-31: Live Fast phrase replies always waited for `assistant.text.done` before
   starting TTS. Staging now begins after the first confirmed complete streamed
   sentence for multi-sentence replies. A deployed browser completed cloned playback,

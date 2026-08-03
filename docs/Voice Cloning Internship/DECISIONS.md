@@ -28,6 +28,12 @@
 
 - OpenAI Realtime is used for text conversation/transcription behavior.
 - GPT-SoVITS is the only audible assistant voice in Live Fast.
+- The staging Lambda eagerly initializes the Live handler at 512 MB. GI freezes the
+  active profile's GPT/SoVITS refs into each conversation so synthesis does not reread
+  S3 per clip. This is payload-driven rather than a global resolver bypass: regular
+  Live Fast/Full already supplies its selected-model snapshot, while ID-only direct
+  inference/TTS callers continue through saved-profile resolution. Provisioned
+  concurrency/versioned aliases remain optional future work.
 - Live Fast playback is phrase-based, so punctuation quality in assistant text is operationally important.
 - In staging Live Fast phrase mode, a multi-sentence reply may begin TTS after a
   conservative streamed boundary: the first sentence is complete and following
@@ -54,6 +60,16 @@
   telemetry-only. A true roughly 30-second reaction requires a custom fleet-wide
   high-resolution metric; changing the existing alarm period alone is insufficient.
   Idle scale-in removes one instance after fifteen no-traffic minutes.
+- Treat capacity admission and network transit as separate latency domains. The final
+  150-user first-turn p95 was dominated by retry backoff, while two later maxima were
+  mostly outside Lambda. Scale on high-resolution capacity pressure; use client and
+  edge timing to investigate transit. Provisioned concurrency addresses neither.
+- The next scaling experiment publishes occupied slots, total slots, no-capacity
+  responses, and pending admissions every 10 seconds. No-capacity/pending demand must
+  participate in scale-out rather than relying only on averaged occupancy. Compare
+  short jittered retries with a centralized fair queue. A known simultaneous 150-user
+  event must prewarm additional capacity and be tested both as an immediate burst and
+  with arrivals spread across 30-60 seconds.
 - Retry priority is intentionally local, not global. ALB/Target Optimizer chooses a
   target without knowing retry priority. Once an admitted request reaches a worker,
   `X-VCS-Capacity-Retry` places it ahead of normal local queued work while preserving

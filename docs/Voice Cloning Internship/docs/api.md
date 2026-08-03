@@ -56,8 +56,13 @@ Notes:
 - `GET /api/inference/current`
 - `GET /api/inference/status`
 - `POST /api/live/tts-sentence`
+  - A request with reference audio plus complete `voice_model.gptRef` and
+    `voice_model.sovitsRef` uses that immutable snapshot without rereading the saved
+    profile. A request that provides only `voiceProfileId`, or lacks a complete
+    snapshot, still resolves the saved profile normally.
   - Staging timing response headers: `X-VCS-Profile-Resolve-Ms`,
-    `X-VCS-Worker-Round-Trip-Ms`, and `X-VCS-Lambda-Total-Ms`.
+    `X-VCS-Worker-Round-Trip-Ms`, `X-VCS-Lambda-Total-Ms`,
+    `X-VCS-Capacity-Retry-Count`, and `X-VCS-Capacity-Retry-Sleep-Ms`.
   - `X-VCS-GPU-Queue-Wait-Ms` is optional; it was not observed through the current
     public Target Optimizer path, so consumers must preserve a missing value as null.
 

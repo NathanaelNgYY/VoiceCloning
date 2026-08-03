@@ -1,5 +1,26 @@
 # Active TODO
 
+- [ ] Restore GitHub authentication and push local/dev-host
+  `separate-containers-new` commit `070a99a`; origin remains at `14afe68`.
+- [ ] After the user confirms the interpretation, create the 2026-08-04 staging
+  event prewarm/scale-down actions (proposed: 13:30 SGT to 50, 16:00 SGT to 1).
+- [ ] Repair the worker test suites: the compact-formula inference test leaves a
+  nested subtest unfinished, and the email mock fails without configured mail env.
+
+- [ ] Future: evaluate a versioned alias plus scheduled provisioned concurrency only
+  if eager 512 MB initialization is still insufficient. Current reruns passed 100/100
+  and 150/150. It will not fix GPU admission retries or network/transit outliers.
+- [ ] Reduce 150-user first-audio tails. First-turn p95 included 9.75 seconds of
+  capacity-retry sleep, while the maximum slept 19.75 seconds across 12 retries.
+  Publish occupied/total slots, no-capacity responses, and pending admissions every
+  10 seconds; scale on capacity pressure rather than only minute-averaged occupancy.
+  Compare shorter jittered retries with a centralized fair queue, requiring bounded
+  FIFO waiting and no retry storm/starvation. For a known 150-user simultaneous event,
+  prewarm more than the current 50-GPU rehearsal floor and do not depend on reactive
+  launch. Test the same three-turn workload as both an immediate burst and a 30-60
+  second arrival ramp, reporting p50/p95/max, retries, pending demand, errors, and
+  GPU-hours. Separately trace the two requests that spent 9.50-16.55 seconds outside
+  Lambda.
 - [ ] Before the 2026-08-03 event, verify LT v20/default, the paired 08:30/17:00
   actions, occupancy alarm/actions, and gateway health. The 08:30 action begins GPU
   launch; it is not an admission-ready timestamp. If users enter at 08:30, move the
@@ -13,12 +34,18 @@
   timeout with `scripts/set-staging-alb-idle-timeout.ps1 -Apply`; this role is denied
   `elasticloadbalancing:ModifyLoadBalancerAttributes`. Keep the 15-second client/
   harness keepalive regardless.
-- [ ] Verify the 07:00 and 23:00 SGT scheduled boundary transitions. CloudWatch proves
-  one Lambda invocation every five minutes, but this role cannot inspect the invoker
-  resource, so its exact ownership/configuration remains unknown.
+- [ ] Verify the fixed GPU's 07:00 and 19:00 SGT boundary transitions. Matching ASG
+  recurring actions were read back, but the fixed GPU's invoker remains uninspectable.
+- [ ] Ask an administrator to grant the staging Lambda execution role
+  `autoscaling:DescribeAutoScalingGroups` and `autoscaling:UpdateAutoScalingGroup`
+  scoped to `vcs-staging-gpu-inference`, then apply
+  `scripts/set-staging-lifecycle-coupling.ps1 -Apply` for manual stop/termination coupling.
+- [ ] Rotate the internal voice-profile authentication value across Lambda, the fixed
+  worker, and the inference launch image; an older deploy command exposed the current
+  value in console output. The deploy script now prints deployment metadata only.
 - [ ] Ask an administrator to deregister stopped validator `i-015de451bff24a73b`
   from `vcs-stg-opt-3103` and terminate it, and terminate stopped v15 validator
-  `i-0eb2ca68edb88d6d7`; this role is denied the required actions.
+  `i-0eb2ca68edb88d6d7`; fresh 2026-08-01 attempts confirmed both permissions denied.
 - [ ] After the event, prototype durable multi-user training orchestration. Compare a
   queue-backed training ASG/AWS Batch with SageMaker Training Jobs using the same
   v2ProPlus pipeline; require per-job S3 isolation, leases/idempotency, checkpoints,

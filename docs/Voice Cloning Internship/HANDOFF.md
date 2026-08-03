@@ -1,35 +1,34 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-07-31
+Last updated: 2026-08-03
 
 ## Start Here
 
-- Work only in staging unless the user explicitly expands scope.
-- Repo/branch: `VoiceCloning` / `codex/staging-multi-user-scaling`.
-- Current pushed commits: source/deployment `fc99271`; documentation `18d82ef`.
+- Current scope includes dev parity plus a separately confirmed staging event action.
+- Repo/branch: `VoiceCloning` / `separate-containers-new`.
+- Local and dev-host application source: `070a99a`; GitHub origin remains `14afe68`
+  because both available Git credentials are invalid. Do not overwrite the host.
 - Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
   `scripts/deploy.config.json` before changing AWS or code.
 - Never print or save credentials, tokens, private URLs, or secret values.
 
-## Deployed Staging State
+## Deployed Dev State
 
-- Chatbot: `https://d25sg72wp8oj5g.cloudfront.net/`; GI bundle
-  `assets/index-DJ5lJmLS.js`, built from `fc99271`, fixed profile `deanvoice-v1`.
-- Staging Lambda code from `fc99271` was successfully deployed on 2026-07-31
-  08:38:42 UTC. It remains at 128 MB and 120-second timeout.
-- Live Fast phrase mode starts TTS once a streamed multi-sentence reply has a
-  confirmed complete first sentence and the next sentence has begun. A one-sentence
-  answer still waits for text completion. Live Full and non-phrase modes are unchanged.
-- Lambda returns profile-resolution, worker-round-trip, and total timing headers.
-  The optional GPU queue header is not preserved by the public Target Optimizer path.
-- Browser and complete-flow load harness send a WebSocket keepalive every 15 seconds.
-  ALB idle timeout remains 60 seconds because this role cannot change it.
+- Dev training/live/GI CloudFront configs match their staging counterparts after
+  substituting dev Lambda, ALB, and `echolect/` origins; all three are deployed.
+- Dev Lambda runs source `070a99a`, 512 MB, 120 seconds, and a 30-second inference
+  retry budget. `GPU_SCHEDULE_ENABLED=false` and no inference ASG name is configured.
+- Fixed GPU `VoiClo-GPU-Seoul` runs all three workers from `070a99a`; inference
+  has two synthesis slots, the 100-item/25-second queue, and boot warming enabled.
+- Dev has no ASG, scaling alarms, or ASG scheduled actions. The enabled five-minute
+  EventBridge rule invokes idle-check only; activity requests own GPU startup.
+- Public root, deep-link, config, model, GI video, and activity-start checks passed.
 
 ## Current AWS Operating State
 
 - Region/account/role: Seoul / `329599637774` /
   `Liu_Teng_Yu_Intern2026`; verify the assumed identity before every mutation.
-- ASG `vcs-staging-gpu-inference`: min 1, desired 1, max 192; launch-template
+- ASG `vcs-staging-gpu-inference`: daytime min/desired 1, off-hours 0, max 192; launch-template
   `lt-07728350a25e691a4` defaults to v20; two synthesis slots per `g6.xlarge`.
 - Optimized target group is `vcs-stg-opt-3103`. The separate live gateway is running
   and healthy in `vcs-staging-tg-3002`; do not stop it during event preparation.
@@ -37,11 +36,12 @@ Last updated: 2026-07-31
   2026-08-03. If users are meant to enter at 08:30, this prewarm time is too late:
   observed strict readiness after launch can take about 8 minutes, and reactive
   load-to-readiness took 11m46s.
-- `GPU_SCHEDULE_ENABLED=true`. Lambda was observed invoking every five minutes, but
-  this role cannot inspect the invoker and the exact 07:00/23:00 transition remains
-  unverified. Do not create a duplicate scheduler until the existing invoker is known.
-- Final audit: occupancy alarms enabled/OK; rejection alarm telemetry-only; ASG
-  returned to baseline min/desired 1.
+- `GPU_SCHEDULE_ENABLED=true` with a live 07:00-19:00 Singapore fixed-GPU window.
+  Matching verified ASG actions set 1 at 07:00 and 0 at 19:00. Exact manual-state
+  coupling is deployed but disabled pending Lambda-role Auto Scaling permissions.
+- Evening rehearsal temporarily raised the event floor to 50, strictly verified all
+  targets, triggered 50->60 from an 82% occupancy minute, and strictly verified all
+  60 targets. Cleanup restored min/desired 1; re-read live state before relying on it.
 
 ## Autoscaling and Readiness
 
@@ -50,6 +50,10 @@ Last updated: 2026-07-31
 - Below five healthy GPUs, one sample at or above 70% sets desired capacity to five.
   At five or more, one sample at or above 70% adds ten; later samples re-evaluate.
 - Scale-in removes one GPU after 15 no-traffic minutes, with floor one.
+- Fixed quiet scale-in: a missing-data alarm had no numeric value for Step Scaling.
+  The live/repo alarm now uses `FILL(requests,0)`. A desired-3 test changed 3->2 at
+  19:21:26 SGT and 2->1 at 19:32:38. After the first 15-minute window, conservative
+  `-1` removal plus drain/cooldown took about 11 minutes per additional GPU.
 - This is deliberately conservative at baseline but too slow for a sudden event burst.
   A 73% sample at 07:00 alarmed at 07:03:48; launch began 07:04:01; all targets were
   healthy at 07:09:27; all public-prime markers completed at 07:11:30.
@@ -68,6 +72,11 @@ Last updated: 2026-07-31
   only 39/50 targets passed; no three-slot user load was run.
 - With browser-equivalent keepalive, real three-turn complete-flow bursts passed:
   50 GPUs/100 users 100/100; 50/150 150/150; primed 60/100 100/100; 60/150 150/150.
+- Evening first-WAV-after-text-done repeat, with first-chunk verification enabled:
+  50/100 completed 100/100, 50/150 completed 149/150 (one 720-second no-turn
+  timeout), primed 60/150 completed 150/150, and 60/100 completed 100/100.
+  Aggregate average/p50/p95 was 3.44/2.22/9.81, 4.06/3.14/10.47,
+  5.18/2.65/11.82, and 2.42/2.02/4.19 seconds respectively.
 - Turn-one first-audio p50/p95: 50/100 12.72/13.98 s; 50/150 7.15/14.61 s;
   60/100 13.33/22.40 s; 60/150 7.61/14.20 s. OpenAI answer length was uncontrolled,
   so these runs prove completion/reliability, not a clean fleet-size latency comparison.
@@ -75,8 +84,11 @@ Last updated: 2026-07-31
   3.26/2.96 s on warm turns. One scripted backend control measured text done 2.06 s,
   first TTS chunk 3.40 s, and speech-to-first-audio 5.46 s. These are functional
   checks, not population p50/p95 evidence.
-- Relevant checks passed: 79 conversation-helper tests, full Lambda suite, 55
-  live-gateway tests, GI build, public RIFF/timing smokes, and a real browser flow.
+- Fixed cold Live route cost: the router eagerly loads Live at 512 MB and GI pins the
+  full model snapshot. ID-only/direct callers still resolve saved profiles; regular
+  Live Fast/Full already pins its selected model. No-GPU first invocation fell
+  4.618 s -> 15.71 ms. Full reruns passed 100/100 and 150/150 three-turn users.
+- Relevant checks passed: client, Lambda, gateway, build, public RIFF, and browser flow.
 - One passing burst is not production proof. The 60-minute soak and target-loss/
   draining rehearsal remain undone.
 
@@ -95,15 +107,12 @@ Last updated: 2026-07-31
 
 ## Next Session Priorities and Blockers
 
-- Run a controlled early-sentence A/B with comparable multi-sentence replies and
-  record OpenAI first text/text done, TTS start, first audio, backend timing, p50/p95.
-  The current Node harness waits for full text, so adapt it or instrument the browser.
+- Keep alias/provisioned concurrency as a future option only. The next latency targets
+  are 150-user admission retries and rare outside-Lambda transit outliers.
 - For faster reactive scaling, build a real fleet-wide high-resolution occupancy
   publisher every 10 seconds and test three consecutive samples. Merely changing the
   current alarm period does not create 10-second source data.
 - Do not enable three slots, FSR, a longer CloudFront timeout, or Lambda memory changes
   without a controlled benchmark. Current evidence does not justify them as baseline.
-- Admin work: optional ALB idle timeout to 300 seconds; deregister/terminate the two
-  stopped validator instances listed in `TODO.md`; consider a second private subnet/AZ.
-- Preserve previous results. Append new runs to repo `docs/staging-architecture.md`
-  and mirror any allowed project-memory change in both vault locations.
+- Admin work: grant scoped Lambda ASG permissions; deregister/terminate the two stopped
+  validators listed in `TODO.md`; consider a second private subnet/AZ.

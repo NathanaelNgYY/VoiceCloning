@@ -158,8 +158,8 @@
   - Requires capacity, target health, and fresh per-target public-prime evidence.
 - `scripts/warm-staging-deanvoice.sh`
   - Loads the pinned model/references and validates the real TTS route before optimizer startup.
-- `scripts/provision-staging-autoscaling.ps1` / `scripts/staging-autoscaling.config.json`
-  - Staging target group, launch template, ASG, scaling, listener, and prewarm provisioning.
+- `scripts/provision-staging-autoscaling.ps1` / `scripts/set-staging-asg-daily-schedule.ps1` / `scripts/staging-autoscaling.config.json`
+  - Staging ASG provisioning plus its recurring 07:00 start and 19:00 scale-to-zero schedule.
 - `docs/staging-architecture.md`
   - Authoritative live staging/dev resource map, rollout state, tests, and permissions.
 

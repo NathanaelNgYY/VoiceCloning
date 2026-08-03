@@ -1,7 +1,77 @@
 # Changelog
 
+## 2026-08-03
+
+- Fast-forwarded dev application source to the staging implementation and deployed
+  commit `070a99a` to the fixed dev GPU, Lambda, and all three dev frontends.
+- Made dev CloudFront behavior configs equal to staging after substituting dev-only
+  Lambda, ALB, and S3 origins. Kept the extra staging chatbot-text distribution absent.
+- Kept dev fixed-instance only: schedule mode false, no ASG coupling, no dev ASG or
+  scheduled capacity actions. Added the tested two-slot inference queue settings.
+- Enabled dev inference boot warming after the stricter readiness check exposed a
+  post-restart ALB deadlock; local health and the ALB target both returned healthy.
+- Verification: Lambda 105/105, gateway 55/55, client 296/296, three client builds,
+  normalized CloudFront parity, public HTTP/API/video/activity checks, and service
+  health. Full inference and training-worker suites still each have one test issue.
+
+## 2026-08-01
+
+- Deployed fixed-GPU/inference-ASG lifecycle coupling code and added safe deployment
+  helpers. Lambda tests passed 105/105 and packaging passed. Exact state coupling was
+  rolled back after the Lambda role lacked Auto Scaling permissions.
+- Created and verified recurring inference-ASG actions: 07:00 Singapore restores
+  min/desired 1 and 19:00 sets min/desired 0. Immediately scaled the ASG to zero because
+  the fixed GPU was already stopped; retained the August 3 08:30/17:00 event actions.
+- Verified the two named validation GPUs are stopped standalone instances. Attempts to
+  deregister/terminate them were denied, so no validator was deleted.
+- Restricted Lambda deployment output to function name, timestamp, and code hash after
+  the prior AWS CLI response exposed environment values; recorded coordinated internal
+  authentication-value rotation as required follow-up.
+
 ## 2026-07-31
 
+- Recorded the next capacity plan: publish occupied/total/no-capacity/pending metrics
+  every 10 seconds, include admission pressure in scale-out, compare short jittered
+  retries with a fair central queue, prewarm additional capacity for a known 150-user
+  simultaneous event, and test both an immediate burst and a 30-60 second ramp.
+
+- Clarified voice-resolution scope: GI now adds a pinned model snapshot, regular Live
+  Fast/Full already pins its selected model, and ID-only direct callers still resolve
+  saved profiles. The optimization does not globally disable S3 profile resolution.
+- Decomposed the final 150-user tail. First-turn p95 had 9.75 seconds of capacity-retry
+  sleep; the 22.35-second maximum slept 19.75 seconds across 12 retries. Two later
+  outliers instead spent 9.50-16.55 seconds outside Lambda with warm workers. Recorded
+  capacity admission and transit investigation as separate follow-up work.
+
+- Deployed eager Live Lambda initialization at 512 MB and made the GI client freeze/
+  send the full GPT/SoVITS voice snapshot. Any router warmup now prepares Live; no
+  provisioned concurrency was added. Updated deployment configuration and load tests.
+- Deployed GI bundle `index-DENtXOAd.js`. Browser render had no console errors. The
+  GPU-free first invocation fell from 4.618 s to 15.71 ms; real profile resolution
+  became 0 ms. Strict-ready 50-GPU reruns passed 100/100 and 150/150 three-turn users.
+- Tests: 102 Lambda tests, 85 client tests, GI build, direct cold/warm probe, browser
+  bundle/render check, pinned real-flow smoke, 50/50 readiness, and full 100/150 load.
+- Deployed request-level Live TTS diagnostics: Lambda cold/environment/request IDs,
+  capacity retry count/sleep, preserved queue timing where available, and load-harness
+  request-to-headers/body-transfer splits. The router now forwards AWS context.
+- Isolated first-hit latency with CloudWatch and GPU-free probes. The lazy Live route
+  import consumed 4.618 s cold versus 1.95 ms warm at 128 MB; AWS Init Duration was
+  only 128.57 ms. A reversible 512 MB A/B reduced it to 1.071 s, then restored 128 MB.
+- Tests: full 101-test Lambda suite, harness syntax/diff checks, cold/warm CloudFront
+  and direct real-flow TTS, exact request/REPORT correlation, and invalid-body no-GPU
+  cold/warm plus memory A/B probes.
+- Fixed and live-applied quiet inference scale-in by feeding Step Scaling explicit
+  zero request datapoints through CloudWatch metric math. A desired-3 proof reached
+  desired 1 after the 15-minute quiet window and two conservative `-1` actions.
+- Repeated the real three-turn event flow with first-chunk verification enabled and
+  recorded text-done-to-first-WAV latency. Completion was 100/100 at 50 GPUs,
+  149/150 at 50 GPUs, 150/150 after strict 60-GPU readiness, and 100/100 at 60 GPUs.
+  The pre-scale 150 wave sampled 82%, triggered 50->60, and the added fleet passed
+  strict health/service/cloud-init/public-prime proof; no second +10 occurred.
+- Tests: full 100-test Lambda suite, full 55-test live-gateway suite, PowerShell
+  parser, four public complete-flow waves, 50/50 and 60/60 strict readiness, live
+  scale-out, live quiet scale-in, and a final HTTP 200 RIFF smoke in 6.28 seconds.
+  Raw reports remain ignored under `.tmp/`.
 - Reconciled the next-session handoff, decisions, API notes, project map, event TODO,
   and deployment runbook with the deployed `fc99271` bundle and current tiered
   occupancy policy; removed stale branch, bundle, baseline-ID, and rejection-policy

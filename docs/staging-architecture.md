@@ -203,6 +203,15 @@ rebuild it, or you take down other projects' distributions.
 | `staging` | staging (training + live-fast) | fast-forward from `separate-containers-new` when promoting |
 | `codex/staging-multi-user-scaling` | staging (chatbot and current scaling work) | configured `chatbotBranch`; verify `scripts/deploy.config.json` before deployment |
 
+Dev parity rollout (2026-08-03): `separate-containers-new` and the fixed
+`VoiClo-GPU-Seoul` host are at `070a99a`. The three dev distributions now
+match their staging templates after substituting the dev Lambda, ALB, and
+`echolect/` origins. Dev Lambda is 512 MB with schedule mode false and no ASG
+name. Dev has no ASG or scheduled capacity actions; the five-minute
+`VoiClo-gpu-idle-stop` rule performs idle checks, while user activity starts
+the fixed instance. `WARM_ON_BOOT=true` keeps inference ALB-ready after service
+restarts. GitHub origin is still `14afe68` pending credential repair.
+
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; staging worker access = **SSM**, dev = SSH). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
 ## 9. Access / operations

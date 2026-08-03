@@ -12,6 +12,27 @@ The repo docs describe a split cloud deployment:
   - `live-gateway` on `3002`
   - `gpu-inference-worker` on `3003`
 
+## Live TTS cold-path state (2026-07-31)
+
+- Staging Lambda is 512 MB with no provisioned concurrency or alias.
+- The router eagerly imports Live, so any environment warmup prepares that module.
+- GI sends the active profile's pinned GPT/SoVITS snapshot for the conversation,
+  avoiding synthesis-time S3 profile reads. Profile resolution is 0 ms p50.
+- This is not a global resolver bypass. Regular Live Fast/Full already supplies its
+  selected-model snapshot; direct callers that send only `voiceProfileId` still load
+  the saved profile normally.
+- GPU-free first invocation dropped from 4.618 s to 15.71 ms. Strict-ready 50-GPU
+  full-flow reruns passed 100/100 and 150/150; the 150-user tail is capacity retries.
+- At 150 users, first-turn p95 was 12.82 s, including 9.75 s p95 retry sleep. The
+  22.35 s maximum slept 19.75 s across 12 retries. Two later maxima were different:
+  9.50-16.55 s was outside Lambda, so retain separate transit instrumentation.
+- A versioned alias and scheduled provisioned concurrency remain future improvements.
+- The next capacity rehearsal must publish occupied/total slots, no-capacity responses,
+  and pending admissions every 10 seconds; compare shorter jittered retries with a
+  centralized fair queue; prewarm above the current rehearsal floor for a known
+  simultaneous 150-user event; and compare an immediate burst with the same workload
+  arriving over 30-60 seconds. Reactive GPU launch is not the event safety mechanism.
+
 ## Environment Map
 
 The authoritative resource-level inventory is repo `docs/staging-architecture.md`;
@@ -25,11 +46,11 @@ always read and live-verify it before AWS work.
 `d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot.
 
 As of 2026-07-31, staging chatbot serves the GI build from
-`codex/staging-multi-user-scaling` commit
-`fc99271`, bundle `assets/index-DJ5lJmLS.js`, with fixed profile `deanvoice-v1`.
+`codex/staging-multi-user-scaling`; deployed code is `b44e4d2` and the bundle is
+`assets/index-DENtXOAd.js`, with fixed profile `deanvoice-v1`.
 Staging Live Fast starts multi-sentence voice after the first confirmed completed
 streamed sentence. The staging Lambda exposes profile-resolution, worker-round-trip,
-and total timing headers; memory remains 128 MB.
+capacity-retry, cold-environment, and total timing headers; memory is 512 MB.
 The lesson video is preserved under `echolect-staging/dist-chatbot/videos/`. The three staging
 CloudFront distributions use static-behavior SPA rewrites rather than global 404-to-200
 fallbacks, so API errors preserve their real status.
@@ -173,9 +194,10 @@ than the environment's configured `chatbotBranch`.
 
    The gateway preflight starts the fixed control instance only when necessary,
    waits for it in `vcs-staging-tg-3002`, and never stops it or creates a schedule.
-   `GPU_SCHEDULE_ENABLED=true` is live. CloudWatch showed one Lambda invocation every
-   five minutes, including quiet hours, so an automatic invoker exists. This role
-   cannot inspect that scheduler resource; verify the actual 07:00/23:00 transitions.
+   `GPU_SCHEDULE_ENABLED=true` is live with 07:00-19:00 Singapore values. CloudWatch
+   showed one Lambda invocation every five minutes, but this role cannot inspect its
+   invoker. Matching inference-ASG actions run daily at 07:00 (min/desired 1) and
+   19:00 (min/desired 0); apply them with `set-staging-asg-daily-schedule.ps1 -Apply`.
    Review the dry run, then repeat with `-Apply`. Use `-SwitchListener` only when an
    intentional listener cutover is required. Environment variables do not update AWS
    until the provisioner is applied.
@@ -307,6 +329,12 @@ redundant student-entry warm-up burst.
   this role is denied both actions; its stopped EBS volume still incurs storage cost.
 - Fresh v15 validator `i-0eb2ca68edb88d6d7` is stopped and requires administrator
   termination because this role is denied `ec2:TerminateInstances`.
+- On 2026-08-01 the fixed GPU was stopped while the ASG baseline still ran. Matching
+  recurring actions were created and read back, and the ASG was immediately set to
+  min/desired 0. The Lambda code for exact manual stop/termination coupling is deployed,
+  but its setting was rolled back after the execution role was denied
+  `autoscaling:DescribeAutoScalingGroups`; an administrator must grant that plus
+  `autoscaling:UpdateAutoScalingGroup` before applying the lifecycle helper.
 - The v14 event rerun waited for all 50 two-slot gates before load. Immediate 100 users
   completed 68/100 (32 first-chunk 504s); hot 150 users completed 144/150 (six
   WebSocket 1006 closures). A real 226-rejection minute changed desired 50->60
@@ -337,6 +365,23 @@ Detailed per-turn timing definitions, the complete test ledger, warm-up ownershi
 burst interpretation, and evaluated future options with downsides are maintained in
 repo `docs/staging-architecture.md`. Keep this operational file concise enough to use
 as a runbook; do not duplicate raw per-session JSON here.
+
+## 2026-07-31 Evening Rehearsal
+
+- A temporary 50-GPU event floor passed 50/50 strict health, service, cloud-init, and
+  public-prime checks. A 150-user wave sampled 82% occupancy and changed desired
+  50->60; all 60 later passed the strict gate. Post-scale 150 and 100 waves did not
+  request another increment.
+- First-WAV latency is measured from fully completed assistant text, excluding speech
+  upload/transcription/OpenAI generation. Full results are in repo architecture docs;
+  raw JSON remains ignored in `.tmp/`.
+- Fixed live/repo quiet scale-in with `FILL(requests,0)`. A controlled desired-3 run
+  changed 3->2 after the 15-minute quiet window and later 2->1. The `-1` policy is
+  safe but removes subsequent GPUs only after drain/cooldown completes. The baseline
+  public route then returned a verified HTTP 200 RIFF in 6.28 seconds.
+- Live event actions remain August 3 at 08:30/17:00 SGT. Today strict readiness took
+  about eight minutes, so 08:30 is too late if students also enter at 08:30; confirm
+  the real start time before rescheduling.
 
 ## Repo Files Worth Checking First
 
