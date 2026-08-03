@@ -6,9 +6,9 @@ Last updated: 2026-08-03
 
 - Current scope includes dev parity plus a separately confirmed staging event action.
 - Repo/branch: `VoiceCloning` / `separate-containers-new`.
-- Dev-host application source is `070a99a`; local history also has later operations
-  docs. GitHub origin remains `14afe68` because both HTTPS credentials are invalid
-  and `gh` is absent. Fresh clones are stale; do not overwrite the deployed host.
+- Dev-host application source is `070a99a`; later local/remote commits are operations
+  documentation. GitHub `separate-containers-new` was verified synchronized through
+  `8b963eb`; re-read branch state before deployment and do not replace host code blindly.
 - Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
   `scripts/deploy.config.json` before changing AWS or code.
 - Never print or save credentials, tokens, private URLs, or secret values.

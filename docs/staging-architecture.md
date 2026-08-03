@@ -100,17 +100,31 @@ and JSON content type.
 | Prio | Path pattern(s) | Target group | Backend service |
 |---|---|---|---|
 | 1 | `/api/live/chat/realtime` | vcs-staging-tg-3002 | live gateway (WebSocket) |
-| 2 | `/inference/progress/*` | vcs-staging-tg-3003 | inference worker |
-| 3 | `/models*`, `/ref-audio*`, `/inference*` | vcs-staging-tg-3003 | inference worker |
+| 2 | `/inference/progress/*` | vcs-staging-tg-3003 | fixed progress relay; polls shared S3 events when another worker owns the session |
+| 3 | `/models*`, `/ref-audio*`, `/inference*` | vcs-stg-opt-3103 | ASG inference fleet through Target Optimizer |
 | default | everything else | vcs-staging-tg-3001 | gpu worker (training) |
 
-**Target groups** (all HTTP, health check `GET /healthz`, interval 30 s, healthy threshold 5, target = the staging instance):
+**Fixed-instance target groups** (HTTP, health check `GET /healthz`, interval 30 s,
+healthy threshold 5):
 
 | Name | Port | ARN suffix |
 |---|---|---|
 | vcs-staging-tg-3001 | 3001 | `targetgroup/vcs-staging-tg-3001/782635b79a09031d` |
 | vcs-staging-tg-3002 | 3002 | `targetgroup/vcs-staging-tg-3002/77d07064082cbead` |
 | vcs-staging-tg-3003 | 3003 | `targetgroup/vcs-staging-tg-3003/3449adfcba215f65` |
+
+`vcs-stg-opt-3103` is the separate ASG inference target group. Its data/control
+proxy listens on 3103/3004 and forwards to the local inference worker on 3003.
+
+The fixed 3003 worker intentionally does not warm its Python inference server, so
+its inference-readiness `/healthz` returns 503. Rule 2 still returns a working SSE
+stream because that route does not synthesize: it polls shared S3 session events.
+With the fixed target marked unhealthy, ALB routes to it only through fail-open when
+all targets in that group are unhealthy. This does not redirect synthesis away from
+the ASG or affect Target Optimizer scaling, but it is operationally brittle: health
+reporting is misleading and loss of the fixed relay can interrupt browser progress
+while synthesis continues. Replace this target group's readiness check with a
+relay-liveness endpoint; do not warm fixed inference merely to make the check green.
 
 ⚠️ After a **new instance** is launched (e.g. from a fresh AMI), it must be re-registered in all three TGs — registration is per-instance-ID, and stop/start of the *same* instance keeps it registered.
 
@@ -128,7 +142,8 @@ and JSON content type.
 | First-boot config | user-data = `docs/aws-snapshots/staging-userdata.sh`; log `/var/log/staging-bootstrap.log`; marker `/home/ubuntu/STAGING_BOOTSTRAP_DONE` |
 
 **Services on the box** (systemd, code at `/home/ubuntu/VoiceCloning`, branch
-`codex/staging-multi-user-scaling` at commit `1c945b9` on disk):
+`codex/staging-multi-user-scaling` at commit `c70bf7d` on disk at the 2026-08-03
+read-back):
 
 | Port | systemd unit | Role | Env file |
 |---|---|---|---|
@@ -138,6 +153,31 @@ and JSON content type.
 | 3103 / 3004 | `target-optimizer-inference` | ALB Target Optimizer data/control proxy to 3003 | reads inference `.env`; advertises `SYNTHESIS_MAX_CONCURRENCY=2` |
 
 All three expose `GET /healthz` for the ALB health checks. Direct-to-worker endpoints return 403 to plain curl (origin/internal-auth checks) — same behavior as dev; not a bug.
+
+**2026-08-03 fleet audit:** before the next idle removal, 55/55 ASG instances were
+InService and passed the repository's strict public-prime marker; 55/55 local
+inference workers returned 200 on port 3003, both worker/optimizer services were
+active, and every GPU had a Python inference process. Live scaling history showed
+50->60 from the 70% occupancy alarm and conservative idle steps down through 54,
+with the event floor preventing a drop below 50 before the scheduled reset.
+
+Speaker similarity is currently unavailable on the staging fixed host and on ASG
+AMI `ami-021aeb72894b8c79b`: `resemblyzer` is absent from the GPT-SoVITS Conda
+environment. This is **not a verified latency optimization**. Repository commit
+`cd79b03` added the similarity gate, and project history treats a missing dependency
+as a bug; dev later installed `resemblyzer 0.1.4`. Staging therefore continues with
+ASR/audio-quality validation but without reference-speaker similarity scoring, which
+can admit a take with weaker voice identity. Fix it in a canary AMI/launch-template
+version and measure latency before rollout; do not patch ephemeral ASG nodes by hand.
+
+A separate, intentional latency optimization does exist: client commit `6cd6de0`
+marks the first Live Fast/chatbot reply clip `skip_verify=true`, and backend commit
+`4e37c58` disables the entire live verification callback for that clip. It therefore
+skips ASR, phoneme, and speaker checks only for the first clip that gates
+time-to-first-audio. Later reply clips remain verified when their dependencies are
+available, and Live Full/Queue is unaffected. Launch-template v19 removed
+`skip_verify` from public-prime readiness requests only; it did not remove the live
+browser behavior or the `resemblyzer` dependency requirement.
 
 ## 5. Networking
 
@@ -218,9 +258,8 @@ match their staging templates after substituting the dev Lambda, ALB, and
 name. Dev has no ASG or scheduled capacity actions; the five-minute
 `VoiClo-gpu-idle-stop` rule performs idle checks, while user activity starts
 the fixed instance. `WARM_ON_BOOT=true` keeps inference ALB-ready after service
-restarts. The local branch contains additional documentation/operations commits,
-but GitHub origin is still `14afe68` pending credential repair. A fresh clone will
-therefore be stale even though AWS already has application commit `070a99a`.
+restarts. GitHub `separate-containers-new` was verified synchronized through
+operations/docs commit `8b963eb`; AWS dev application source remains `070a99a`.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 

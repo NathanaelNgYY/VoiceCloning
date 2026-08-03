@@ -75,14 +75,10 @@ Inspect the script parameters before use; deployment is a mutating action. Verif
 the assumed AWS account, branch, target IDs, service health, CloudFront status, and
 public routes after each deployment.
 
-## Current Git publication blocker
+## Git publication state
 
-The local `separate-containers-new` branch and deployed dev application contain work
-that is not on GitHub origin. Origin remains at `14afe68`; the local branch reports
-77 commits ahead because the installed HTTPS credentials are invalid and GitHub CLI
-is not installed/authenticated. This does not roll back AWS, but a fresh clone or an
-agent that reads only origin will receive old code.
-
-Repair publication by installing GitHub CLI, running `gh auth login`, confirming the
-authenticated repository identity, then pushing `separate-containers-new`. Do not
-replace the deployed host with origin while origin is stale.
+GitHub `separate-containers-new` was verified synchronized through operations/docs
+commit `8b963eb` on 2026-08-03. The deployed dev host intentionally remains at
+application commit `070a99a`; later commits through `8b963eb` did not change the
+application component trees. Re-read local, origin, and host revisions before any
+future deployment rather than assuming they still match this snapshot.

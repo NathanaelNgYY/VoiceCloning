@@ -1,7 +1,11 @@
 # Active TODO
 
-- [ ] Install/authenticate GitHub CLI, then push all local
-  `separate-containers-new` commits; origin remains at `14afe68`.
+- [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
+  and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
+  verify synthesis still routes only to `vcs-stg-opt-3103`.
+- [ ] Bake `resemblyzer` into a canary staging inference AMI, verify the speaker gate
+  becomes active, benchmark its latency/quality cost, then promote through a reviewed
+  launch-template version. Do not hand-patch ephemeral ASG instances.
 - [ ] Repair the worker test suites: the compact-formula inference test leaves a
   nested subtest unfinished, and the email mock fails without configured mail env.
 

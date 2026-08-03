@@ -2,6 +2,15 @@
 
 ## Active
 
+- 2026-08-03: staging fixed inference and ASG AMI `ami-021aeb72894b8c79b`
+  lack `resemblyzer`, so speaker-identity scoring degrades to ASR/audio-quality checks.
+  History shows the gate was added intentionally; no evidence supports removal as a
+  fleet-wide latency optimization. Do not confuse this with the deliberate first-live-
+  clip `skip_verify` path. Bake and benchmark the dependency in a canary AMI.
+- 2026-08-03: staging `/inference/progress/*` uses the fixed port-3003 target while
+  its inference-readiness health check is 503. S3-backed SSE currently works through
+  ALB fail-open and synthesis remains on the ASG, but health is misleading and loss
+  of the fixed relay can interrupt progress. Add a relay-liveness health check.
 - 2026-08-03: the full inference-worker suite has one cancelled nested subtest in
   the compact-chemical-formula case, and the training-worker suite has one email mock
   failure when mail env is absent. Lambda, gateway, and client suites pass; deployed

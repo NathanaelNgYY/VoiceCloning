@@ -2,6 +2,10 @@
 
 ## 2026-08-03
 
+- Recorded the 55-node inference-readiness/autoscaling audit, the fixed SSE relay's
+  fail-open health-check mismatch, and staging's missing `resemblyzer` dependency.
+  History does not support treating the missing speaker gate as a fleet-wide latency
+  decision; separately documented the intentional first-live-clip verification bypass.
 - Replaced the obsolete dev-duplication proposal with the deployed environment map,
   documented branch/IAM/runtime-role ownership, changed dev deployment access to SSM,
   and marked the unpushed GitHub-origin state as a handoff blocker.

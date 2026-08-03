@@ -35,6 +35,11 @@
   inference/TTS callers continue through saved-profile resolution. Provisioned
   concurrency/versioned aliases remain optional future work.
 - Live Fast playback is phrase-based, so punctuation quality in assistant text is operationally important.
+- The first Live Fast/chatbot reply clip deliberately sets `skip_verify=true` to
+  protect time-to-first-audio (`6cd6de0`, backend support `4e37c58`). This bypasses
+  ASR/phoneme/speaker verification for that first clip only; later clips retain live
+  verification and Live Full/Queue remains fully verified. This is distinct from a
+  missing verification dependency. Public-prime probes no longer use `skip_verify`.
 - In staging Live Fast phrase mode, a multi-sentence reply may begin TTS after a
   conservative streamed boundary: the first sentence is complete and following
   sentence text has begun. This avoids speaking unstable punctuation. Single-sentence,
