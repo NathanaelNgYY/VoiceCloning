@@ -6,6 +6,9 @@ import { useAuth } from "@/auth/useAuth";
 export function MicrosoftEntryPage({
   title,
   description,
+  // Shown under the sign-in button. Optional so only surfaces that actually
+  // store a conversation carry a data notice.
+  privacyNotice = '',
   defaultRedirectPath,
   badge,
 }) {
@@ -94,6 +97,12 @@ export function MicrosoftEntryPage({
           {visibleError ? (
             <p className="mt-4 text-sm text-red-600" role="alert">
               {visibleError}
+            </p>
+          ) : null}
+
+          {privacyNotice ? (
+            <p className="mt-8 max-w-sm text-xs leading-relaxed text-slate-400">
+              {privacyNotice}
             </p>
           ) : null}
         </div>
