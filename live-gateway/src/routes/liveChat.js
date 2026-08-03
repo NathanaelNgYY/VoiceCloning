@@ -12,7 +12,7 @@ import {
   TRANSCRIPT_TTL_DAYS,
 } from '../config.js';
 import { createDynamoPutItem } from '../services/dynamoTranscriptClient.js';
-import { createEntraVerifier } from '../services/entraToken.js';
+import { createEntraVerifier, TokenError } from '../services/entraToken.js';
 import {
   AUTH_TIMEOUT_MS,
   closeCodeForError,
@@ -34,12 +34,20 @@ export function buildConfiguredAuthenticator() {
     return null;
   }
 
-  // Fail at startup rather than accepting every caller: a gateway that thinks
-  // auth is on but has no tenant configured is the worst of both worlds.
+  // A gateway that thinks auth is on but has no tenant configured must not accept
+  // callers. It also must not crash: a dead process cannot serve /readyz, so the
+  // operator gets a restart loop instead of the reason. Refuse every connection
+  // and stay up — /readyz reports 503 and the load balancer pulls the instance.
   if (!ENTRA_TENANT_ID || !ENTRA_AUDIENCE) {
-    throw new Error(
-      'LIVE_AUTH_ENABLED requires ENTRA_TENANT_ID and ENTRA_AUDIENCE to be set.',
+    console.error(
+      '[live-chat] LIVE_AUTH_ENABLED is on but ENTRA_TENANT_ID/ENTRA_AUDIENCE are missing; '
+      + 'refusing all live-chat connections. See GET /readyz.',
     );
+    return {
+      authenticate: async () => {
+        throw new TokenError('misconfigured', 'Live chat authentication is not configured.');
+      },
+    };
   }
 
   return createLiveChatAuthenticator({

@@ -74,3 +74,42 @@ export const TRANSCRIPT_TTL_DAYS = Number.parseInt(process.env.TRANSCRIPT_TTL_DA
 // Load-test sessions are dropped by default so rehearsals do not bury real
 // transcripts under thousands of synthetic turns.
 export const TRANSCRIPT_STORE_SYNTHETIC = process.env.TRANSCRIPT_STORE_SYNTHETIC === 'true';
+
+/**
+ * Configuration problems that should keep the gateway out of a load balancer.
+ * Reports every problem rather than the first, so one restart surfaces the whole
+ * list instead of one per deploy attempt.
+ *
+ * @returns {string[]} empty when the service is ready
+ */
+export function readinessProblems(env = process.env) {
+  const problems = [];
+
+  if (!(env.OPENAI_API_KEY || '')) {
+    problems.push('OPENAI_API_KEY is not set; live chat cannot connect to OpenAI.');
+  }
+
+  if ((env.LIVE_AUTH_ENABLED || 'false') === 'true') {
+    if (!(env.ENTRA_TENANT_ID || '')) {
+      problems.push('LIVE_AUTH_ENABLED is on but ENTRA_TENANT_ID is not set.');
+    }
+    if (!(env.ENTRA_AUDIENCE || '')) {
+      problems.push('LIVE_AUTH_ENABLED is on but ENTRA_AUDIENCE is not set.');
+    }
+    if (!(env.ENTRA_ALLOWED_EMAIL_DOMAINS || '')) {
+      // Not fatal to the code path — an empty allowlist admits any account in the
+      // tenant — but on this deployment it always means a missing config value.
+      problems.push('LIVE_AUTH_ENABLED is on but ENTRA_ALLOWED_EMAIL_DOMAINS is empty.');
+    }
+  }
+
+  // Transcripts are only written for authenticated sessions, so a table with no
+  // authentication in front of it would silently never be used.
+  if ((env.TRANSCRIPT_TABLE_NAME || '') && (env.LIVE_AUTH_ENABLED || 'false') !== 'true') {
+    problems.push(
+      'TRANSCRIPT_TABLE_NAME is set but LIVE_AUTH_ENABLED is off; no transcript would be stored.',
+    );
+  }
+
+  return problems;
+}

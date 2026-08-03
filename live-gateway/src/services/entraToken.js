@@ -1,13 +1,19 @@
-// Validates Microsoft Entra tokens for the live gateway.
+// Validates Microsoft Entra tokens.
 //
-// This is the only thing standing between a WebSocket connection and a transcript
-// written under someone else's name, so every check below is load-bearing. The
-// order matters: nothing in the payload is trusted until the signature verifies
-// against a key from the tenant's JWKS.
+// This is the only thing standing between a caller and a transcript written under
+// someone else's name, so every check below is load-bearing. The order matters:
+// nothing in the payload is trusted until the signature verifies against a key
+// from the tenant's JWKS.
 //
 // No JWT library: Node's crypto verifies RS256 straight from a JWK, and the
 // gateway ships as a systemd service on EC2 where fewer dependencies is worth
 // more than the convenience.
+//
+// DUPLICATED, deliberately: this file exists identically at
+// live-gateway/src/services/entraToken.js and lambda/shared/entraToken.js. The two
+// services are packaged and deployed separately with no shared module. The copies
+// must stay byte-identical — lambda/shared/entraTokenParity.test.js fails if they
+// drift, so fix a bug in one and copy it to the other.
 import { createPublicKey, createVerify } from 'node:crypto';
 
 // Entra rotates signing keys; an hour is well inside its rotation window, and
