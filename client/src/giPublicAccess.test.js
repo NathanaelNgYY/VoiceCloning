@@ -17,6 +17,17 @@ const stagingGiEnv = readFileSync(
   new URL("../env/staging/gi.env", import.meta.url),
   "utf8",
 );
+// Reaching outside client/ on purpose: the scope the browser requests and the
+// audience the backends verify are one invariant spread across three packages
+// that deploy independently, and nothing else checks them against each other.
+const stagingGatewayEnv = readFileSync(
+  new URL("../../live-gateway/.env.livegateway.deployment.staging", import.meta.url),
+  "utf8",
+);
+const stagingLambdaEnv = readFileSync(
+  new URL("../../lambda/.env.deployment.staging", import.meta.url),
+  "utf8",
+);
 
 test("the staging GI build gates the lesson site behind NTU Microsoft sign-in", () => {
   assert.match(stagingGiEnv, /^VITE_GI_AUTH_ENABLED=true$/m);
@@ -42,11 +53,43 @@ test("the staging GI build carries an Entra config the gate can actually use", (
   );
 });
 
-test("the staging GI build requests no API scope the registration cannot issue", () => {
-  // httpClient.js attaches a bearer token only when both are set; the NTU
-  // registration exposes no custom API, so setting them breaks every API call.
-  assert.doesNotMatch(stagingGiEnv, /^VITE_API_AUTH_MODE=/m);
-  assert.doesNotMatch(stagingGiEnv, /^VITE_ENTRA_API_SCOPE=/m);
+test("the staging GI build requests the API scope its backends verify against", () => {
+  // shouldAttachApiAccessToken() needs BOTH before it attaches anything, so half
+  // this pair is indistinguishable from a frontend-only gate: the browser signs
+  // in, the socket sends no session.auth, and the gateway rejects it.
+  assert.match(stagingGiEnv, /^VITE_API_AUTH_MODE=entra$/m);
+  assert.match(
+    stagingGiEnv,
+    /^VITE_ENTRA_API_SCOPE=api:\/\/9b5c52c0-5f02-4dbf-83ac-c68d246abc68\/access_as_user$/m,
+  );
+});
+
+test("the requested API scope matches the audience the gateway checks", () => {
+  // entraToken.js rejects any token whose `aud` is not ENTRA_AUDIENCE. The scope
+  // the client asks for and the audience the gateway expects are configured in
+  // two different files, so drift between them looks like a broken sign-in
+  // rather than a config mismatch. api://<id>/<scope> must reduce to api://<id>.
+  const scope = stagingGiEnv.match(/^VITE_ENTRA_API_SCOPE=(.+)$/m)?.[1] ?? "";
+  const audience = scope.slice(0, scope.lastIndexOf("/"));
+  assert.ok(audience.startsWith("api://"), `expected an api:// scope, got "${scope}"`);
+
+  const expectsAudience = new RegExp(
+    `^ENTRA_AUDIENCE=${audience.replace(/[/]/gu, "\\/")}$`,
+    "m",
+  );
+  // The Lambda guards /api/live synthesis, the gateway guards the socket. A
+  // student signing in has to satisfy both with the same token.
+  assert.match(stagingGatewayEnv, expectsAudience);
+  assert.match(stagingLambdaEnv, expectsAudience);
+});
+
+test("both staging backends actually turn their token checks on", () => {
+  // ENTRA_AUDIENCE is inert on its own: liveAuth.js and buildConfiguredAuthenticator()
+  // both return null — no guard at all — unless LIVE_AUTH_ENABLED is true. A
+  // client that sends tokens to backends that ignore them is the failure this
+  // catches, and it looks exactly like success from the browser.
+  assert.match(stagingGatewayEnv, /^LIVE_AUTH_ENABLED=true$/m);
+  assert.match(stagingLambdaEnv, /^LIVE_AUTH_ENABLED=true$/m);
 });
 
 test("public GI visitors bypass protected routes and cannot render the login page", () => {

@@ -1,6 +1,6 @@
 # Per-user chat transcript storage — design plan
 
-**Status:** design agreed, not implemented.
+**Status:** implemented and verified locally; **not deployed**.
 **Related:** `docs/staging-architecture.md` (staging stack), `client/env/staging/gi.env` (SSO config, staged but **not deployed**).
 
 ## Decision log
@@ -11,8 +11,8 @@ matching how they would set it up themselves.
 | Item | Outcome |
 |---|---|
 | Backend identity | **Option (ii), the API scope** — see Decision 1 |
-| Redirect URIs | Being added to the app registration; ETA 2026-08-04 12:00 |
-| DynamoDB table + IAM | Being provisioned by the same owner, same ETA. Probed 2026-08-03: this role has `dynamodb:ListTables` (no tables exist in ap-northeast-2 yet) but is denied `dynamodb:CreateTable` and `dynamodb:DescribeLimits`, so **table creation is his job too**, not just the role policy |
+| Redirect URIs | Reported added by the tenant owner 2026-08-03 (ahead of the 08-04 ETA). Not yet exercised by a real sign-in — see Verified so far |
+| DynamoDB table + IAM | **Table created 2026-08-03** by us, not the owner — see The account the table lives in |
 | MFA | Not required for this app |
 | Token lifetime | ~24 h; not a constraint, identity is bound once at WS connect |
 | Access policies | Satisfied — the gi build has no admin surface (`GiApp.jsx` omits admin routes) |
@@ -262,18 +262,24 @@ does not mention one. Worth raising with its owner separately; it is not a block
 ## Implementation order
 
 1. ~~Confirm the IAM permission is obtainable.~~ Agreed 2026-08-03; being provisioned.
-2. *(Waiting on tenant owner, ETA 2026-08-04 12:00)* SPA redirect URIs registered
-   (CloudFront **and** `http://localhost:5173`), API scope exposed, DynamoDB table and
-   `dynamodb:PutItem` in place. Confirm the URIs are on the **SPA** platform, not Web.
-3. Deploy the staged `gi.env` and verify sign-in works on staging end-to-end.
-4. Client: switch to `VITE_API_AUTH_MODE=entra` + `VITE_ENTRA_API_SCOPE`, flip the
-   `giPublicAccess.test.js` guard accordingly.
+2. ~~SPA redirect URIs registered, API scope exposed, DynamoDB table in place.~~ Reported
+   done by the tenant owner 2026-08-03; table created by us the same day (see above).
+   The **SPA**-vs-Web platform question is still only verifiable by signing in: a Web-platform
+   registration fails at token redemption with AADSTS9002326, not at the login page.
+3. Verify sign-in end-to-end. **Done locally on `http://localhost:5173`, not on staging** —
+   see Verified so far. Staging verification waits for a deploy.
+4. ~~Client: switch to `VITE_API_AUTH_MODE=entra` + `VITE_ENTRA_API_SCOPE`, flip the
+   `giPublicAccess.test.js` guard accordingly.~~ **Done** — plus two new guards that catch
+   the failure modes the flip introduces: the requested scope must reduce to the
+   `ENTRA_AUDIENCE` both backends check, and both backends must actually have
+   `LIVE_AUTH_ENABLED=true` (an audience alone leaves the guard `null`).
 5. ~~Gateway: JWKS validation + bind identity at WS connect, behind a flag.~~ **Done** —
    `services/entraToken.js`, `services/liveChatAuth.js`, gate wired into
    `routes/liveChat.js`. Off unless `LIVE_AUTH_ENABLED=true`; 39 tests.
-6. Load-test bypass — **gateway side done** (`LIVE_AUTH_LOADTEST_SECRET`, synthetic
-   `LOADTEST#<n>` identity). `scripts/load-test-staging-chatbot.mjs` still needs to send the
-   `session.auth` frame before auth is switched on.
+6. ~~Load-test bypass.~~ **Done** on both sides — `LIVE_AUTH_LOADTEST_SECRET` in the gateway
+   and the Lambda, `VCS_CHATBOT_LOADTEST_SECRET` in `scripts/load-test-staging-chatbot.mjs`,
+   which now sends the `session.auth` frame. Both secrets ship **empty**: a rehearsal has to
+   set them deliberately on both ends, and clearing either one closes the bypass.
 7. ~~Per-turn DynamoDB writes.~~ **Done** — `services/transcriptStore.js` (item shape and
    keys, SDK-free and unit-tested), `services/dynamoTranscriptClient.js` (the only file that
    imports the AWS SDK, client built lazily), tapped off the bridge's `app-event` stream in
@@ -293,19 +299,47 @@ there is no identity to attribute a turn to, so nothing is stored. The gateway a
 `@aws-sdk/client-dynamodb` and `@aws-sdk/lib-dynamodb` (3 dependencies → 5), which means the
 EC2 host needs an `npm install` at deploy.
 
-### Table to create
+### The table — created 2026-08-03
 
 ```
 Name     vcs-staging-transcripts
-Region   ap-northeast-2
+ARN      arn:aws:dynamodb:ap-northeast-2:329599637774:table/vcs-staging-transcripts
 Keys     PK (S, HASH), SK (S, RANGE)
 Billing  PAY_PER_REQUEST
-TTL      attribute "ttl", enabled
+TTL      attribute "ttl", ENABLED
+Tags     CreatorId=INTERNS2026
 ```
 
-Enabling TTL now costs nothing and settles the retrofit risk: items written without a `ttl`
-attribute never expire, so the retention decision stays a config change rather than a
-migration.
+TTL was enabled at creation rather than later: items written without a `ttl` attribute
+never expire, so doing it now keeps the retention decision a config change rather than a
+backfill over rows that already exist.
+
+### The account the table lives in
+
+Worth writing down, because the obvious credentials are the wrong ones.
+
+The NTU SSO login (`AWSReservedSSO_Identity-Switch-Role`, account **116310094355**) has **no
+DynamoDB permissions at all** — not `CreateTable`, not even `ListTables` or `DescribeTable`,
+in either region. It is only a stepping stone: `~/.aws/config`'s `dl-account` profile uses it
+as `source_profile` to assume **`arn:aws:iam::329599637774:role/Nathanael_Ng_Intern2026`**,
+and that role is where DynamoDB access lives. The staging GPU host
+(`i-0f0da8be59367f7a8`, instance profile `VoiClo_GPU`) is in the same account 329599637774,
+which is what makes a table there reachable from the gateway.
+
+So the earlier note that "table creation is his job" was wrong about the reason: it was not a
+missing grant, it was probing with the un-assumed role.
+
+```bash
+aws sts assume-role --role-arn arn:aws:iam::329599637774:role/Nathanael_Ng_Intern2026 \
+  --role-session-name vcs --region ap-southeast-1
+```
+
+**Still unverified:** whether `VoiClo_GPU` carries `dynamodb:PutItem` on this table. This role
+is denied `iam:ListAttachedRolePolicies` / `iam:ListRolePolicies` (consistent with the
+`iam:*` denials in `docs/staging-architecture.md` §9), so it cannot be read from here. The
+local run proves the code and the table, not the EC2 instance profile — the first staging
+deploy is where that shows up, as `[transcript] write failed` in the gateway log while the
+conversation itself keeps working.
 
 ### Gateway env added by step 5
 
@@ -318,6 +352,123 @@ The client sends `{"type":"session.auth","token":"…"}` as its first frame and 
 `{"type":"session.authenticated"}`. Failures close with 4401 (unauthorized), 4403
 (forbidden — wrong domain, guest, wrong tenant) or 4408 (handshake timeout).
 
-Steps 3-8 are all unblocked once step 2 lands. Nothing before then requires waiting —
-gateway validation (5) and the load-test bypass (6) can be written and unit-tested against
-a fixture token in the meantime.
+## Running the local verification
+
+Nothing here is deployed. Two processes, both reading the staged config:
+
+```bash
+# 1. Gateway, with auth and storage on. Credentials come from the assumed
+#    Nathanael_Ng_Intern2026 role (see The account the table lives in).
+cd live-gateway
+LIVE_AUTH_ENABLED=true \
+ENTRA_TENANT_ID=45e82b6b-5ac4-41a7-a36f-e702e5e3a355 \
+ENTRA_AUDIENCE=api://9b5c52c0-5f02-4dbf-83ac-c68d246abc68 \
+ENTRA_ALLOWED_EMAIL_DOMAINS=staff.main.ntu.edu.sg,student.main.ntu.edu.sg,assoc.main.ntu.edu.sg \
+TRANSCRIPT_TABLE_NAME=vcs-staging-transcripts \
+TRANSCRIPT_TABLE_REGION=ap-northeast-2 TRANSCRIPT_TTL_DAYS=90 \
+AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… AWS_SESSION_TOKEN=… \
+node src/index.js
+
+# 2. Client, on 5173 — see client/.env.gi.local (untracked) for why the port matters.
+cd client && npm run dev:gi:sso
+```
+
+`GET /readyz` on 3002 must return `{"ok":true,"problems":[]}`; with auth on but the tenant
+or audience missing it returns 503 with the reason, which is the failure this arrangement is
+designed to make loud.
+
+## Verified so far
+
+Verified locally on 2026-08-03, against the real NTU tenant and the real table:
+
+- **The gate is live and fails closed.** Six rejection paths exercised against the running
+  gateway: no handshake frame → 4408; malformed token → 4401 `malformed`; well-formed but
+  unsigned JWT with every claim correct → 4401 `unknown_key`; `alg:none` → 4401
+  `bad_algorithm`; load-test bypass with no secret configured → 4403; a pre-auth client
+  sending `session.init` first → 4401 `missing`. The `unknown_key` case is the informative
+  one — reaching a *key lookup* means the gateway really fetched NTU's JWKS rather than
+  short-circuiting.
+- **The write path works against the real table**, driven through `transcriptStore` →
+  `dynamoTranscriptClient` → DynamoDB: a `#META` row plus two zero-padded `#TURN#` rows in
+  order, `ttl` resolving to 90 days out, and an all-whitespace turn correctly not written.
+  Probe rows deleted afterwards.
+- **Tests:** 307 client, 121 gateway, 118 Lambda, all passing.
+
+### Blocked 2026-08-03, and the bigger one: the app is in the wrong tenant
+
+```
+AADSTS50020: User account 'CS-NATHANAEL.NG@assoc.main.ntu.edu.sg' from identity provider
+'https://sts.windows.net/15ce9348-be2a-462b-8fc0-e1765a9b204a/' does not exist in tenant
+'Default Directory' and cannot access the application '9b5c52c0-…' (GI Bleeding).
+```
+
+**`45e82b6b-5ac4-41a7-a36f-e702e5e3a355` is not the NTU tenant.** Every comment in this
+document and in `client/env/staging/gi.env` that calls it that is wrong. Resolved from
+Microsoft's own discovery documents:
+
+| Domain | Tenant |
+|---|---|
+| `ntu.edu.sg`, `student.main.ntu.edu.sg`, `assoc.main.ntu.edu.sg` | `15ce9348-be2a-462b-8fc0-e1765a9b204a` |
+| the "GI Bleeding" app registration | `45e82b6b-5ac4-41a7-a36f-e702e5e3a355` ("Default Directory") |
+
+```bash
+curl -s https://login.microsoftonline.com/student.main.ntu.edu.sg/v2.0/.well-known/openid-configuration
+```
+
+So the MSAL authority, `ENTRA_TENANT_ID`, and the JWKS URL the gateway checks signatures
+against all point at a directory that contains no NTU students. This is not a
+misconfiguration to patch — the registration has to move.
+
+**Inviting students as guests is not a workaround.** A B2B guest's `preferred_username`
+becomes `CS-NATHANAEL.NG_assoc.main.ntu.edu.sg#EXT#@<defaultdir>.onmicrosoft.com`, which
+fails `ENTRA_ALLOWED_EMAIL_DOMAINS`, and both the client (`isAllowedAccount`) and the
+gateway (`guest_account` TokenError) reject `#ext#` accounts deliberately. Relaxing those
+would defeat the point: `tid` would be the Default Directory, so the token would prove only
+that someone was invited, not that they are an NTU student. It also means 150 individual
+invitations.
+
+The fix is either a registration inside tenant `15ce9348` (single-tenant, matches this
+design as written), or making the existing app multi-tenant and re-pinning every tenant
+reference to `15ce9348` — the latter still needs NTU admin consent, and asks NTU students to
+authenticate against an app in a directory NTU does not control.
+
+### Blocked 2026-08-03: the API scope does not exist
+
+Sign-in fails outright:
+
+```
+AADSTS65005: The application '9b5c52c0-…' asked for scope 'access_as_user' that doesn't exist.
+```
+
+The tenant owner reported adding it, but the registration does not expose it. Most likely
+it was added under **API permissions** (what this app may call) rather than **Expose an
+API** (what this app offers) — adjacent blades that both read as "adding an API scope".
+
+Neither this machine's operator nor the AWS credentials can help: the portal returns "You
+don't have access" for this registration, so it is entirely the tenant owner's fix. The
+request to send them is in the Decision 1 section above.
+
+Do not try to diagnose this by probing the `/authorize` endpoint. It returns a normal login
+page for scopes that do not exist — verified by control, where a wholly fictional
+`api://00000000-dead-beef-…/definitely_not_real` was equally "accepted". Entra defers scope
+validation until after credentials, so the only signal is a real sign-in.
+
+**Local workaround, so the rest stays testable:** `client/.env.gi.local` has
+`VITE_API_AUTH_MODE` / `VITE_ENTRA_API_SCOPE` commented out.
+`msalClient.getInteractionScopes()` appends the API scope to the *login* request, so leaving
+them set fails sign-in before the redirect URI, tenant pin, or domain allowlist are ever
+exercised. Without them login uses only `openid`/`profile`/`email`, which need no portal
+work. The committed `client/env/staging/gi.env` is unchanged and still carries both.
+
+**Not yet verified — needs an interactive NTU sign-in:**
+
+1. That the redirect URIs are on the **SPA** platform, not Web (fails at redemption with
+   AADSTS9002326, well after the login page looks fine).
+2. That the exposed scope really is `api://9b5c52c0-…/access_as_user`, and whether the tenant
+   demands admin consent for it.
+3. That a genuine token passes verification and the socket reaches
+   `session.authenticated` — everything above only proves bad tokens are rejected.
+4. That a real conversation lands rows under `USER#<oid>`.
+
+Until (3) is done, "the gate rejects everything" and "the gate is correctly configured" look
+identical from the outside.
