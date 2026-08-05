@@ -205,6 +205,76 @@ rebuild it, or you take down other projects' distributions.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; staging worker access = **SSM**, dev = SSH). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
+### ⚠️ Do not use `deploy-worker.ps1` on staging as written
+
+It runs `git checkout $($cfg.branch)`, and `deploy.config.json` sets staging's `branch` to
+`"staging"` — but the box is checked out on **`codex/staging-multi-user-scaling`**, which is
+where the gateway/SSO/transcript work lives. The script would silently move staging onto a
+branch without any of it. Deploy the gateway by hand until the config is fixed.
+
+Two more things that cost an hour if you meet them cold:
+
+- **SSM `AWS-RunShellScript` runs as root**, and git rejects `/home/ubuntu/VoiceCloning` for
+  *dubious ownership* because the tree belongs to `ubuntu`. `git branch --show-current` then
+  fails in a way that reads exactly like "this is not a git repo". It is one. Prefix every
+  git call with `sudo -u ubuntu`.
+- **The repo is shared by the gateway and both GPU workers.** A pull moves worker code on
+  disk even when only `voice-live-gateway` is restarted; it activates at their next restart
+  or reboot. Check `git status --porcelain` first — `gpu-inference-worker/src/index.js`
+  carries an uncommitted local edit that must survive.
+
+### Gateway deploy and rollback (staging)
+
+systemd loads `live-gateway/.env` — **not** the `.env.livegateway.deployment.staging` file
+sitting beside it. `.env` holds `OPENAI_API_KEY`, so edit it surgically; overwriting it takes
+the chat down. New dependencies need `npm install` on the box or the service will not start.
+
+```bash
+# deploy (via aws ssm send-command, or a start-session shell)
+R=/home/ubuntu/VoiceCloning; F=$R/live-gateway/.env
+sudo -u ubuntu cp $F $F.bak-$(date +%Y%m%d)          # ALWAYS, before anything
+sudo -u ubuntu git -C $R rev-parse HEAD               # write this down — rollback point
+sudo -u ubuntu git -C $R fetch origin
+sudo -u ubuntu git -C $R merge --ff-only origin/codex/staging-multi-user-scaling
+cd $R/live-gateway && sudo -u ubuntu npm install
+# edit only the keys you own, never rewrite the file:
+sudo -u ubuntu sed -i '/^LIVE_AUTH_ENABLED=/d;/^ENTRA_/d;/^TRANSCRIPT_/d' $F
+echo 'LIVE_AUTH_ENABLED=false' | sudo -u ubuntu tee -a $F > /dev/null
+sudo systemctl restart voice-live-gateway
+curl -s localhost:3002/readyz     # expect {"ok":true,...,"problems":[]}
+```
+
+```bash
+# rollback — restores code AND env; <SHA> is the rev-parse above
+sudo -u ubuntu git -C /home/ubuntu/VoiceCloning reset --hard <SHA>
+sudo -u ubuntu cp /home/ubuntu/VoiceCloning/live-gateway/.env.bak-<DATE> \
+                  /home/ubuntu/VoiceCloning/live-gateway/.env
+cd /home/ubuntu/VoiceCloning/live-gateway && sudo -u ubuntu npm install
+sudo systemctl restart voice-live-gateway
+```
+
+`npm install` on the way back too: a rollback past a dependency change leaves `node_modules`
+holding packages the old `package.json` never declared, which is survivable, but a rollback
+past a dependency *addition* without it leaves the tree fine and the lockfile lying.
+
+**2026-08-05 deploy:** `c70bf7d` → `755562a`, backup `.env.bak-20260805`. Rollback SHA is
+therefore `c70bf7d`. Shipped the auth + transcript gateway with `LIVE_AUTH_ENABLED=false`
+and an empty `TRANSCRIPT_TABLE_NAME` — deliberately inert, see below.
+
+### ⚠️ One gateway, several clients — before enabling `LIVE_AUTH_ENABLED`
+
+Every staging distribution reaches the *same* live gateway. Only the **gi** build
+authenticates (`VITE_API_AUTH_MODE=entra-id`, sends a `session.auth` frame). The
+**chatbot-text** kiosk on `d3k2rz0hqm8nxi` opens `chat/realtime` with no token at all, so
+turning `LIVE_AUTH_ENABLED=true` closes each of its sockets with **4401** and its live chat
+stops working. Verify who is still using that kiosk before flipping, and expect the same
+question for `live-fast` and `training`, which also carry a `VITE_LIVE_GATEWAY_URL`.
+
+The reverse mismatch bites too: a gi client that sends `session.auth` to a gateway *older*
+than 2026-08-05 has its `session.init` swallowed behind the auth frame, silently stripping
+the GI system prompt — the tutor answers as a generic assistant. Deploy the gateway before,
+or with, any gi client build.
+
 ## 9. Access / operations
 
 - **AWS access:** portal creds for identity account 116310094355 → `aws sts assume-role --role-arn arn:aws:iam::329599637774:role/Liu_Teng_Yu_Intern2026` (portal creds ~2 h, role session 1 h). Role denials (console too): `iam:*`, `events:*`, `scheduler:*`, `elasticloadbalancing:Delete*`, `ec2:ReplaceRoute/DeleteRoute/ReplaceRouteTableAssociation`, `ec2:ModifyVpcEndpoint`, `ssm:DescribeInstanceInformation`. `ssm:StartSession` **is** allowed.
