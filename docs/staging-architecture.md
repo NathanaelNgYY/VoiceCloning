@@ -319,12 +319,43 @@ past a dependency *addition* without it leaves the tree fine and the lockfile ly
 therefore `c70bf7d`. Shipped the auth + transcript gateway with `LIVE_AUTH_ENABLED=false`
 and an empty `TRANSCRIPT_TABLE_NAME` — deliberately inert, see below.
 
-### Switching transcript storage on (it shipped inert)
+### Switching transcript storage on
 
-The 2026-08-05 deploy put the code on the box with `LIVE_AUTH_ENABLED=false` and an empty
-`TRANSCRIPT_TABLE_NAME`. Both are needed, and **either one alone records nothing**: with no
-authentication there is no identity to attribute a row to, and with no table name the store
-is never built. `/readyz` reports the half-configured case rather than failing silently.
+Both `LIVE_AUTH_ENABLED=true` and `TRANSCRIPT_TABLE_NAME` are needed, and **either one alone
+records nothing**: with no authentication there is no identity to attribute a row to, and
+with no table name the store is never built. `/readyz` reports the half-configured case
+rather than failing silently.
+
+> The first draft of this section said the 2026-08-05 deploy shipped inert. It did, but the
+> box was switched on later the same day, so by the time anyone read this it was wrong.
+> Check the running config before trusting it:
+> `sudo -u ubuntu grep -E '^(LIVE_AUTH_ENABLED|ENTRA_|TRANSCRIPT_)' /home/ubuntu/VoiceCloning/live-gateway/.env`
+
+### ⚠️ A new `/api/live/*` route needs **two** routing changes, not zero
+
+Both layers match the live-gateway paths **exactly**, so a new route silently lands somewhere
+else and looks like a code bug. Adding `POST /api/live/session/signin` needed:
+
+1. **CloudFront** — a cache behavior for the new path, ordered *before* `/api/*`. Without it
+   the request goes to the Lambda, which answers
+   `{"error":"No Lambda route for POST /api/live/session/signin"}`.
+2. **The ALB** — a listener rule for the new path forwarding to the gateway target group.
+   Without it the request falls to the *default* rule, which is the training worker, and
+   Express answers `Cannot POST /api/live/session/signin`.
+
+Those two error bodies are the fastest way to tell which layer is missing. A third symptom,
+`{"ok":false,"code":"auth_disabled"}`, means routing is correct and you reached a gateway
+with `LIVE_AUTH_ENABLED=false`.
+
+**Read origin *domains*, not origin IDs.** On `E3MLIO4CZFOPEO` the origin whose Id is
+`voice-gpu-alb-815777974…` has DomainName `voice-gpu-alb-staging-1031778835…` — the Id is a
+stale label kept across a repoint. Reading the Id leads to the confident, wrong conclusion
+that the staging distributions are served by the dev ALB:
+
+```bash
+aws cloudfront get-distribution-config --id E3MLIO4CZFOPEO \
+  --query 'DistributionConfig.Origins.Items[].{id:Id,domain:DomainName}'
+```
 
 ```bash
 R=/home/ubuntu/VoiceCloning; F=$R/live-gateway/.env
