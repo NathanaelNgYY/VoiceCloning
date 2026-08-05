@@ -11,7 +11,8 @@ $hosts = @(
   @{ Id='i-07b146468386bcd0f'; Branch='codex/staging-multi-user-scaling'; Kind='asg' },
   @{ Id='i-0c2c78cb960afe784'; Branch='codex/staging-multi-user-scaling'; Kind='asg' },
   @{ Id='i-0f9568c3fa7be99de'; Branch='codex/staging-multi-user-scaling'; Kind='asg' },
-  @{ Id='i-09edbf1092b034096'; Branch='codex/staging-multi-user-scaling'; Kind='asg' }
+  @{ Id='i-09edbf1092b034096'; Branch='codex/staging-multi-user-scaling'; Kind='asg' },
+  @{ Id='i-06baeb3164054ff47'; Branch='codex/staging-multi-user-scaling'; Kind='asg' }
 )
 foreach ($hostInfo in $hosts) {
   if ($InstanceIds -and $hostInfo.Id -notin $InstanceIds) { continue }
