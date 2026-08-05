@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory)][string]$BundleUri,
   [Parameter(Mandatory)][string]$Commit,
-  [string[]]$InstanceIds
+  [string[]]$InstanceIds,
+  [switch]$SkipInstallRestart
 )
 $ErrorActionPreference = 'Stop'
 $hosts = @(
@@ -14,6 +15,11 @@ $hosts = @(
   @{ Id='i-09edbf1092b034096'; Branch='codex/staging-multi-user-scaling'; Kind='asg' },
   @{ Id='i-06baeb3164054ff47'; Branch='codex/staging-multi-user-scaling'; Kind='asg' }
 )
+foreach ($requestedId in $InstanceIds) {
+  if ($requestedId -notin $hosts.Id) {
+    $hosts += @{ Id=$requestedId; Branch='codex/staging-multi-user-scaling'; Kind='asg' }
+  }
+}
 foreach ($hostInfo in $hosts) {
   if ($InstanceIds -and $hostInfo.Id -notin $InstanceIds) { continue }
   $setup = switch ($hostInfo.Kind) {
@@ -21,7 +27,10 @@ foreach ($hostInfo in $hosts) {
     'relay' { 'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET TRANSCRIPT_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT; sudo install -d -m 0755 /etc/systemd/system/gpu-inference-worker.service.d; sudo install -m 0644 systemd/gpu-inference-worker-relay-health.conf /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload' }
     default { 'bash scripts/install-resemblyzer.sh' }
   }
-  $command = "set -e; cd /home/ubuntu/VoiceCloning; aws s3 cp $BundleUri /tmp/vcs.bundle --region ap-southeast-1 --only-show-errors; sudo -u ubuntu git fetch /tmp/vcs.bundle HEAD; rm -f gpu-inference-worker/scripts/verify_speaker_similarity.mjs; sudo -u ubuntu git checkout -B $($hostInfo.Branch) FETCH_HEAD; npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $setup; systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 12; test `$(sudo -u ubuntu git rev-parse HEAD) = $Commit"
+  $deploySteps = if ($SkipInstallRestart) { '' } else {
+    "npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $setup; systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 12;"
+  }
+  $command = "set -e; cd /home/ubuntu/VoiceCloning; aws s3 cp $BundleUri /tmp/vcs.bundle --region ap-southeast-1 --only-show-errors; sudo -u ubuntu git fetch /tmp/vcs.bundle HEAD; rm -f gpu-inference-worker/scripts/verify_speaker_similarity.mjs; sudo -u ubuntu git checkout -B $($hostInfo.Branch) FETCH_HEAD; $deploySteps test `$(sudo -u ubuntu git rev-parse HEAD) = $Commit"
   $parametersPath = Join-Path $env:TEMP "vcs-deploy-$($hostInfo.Id).json"
   [IO.File]::WriteAllText($parametersPath, (@{commands=@($command)} | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
   try {
