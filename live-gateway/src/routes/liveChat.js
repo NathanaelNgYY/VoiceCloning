@@ -282,6 +282,13 @@ export function attachLiveChatSocket(server, options = {}) {
       }
     });
 
+    // Turns the browser must not be told about again. A typed question is the
+    // only one today: it never reaches OpenAI's transcription, so no app-event
+    // carries it, but the browser drew it locally the moment it was sent.
+    bridge.on('transcript-turn', (turn) => {
+      if (transcriptSession) transcriptSession.recordTurn(turn);
+    });
+
     bridge.on('close', () => {
       activeClients.delete(browserSocket);
       if (browserSocket.readyState === WebSocket.OPEN) {

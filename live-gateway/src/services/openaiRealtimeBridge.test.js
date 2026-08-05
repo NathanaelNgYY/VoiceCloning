@@ -116,6 +116,44 @@ test('sendText adds a typed question as a user turn and asks for the reply', () 
   });
 });
 
+test('sendText records the typed question as a transcript turn', () => {
+  // OpenAI transcribes audio, not typed text, so no user.text.done ever arrives
+  // for this turn. Without a separate signal the stored transcript keeps every
+  // assistant reply and none of the student's questions.
+  const { bridge } = createBridgeWithOpenSocket();
+  const turns = [];
+  bridge.on('transcript-turn', (turn) => turns.push(turn));
+
+  bridge.sendText('  What causes an upper GI bleed?  ');
+
+  assert.deepEqual(turns, [
+    { role: 'user', text: 'What causes an upper GI bleed?' },
+  ]);
+});
+
+test('sendText does not echo the typed question back to the browser', () => {
+  // The browser drew this text when the student pressed enter. Sending it again
+  // as an app-event — the channel liveChat.js forwards — duplicates the bubble.
+  const { bridge } = createBridgeWithOpenSocket();
+  const appEvents = [];
+  bridge.on('app-event', (payload) => appEvents.push(payload));
+
+  bridge.sendText('What causes an upper GI bleed?');
+
+  assert.deepEqual(appEvents, []);
+});
+
+test('a rejected typed turn records nothing', () => {
+  // recordTurn would otherwise store a question the model never received.
+  const { bridge } = createBridgeWithOpenSocket();
+  const turns = [];
+  bridge.on('transcript-turn', (turn) => turns.push(turn));
+
+  bridge.closed = true;
+  assert.equal(bridge.sendText('never sent'), false);
+  assert.deepEqual(turns, []);
+});
+
 test('sendText ignores an empty message and a closed bridge', () => {
   const { bridge, sent } = createBridgeWithOpenSocket();
 

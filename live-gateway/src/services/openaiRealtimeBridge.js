@@ -231,6 +231,16 @@ export class OpenAiRealtimeBridge extends EventEmitter {
       return false;
     }
 
+    // A typed turn produces no transcription event, because there is no audio to
+    // transcribe — `user.text.done` only ever arrives for speech. Without this
+    // the stored transcript keeps every reply and none of the questions, which
+    // reads as a working transcript right up until someone tries to use it.
+    //
+    // Deliberately not an `app-event`: those are forwarded to the browser, which
+    // already rendered this text when the student pressed enter, and a second
+    // copy would show up as a duplicate bubble.
+    this.emit('transcript-turn', { role: 'user', text: value });
+
     // Whatever the mic half-captured while they were typing is not part of this
     // turn, and must not be committed on top of it.
     if (this.hasPendingAudio) {
