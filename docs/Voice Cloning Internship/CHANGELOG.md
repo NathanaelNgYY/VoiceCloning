@@ -12,6 +12,9 @@
   autoscaled inference targets.
 - Verification: sign-in client tests 9/9, targeted gateway tests 51/51, script syntax,
   speaker sidecar model load, and direct speaker similarity (same sample: ~1.0) passed.
+- Audited environment separation: dev and staging use distinct fixed EC2 instances,
+  Lambdas, ALBs, CloudFront paths, and S3 prefixes; only staging has an ASG. Added
+  dev-specific Entra configuration and a separate `vcs-dev-transcripts` target.
 
 ## 2026-08-03
 
