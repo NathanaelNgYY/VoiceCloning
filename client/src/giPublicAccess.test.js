@@ -69,34 +69,43 @@ test("the client routes sign-in through /common, and only the backends pin a ten
   assert.match(stagingLambdaEnv, pinsNtuTenant);
 });
 
-test("the staging GI build requests the API scope its backends verify against", () => {
-  // shouldAttachApiAccessToken() needs BOTH before it attaches anything, so half
-  // this pair is indistinguishable from a frontend-only gate: the browser signs
-  // in, the socket sends no session.auth, and the gateway rejects it.
-  assert.match(stagingGiEnv, /^VITE_API_AUTH_MODE=entra$/m);
-  assert.match(
-    stagingGiEnv,
-    /^VITE_ENTRA_API_SCOPE=api:\/\/9b5c52c0-5f02-4dbf-83ac-c68d246abc68\/access_as_user$/m,
-  );
+test("the staging GI build sends a token to its own backends", () => {
+  // Without this the browser signs in, the socket sends no session.auth, and the
+  // gateway closes it — a build that looks authenticated and stores nothing.
+  assert.match(stagingGiEnv, /^VITE_API_AUTH_MODE=entra-id$/m);
 });
 
-test("the requested API scope matches the audience the gateway checks", () => {
-  // entraToken.js rejects any token whose `aud` is not ENTRA_AUDIENCE. The scope
-  // the client asks for and the audience the gateway expects are configured in
-  // two different files, so drift between them looks like a broken sign-in
-  // rather than a config mismatch. api://<id>/<scope> must reduce to api://<id>.
-  const scope = stagingGiEnv.match(/^VITE_ENTRA_API_SCOPE=(.+)$/m)?.[1] ?? "";
-  const audience = scope.slice(0, scope.lastIndexOf("/"));
-  assert.ok(audience.startsWith("api://"), `expected an api:// scope, got "${scope}"`);
+test("the token type the client sends is the one both backends verify", () => {
+  // The two modes carry different `aud` values and entraToken.js rejects anything
+  // that is not ENTRA_AUDIENCE exactly:
+  //   entra-id  ->  <clientId>
+  //   entra     ->  api://<clientId>
+  // Client and backends are three files that deploy separately, so a mismatch
+  // here surfaces as "sign-in is broken" rather than as a config error. The
+  // Lambda guards /api/live synthesis, the gateway guards the socket, and one
+  // token has to satisfy both.
+  const CLIENT_ID = "9b5c52c0-5f02-4dbf-83ac-c68d246abc68";
+  const mode = stagingGiEnv.match(/^VITE_API_AUTH_MODE=(.+)$/m)?.[1] ?? "";
+  const expected = mode === "entra-id" ? CLIENT_ID : `api://${CLIENT_ID}`;
 
   const expectsAudience = new RegExp(
-    `^ENTRA_AUDIENCE=${audience.replace(/[/]/gu, "\\/")}$`,
+    `^ENTRA_AUDIENCE=${expected.replace(/[/]/gu, "\\/")}$`,
     "m",
   );
-  // The Lambda guards /api/live synthesis, the gateway guards the socket. A
-  // student signing in has to satisfy both with the same token.
   assert.match(stagingGatewayEnv, expectsAudience);
   assert.match(stagingLambdaEnv, expectsAudience);
+
+  // The access-token mode is the only one allowed to request a custom scope.
+  // Setting it under entra-id appends it to the login request and fails sign-in
+  // outright with AADSTS65005 — the scope is not exposed on the registration.
+  if (mode === "entra-id") {
+    assert.doesNotMatch(stagingGiEnv, /^VITE_ENTRA_API_SCOPE=.+$/m);
+  } else {
+    assert.match(
+      stagingGiEnv,
+      new RegExp(`^VITE_ENTRA_API_SCOPE=api:\\/\\/${CLIENT_ID}\\/.+$`, "m"),
+    );
+  }
 });
 
 test("both staging backends actually turn their token checks on", () => {

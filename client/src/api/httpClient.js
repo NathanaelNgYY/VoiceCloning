@@ -1,7 +1,7 @@
 import { config } from "@/config";
 import {
-    acquireApiAccessToken,
-    shouldAttachApiAccessToken,
+    acquireApiToken,
+    shouldAttachApiToken,
 } from "@/auth/msalClient";
 function readBrowserOrigin() {
     if (typeof window === "undefined" || !window.location?.origin) {
@@ -20,9 +20,9 @@ function buildNetworkErrorMessage() {
 async function post(body) {
     const headers = { "Content-Type": "application/json" };
 
-    if (shouldAttachApiAccessToken()) {
-        const accessToken = await acquireApiAccessToken();
-        headers.Authorization = `Bearer ${accessToken}`;
+    if (shouldAttachApiToken()) {
+        const token = await acquireApiToken();
+        headers.Authorization = `Bearer ${token}`;
     }
 
     let response;

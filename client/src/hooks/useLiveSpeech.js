@@ -8,7 +8,7 @@ import {
   synthesizeSentence,
 } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
-import { acquireApiAccessToken, shouldAttachApiAccessToken } from '../auth/msalClient.js';
+import { acquireApiToken, shouldAttachApiToken } from '../auth/msalClient.js';
 import { connectInferenceSSE } from '../services/sse.js';
 import { sanitizeBackendError } from '../lib/backendErrors.js';
 import {
@@ -1703,7 +1703,7 @@ export function useLiveSpeech({
       systemPrompt: systemPromptRef.current,
       // Same gate the REST client uses, so the socket and the API agree on
       // whether this build authenticates at all.
-      getAuthToken: shouldAttachApiAccessToken() ? acquireApiAccessToken : null,
+      getAuthToken: shouldAttachApiToken() ? acquireApiToken : null,
       onOpen: () => {
         if (runId === runIdRef.current) {
           setNotice('Connected. Preparing live chat...');

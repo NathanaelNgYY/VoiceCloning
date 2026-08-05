@@ -54,6 +54,42 @@ permissions on 2026-08-03, and there is no house standard to conform to. Since t
 gateway-side work is identical either way (same JWKS verification; only the expected `aud`
 differs), one portal request buys the properly-scoped design at near-zero extra cost.
 
+> **Reversed 2026-08-05 — back to the ID token (option i).** The premise above was wrong:
+> the offer never landed. Probing the authorize endpoint directly still returns
+> `AADSTS65005: … asked for scope 'access_as_user' that doesn't exist`, and NTU-side
+> approvals have since proved hard enough that the app registration itself had to stay
+> outside NTU's tenant. Waiting on the scope was blocking the whole feature.
+>
+> ```bash
+> # Reproduce: an unauthenticated GET, no credentials needed.
+> curl -s "https://login.microsoftonline.com/common/oauth2/v2.0/authorize\
+> ?client_id=9b5c52c0-5f02-4dbf-83ac-c68d246abc68&response_type=code\
+> &redirect_uri=http%3A%2F%2Flocalhost%3A5173\
+> &scope=openid%20api%3A%2F%2F9b5c52c0-…%2Faccess_as_user"
+> ```
+>
+> The cost of the scope was also understated above. `getInteractionScopes()` appends it to
+> the **login** request, so a missing scope fails sign-in outright — the symptom is "SSO is
+> broken", nowhere near the setting that caused it. That is why the local env had it
+> commented out on 2026-08-03 to test anything at all.
+>
+> What changed: `VITE_API_AUTH_MODE=entra-id`, and `ENTRA_AUDIENCE` in both backends drops
+> the `api://` prefix to the bare client ID. No gateway or Lambda code changed — the
+> verifier never looked at `scp`, so an ID token satisfies it unaltered. The mode decision
+> moved into `client/src/auth/apiTokenMode.js` so it could be unit-tested away from MSAL.
+>
+> **Switching back** if the scope is ever exposed: set `VITE_ENTRA_API_SCOPE`, flip the mode
+> to `entra`, and restore `api://` on both `ENTRA_AUDIENCE` values — all three together.
+> `giPublicAccess.test.js` derives the expected audience from the mode and fails if they
+> disagree.
+>
+> **What this trades away.** An ID token authenticates a user to the app; an access token
+> authorises a caller to an API. Using the first as the second is acceptable here because
+> the SPA and the API are one application and validation is strict (`aud` pinned to this
+> client, `tid` to NTU, RS256 only). It gets weaker the moment a second client or a second
+> API appears — there is then no per-API audience to separate them. Revisit at that point,
+> not before.
+
 Requested from the tenant owner: "Expose an API" on the registration with app ID URI
 `api://9b5c52c0-5f02-4dbf-83ac-c68d246abc68`, one scope (`access_as_user`), plus admin
 consent if the tenant requires it.
@@ -362,7 +398,7 @@ Nothing here is deployed. Two processes, both reading the staged config:
 cd live-gateway
 LIVE_AUTH_ENABLED=true \
 ENTRA_TENANT_ID=15ce9348-be2a-462b-8fc0-e1765a9b204a \
-ENTRA_AUDIENCE=api://9b5c52c0-5f02-4dbf-83ac-c68d246abc68 \
+ENTRA_AUDIENCE=9b5c52c0-5f02-4dbf-83ac-c68d246abc68 \
 ENTRA_ALLOWED_EMAIL_DOMAINS=staff.main.ntu.edu.sg,student.main.ntu.edu.sg,assoc.main.ntu.edu.sg \
 TRANSCRIPT_TABLE_NAME=vcs-staging-transcripts \
 TRANSCRIPT_TABLE_REGION=ap-northeast-2 TRANSCRIPT_TTL_DAYS=90 \
