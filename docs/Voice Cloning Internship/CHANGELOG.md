@@ -14,7 +14,8 @@
   speaker sidecar model load, and direct speaker similarity (same sample: ~1.0) passed.
 - Audited environment separation: dev and staging use distinct fixed EC2 instances,
   Lambdas, ALBs, CloudFront paths, and S3 prefixes; only staging has an ASG. Added
-  dev-specific Entra configuration and a separate `vcs-dev-transcripts` target.
+  dev-specific Entra configuration. Dev transcript storage remains disabled because
+  the deployment role cannot create `vcs-dev-transcripts`; staging data is not reused.
 
 ## 2026-08-03
 
