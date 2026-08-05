@@ -45,6 +45,23 @@ export const OPENAI_REALTIME_VAD = process.env.OPENAI_REALTIME_VAD || 'semantic_
 export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 export const GEMINI_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.0-flash';
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+// The `cors` package compares a string origin with `===`, so handing it the raw
+// comma-joined value silently rejects every browser request once more than one
+// origin is configured. Nothing caught this before the sign-in route: the
+// WebSocket is not subject to CORS, and it does its own allowlist parsing in
+// originAllowed(). Splitting here keeps the two readings of the same variable
+// from disagreeing.
+export function parseCorsOrigins(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '*') {
+    return '*';
+  }
+
+  const origins = raw.split(',').map((item) => item.trim()).filter(Boolean);
+  return origins.length > 0 ? origins : '*';
+}
+
+export const CORS_ORIGINS = parseCorsOrigins(CORS_ORIGIN);
 export const PORT = Number.parseInt(process.env.PORT || '3002', 10);
 
 // Live-chat authentication. Defaults to off so existing deployments keep working

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { readinessProblems } from './config.js';
+import { parseCorsOrigins, readinessProblems } from './config.js';
 
 const READY = {
   OPENAI_API_KEY: 'sk-test',
@@ -63,4 +63,29 @@ test('authentication without a transcript table is a valid configuration', () =>
     ENTRA_AUDIENCE: 'api://client',
     ENTRA_ALLOWED_EMAIL_DOMAINS: 'assoc.main.ntu.edu.sg',
   }), []);
+});
+
+test('a multi-origin CORS value becomes a list the cors package can match', () => {
+  // The bug this guards: `cors` compares a string origin with `===`, so handing
+  // it the raw comma-joined value rejects every browser request once a second
+  // origin is configured. Nothing caught it until the sign-in route, because the
+  // WebSocket is not subject to CORS.
+  assert.deepEqual(
+    parseCorsOrigins('https://a.cloudfront.net,https://lectures.lkcmedicine.org'),
+    ['https://a.cloudfront.net', 'https://lectures.lkcmedicine.org'],
+  );
+});
+
+test('a single origin is still a list, not a bare string', () => {
+  assert.deepEqual(parseCorsOrigins('https://a.cloudfront.net'), ['https://a.cloudfront.net']);
+});
+
+test('surrounding whitespace and empty entries are ignored', () => {
+  assert.deepEqual(parseCorsOrigins(' https://a.net , , https://b.net '), ['https://a.net', 'https://b.net']);
+});
+
+test('an unset or wildcard value stays a wildcard', () => {
+  for (const value of ['*', '', '   ', undefined, null, ',,']) {
+    assert.equal(parseCorsOrigins(value), '*', `expected wildcard for ${JSON.stringify(value)}`);
+  }
 });

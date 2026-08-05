@@ -1,13 +1,23 @@
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
-import { CORS_ORIGIN, PORT, readinessProblems } from './config.js';
-import { attachLiveChatSocket } from './routes/liveChat.js';
+import { CORS_ORIGINS, PORT, readinessProblems } from './config.js';
+import {
+  attachLiveChatSocket,
+  buildConfiguredAuthenticator,
+  buildConfiguredTranscriptStore,
+} from './routes/liveChat.js';
+import { SIGN_IN_PATH, createSignInHandler } from './routes/signIn.js';
 
 const app = express();
 
-app.use(cors({ origin: CORS_ORIGIN }));
+app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json());
+
+// Built once and shared with the socket below. Two verifiers would mean two
+// JWKS caches fetching the same keys from Microsoft on separate schedules.
+const authenticator = buildConfiguredAuthenticator();
+const transcriptStore = buildConfiguredTranscriptStore();
 
 app.get('/healthz', (_req, res) => {
   res.json({
@@ -30,8 +40,11 @@ app.get('/readyz', (_req, res) => {
   });
 });
 
+// Records who reached the lesson, independently of whether they ever speak.
+app.post(SIGN_IN_PATH, createSignInHandler({ authenticator, transcriptStore }));
+
 const server = createServer(app);
-const liveChatSocket = attachLiveChatSocket(server);
+const liveChatSocket = attachLiveChatSocket(server, { authenticator, transcriptStore });
 
 server.timeout = 0;
 server.keepAliveTimeout = 0;

@@ -175,6 +175,14 @@ SK  SESSION#<sessionId>#TURN#<seq, zero-padded>
   means a student who signs in and never asks anything would otherwise appear in no row
   at all. `PROFILE` is the record of who *reached* the lesson, as opposed to who talked
   to it. `"PROFILE" < "SESSION#…"` lexicographically, so it sorts first in that Query.
+
+  > **Corrected 2026-08-05.** Until step 9 below, that paragraph described an intent the
+  > code did not implement. `PROFILE` was written by `openSession`, which runs on the
+  > **WebSocket** handshake — and the client only opens that socket when the student
+  > presses the microphone (`useLiveSpeech.js`, after the `getUserMedia` prompt). So the
+  > row recorded who reached the *microphone*, not who reached the lesson, and everyone
+  > who signed in and read without speaking was still invisible. The sign-in endpoint in
+  > step 9 is what makes the sentence above true.
 - A returning student overwrites their own `PROFILE`, and its `ttl` slides forward on
   each sign-in so an active student's row cannot expire under their live transcripts.
   `firstSeenAt` is deliberately absent: keeping it would need a read before every write,
@@ -351,6 +359,36 @@ does not mention one. Worth raising with its owner separately; it is not a block
    `routes/liveChat.js`. Inert unless `TRANSCRIPT_TABLE_NAME` is set.
 8. ~~Read path.~~ Not needed — the purpose question settled as research export, which reads
    the de-identified copy rather than the table.
+9. ~~Record the sign-in itself, not just the conversation.~~ **Done 2026-08-05** — see below.
+
+### Step 9 — `POST /api/live/session/signin`
+
+Closes the gap described under Data model: the student is recorded when SSO completes,
+independently of whether they ever speak.
+
+| | |
+|---|---|
+| Gateway | `routes/signIn.js` — verifies `Authorization: Bearer <token>` with the *same* authenticator as the socket, then calls the store. `index.js` builds the authenticator and store **once** and shares them with both, so there is one JWKS cache rather than two fetching Microsoft's keys on separate schedules. |
+| Store | `transcriptStore.recordSignIn(identity)`, factored out of `openSession`, which still calls it — whichever path runs first writes the same row under the same key, so the repeat write overwrites rather than duplicating. |
+| Client | `services/signInRecord.js` (pure, dependency-free, tested) + `services/signInReporter.js` (MSAL/`import.meta.env` wiring, not importable under `node --test` — the split `auth/apiTokenMode.js` explains). Fired by `SignInRecorder` in `GiApp.jsx` once per authenticated mount. |
+| Failure policy | Fire-and-forget in every branch: no token, token acquisition throws, gateway down, gateway 401, no `fetch`. `recordSignIn` never rejects, because the caller uses `void`. A missed record is a gap in research data; a blocked sign-in is a broken lesson. |
+| Identity source | The verified token, and nothing else. The request has **no body**, so there is no field a caller could set to write a row under another student's name. |
+| Load-test bypass | Deliberately **not** accepted here. A load test has no interactive sign-in to record, and the socket already has the bypass it needs. |
+
+**No new environment variables.** It is governed by the two that already exist:
+`LIVE_AUTH_ENABLED` (off → 503 `auth_disabled`) and `TRANSCRIPT_TABLE_NAME` (empty → 200
+with `storage:"disabled"`, which distinguishes a deploy mistake from a deliberately
+skipped write).
+
+#### A CORS bug this uncovered
+
+`index.js` passed the raw `CORS_ORIGIN` string to `cors({ origin })`, which compares a
+string origin with `===`. With four origins configured, **every** browser HTTP request
+got no `Access-Control-Allow-Origin` and was blocked. It had never shown up because the
+WebSocket is not subject to CORS and does its own comma-splitting in `originAllowed()`.
+This route is the first browser HTTP call to the gateway, so it would have failed 100% of
+the time on staging. Fixed with `parseCorsOrigins()` in `config.js`; verified by preflight
+against the *second* origin in the list, which is the case that was broken.
 
 ### Gateway env added by step 7
 
@@ -457,7 +495,7 @@ Verified locally on 2026-08-03, against the real NTU tenant and the real table:
   `dynamoTranscriptClient` → DynamoDB: a `#META` row plus two zero-padded `#TURN#` rows in
   order, `ttl` resolving to 90 days out, and an all-whitespace turn correctly not written.
   Probe rows deleted afterwards.
-- **Tests:** 307 client, 121 gateway, 118 Lambda, all passing.
+- **Tests:** 322 client, 153 gateway, 118 Lambda, all passing (2026-08-05, after step 9).
 
 ### Blocked 2026-08-03, and the bigger one: the app is in the wrong tenant
 

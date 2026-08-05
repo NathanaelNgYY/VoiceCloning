@@ -70,6 +70,53 @@ export function createTranscriptStore({
   };
 
   /**
+   * Writes the one row that says a person reached the lesson at all, separately
+   * from anything they said. Called from two places, and the reason it is public
+   * is the second one:
+   *
+   * 1. `openSession` below, when a live-chat socket authenticates.
+   * 2. The sign-in endpoint (`routes/signIn.js`), the moment the browser
+   *    finishes SSO — before, and independently of, any conversation.
+   *
+   * Without (2) this row only ever appeared for students who pressed the
+   * microphone, because that is when the socket opens. Someone who signed in,
+   * read the lesson and left was recorded nowhere.
+   *
+   * A repeat visitor overwrites their own row, so firstSeenAt is not kept —
+   * reconstructing it would need a read before every write. The earliest
+   * session META serves that purpose for anyone who actually spoke.
+   *
+   * @param {{ oid: string, email?: string, name?: string, synthetic?: boolean }} identity
+   * @returns {boolean} whether a write was issued (not whether it succeeded —
+   *   writes are fire-and-forget by design).
+   */
+  function recordSignIn(identity) {
+    if (!identity?.oid) {
+      throw new Error('recordSignIn requires an identity with an oid.');
+    }
+
+    // Load-test traffic would otherwise bury real records under thousands of
+    // synthetic rows on every rehearsal.
+    if (identity.synthetic && !storeSynthetic) {
+      return false;
+    }
+
+    const seenAtMs = now();
+    write({
+      PK: userPartitionKey(identity.oid),
+      SK: USER_PROFILE_KEY,
+      lastSeenAt: new Date(seenAtMs).toISOString(),
+      email: identity.email || '',
+      displayName: identity.name || '',
+      ...(identity.synthetic ? { synthetic: true } : {}),
+      // Slides forward on every sign-in, so an active student's row does not
+      // expire underneath their still-live transcripts.
+      ...expiresAt(seenAtMs),
+    });
+    return true;
+  }
+
+  /**
    * Binds a session to one authenticated identity for the life of a socket.
    * @param {{ oid: string, email?: string, name?: string, synthetic?: boolean }} identity
    */
@@ -78,35 +125,16 @@ export function createTranscriptStore({
       throw new Error('openSession requires an identity with an oid.');
     }
 
-    // Load-test traffic would otherwise bury real transcripts under thousands of
-    // synthetic turns on every rehearsal.
     const enabled = storeSynthetic || !identity.synthetic;
     const sessionId = newSessionId();
     let sequence = 0;
     let metaWritten = false;
 
-    // Written at sign-in, unlike the session META below, and that difference is
-    // the point: a student who signs in and leaves without asking anything would
-    // otherwise appear nowhere at all. This is the only record of who reached the
-    // lesson, as opposed to who talked to it.
-    //
-    // A repeat visitor overwrites their own row, so firstSeenAt is not kept —
-    // reconstructing it would need a read before every write. The earliest
-    // session META serves that purpose for anyone who actually spoke.
-    if (enabled) {
-      const seenAtMs = now();
-      write({
-        PK: userPartitionKey(identity.oid),
-        SK: USER_PROFILE_KEY,
-        lastSeenAt: new Date(seenAtMs).toISOString(),
-        email: identity.email || '',
-        displayName: identity.name || '',
-        ...(identity.synthetic ? { synthetic: true } : {}),
-        // Slides forward on every sign-in, so an active student's row does not
-        // expire underneath their still-live transcripts.
-        ...expiresAt(seenAtMs),
-      });
-    }
+    // Kept even though the sign-in endpoint also writes it: the WebSocket is the
+    // only path guaranteed to have run when a turn is stored, so a client that
+    // never called the endpoint — or whose call failed — still produces a row.
+    // Same key, so the repeat write overwrites rather than duplicating.
+    recordSignIn(identity);
 
     const writeMetaOnce = (startedAtMs) => {
       if (metaWritten) return;
@@ -167,5 +195,5 @@ export function createTranscriptStore({
     };
   }
 
-  return { openSession };
+  return { openSession, recordSignIn };
 }
