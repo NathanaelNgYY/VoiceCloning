@@ -4,6 +4,7 @@ import {
   writeVoiceProfileBrowserDebug,
 } from '../lib/voiceProfileDebug.js';
 import { API_BASE_URL, resolveApiPath, getStorageMode, isS3Mode } from '@/lib/runtimeConfig';
+import { acquireApiTokenSilent, shouldAttachApiToken } from '@/auth/msalClient';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -69,6 +70,24 @@ async function sha256Hex(text) {
 }
 
 api.interceptors.request.use(async (config) => {
+  // The Lambda verifies a bearer token on the synthesis routes
+  // (lambda/shared/liveAuth.js). Attaching it here rather than at each call site
+  // because this axios instance is the only thing every backend request shares —
+  // api/httpClient.js attaches one too, but nothing that synthesises speech goes
+  // through it, which is how the live TTS path came to be calling a protected
+  // route bare and failing with "Sign in to use the voice assistant."
+  //
+  // Silent acquisition only. The redirecting variant would hand the page to
+  // Microsoft in the middle of a live conversation, losing the session; a 401 is
+  // recoverable, a discarded conversation is not.
+  if (shouldAttachApiToken()) {
+    const token = await acquireApiTokenSilent();
+    if (token) {
+      config.headers = config.headers || {};
+      setHeader(config.headers, 'Authorization', `Bearer ${token}`);
+    }
+  }
+
   const method = String(config.method || 'get').toLowerCase();
   if (!METHODS_REQUIRING_PAYLOAD_HASH.has(method) || !isJsonBody(config.data)) {
     return config;
