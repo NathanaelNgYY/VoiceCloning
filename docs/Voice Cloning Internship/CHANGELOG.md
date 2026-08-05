@@ -15,6 +15,9 @@
 - Audited environment separation: dev and staging use distinct fixed EC2 instances,
   Lambdas, ALBs, CloudFront paths, and S3 prefixes; only staging has an ASG. Both
   environments carry the SSO code, while SSO remains enabled only in staging runtime.
+- Promoted staging AMI `ami-09d03a73cf78729ab` as launch-template v24 after baking
+  the unified application source with `resemblyzer==0.1.4`; restored ASG ELB health
+  checks after the replacement target reached healthy readiness.
 
 ## 2026-08-03
 
