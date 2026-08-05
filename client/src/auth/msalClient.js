@@ -243,6 +243,45 @@ export async function signOutFromMicrosoft() {
   });
 }
 
+/**
+ * The API token, or "" if it cannot be obtained without user interaction.
+ *
+ * **Never navigates.** The two functions below fall back to
+ * `acquireTokenRedirect`, which takes the whole page to Microsoft — correct
+ * when the user just asked to start a conversation and is waiting for it, and
+ * badly wrong for anything that runs on its own at mount. An eager background
+ * caller using those would bounce a freshly signed-in student straight back to
+ * a sign-in prompt.
+ *
+ * Use this for anything speculative; use the redirecting versions only in
+ * response to a deliberate user action.
+ */
+export async function acquireApiTokenSilent() {
+  const mode = resolveApiTokenMode(apiTokenModeInputs());
+  if (mode === NO_TOKEN) {
+    return "";
+  }
+
+  const instance = await getMsalInstance();
+  const account = await getCurrentAccount();
+  if (!account) {
+    return "";
+  }
+
+  try {
+    const tokenResult = await instance.acquireTokenSilent({
+      account,
+      scopes: mode === ID_TOKEN ? MICROSOFT_LOGIN_SCOPES : getApiScopes(),
+    });
+
+    return (mode === ID_TOKEN ? tokenResult.idToken : tokenResult.accessToken) || "";
+  } catch {
+    // Including InteractionRequiredAuthError: the caller does without a token
+    // rather than seizing the page.
+    return "";
+  }
+}
+
 export async function acquireApiAccessToken() {
   const instance = await getMsalInstance();
   const account = await getCurrentAccount();

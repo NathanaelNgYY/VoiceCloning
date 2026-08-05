@@ -2,7 +2,10 @@
 // the same reason liveChatSocket.js is kept apart from liveChatHandshake.js:
 // this file pulls in MSAL and import.meta.env, so it cannot be imported under
 // `node --test`. Everything worth testing lives in the module it calls.
-import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
+// acquireApiTokenSilent, never acquireApiToken: this runs by itself at mount,
+// and the redirecting variant would take a freshly signed-in student back to
+// Microsoft mid-page. Recording a sign-in is not worth a navigation.
+import { acquireApiTokenSilent, shouldAttachApiToken } from '@/auth/msalClient';
 import { resolveLiveGatewayPath } from '@/lib/runtimeConfig';
 import { SIGN_IN_PATH, recordSignIn } from './signInRecord.js';
 
@@ -11,7 +14,7 @@ export function reportSignIn() {
   return recordSignIn({
     url: resolveLiveGatewayPath(SIGN_IN_PATH),
     isTokenModeEnabled: shouldAttachApiToken,
-    getToken: acquireApiToken,
+    getToken: acquireApiTokenSilent,
     fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : undefined,
   });
 }
