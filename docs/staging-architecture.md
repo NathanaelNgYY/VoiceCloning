@@ -347,6 +347,31 @@ Those two error bodies are the fastest way to tell which layer is missing. A thi
 `{"ok":false,"code":"auth_disabled"}`, means routing is correct and you reached a gateway
 with `LIVE_AUTH_ENABLED=false`.
 
+### ⚠️ CloudFront OAC silently destroys a bearer token
+
+The Lambda origin on `E3MLIO4CZFOPEO` carried OAC `EEPE53W4BCAQ8`
+(`lambda-cloudfront-OAC_V3`) with **`SigningBehavior: always`**. CloudFront then signs every
+request to that origin with SigV4 and **replaces the viewer's `Authorization` header** with
+its own signature. The client's `Bearer <id token>` never survives the hop.
+
+The symptom is maximally misleading: `readBearerToken()` sees `AWS4-HMAC-SHA256…`, does not
+match `/^Bearer\s+/`, and returns `''`, so the Lambda answers its generic
+`401 Sign in to use the voice assistant.` — a *sign-in* error caused by a *CDN* setting.
+Meanwhile the live gateway authenticates the same token perfectly, because the ALB origin has
+no OAC. "Chat works but voice fails" is the signature of this bug.
+
+Fixed by attaching a separate OAC, `E2FQU7VYHBAXBC` (`vcs-lambda-oac-no-override`,
+`SigningBehavior: no-override`), to that origin only. `no-override` signs only when the viewer
+sent no `Authorization`, so unauthenticated calls behave exactly as before and bearer tokens
+pass through. The original OAC is shared — its name suggests other projects use it — so it was
+left untouched rather than edited in place.
+
+Note the function URL is `AuthType: NONE`, so the signing was never load-bearing.
+
+**Verifying without a real token:** send a syntactically valid JWT with an invented `kid`. If
+the header survives, `resolveKey` refetches JWKS and the first call takes ~0.5-0.6 s; a
+stripped header fails at `malformed` before any network work, in ~0.25 s.
+
 **Read origin *domains*, not origin IDs.** On `E3MLIO4CZFOPEO` the origin whose Id is
 `voice-gpu-alb-815777974…` has DomainName `voice-gpu-alb-staging-1031778835…` — the Id is a
 stale label kept across a repoint. Reading the Id leads to the confident, wrong conclusion
