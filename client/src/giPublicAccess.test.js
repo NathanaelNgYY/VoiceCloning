@@ -35,9 +35,9 @@ test("the staging GI build gates the lesson site behind NTU Microsoft sign-in", 
 });
 
 test("the staging GI build carries an Entra config the gate can actually use", () => {
-  // VITE_GI_AUTH_ENABLED alone still leaves config.js in "mock" auth mode, and
-  // an unpinned authority would accept any Microsoft tenant. Each of these is a
-  // silent way for the gate to look enabled while admitting the wrong accounts.
+  // VITE_GI_AUTH_ENABLED alone still leaves config.js in "mock" auth mode, which
+  // is a silent way for the gate to look enabled while accepting a localStorage
+  // flag instead of an identity.
   assert.match(stagingGiEnv, /^VITE_AUTH_MODE=msal$/m);
   assert.match(
     stagingGiEnv,
@@ -45,12 +45,28 @@ test("the staging GI build carries an Entra config the gate can actually use", (
   );
   assert.match(
     stagingGiEnv,
-    /^VITE_ENTRA_TENANT_AUTHORITY=https:\/\/login\.microsoftonline\.com\/45e82b6b-5ac4-41a7-a36f-e702e5e3a355$/m,
-  );
-  assert.match(
-    stagingGiEnv,
     /^VITE_ENTRA_ALLOWED_EMAIL_DOMAINS=staff\.main\.ntu\.edu\.sg,student\.main\.ntu\.edu\.sg,assoc\.main\.ntu\.edu\.sg$/m,
   );
+});
+
+test("the client routes sign-in through /common, and only the backends pin a tenant", () => {
+  // The app is registered in a directory that holds no NTU accounts, so pinning
+  // the authority to it rejects every student with AADSTS50020. /common resolves
+  // the signer's own tenant instead.
+  //
+  // That is only safe because the pin moved rather than disappeared: a build is
+  // editable by whoever serves it, a token check is not. If these two ever
+  // disagree — /common here with no tenant pinned there — the gate is gone and
+  // every sign-in still looks perfectly normal from the browser.
+  assert.match(
+    stagingGiEnv,
+    /^VITE_ENTRA_TENANT_AUTHORITY=https:\/\/login\.microsoftonline\.com\/common$/m,
+  );
+
+  const NTU_TENANT = "15ce9348-be2a-462b-8fc0-e1765a9b204a";
+  const pinsNtuTenant = new RegExp(`^ENTRA_TENANT_ID=${NTU_TENANT}$`, "m");
+  assert.match(stagingGatewayEnv, pinsNtuTenant);
+  assert.match(stagingLambdaEnv, pinsNtuTenant);
 });
 
 test("the staging GI build requests the API scope its backends verify against", () => {

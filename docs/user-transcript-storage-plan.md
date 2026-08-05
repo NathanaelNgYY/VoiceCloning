@@ -86,8 +86,8 @@ reasons.
 Reject the connection unless **all** hold:
 
 - signature verifies against the NTU JWKS
-  (`https://login.microsoftonline.com/45e82b6b-5ac4-41a7-a36f-e702e5e3a355/discovery/v2.0/keys`, keys cached)
-- `iss` = `https://login.microsoftonline.com/45e82b6b-5ac4-41a7-a36f-e702e5e3a355/v2.0`
+  (`https://login.microsoftonline.com/15ce9348-be2a-462b-8fc0-e1765a9b204a/discovery/v2.0/keys`, keys cached)
+- `iss` = `https://login.microsoftonline.com/15ce9348-be2a-462b-8fc0-e1765a9b204a/v2.0`
 - `aud` = `api://9b5c52c0-5f02-4dbf-83ac-c68d246abc68` (the API's app ID URI, now that
   option (ii) is selected — it would be the bare client ID on the ID-token route)
 - `tid` = the NTU tenant, `exp` in the future
@@ -361,7 +361,7 @@ Nothing here is deployed. Two processes, both reading the staged config:
 #    Nathanael_Ng_Intern2026 role (see The account the table lives in).
 cd live-gateway
 LIVE_AUTH_ENABLED=true \
-ENTRA_TENANT_ID=45e82b6b-5ac4-41a7-a36f-e702e5e3a355 \
+ENTRA_TENANT_ID=15ce9348-be2a-462b-8fc0-e1765a9b204a \
 ENTRA_AUDIENCE=api://9b5c52c0-5f02-4dbf-83ac-c68d246abc68 \
 ENTRA_ALLOWED_EMAIL_DOMAINS=staff.main.ntu.edu.sg,student.main.ntu.edu.sg,assoc.main.ntu.edu.sg \
 TRANSCRIPT_TABLE_NAME=vcs-staging-transcripts \
@@ -431,6 +431,26 @@ The fix is either a registration inside tenant `15ce9348` (single-tenant, matche
 design as written), or making the existing app multi-tenant and re-pinning every tenant
 reference to `15ce9348` — the latter still needs NTU admin consent, and asks NTU students to
 authenticate against an app in a directory NTU does not control.
+
+**Resolved 2026-08-05: multi-tenant, because the first option was refused.** NTU IT will not
+take an app registration without an approval submission, so the registration stays in the
+Default Directory and is marked multi-tenant instead. The repo now reflects that:
+
+| Setting | Value | Why there |
+|---|---|---|
+| `VITE_ENTRA_TENANT_AUTHORITY` | `https://login.microsoftonline.com/common` | Pinning it to the registration's own directory is what returns AADSTS50020 — that directory holds no NTU accounts. `/common` resolves the signer's home tenant |
+| `ENTRA_TENANT_ID` (gateway **and** Lambda) | `15ce9348-…` | The tenant that now actually issues the token |
+
+The pin moved from the client to the backends rather than disappearing, which is the stronger
+place for it: a build is editable by whoever serves it, a token check is not. `/common` widens
+routing, not access — `entraToken.js` still rejects any `tid`/`iss` that is not NTU's, so an
+account from any other tenant that reaches the login page still cannot get past the gateway.
+
+**Still not verified, and the last thing that can block this:** an NTU account signing in to an
+externally-registered app triggers a consent prompt. If NTU's tenant permits user consent it
+resolves itself; if not it fails with `AADSTS65001` and needs **admin consent for app
+`9b5c52c0-…`**. That is a smaller ask than a registration submission, but it is still an NTU-side
+approval, and nothing in this repo can settle it.
 
 ### Blocked 2026-08-03: the API scope does not exist
 
