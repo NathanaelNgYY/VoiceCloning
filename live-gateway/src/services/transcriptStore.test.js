@@ -103,6 +103,71 @@ test('signing in writes the user profile before any turn exists', async () => {
   }]);
 });
 
+test('recordSignIn writes the profile with no session at all', async () => {
+  // The whole point of the sign-in endpoint: a student who never opens the
+  // WebSocket — never presses the microphone — is still recorded as present.
+  const { store, items } = harness({ ttlDays: 90 });
+  const recorded = store.recordSignIn(IDENTITY);
+  await flush();
+
+  assert.equal(recorded, true);
+  assert.deepEqual(items, [{
+    PK: `USER#${OID}`,
+    SK: USER_PROFILE_KEY,
+    lastSeenAt: '2026-08-03T09:30:00.000Z',
+    email: 'cs-nathanael.ng@assoc.main.ntu.edu.sg',
+    displayName: 'Nathanael Ng',
+    ttl: Math.floor(NOW_MS / 1000) + 90 * 86_400,
+  }]);
+});
+
+test('recordSignIn and openSession write the identical row', async () => {
+  // They must stay interchangeable: whichever path runs first, and whichever
+  // runs at all, the person is recorded the same way.
+  const viaEndpoint = harness();
+  const viaSocket = harness();
+  viaEndpoint.store.recordSignIn(IDENTITY);
+  viaSocket.store.openSession(IDENTITY);
+  await flush();
+
+  assert.deepEqual(
+    viaEndpoint.items[0],
+    viaSocket.items.find((item) => item.SK === USER_PROFILE_KEY),
+  );
+});
+
+test('recordSignIn drops load-test identities unless they are opted in', async () => {
+  const off = harness();
+  const on = harness({ storeSynthetic: true });
+  const synthetic = { ...IDENTITY, oid: 'LOADTEST#3', synthetic: true };
+
+  assert.equal(off.store.recordSignIn(synthetic), false);
+  assert.equal(on.store.recordSignIn(synthetic), true);
+  await flush();
+
+  assert.deepEqual(off.items, []);
+  assert.equal(on.items[0].synthetic, true);
+});
+
+test('recordSignIn refuses an identity with no oid', () => {
+  const { store } = harness();
+  // Never fall back to email or a generated id: an unattributable row is worse
+  // than no row, because it looks like data.
+  assert.throws(() => store.recordSignIn({ email: 'a@b.c' }), /oid/u);
+  assert.throws(() => store.recordSignIn(null), /oid/u);
+});
+
+test('a failed sign-in write is swallowed after logging', async () => {
+  const { store, errors } = harness({
+    putItem: async () => { throw new Error('DynamoDB is having a bad second'); },
+  });
+
+  assert.equal(store.recordSignIn(IDENTITY), true, 'the write was issued');
+  await flush();
+
+  assert.equal(errors.length, 1);
+});
+
 test('the profile sorts ahead of every session for one Query on the user', async () => {
   // "PROFILE" < "SESSION#…" lexicographically, which is what puts identity first
   // in a Query on PK rather than after an arbitrary number of turns.

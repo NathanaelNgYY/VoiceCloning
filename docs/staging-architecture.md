@@ -261,6 +261,39 @@ past a dependency *addition* without it leaves the tree fine and the lockfile ly
 therefore `c70bf7d`. Shipped the auth + transcript gateway with `LIVE_AUTH_ENABLED=false`
 and an empty `TRANSCRIPT_TABLE_NAME` — deliberately inert, see below.
 
+### Switching transcript storage on (it shipped inert)
+
+The 2026-08-05 deploy put the code on the box with `LIVE_AUTH_ENABLED=false` and an empty
+`TRANSCRIPT_TABLE_NAME`. Both are needed, and **either one alone records nothing**: with no
+authentication there is no identity to attribute a row to, and with no table name the store
+is never built. `/readyz` reports the half-configured case rather than failing silently.
+
+```bash
+R=/home/ubuntu/VoiceCloning; F=$R/live-gateway/.env
+sudo -u ubuntu cp $F $F.bak-$(date +%Y%m%d)
+sudo -u ubuntu sed -i '/^LIVE_AUTH_ENABLED=/d;/^TRANSCRIPT_/d' $F
+sudo -u ubuntu tee -a $F > /dev/null <<'ENV'
+LIVE_AUTH_ENABLED=true
+TRANSCRIPT_TABLE_NAME=vcs-staging-transcripts
+TRANSCRIPT_TABLE_REGION=ap-northeast-2
+TRANSCRIPT_TTL_DAYS=90
+TRANSCRIPT_STORE_SYNTHETIC=false
+TRANSCRIPT_STORE_ASSISTANT=false
+ENV
+# ENTRA_* must already be present — check before restarting, they are not added here:
+sudo -u ubuntu grep -c '^ENTRA_' $F      # expect 3
+sudo systemctl restart voice-live-gateway
+curl -s localhost:3002/readyz            # expect {"ok":true,...,"problems":[]}
+```
+
+Read the ⚠️ below first — this is the flip that closes the chatbot-text kiosk's sockets.
+
+**The first thing that will fail is the IAM grant.** Whether `VoiClo_GPU` carries
+`dynamodb:PutItem` on that table is still unverified and unreadable from the intern role
+(`iam:*` denied). The symptom is `[transcript] write failed` in `journalctl -u
+voice-live-gateway` while conversations keep working normally — by design, storage never
+takes down a lesson. Check the log after the first sign-in rather than assuming success.
+
 ### ⚠️ One gateway, several clients — before enabling `LIVE_AUTH_ENABLED`
 
 Every staging distribution reaches the *same* live gateway. Only the **gi** build

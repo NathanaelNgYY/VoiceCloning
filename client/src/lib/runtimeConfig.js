@@ -22,12 +22,25 @@ export function resolveWorkerPath(pathname, fallbackPathname = pathname) {
   return resolveApiPath(fallbackPathname);
 }
 
-export function resolveWsPath(pathname) {
-  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
-  const base = liveGatewayOrigin
+function liveGatewayBase() {
+  return liveGatewayOrigin
     || apiOrigin
     || (typeof window !== 'undefined' ? window.location.origin : '');
-  const url = new URL(normalizedPath, base || 'http://localhost');
+}
+
+/**
+ * The live gateway over HTTP, for the routes that are not the WebSocket. Shares
+ * `resolveWsPath`'s base resolution so the two cannot drift onto different hosts.
+ */
+export function resolveLiveGatewayPath(pathname) {
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  const base = liveGatewayBase();
+  return base ? new URL(normalizedPath, base).toString() : normalizedPath;
+}
+
+export function resolveWsPath(pathname) {
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  const url = new URL(normalizedPath, liveGatewayBase() || 'http://localhost');
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
 }
