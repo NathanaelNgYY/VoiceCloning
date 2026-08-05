@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  USER_PROFILE_KEY,
   createTranscriptStore,
   sessionMetaKey,
   turnSortKey,
@@ -17,19 +18,31 @@ const IDENTITY = {
 };
 const NOW_MS = Date.UTC(2026, 7, 3, 9, 30, 0);
 
-function harness({ ttlDays = 0, storeSynthetic = false, putItem } = {}) {
+function harness({
+  ttlDays = 0,
+  storeSynthetic = false,
+  storeAssistantTurns = true,
+  putItem,
+} = {}) {
   const items = [];
   const errors = [];
   const store = createTranscriptStore({
     putItem: putItem || (async (item) => { items.push(item); }),
     ttlDays,
     storeSynthetic,
+    // Most cases here are about keys, ttl and failure handling, so they opt in
+    // and stay readable. The default-off behaviour has its own tests below.
+    storeAssistantTurns,
     now: () => NOW_MS,
     newSessionId: () => 'session-1',
     logger: { error: (...args) => errors.push(args) },
   });
   return { store, items, errors };
 }
+
+// Everything except the per-user profile row, which is written on every
+// openSession and would otherwise shift the index of each assertion below.
+const turnsAndMeta = (items) => items.filter((item) => item.SK !== USER_PROFILE_KEY);
 
 // Writes are fire-and-forget, so tests wait for the microtask queue to drain.
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -55,21 +68,58 @@ test('the first turn writes session metadata then the turn itself', async () => 
   session.recordTurn({ role: 'user', text: 'What is melena?' });
   await flush();
 
-  assert.equal(items.length, 2);
-  assert.deepEqual(items[0], {
+  const items2 = turnsAndMeta(items);
+  assert.equal(items2.length, 2);
+  assert.deepEqual(items2[0], {
     PK: `USER#${OID}`,
     SK: 'SESSION#session-1#META',
     startedAt: '2026-08-03T09:30:00.000Z',
     email: 'cs-nathanael.ng@assoc.main.ntu.edu.sg',
     displayName: 'Nathanael Ng',
   });
-  assert.deepEqual(items[1], {
+  assert.deepEqual(items2[1], {
     PK: `USER#${OID}`,
     SK: 'SESSION#session-1#TURN#000001',
     role: 'user',
     text: 'What is melena?',
     ts: '2026-08-03T09:30:00.000Z',
   });
+});
+
+test('signing in writes the user profile before any turn exists', async () => {
+  // The only record of someone who reached the lesson and left without asking
+  // anything. Session META cannot serve this: it waits for a first real turn.
+  const { store, items } = harness({ ttlDays: 90 });
+  store.openSession(IDENTITY);
+  await flush();
+
+  assert.deepEqual(items, [{
+    PK: `USER#${OID}`,
+    SK: USER_PROFILE_KEY,
+    lastSeenAt: '2026-08-03T09:30:00.000Z',
+    email: 'cs-nathanael.ng@assoc.main.ntu.edu.sg',
+    displayName: 'Nathanael Ng',
+    ttl: Math.floor(NOW_MS / 1000) + 90 * 86_400,
+  }]);
+});
+
+test('the profile sorts ahead of every session for one Query on the user', async () => {
+  // "PROFILE" < "SESSION#…" lexicographically, which is what puts identity first
+  // in a Query on PK rather than after an arbitrary number of turns.
+  const keys = [sessionMetaKey('a'), USER_PROFILE_KEY, turnSortKey('a', 1)];
+  assert.equal([...keys].sort()[0], USER_PROFILE_KEY);
+});
+
+test('a returning student refreshes their profile rather than duplicating it', async () => {
+  const { store, items } = harness();
+  store.openSession(IDENTITY);
+  store.openSession(IDENTITY);
+  await flush();
+
+  const profiles = items.filter((item) => item.SK === USER_PROFILE_KEY);
+  assert.equal(profiles.length, 2, 'both are writes to the same key, so DynamoDB keeps one row');
+  assert.equal(profiles[0].PK, profiles[1].PK);
+  assert.equal(profiles[0].SK, profiles[1].SK);
 });
 
 test('metadata is written once per session, not once per turn', async () => {
@@ -92,14 +142,15 @@ test('metadata is written once per session, not once per turn', async () => {
   );
 });
 
-test('a session that never produces a turn writes nothing at all', async () => {
+test('a session that never produces a turn writes no session rows', async () => {
   // Kiosk users open the page and walk away constantly; empty session rows would
-  // outnumber real ones.
+  // outnumber real ones. The profile row is still written — that is the point of
+  // keeping it separate from session META.
   const { store, items } = harness();
   store.openSession(IDENTITY);
   await flush();
 
-  assert.deepEqual(items, []);
+  assert.deepEqual(turnsAndMeta(items), []);
 });
 
 test('empty and whitespace-only transcripts are not stored', async () => {
@@ -113,7 +164,7 @@ test('empty and whitespace-only transcripts are not stored', async () => {
   assert.equal(session.recordTurn({ role: 'user', text: null }), false);
   await flush();
 
-  assert.deepEqual(items, []);
+  assert.deepEqual(turnsAndMeta(items), []);
   assert.equal(session.turnCount, 0);
 });
 
@@ -138,6 +189,53 @@ test('a barged-in reply is stored and flagged rather than dropped', async () => 
   await flush();
 
   assert.equal(items.at(-1).cancelled, true);
+});
+
+test('replies are dropped by default and the questions still stored', async () => {
+  // What the student asked is the research interest; replies are reproducible
+  // from the prompt and the lesson.
+  const { store, items } = harness({ storeAssistantTurns: false });
+  const session = store.openSession(IDENTITY);
+
+  assert.equal(session.recordTurn({ role: 'user', text: 'What is melena?' }), true);
+  assert.equal(session.recordTurn({ role: 'assistant', text: 'Dark tarry stool.' }), false);
+  assert.equal(session.recordTurn({ role: 'user', text: 'And haematemesis?' }), true);
+  await flush();
+
+  assert.deepEqual(
+    items.filter((item) => item.role).map((item) => [item.role, item.SK]),
+    [
+      ['user', 'SESSION#session-1#TURN#000001'],
+      ['user', 'SESSION#session-1#TURN#000002'],
+    ],
+    'dropped replies must not consume a sequence number and leave gaps',
+  );
+});
+
+test('a reply-only session writes no session metadata', async () => {
+  // The reply is dropped before writeMetaOnce, so a student who never spoke does
+  // not get a session row conjured out of the assistant greeting them.
+  const { store, items } = harness({ storeAssistantTurns: false });
+  const session = store.openSession(IDENTITY);
+
+  session.recordTurn({ role: 'assistant', text: 'Hello, ask me anything.' });
+  await flush();
+
+  assert.deepEqual(turnsAndMeta(items), []);
+});
+
+test('replies are stored when explicitly enabled', async () => {
+  const { store, items } = harness({ storeAssistantTurns: true });
+  const session = store.openSession(IDENTITY);
+
+  session.recordTurn({ role: 'user', text: 'What is melena?' });
+  assert.equal(session.recordTurn({ role: 'assistant', text: 'Dark tarry stool.' }), true);
+  await flush();
+
+  assert.deepEqual(
+    items.filter((item) => item.role).map((item) => item.role),
+    ['user', 'assistant'],
+  );
 });
 
 test('no ttl attribute is written when retention is unset', async () => {
@@ -179,8 +277,15 @@ test('load-test sessions are stored and marked when explicitly enabled', async (
   session.recordTurn({ role: 'user', text: 'Rehearsal question' });
   await flush();
 
+  // The profile is written first and carries the same marking, so a rehearsal is
+  // identifiable at the user level, not only session by session. Turn rows are
+  // deliberately unmarked — their partition already says LOADTEST.
+  assert.equal(items[0].SK, USER_PROFILE_KEY);
   assert.equal(items[0].synthetic, true);
-  assert.equal(items[0].PK, 'USER#LOADTEST#4');
+  assert.equal(items.find((item) => item.SK.endsWith('#META')).synthetic, true);
+  for (const item of items) {
+    assert.equal(item.PK, 'USER#LOADTEST#4');
+  }
 });
 
 test('a storage failure is logged and never surfaces to the caller', async () => {
@@ -194,7 +299,7 @@ test('a storage failure is logged and never surfaces to the caller', async () =>
   assert.equal(session.recordTurn({ role: 'user', text: 'Hello' }), true);
   await flush();
 
-  assert.equal(errors.length, 2, 'both the meta and turn writes report failure');
+  assert.equal(errors.length, 3, 'the profile, meta and turn writes each report failure');
   assert.match(errors[0][1].message, /ProvisionedThroughputExceeded/);
 });
 

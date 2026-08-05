@@ -18,6 +18,11 @@ export function userPartitionKey(oid) {
   return `USER#${oid}`;
 }
 
+// One row per person, under the same partition as their sessions, so a single
+// Query on PK returns who they are and everything they said. Sorts before every
+// SESSION# key, which keeps the profile first in that result.
+export const USER_PROFILE_KEY = 'PROFILE';
+
 export function sessionMetaKey(sessionId) {
   return `SESSION#${sessionId}#META`;
 }
@@ -31,11 +36,13 @@ export function turnSortKey(sessionId, sequence) {
  * @param {(item: object) => Promise<unknown>} options.putItem
  * @param {number} [options.ttlDays]  0 keeps items indefinitely (no ttl attribute).
  * @param {boolean} [options.storeSynthetic]  Whether load-test sessions are written.
+ * @param {boolean} [options.storeAssistantTurns]  Whether replies are kept, not just questions.
  */
 export function createTranscriptStore({
   putItem,
   ttlDays = 0,
   storeSynthetic = false,
+  storeAssistantTurns = false,
   now = () => Date.now(),
   newSessionId = () => randomUUID(),
   logger = console,
@@ -78,6 +85,29 @@ export function createTranscriptStore({
     let sequence = 0;
     let metaWritten = false;
 
+    // Written at sign-in, unlike the session META below, and that difference is
+    // the point: a student who signs in and leaves without asking anything would
+    // otherwise appear nowhere at all. This is the only record of who reached the
+    // lesson, as opposed to who talked to it.
+    //
+    // A repeat visitor overwrites their own row, so firstSeenAt is not kept —
+    // reconstructing it would need a read before every write. The earliest
+    // session META serves that purpose for anyone who actually spoke.
+    if (enabled) {
+      const seenAtMs = now();
+      write({
+        PK: userPartitionKey(identity.oid),
+        SK: USER_PROFILE_KEY,
+        lastSeenAt: new Date(seenAtMs).toISOString(),
+        email: identity.email || '',
+        displayName: identity.name || '',
+        ...(identity.synthetic ? { synthetic: true } : {}),
+        // Slides forward on every sign-in, so an active student's row does not
+        // expire underneath their still-live transcripts.
+        ...expiresAt(seenAtMs),
+      });
+    }
+
     const writeMetaOnce = (startedAtMs) => {
       if (metaWritten) return;
       metaWritten = true;
@@ -113,6 +143,9 @@ export function createTranscriptStore({
         // Suppressed transcripts arrive as empty strings; an empty row is noise.
         if (!trimmed) return false;
         if (role !== 'user' && role !== 'assistant') return false;
+        // Dropped before writeMetaOnce, so a session where the student never
+        // spoke does not get a META row off the back of a reply alone.
+        if (role === 'assistant' && !storeAssistantTurns) return false;
 
         const atMs = now();
         // Written on the first real turn, not at connect: sockets that open and

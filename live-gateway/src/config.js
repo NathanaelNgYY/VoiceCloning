@@ -74,6 +74,12 @@ export const TRANSCRIPT_TTL_DAYS = Number.parseInt(process.env.TRANSCRIPT_TTL_DA
 // Load-test sessions are dropped by default so rehearsals do not bury real
 // transcripts under thousands of synthetic turns.
 export const TRANSCRIPT_STORE_SYNTHETIC = process.env.TRANSCRIPT_STORE_SYNTHETIC === 'true';
+// What the student asked is the research interest; the model's replies are
+// reproducible from the prompt and the lesson. Off by default, but a flag rather
+// than deleted code: a turn not written cannot be recovered later, and follow-up
+// questions ("what about the other one?") lose their referent without the reply
+// they answered. Set true before a session if that context is needed.
+export const TRANSCRIPT_STORE_ASSISTANT = process.env.TRANSCRIPT_STORE_ASSISTANT === 'true';
 
 /**
  * Configuration problems that should keep the gateway out of a load balancer.

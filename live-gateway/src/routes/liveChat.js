@@ -6,6 +6,7 @@ import {
   ENTRA_TENANT_ID,
   LIVE_AUTH_ENABLED,
   LIVE_AUTH_LOADTEST_SECRET,
+  TRANSCRIPT_STORE_ASSISTANT,
   TRANSCRIPT_STORE_SYNTHETIC,
   TRANSCRIPT_TABLE_NAME,
   TRANSCRIPT_TABLE_REGION,
@@ -72,6 +73,7 @@ export function buildConfiguredTranscriptStore() {
     }),
     ttlDays: TRANSCRIPT_TTL_DAYS,
     storeSynthetic: TRANSCRIPT_STORE_SYNTHETIC,
+    storeAssistantTurns: TRANSCRIPT_STORE_ASSISTANT,
   });
 }
 

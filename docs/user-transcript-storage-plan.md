@@ -156,6 +156,10 @@ building a locking scheme. DynamoDB's per-turn `PutItem` has no such race, and
 
 ```
 PK  USER#<oid>
+SK  PROFILE
+    lastSeenAt, email, displayName, ttl
+
+PK  USER#<oid>
 SK  SESSION#<sessionId>#META
     startedAt, email, displayName, lessonSlug, ttl
 
@@ -165,6 +169,23 @@ SK  SESSION#<sessionId>#TURN#<seq, zero-padded>
 ```
 
 - One user's whole history: `Query` on `PK = USER#<oid>`.
+- **`PROFILE` is written at sign-in, not on the first turn**, and that is the whole
+  reason it exists separately from session `META`. META waits for a real turn — by
+  design, so kiosk users who open the page and walk away leave no empty session — which
+  means a student who signs in and never asks anything would otherwise appear in no row
+  at all. `PROFILE` is the record of who *reached* the lesson, as opposed to who talked
+  to it. `"PROFILE" < "SESSION#…"` lexicographically, so it sorts first in that Query.
+- A returning student overwrites their own `PROFILE`, and its `ttl` slides forward on
+  each sign-in so an active student's row cannot expire under their live transcripts.
+  `firstSeenAt` is deliberately absent: keeping it would need a read before every write,
+  and the earliest session `META` already serves that for anyone who spoke.
+- **A second table for users was considered and rejected.** It buys nothing on lookup —
+  both designs are key lookups — and costs a second IAM grant, which is the current
+  bottleneck. The one real argument for splitting is the roster query: "list all users"
+  is a `Scan` that reads every turn row to find the few user rows. If that becomes
+  expensive, the fix is a GSI (`GSI1PK="USER"`, `GSI1SK=<oid>`), not another table.
+  Split only when user records grow attributes unrelated to conversations — cohort,
+  enrolment, grades — which is a different entity with a different lifecycle.
 - One session: `Query` with `begins_with(SK, "SESSION#<id>")`; zero-padded `seq` keeps
   turns in order under lexicographic sort.
 - Per-turn items stay far below the 400 KB item cap. A whole session as one item would
@@ -180,6 +201,14 @@ The live gateway already sees both sides of the conversation:
 - user speech — `conversation.item.input_audio_transcription.completed`
   (`live-gateway/src/services/openaiRealtimeEvents.js:241`)
 - assistant text — `openaiRealtimeEvents.js:298`
+
+**Replies are not stored by default** (`TRANSCRIPT_STORE_ASSISTANT=false`, decided
+2026-08-05). What the student asked is the research interest, and the model's answers are
+largely reproducible from the prompt and the lesson. Kept as a flag rather than deleted
+code, because the cost is invisible and permanent: a follow-up like "what about the other
+one?" has no recoverable meaning without the reply it answered, and no amount of later
+effort can backfill a turn that was never written. Set it true before any session where
+that context matters.
 
 It is a single writer with the full turn, and needs no client trust for transcript
 *content*. The alternative — the client POSTing a transcript at session end — loses data
