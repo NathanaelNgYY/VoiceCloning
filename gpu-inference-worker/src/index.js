@@ -28,11 +28,24 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 app.use(cors({ origin: buildCorsOriginOption(CORS_ORIGIN) }));
 app.use(express.json());
 
+// Liveness for routes that do not require the Python inference server, notably
+// /inference/progress/:sessionId, which can relay shared S3 session state.
+app.get('/livez', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'gpu-inference-worker',
+    timestamp: Date.now(),
+  });
+});
+
 app.get('/healthz', (_req, res) => {
+  const relayOnly = process.env.HEALTH_CHECK_MODE === 'liveness';
   const ready = inferenceServer.ready;
-  res.status(ready ? 200 : 503).json({
-    ok: ready,
+  const healthy = relayOnly || ready;
+  res.status(healthy ? 200 : 503).json({
+    ok: healthy,
     ready,
+    mode: relayOnly ? 'liveness' : 'readiness',
     service: 'gpu-inference-worker',
     timestamp: Date.now(),
   });

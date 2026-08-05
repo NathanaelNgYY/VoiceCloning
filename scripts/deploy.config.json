@@ -5,7 +5,7 @@
     "region": "ap-northeast-2",
     "s3Region": "ap-southeast-1",
     "instanceId": "i-0f0da8be59367f7a8",
-    "branch": "staging",
+    "branch": "codex/staging-multi-user-scaling",
     "chatbotBranch": "codex/staging-multi-user-scaling",
     "chatbotBuildMode": "gi",
     "workerAccess": "ssm",

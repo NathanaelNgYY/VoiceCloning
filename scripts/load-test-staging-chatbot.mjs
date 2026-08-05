@@ -64,6 +64,11 @@ const reportFile = process.env.VCS_CHATBOT_REPORT_FILE || '';
 const skipFirstVerify = process.env.VCS_CHATBOT_SKIP_FIRST_VERIFY === 'true';
 const firstChunkOnly = process.env.VCS_CHATBOT_FIRST_CHUNK_ONLY === 'true';
 const pinVoiceSnapshot = process.env.VCS_CHATBOT_PIN_VOICE_SNAPSHOT !== 'false';
+// Matches LIVE_AUTH_LOADTEST_SECRET on the gateway. Load tests have no
+// interactive sign-in, so this is how they get past the auth gate once
+// LIVE_AUTH_ENABLED is on. Safe to set before then: a gateway with auth off
+// ignores the frame.
+const loadTestAuthSecret = process.env.VCS_CHATBOT_LOADTEST_SECRET || '';
 
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 200) {
   throw new Error('Concurrency must be an integer from 1 to 200.');
@@ -314,6 +319,15 @@ function makeSession(index, audioPool, productionPrompt, synthesisProfile) {
 
   socket.on('open', () => {
     connectedAt = performance.now();
+    if (loadTestAuthSecret) {
+      // Must be the first frame; the gateway queues whatever follows while it
+      // verifies, so there is no need to wait for session.authenticated.
+      socket.send(JSON.stringify({
+        type: 'session.auth',
+        loadTestSecret: loadTestAuthSecret,
+        loadTestUser: index,
+      }));
+    }
     const systemPrompt = `${productionPrompt}
 
 # Controlled staging load-test instruction

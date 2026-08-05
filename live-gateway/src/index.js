@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
-import { CORS_ORIGIN, PORT } from './config.js';
+import { CORS_ORIGIN, PORT, readinessProblems } from './config.js';
 import { attachLiveChatSocket } from './routes/liveChat.js';
 
 const app = express();
@@ -13,6 +13,19 @@ app.get('/healthz', (_req, res) => {
   res.json({
     ok: true,
     service: 'voice-cloning-live-gateway',
+    timestamp: Date.now(),
+  });
+});
+
+// 503 on configuration problems so a misconfigured instance is pulled from the
+// load balancer instead of failing requests. /healthz stays 200 whenever the
+// process is alive, so the two answer different questions.
+app.get('/readyz', (_req, res) => {
+  const problems = readinessProblems();
+  res.status(problems.length === 0 ? 200 : 503).json({
+    ok: problems.length === 0,
+    service: 'voice-cloning-live-gateway',
+    problems,
     timestamp: Date.now(),
   });
 });

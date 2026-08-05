@@ -5,7 +5,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $cfg = (Get-Content "$PSScriptRoot\deploy.config.json" -Raw | ConvertFrom-Json).$Env
-$remote = "cd /home/ubuntu/VoiceCloning; git fetch origin; git checkout $($cfg.branch); git pull; sudo systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 5; curl -sf localhost:3001/healthz; curl -sf localhost:3003/healthz; curl -sf localhost:3002/healthz"
+$relaySetup = if ($Env -eq 'staging') {
+  'sudo install -d -m 0755 /etc/systemd/system/gpu-inference-worker.service.d; sudo install -o root -g root -m 0644 systemd/gpu-inference-worker-relay-health.conf /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload;'
+} else {
+  'sudo rm -f /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload;'
+}
+$gatewayEnvSetup = if ($Env -eq 'staging') {
+  'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET TRANSCRIPT_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT;'
+} else { '' }
+$remote = "set -e; cd /home/ubuntu/VoiceCloning; git fetch origin; git checkout $($cfg.branch); git pull --ff-only; npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $gatewayEnvSetup $relaySetup sudo systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 8; curl -sf localhost:3001/healthz; curl -sf localhost:3003/healthz; curl -sf localhost:3002/readyz"
 
 if ($DryRun) { Write-Host "[dry-run] $($cfg.workerAccess) to $($cfg.instanceId): $remote"; exit 0 }
 

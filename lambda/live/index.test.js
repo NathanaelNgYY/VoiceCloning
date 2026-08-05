@@ -277,3 +277,83 @@ test('a clip sent without a reply token carries no token header', async () => {
 
   assert.equal('X-VCS-Reply-Token' in headerCalls[0], false);
 });
+
+test('an unauthenticated synthesis request is refused before any GPU work', async () => {
+  // The gateway authenticates the conversation; without this the same GPU is
+  // still reachable by calling /api/live/tts-sentence directly.
+  const calls = [];
+  const handler = createHandler({
+    authGuard: {
+      authorize: async () => {
+        const error = new Error('Token signature does not verify.');
+        error.code = 'bad_signature';
+        throw error;
+      },
+    },
+    resolveSynthesisBody: async (body) => body,
+    postBinary: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { buffer: Buffer.from('RIFFdemo'), contentType: 'audio/wav' };
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    body: JSON.stringify({ text: 'Hello there.', voiceProfileId: 'lecturer-a-v1' }),
+  }, { awsRequestId: 'request-401' });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(calls, [], 'no synthesis may be requested for an unauthorized caller');
+});
+
+test('an authorized synthesis request proceeds as normal', async () => {
+  const calls = [];
+  const handler = createHandler({
+    authGuard: { authorize: async () => ({ oid: 'abc', email: '', synthetic: false }) },
+    resolveSynthesisBody: async (body) => ({
+      ...body,
+      ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+      prompt_text: 'Reference transcript',
+      prompt_lang: 'en',
+      text_lang: 'en',
+    }),
+    postBinary: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { buffer: Buffer.from('RIFFdemo'), contentType: 'audio/wav' };
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    body: JSON.stringify({ text: 'Hello there.', voiceProfileId: 'lecturer-a-v1' }),
+  }, { awsRequestId: 'request-200' });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls.length, 1);
+});
+
+test('a barge-in cancel is authenticated too', async () => {
+  // replyToken belongs to someone else's in-flight reply, so an open cancel
+  // route would let anyone interrupt another student's answer.
+  const calls = [];
+  const handler = createHandler({
+    authGuard: {
+      authorize: async () => { throw new Error('nope'); },
+    },
+    post: async (routePath, payload) => {
+      calls.push({ routePath, payload });
+      return { freed: 1 };
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/cancel',
+    body: JSON.stringify({ replyToken: 'someone-elses-token' }),
+  }, { awsRequestId: 'request-cancel' });
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(calls, []);
+});

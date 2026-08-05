@@ -238,6 +238,7 @@ bootcmd:
 runcmd:
   - [systemctl, disable, --now, gpu-worker.service]
   - [systemctl, disable, --now, target-optimizer-inference.service]
+  - [/home/ubuntu/VoiceCloning/scripts/install-resemblyzer.sh]
   - [systemctl, daemon-reload]
   - [systemctl, enable, gpu-inference-worker.service]
   - [systemctl, restart, gpu-inference-worker.service]

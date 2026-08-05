@@ -4,6 +4,12 @@ import {
 } from "@azure/msal-browser";
 import { config } from "@/config";
 import { POST_LOGIN_PATH_STORAGE_KEY } from "./constants";
+import {
+  ID_TOKEN,
+  NO_TOKEN,
+  loginApiScope,
+  resolveApiTokenMode,
+} from "./apiTokenMode";
 
 const MICROSOFT_LOGIN_SCOPES = ["openid", "profile", "email"];
 const CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad";
@@ -40,12 +46,34 @@ function buildMsalConfig() {
   };
 }
 
-function getInteractionScopes() {
-  return [...MICROSOFT_LOGIN_SCOPES, config.entraApiScope].filter(Boolean);
+function apiTokenModeInputs() {
+  return {
+    msalEnabled: isMsalAuthEnabled(),
+    apiAuthMode: config.apiAuthMode,
+    entraApiScope: config.entraApiScope,
+  };
 }
 
-export function shouldAttachApiAccessToken() {
-  return isMsalAuthEnabled() && config.apiAuthMode === "entra" && Boolean(config.entraApiScope);
+function getInteractionScopes() {
+  return [...MICROSOFT_LOGIN_SCOPES, loginApiScope(apiTokenModeInputs())].filter(Boolean);
+}
+
+/**
+ * Whether this build sends a token to its own backends at all.
+ *
+ * The backends verify one token type or the other via ENTRA_AUDIENCE, so this
+ * and their audience must be chosen together; see apiTokenMode.js and
+ * docs/user-transcript-storage-plan.md.
+ */
+export function shouldAttachApiToken() {
+  return resolveApiTokenMode(apiTokenModeInputs()) !== NO_TOKEN;
+}
+
+/** The token for whichever mode is configured. */
+export async function acquireApiToken() {
+  return resolveApiTokenMode(apiTokenModeInputs()) === ID_TOKEN
+    ? acquireMicrosoftIdToken()
+    : acquireApiAccessToken();
 }
 
 function getApiScopes() {
