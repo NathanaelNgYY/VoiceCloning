@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-05
+
+- Unified the dev and staging application histories, including staging SSO,
+  transcript/sign-in recording, and dev lesson analytics, then deployed the combined
+  source to both environments without changing their environment-specific settings.
+- Added authenticated staging load-test/public-prime requests, a safe Lambda env merge,
+  and a direct speaker-similarity diagnostic. Rotated the staging prime credential.
+- Installed `resemblyzer==0.1.4` on the staging GPU image and enabled relay liveness
+  health semantics for the fixed port-3003 SSE target; readiness remains in force for
+  autoscaled inference targets.
+- Verification: sign-in client tests 9/9, targeted gateway tests 51/51, script syntax,
+  speaker sidecar model load, and direct speaker similarity (same sample: ~1.0) passed.
+
 ## 2026-08-03
 
 - Implemented and deployed dev GI behavior analytics. The browser batches lesson,

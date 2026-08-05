@@ -19,6 +19,7 @@ param(
   [int]$SynthesisSlotsPerInstance = $(if ($env:VCS_STAGING_SYNTHESIS_SLOTS_PER_INSTANCE) {
     [int]$env:VCS_STAGING_SYNTHESIS_SLOTS_PER_INSTANCE
   } else { -1 }),
+  [string]$PrimeAuthSecret = $env:VCS_STAGING_PRIME_SECRET,
   [switch]$Apply,
   [switch]$SwitchListener
 )
@@ -161,6 +162,9 @@ $publicPrimeBody = @{
 $publicPrimeBodyB64 = [Convert]::ToBase64String(
   [Text.Encoding]::UTF8.GetBytes($publicPrimeBody)
 )
+$publicPrimeAuthB64 = if ($PrimeAuthSecret) {
+  [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($PrimeAuthSecret))
+} else { '' }
 
 $userData = @'
 #cloud-config
@@ -181,6 +185,7 @@ write_files:
 
       prime_url='__PUBLIC_PRIME_URL__'
       prime_body_b64='__PUBLIC_PRIME_BODY_B64__'
+      prime_auth_b64='__PUBLIC_PRIME_AUTH_B64__'
       delay_seconds=__PUBLIC_PRIME_DELAY_SECONDS__
       request_count=__PUBLIC_PRIME_REQUESTS__
       max_attempts=__PUBLIC_PRIME_MAX_ATTEMPTS__
@@ -188,6 +193,7 @@ write_files:
 
       sleep "${delay_seconds}"
       prime_body="$(printf '%s' "${prime_body_b64}" | base64 --decode)"
+      prime_auth="$(printf '%s' "${prime_auth_b64}" | base64 --decode)"
       pids=()
       for request_index in $(seq 1 "${request_count}"); do
         (
@@ -200,6 +206,7 @@ write_files:
                 --write-out '%{http_code}' \
                 --header 'Content-Type: application/json' \
                 --header 'Cache-Control: no-cache' \
+                ${prime_auth:+--header "Authorization: Bearer ${prime_auth}"} \
                 --data-binary "${prime_body}" \
                 "${prime_url}?instancePrime=$(date +%s)-${request_index}-${attempt}" \
                 || true
@@ -247,6 +254,7 @@ runcmd:
 '@
 $userData = $userData.Replace('__PUBLIC_PRIME_URL__', [string]$cfg.publicPrimeUrl)
 $userData = $userData.Replace('__PUBLIC_PRIME_BODY_B64__', $publicPrimeBodyB64)
+$userData = $userData.Replace('__PUBLIC_PRIME_AUTH_B64__', $publicPrimeAuthB64)
 $userData = $userData.Replace(
   '__PUBLIC_PRIME_DELAY_SECONDS__',
   [string][int]$cfg.publicPrimeDelaySeconds

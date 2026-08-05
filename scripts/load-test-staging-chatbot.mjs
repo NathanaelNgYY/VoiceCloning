@@ -397,6 +397,9 @@ Begin that sentence exactly with "${marker}."`;
               headers: {
                 'Content-Type': 'application/json',
                 'Cache-Control': 'no-cache',
+                ...(loadTestAuthSecret
+                  ? { Authorization: `Bearer ${loadTestAuthSecret}` }
+                  : {}),
               },
               body: JSON.stringify({
                 ...synthesisProfile,

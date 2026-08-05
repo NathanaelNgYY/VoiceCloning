@@ -33,8 +33,12 @@ if (Test-Path $deploymentEnv) {
   }
 
   $environmentPath = Join-Path $env:TEMP "voice-cloning-lambda-$Env-environment.json"
-  @{ Variables = $variables } | ConvertTo-Json -Depth 4 -Compress |
-    Set-Content -LiteralPath $environmentPath -Encoding utf8NoBOM
+  $environmentJson = @{ Variables = $variables } | ConvertTo-Json -Depth 4 -Compress
+  [IO.File]::WriteAllText(
+    $environmentPath,
+    $environmentJson,
+    (New-Object Text.UTF8Encoding($false))
+  )
   try {
     aws lambda update-function-configuration `
       --region $cfg.region `
