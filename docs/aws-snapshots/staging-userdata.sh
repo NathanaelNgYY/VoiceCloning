@@ -3,7 +3,9 @@
 exec > /var/log/staging-bootstrap.log 2>&1
 set -x
 
-STAGCORS="https://d1qh0ebsvevhy3.cloudfront.net,https://dfzrfr93t2ruf.cloudfront.net,https://d25sg72wp8oj5g.cloudfront.net"
+# lectures.lkcmedicine.org aliases the d25sg72wp8oj5g distribution, but the
+# browser sends the alias as `Origin`, so it has to be listed in its own right.
+STAGCORS="https://d1qh0ebsvevhy3.cloudfront.net,https://dfzrfr93t2ruf.cloudfront.net,https://d25sg72wp8oj5g.cloudfront.net,https://lectures.lkcmedicine.org"
 
 # 1) point workers at the staging S3 prefix + staging CORS
 for f in /home/ubuntu/VoiceCloning/gpu-worker/.env /home/ubuntu/VoiceCloning/gpu-inference-worker/.env; do
