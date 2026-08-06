@@ -5,6 +5,7 @@ import {
   USER_PROFILE_KEY,
   createTranscriptStore,
   sessionMetaKey,
+  signInEventKey,
   turnSortKey,
   userPartitionKey,
 } from './transcriptStore.js';
@@ -155,6 +156,67 @@ test('recordSignIn refuses an identity with no oid', () => {
   // than no row, because it looks like data.
   assert.throws(() => store.recordSignIn({ email: 'a@b.c' }), /oid/u);
   assert.throws(() => store.recordSignIn(null), /oid/u);
+});
+
+test('event: true adds a per-visit row alongside the profile', async () => {
+  const { store, items } = harness({ ttlDays: 90 });
+  store.recordSignIn(IDENTITY, { event: true });
+  await flush();
+
+  assert.deepEqual(items.map((item) => item.SK), [
+    USER_PROFILE_KEY,
+    signInEventKey('2026-08-03T09:30:00.000Z'),
+  ]);
+  assert.deepEqual(items[1], {
+    PK: `USER#${OID}`,
+    SK: 'SIGNIN#2026-08-03T09:30:00.000Z',
+    signedInAt: '2026-08-03T09:30:00.000Z',
+    email: 'cs-nathanael.ng@assoc.main.ntu.edu.sg',
+    displayName: 'Nathanael Ng',
+    ttl: Math.floor(NOW_MS / 1000) + 90 * 86_400,
+  });
+});
+
+test('openSession records presence without counting a login', async () => {
+  // The reason the flag exists. A socket can reopen several times inside one
+  // visit; if those counted, one student pressing the microphone twice would
+  // look like two logins. Only the sign-in endpoint opts in.
+  const { store, items } = harness();
+  store.openSession(IDENTITY);
+  store.recordSignIn(IDENTITY);
+  await flush();
+
+  assert.equal(items.every((item) => item.SK === USER_PROFILE_KEY), true);
+  assert.equal(items.some((item) => item.SK.startsWith('SIGNIN#')), false);
+});
+
+test('sign-in events sort chronologically under a begins_with query', async () => {
+  // The key is raw ISO-8601 precisely so that lexicographic order — the only
+  // order DynamoDB offers on a sort key — is chronological order.
+  const keys = [
+    signInEventKey('2026-08-03T09:30:00.000Z'),
+    signInEventKey('2026-01-14T23:59:59.999Z'),
+    signInEventKey('2026-08-03T09:29:59.999Z'),
+  ];
+  assert.deepEqual([...keys].sort(), [
+    'SIGNIN#2026-01-14T23:59:59.999Z',
+    'SIGNIN#2026-08-03T09:29:59.999Z',
+    'SIGNIN#2026-08-03T09:30:00.000Z',
+  ]);
+
+  // And every event shares the prefix a Query filters on.
+  assert.equal(keys.every((key) => key.startsWith('SIGNIN#')), true);
+});
+
+test('a load-test identity produces no event row either', async () => {
+  const { store, items } = harness();
+  const synthetic = { ...IDENTITY, oid: 'LOADTEST#3', synthetic: true };
+
+  assert.equal(store.recordSignIn(synthetic, { event: true }), false);
+  await flush();
+
+  // Rehearsals must not show up as thousands of logins.
+  assert.deepEqual(items, []);
 });
 
 test('a failed sign-in write is swallowed after logging', async () => {

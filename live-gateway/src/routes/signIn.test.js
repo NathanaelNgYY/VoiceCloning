@@ -40,7 +40,7 @@ function harness({
   transcriptStore,
   storageConfigured = true,
 } = {}) {
-  const seen = { frames: [], identities: [] };
+  const seen = { frames: [], identities: [], recordOptions: [] };
   const errors = [];
 
   const handler = createSignInHandler({
@@ -54,9 +54,10 @@ function harness({
       : authenticator,
     transcriptStore: transcriptStore === undefined
       ? {
-        recordSignIn: (identity) => {
+        recordSignIn: (identity, options) => {
           seen.identities.push(identity);
-          return recordSignIn(identity);
+          seen.recordOptions.push(options);
+          return recordSignIn(identity, options);
         },
       }
       : transcriptStore,
@@ -70,6 +71,16 @@ function harness({
 function request(authorization) {
   return { headers: authorization === undefined ? {} : { authorization } };
 }
+
+test('asks for a per-visit event row, unlike the socket path', async () => {
+  // This route is the one place a login is counted: it fires once per browser
+  // sign-in, whereas openSession runs again on every socket reconnect.
+  const { handler, seen } = harness();
+
+  await handler(request('Bearer good.token.here'), fakeResponse());
+
+  assert.deepEqual(seen.recordOptions, [{ event: true }]);
+});
 
 test('records the sign-in and reports it', async () => {
   const { handler, seen } = harness();

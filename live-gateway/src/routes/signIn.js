@@ -53,7 +53,7 @@ export function bearerToken(headerValue) {
  * @param {{ authenticate: (frame: object) => Promise<object> } | null} options.authenticator
  *   Null when LIVE_AUTH_ENABLED is off — there is then no verified identity to
  *   attribute a row to, so the route reports that rather than inventing one.
- * @param {{ recordSignIn: (identity: object) => boolean } | null} options.transcriptStore
+ * @param {{ recordSignIn: (identity: object, options?: object) => boolean } | null} options.transcriptStore
  *   Null when TRANSCRIPT_TABLE_NAME is empty (storage disabled).
  */
 export function createSignInHandler({
@@ -102,7 +102,10 @@ export function createSignInHandler({
     // the response, and the caller treats it as success either way.
     let recorded = false;
     try {
-      recorded = transcriptStore?.recordSignIn(identity) === true;
+      // The only caller that passes event: true. This route fires once per
+      // browser sign-in, so one row here is one login; openSession deliberately
+      // does not, because sockets reopen mid-visit. See recordSignIn's docblock.
+      recorded = transcriptStore?.recordSignIn(identity, { event: true }) === true;
     } catch (error) {
       logger.error?.('[signin] could not record sign-in', error?.message);
     }

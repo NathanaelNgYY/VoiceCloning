@@ -160,6 +160,10 @@ SK  PROFILE
     lastSeenAt, email, displayName, ttl
 
 PK  USER#<oid>
+SK  SIGNIN#<ISO-8601 timestamp>
+    signedInAt, email, displayName, ttl
+
+PK  USER#<oid>
 SK  SESSION#<sessionId>#META
     startedAt, email, displayName, lessonSlug, ttl
 
@@ -186,7 +190,28 @@ SK  SESSION#<sessionId>#TURN#<seq, zero-padded>
 - A returning student overwrites their own `PROFILE`, and its `ttl` slides forward on
   each sign-in so an active student's row cannot expire under their live transcripts.
   `firstSeenAt` is deliberately absent: keeping it would need a read before every write,
-  and the earliest session `META` already serves that for anyone who spoke.
+  and the earliest `SIGNIN#` event already serves that.
+- **`SIGNIN#<timestamp>` is the login *history*; `PROFILE` is the login *state*.** Added
+  2026-08-06, because `PROFILE` alone answers "who has ever signed in and when were they
+  last seen" but cannot answer "how many times" or "when each time" — it overwrites.
+  Raw ISO-8601 is the sort key because its lexicographic order *is* chronological order,
+  so `begins_with(SK, "SIGNIN#")` returns a person's visits oldest-first with no GSI.
+
+  Only `POST /api/live/session/signin` emits an event (`recordSignIn(identity,
+  { event: true })`). `openSession` deliberately does not, and this is the load-bearing
+  part of the design: a socket reopens on reconnect and whenever the student presses the
+  microphone again, so counting those would turn one visit into five logins. The endpoint
+  fires once per browser sign-in, which is what "a login" means here.
+
+  The accepted cost: if the endpoint call fails, that visit leaves no event row. `PROFILE`
+  is still written by the socket path, so the person is never lost — only the timestamp of
+  that visit. Undercounting is recoverable from `lastSeenAt`; fabricated logins are not.
+
+  Note `SIGNIN#` sorts *after* `SESSION#` (`"SE" < "SI"`), so a full `Query` on the user
+  returns profile, then sessions, then login history. `PROFILE` still sorts first.
+- **Sign-in events carry their own `ttl`**, unlike `PROFILE`, whose expiry slides forward.
+  So the history is a rolling `TRANSCRIPT_TTL_DAYS` window (currently 90), not a permanent
+  record. Raise it deliberately if the log has to outlive a semester.
 - **A second table for users was considered and rejected.** It buys nothing on lookup —
   both designs are key lookups — and costs a second IAM grant, which is the current
   bottleneck. The one real argument for splitting is the roster query: "list all users"

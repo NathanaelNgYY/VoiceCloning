@@ -188,6 +188,35 @@ test('a lookalike domain suffix does not satisfy the allowlist', async () => {
   await assertRejects(verifier, signToken(lookalike), 'domain_not_allowed');
 });
 
+test('every allowed NTU domain is accepted, students included', async () => {
+  // Stands in for the accounts we cannot sign in as. Nothing about verification
+  // treats a student differently from staff — the domain string is the only
+  // thing that varies — so exercising all three here is the closest we can get
+  // to a student sign-in without a student account.
+  const { verifier } = makeVerifier();
+
+  for (const domain of DOMAINS) {
+    const identity = await verifier.verify(
+      signToken(validClaims({ preferred_username: `SOMEONE@${domain}` })),
+    );
+    assert.equal(identity.email, `someone@${domain}`);
+  }
+});
+
+test('e.ntu.edu.sg is NTU but is not on the allowlist', async () => {
+  // Deliberate, and worth a test because it is the easy one to get wrong: the
+  // domain resolves to the same NTU tenant as the three allowed suffixes, so a
+  // token bearing it is genuine and still rejected. If a cohort turns out to
+  // sign in with this suffix, the fix is the env allowlist, not this code.
+  const { verifier } = makeVerifier();
+
+  await assertRejects(
+    verifier,
+    signToken(validClaims({ preferred_username: 'student@e.ntu.edu.sg' })),
+    'domain_not_allowed',
+  );
+});
+
 test('guest accounts are rejected even on an allowed domain', async () => {
   const { verifier } = makeVerifier();
   const guest = validClaims({
