@@ -1,0 +1,73 @@
+export const GI_BLEEDING_CONCEPTS = Object.freeze([
+  { id: 'introduction-overview', label: 'GI bleeding overview', start: 0, end: 65.14 },
+  { id: 'presentation-epidemiology', label: 'Presentation and epidemiology', start: 65.14, end: 136.92 },
+  { id: 'initial-assessment-stabilization', label: 'Initial assessment and stabilization', start: 136.92, end: 163.66 },
+  { id: 'investigations-risk-stratification', label: 'Investigations and risk stratification', start: 163.66, end: 187.5 },
+  { id: 'upper-gi-causes-presentation', label: 'Upper GI bleeding causes and presentation', start: 187.5, end: 301.78 },
+  { id: 'upper-gi-management', label: 'Upper GI bleeding management', start: 301.78, end: 355.51 },
+  { id: 'endoscopy', label: 'Endoscopy timing and therapy', start: 355.51, end: 505.88 },
+  { id: 'lower-gi-bleeding', label: 'Lower GI bleeding', start: 505.88, end: 624.42 },
+  { id: 'key-messages', label: 'Key messages', start: 624.42, end: 673.04 },
+]);
+
+const LESSON_CONCEPTS = new Map([
+  ['gi-bleeding', GI_BLEEDING_CONCEPTS],
+]);
+
+export function conceptAt(lessonSlug, seconds) {
+  const time = Number(seconds);
+  if (!Number.isFinite(time) || time < 0) return null;
+  const concepts = LESSON_CONCEPTS.get(lessonSlug) || [];
+  return concepts.find((concept) => time >= concept.start && time < concept.end) || null;
+}
+
+export function evidenceFromEvent(event) {
+  const concept = conceptAt(event?.lessonSlug, event?.videoTime);
+  if (!concept) return null;
+
+  if (
+    event.eventName === 'video_seek'
+    && (event.properties?.direction === 'backward'
+      || Number(event.properties?.toSeconds) < Number(event.properties?.fromSeconds))
+  ) {
+    return { concept, signal: 'rewatched_segment', weight: 1 };
+  }
+
+  if (
+    event.eventName === 'video_play'
+    && Number(event.properties?.pauseDurationSeconds) >= 15
+  ) {
+    return { concept, signal: 'long_pause', weight: 0.5 };
+  }
+
+  if (event.eventName === 'transcript_scrolled') {
+    return { concept, signal: 'reviewed_transcript', weight: 0.25 };
+  }
+
+  return null;
+}
+
+export function statusForEvidence(score) {
+  const value = Number(score) || 0;
+  if (value >= 3) return 'needs_review';
+  if (value >= 1.5) return 'possible_uncertainty';
+  return 'insufficient_evidence';
+}
+
+export function buildLearnerSummary(conceptStates) {
+  const ranked = [...conceptStates]
+    .filter((item) => Number(item.evidenceScore) >= 1.5)
+    .sort((left, right) => Number(right.evidenceScore) - Number(left.evidenceScore));
+  if (ranked.length === 0) {
+    return {
+      summary: 'There is not yet enough evidence to identify a learning focus.',
+      focusConcepts: [],
+    };
+  }
+
+  const focus = ranked.slice(0, 3);
+  return {
+    summary: `Recent learning behaviour suggests reviewing ${focus.map((item) => item.conceptLabel).join(', ')}. Treat these as teaching signals, not a formal assessment.`,
+    focusConcepts: focus.map((item) => item.conceptId),
+  };
+}

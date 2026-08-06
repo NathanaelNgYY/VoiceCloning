@@ -35,11 +35,12 @@ test('buildAnalyticsObjectKey partitions batches by UTC date and hour', () => {
   );
 });
 
-test('handleAnalytics stores one compressed anonymous batch', async () => {
+test('handleAnalytics stores one compressed batch under the verified subject', async () => {
   let uploaded;
   const response = await handleAnalytics({
     body: JSON.stringify({ schemaVersion: 1, events: [event()] }),
   }, {
+    identity: { oid: 'verified-oid', synthetic: false },
     now: () => NOW,
     createBatchId: () => 'batch-1',
     upload: async (key, body, contentType) => { uploaded = { key, body, contentType }; },
@@ -47,13 +48,24 @@ test('handleAnalytics stores one compressed anonymous batch', async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(uploaded.key, 'analytics/events/date=2026-08-03/hour=04/batch-1.json.gz');
   const stored = JSON.parse(gunzipSync(uploaded.body).toString('utf8'));
-  assert.deepEqual(stored.subject, { type: 'anonymous' });
+  assert.deepEqual(stored.subject, { type: 'entra', oid: 'verified-oid' });
   assert.equal(stored.events.length, 1);
 });
 
 test('handleAnalytics rejects a client-unknown event type', async () => {
   const response = await handleAnalytics({
     body: JSON.stringify({ schemaVersion: 1, events: [event({ eventName: 'email_captured' })] }),
-  }, { now: () => NOW, upload: async () => assert.fail('must not upload') });
+  }, {
+    identity: { oid: 'verified-oid', synthetic: false },
+    now: () => NOW,
+    upload: async () => assert.fail('must not upload'),
+  });
   assert.equal(response.statusCode, 400);
+});
+
+test('handleAnalytics refuses an unverified caller before writing', async () => {
+  const response = await handleAnalytics({
+    body: JSON.stringify({ schemaVersion: 1, events: [event()] }),
+  }, { upload: async () => assert.fail('must not upload') });
+  assert.equal(response.statusCode, 401);
 });

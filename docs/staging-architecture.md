@@ -261,6 +261,29 @@ the fixed instance. `WARM_ON_BOOT=true` keeps inference ALB-ready after service
 restarts. GitHub `separate-containers-new` was verified synchronized through
 operations/docs commit `8b963eb`; AWS dev application source remains `070a99a`.
 
+### Dev identified learner analytics checkpoint (2026-08-06)
+
+`vcs-dev-transcripts` now exists in `ap-northeast-2` with `PK`/`SK`, on-demand
+billing, GSI `GSI1` (`GSI1PK`/`GSI1SK`), deletion protection, project/environment/data
+classification tags, and TTL on `ttl`. Point-in-time recovery is not enabled because
+the operator role is denied `dynamodb:UpdateContinuousBackups`.
+
+The dev-first implementation is committed on `separate-containers-new` but must not be
+deployed until runtime access is granted. The operator role is denied
+`dynamodb:PutResourcePolicy`, and cannot inspect or edit IAM. An administrator must either
+apply a DynamoDB resource policy or equivalent identity policies granting:
+
+- `Liu_Teng_Yu_Intern2026-LambdaExecutionRole`: `dynamodb:GetItem`, `PutItem`,
+  `UpdateItem`, and `Query` on the dev table and `.../index/*`.
+- `VoiClo_GPU`: `dynamodb:PutItem` on the dev table for gateway sign-in/transcript rows.
+- Operator or administrator: `dynamodb:UpdateContinuousBackups` on the dev table, then
+  enable and read back point-in-time recovery.
+
+After those grants, deploy dev only in this order: Lambda, fixed dev gateway, dev
+CloudFront `/api/live/session/*` behavior, then GI client. Verify a real NTU token,
+identified S3 analytics subject, DynamoDB profile/evidence/summary rows, personalized
+prompt retrieval, and supervisor-role rejection/acceptance before considering staging.
+
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
 ### ⚠️ Do not use `deploy-worker.ps1` on staging as written

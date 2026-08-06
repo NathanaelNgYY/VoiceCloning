@@ -85,6 +85,7 @@ test('a well-formed tenant token yields the caller identity', async () => {
     email: 'cs-nathanael.ng@assoc.main.ntu.edu.sg',
     name: 'Nathanael Ng',
     tenantId: TENANT_ID,
+    roles: [],
   });
 });
 

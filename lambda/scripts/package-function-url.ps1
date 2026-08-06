@@ -25,6 +25,7 @@ try {
     'package-lock.json',
     'config',
     'analytics',
+    'learners',
     'inference',
     'instance',
     'live',

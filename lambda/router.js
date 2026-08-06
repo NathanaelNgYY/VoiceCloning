@@ -4,6 +4,7 @@ import { handler as liveHandler } from './live/index.js';
 export const ROUTES = [
   { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
   { name: 'AnalyticsFunction', methods: ['POST'], pattern: /^\/api\/analytics\/events\/?$/u, modulePath: './analytics/index.js' },
+  { name: 'LearnersFunction', methods: ['GET'], pattern: /^\/api\/(?:learner\/me|supervisor\/users(?:\/[^/]+)?)\/?$/u, modulePath: './learners/index.js' },
   { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },
   { name: 'TrainingLibraryFunction', methods: ['GET', 'POST', 'DELETE'], pattern: /^\/api\/training-library(?:\/(?:snapshot|presign|confirm|[^/]+(?:\/(?:replace-presign|replace-confirm))?))?\/?$/u, modulePath: './training-library/index.js' },
   { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current|metadata\/[^/]+))?\/?$/u, modulePath: './training/index.js' },

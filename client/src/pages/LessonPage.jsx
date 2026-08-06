@@ -649,6 +649,7 @@ export function LessonPage() {
                   </div>
 
                   <GiChatPanel
+                    lessonSlug={slug}
                     emptyHint="Ask about this lesson — click the mic to start"
                     lessonContext={lessonContext}
                     getVideoPosition={videoPositionEnabled ? getVideoPosition : null}

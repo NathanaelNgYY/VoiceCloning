@@ -106,6 +106,8 @@ export function createTranscriptStore({
       PK: userPartitionKey(identity.oid),
       SK: USER_PROFILE_KEY,
       lastSeenAt: new Date(seenAtMs).toISOString(),
+      GSI1PK: 'USERS',
+      GSI1SK: `${new Date(seenAtMs).toISOString()}#${identity.oid}`,
       email: identity.email || '',
       displayName: identity.name || '',
       ...(identity.synthetic ? { synthetic: true } : {}),

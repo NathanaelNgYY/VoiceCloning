@@ -18,6 +18,7 @@ import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { matchesPinnedVoice, resolvePinnedVoiceKey } from '@/lib/giVoicePin';
 import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
+import { getMyLearnerSummary } from '@/services/learnerAnalytics';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
@@ -29,13 +30,18 @@ import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 // optional poll for where that video is right now, so the assistant can resolve
 // "what does she mean here?". The standalone kiosk has no video and passes
 // neither.
-export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } = {}) {
+export function useGiChatEngine({
+  lessonContext = '',
+  lessonSlug = 'gi-bleeding',
+  getVideoPosition = null,
+} = {}) {
   const { workerReady, configured } = useGpuStatus();
   const backendQueryable = !configured || workerReady;
 
   const [activeProfile, setActiveProfile] = useState(null);
   const [profileError, setProfileError] = useState('');
   const [clearedBeforeId, setClearedBeforeId] = useState('');
+  const [learnerSummary, setLearnerSummary] = useState(null);
 
   const profileRequestRef = useRef(0);
 
@@ -54,8 +60,19 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     );
     const lesson = String(lessonContext || '').trim();
     const withLesson = lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
-    return buildGiBleedingScopedSystemPrompt(withLesson);
-  }, [lessonContext]);
+    const personalized = learnerSummary?.summary
+      ? `${withLesson}\n\nPRIVATE LEARNER GUIDANCE (do not quote or mention tracking):\n${learnerSummary.summary}\nUse this only to choose explanations and gentle comprehension checks. Treat it as uncertain evidence, not a diagnosis or grade.`
+      : withLesson;
+    return buildGiBleedingScopedSystemPrompt(personalized);
+  }, [learnerSummary, lessonContext]);
+
+  useEffect(() => {
+    let active = true;
+    getMyLearnerSummary(lessonSlug)
+      .then((summary) => { if (active) setLearnerSummary(summary); })
+      .catch(() => { if (active) setLearnerSummary(null); });
+    return () => { active = false; };
+  }, [lessonSlug]);
 
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;

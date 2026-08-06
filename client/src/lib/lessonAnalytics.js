@@ -67,7 +67,11 @@ export function createLessonBehaviorState({ now = () => Date.now() } = {}) {
   };
 }
 
-export function createLessonAnalyticsClient({ lessonSlug, fetchImpl = globalThis.fetch } = {}) {
+export function createLessonAnalyticsClient({
+  lessonSlug,
+  fetchImpl = globalThis.fetch,
+  getAuthToken = null,
+} = {}) {
   const sessionId = createId();
   let queue = [];
   let sending = false;
@@ -78,7 +82,15 @@ export function createLessonAnalyticsClient({ lessonSlug, fetchImpl = globalThis
     const events = queue.splice(0, ANALYTICS_BATCH_SIZE);
     const body = JSON.stringify({ schemaVersion: ANALYTICS_SCHEMA_VERSION, events });
 
-    if (useBeacon && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    // sendBeacon cannot attach an Authorization header. It remains useful only
+    // for explicitly anonymous/local builds; identified analytics uses a
+    // keepalive fetch during teardown instead.
+    if (
+      useBeacon
+      && !getAuthToken
+      && typeof navigator !== 'undefined'
+      && typeof navigator.sendBeacon === 'function'
+    ) {
       const accepted = navigator.sendBeacon(
         ANALYTICS_ENDPOINT,
         new Blob([body], { type: 'application/json' }),
@@ -93,9 +105,14 @@ export function createLessonAnalyticsClient({ lessonSlug, fetchImpl = globalThis
 
     sending = true;
     try {
+      const token = getAuthToken ? await getAuthToken() : '';
+      if (getAuthToken && !token) throw new Error('Analytics token is unavailable.');
       const response = await fetchImpl(ANALYTICS_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body,
         keepalive: true,
         credentials: 'same-origin',

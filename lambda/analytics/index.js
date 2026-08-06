@@ -2,7 +2,9 @@ import { gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 
 import { err, ok, parseJsonBody } from '../shared/cors.js';
+import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { uploadBuffer } from '../shared/s3.js';
+import { createLearnerStore } from './learnerStore.js';
 
 export const MAX_ANALYTICS_EVENTS = 50;
 export const ANALYTICS_SCHEMA_VERSION = 1;
@@ -94,9 +96,14 @@ export function buildAnalyticsObjectKey(receivedAt, batchId) {
 
 export async function handleAnalytics(event, {
   upload = uploadBuffer,
+  identity = null,
+  learnerStore = null,
   now = () => new Date(),
   createBatchId = randomUUID,
 } = {}) {
+  if (!identity?.oid) {
+    return err(401, 'Analytics authentication is required.', event);
+  }
   let body;
   try {
     body = parseJsonBody(event);
@@ -122,9 +129,9 @@ export async function handleAnalytics(event, {
     schemaVersion: ANALYTICS_SCHEMA_VERSION,
     batchId,
     receivedAt: receivedAt.toISOString(),
-    // Deliberately anonymous. When SSO is enforced, the backend can add a
-    // validated subject here; it must never trust a user ID sent by the browser.
-    subject: { type: 'anonymous' },
+    // The immutable subject comes only from a server-verified Entra token.
+    // Names and email addresses do not belong in the analytics event lake.
+    subject: { type: identity.synthetic ? 'synthetic' : 'entra', oid: identity.oid },
     events,
   };
   await upload(
@@ -132,13 +139,28 @@ export async function handleAnalytics(event, {
     gzipSync(Buffer.from(JSON.stringify(record) + '\n', 'utf8')),
     'application/x-ndjson',
   );
-  return ok({ accepted: events.length, batchId }, {}, event);
+  const learnerResult = learnerStore
+    ? await learnerStore.recordBatch(identity, events)
+    : { recorded: 0 };
+  return ok({ accepted: events.length, batchId, evidenceRecorded: learnerResult.recorded }, {}, event);
 }
 
 export async function handler(event) {
   try {
-    return await handleAnalytics(event);
+    const guard = createLiveAuthGuard();
+    if (!guard) {
+      return err(503, 'Analytics authentication is not configured.', event);
+    }
+    const identity = await guard.authorize(event);
+    return await handleAnalytics(event, {
+      identity,
+      learnerStore: createLearnerStore(),
+    });
   } catch (error) {
+    if (error?.code) {
+      const forbidden = ['forbidden', 'domain_not_allowed', 'guest_account', 'bad_tenant'];
+      return err(forbidden.includes(error.code) ? 403 : 401, 'Analytics authentication failed.', event);
+    }
     console.error('Analytics ingest failed', error?.name || 'Error');
     return err(500, 'Analytics events could not be stored.', event);
   }

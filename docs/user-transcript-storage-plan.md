@@ -595,3 +595,18 @@ work. The committed `client/env/staging/gi.env` is unchanged and still carries b
 
 Until (3) is done, "the gate rejects everything" and "the gate is correctly configured" look
 identical from the outside.
+
+## Dev per-user behaviour checkpoint — 2026-08-06
+
+The dev-first implementation now authenticates analytics, derives the immutable `oid`
+server-side, maps recorded video behaviour to an authored GI concept timeline, aggregates
+cautious evidence, stores learner summaries, retrieves the current user's summary for
+chatbot teaching guidance, and exposes supervisor-role-protected user/detail endpoints plus
+the `/supervisor` UI. Structured OpenAI summary generation is optional and falls back to
+deterministic wording if its dedicated key is absent or the API fails.
+
+Local tests/build pass, and `vcs-dev-transcripts` was created with the required GSI, TTL,
+deletion protection, and tags. Deployment is intentionally paused: the operator cannot
+grant the Lambda/gateway runtime access or enable point-in-time recovery. Exact grants and
+the safe continuation order are recorded in `docs/staging-architecture.md` and project
+memory.

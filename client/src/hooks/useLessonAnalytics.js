@@ -5,6 +5,7 @@ import {
   createLessonAnalyticsClient,
   createLessonBehaviorState,
 } from '@/lib/lessonAnalytics.js';
+import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
 
 export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, activeTab, videoUrl = '' }) {
   const analyticsRef = useRef(null);
@@ -13,7 +14,12 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
   const preSeekTimeRef = useRef(null);
   const lastVideoTimeRef = useRef(0);
 
-  if (!analyticsRef.current) analyticsRef.current = createLessonAnalyticsClient({ lessonSlug: slug });
+  if (!analyticsRef.current) {
+    analyticsRef.current = createLessonAnalyticsClient({
+      lessonSlug: slug,
+      getAuthToken: shouldAttachApiToken() ? acquireApiToken : null,
+    });
+  }
   if (!behaviorRef.current) behaviorRef.current = createLessonBehaviorState();
   activeTabRef.current = activeTab;
 

@@ -5,6 +5,7 @@ import { LessonPage } from '@/pages/LessonPage.jsx';
 import { LoginPage } from '@/pages/LoginPage.jsx';
 import { SearchPage } from '@/pages/SearchPage.jsx';
 import GiChatPage from '@/pages/GiChatPage.jsx';
+import { SupervisorDashboardPage } from '@/pages/SupervisorDashboardPage.jsx';
 import { consumeStoredPostLoginPath } from '@/auth/msalClient';
 import { useAuth } from '@/auth/useAuth';
 import { reportSignIn } from '@/services/signInReporter';
@@ -148,6 +149,14 @@ export default function GiApp() {
           element={
             <ProtectedRoute>
               <LessonPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/supervisor"
+          element={
+            <ProtectedRoute>
+              <SupervisorDashboardPage />
             </ProtectedRoute>
           }
         />
