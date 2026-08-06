@@ -36,6 +36,40 @@ export function signInEventKey(isoTimestamp) {
   return `SIGNIN#${isoTimestamp}`;
 }
 
+/**
+ * Partition key of the sparse `signins-by-day` index — the ISO date alone,
+ * e.g. "2026-08-06".
+ *
+ * Answering "who signed in today" from the base table means scanning every row
+ * of every user, including transcripts, because sign-ins live under each
+ * person's own partition. This index inverts that. Only SIGNIN# rows carry the
+ * attribute, so the index stays sparse: a cohort's chatter never enters it, and
+ * it costs in proportion to logins rather than to utterances.
+ *
+ * Bucketing by day rather than using one constant value avoids funnelling a
+ * whole cohort's writes into a single partition. A date range is one Query per
+ * day, which is the right shape for the question anyway.
+ */
+export function signInDayKey(isoTimestamp) {
+  return isoTimestamp.slice(0, 10);
+}
+
+/**
+ * Session ids lead with the ISO timestamp of the socket opening, so that
+ * `SESSION#…` sort keys order chronologically.
+ *
+ * They used to be bare UUIDs, which sort by random hex: a student's sessions
+ * came back shuffled, and "sessions between two dates" was not expressible at
+ * all. Same reasoning as signInEventKey above.
+ *
+ * The random suffix is load-bearing rather than decoration — two sockets
+ * opening for one user in the same millisecond (a fast reconnect) would
+ * otherwise share an id and interleave their turns into a single transcript.
+ */
+export function timeOrderedSessionId(nowMs) {
+  return `${new Date(nowMs).toISOString()}#${randomUUID().slice(0, 8)}`;
+}
+
 export function sessionMetaKey(sessionId) {
   return `SESSION#${sessionId}#META`;
 }
@@ -57,7 +91,8 @@ export function createTranscriptStore({
   storeSynthetic = false,
   storeAssistantTurns = false,
   now = () => Date.now(),
-  newSessionId = () => randomUUID(),
+  // Receives the open time so the id can lead with it; see timeOrderedSessionId.
+  newSessionId = timeOrderedSessionId,
   logger = console,
 }) {
   if (typeof putItem !== 'function') {
@@ -148,8 +183,13 @@ export function createTranscriptStore({
       write({
         PK: userPartitionKey(identity.oid),
         SK: signInEventKey(seenAt),
-        // Duplicated from the key so the row is readable without parsing it.
+        // Duplicated from the key so the row is readable without parsing it,
+        // and doubling as the sort key of the signins-by-day index.
         signedInAt: seenAt,
+        // Present on these rows and no others, which is what keeps that index
+        // sparse. Dropping the index later means deleting it, not rewriting
+        // rows: a stray attribute on a sign-in row costs nothing.
+        signInDay: signInDayKey(seenAt),
         ...who,
         // Each event expires on its own clock, unlike PROFILE — so this is a
         // rolling window of recent visits, not a permanent history. Raise
@@ -171,7 +211,10 @@ export function createTranscriptStore({
     }
 
     const enabled = storeSynthetic || !identity.synthetic;
-    const sessionId = newSessionId();
+    // Stamped when the socket opens, which is the session's real start. The
+    // META row's `startedAt` is later — it is written on the first turn, so
+    // that a socket which never says anything leaves nothing behind.
+    const sessionId = newSessionId(now());
     let sequence = 0;
     let metaWritten = false;
 

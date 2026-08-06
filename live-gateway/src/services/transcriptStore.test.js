@@ -5,7 +5,9 @@ import {
   USER_PROFILE_KEY,
   createTranscriptStore,
   sessionMetaKey,
+  signInDayKey,
   signInEventKey,
+  timeOrderedSessionId,
   turnSortKey,
   userPartitionKey,
 } from './transcriptStore.js';
@@ -60,6 +62,53 @@ test('key helpers produce sortable, user-partitioned keys', () => {
     turnSortKey('abc', 9),
     turnSortKey('abc', 10),
   ]);
+});
+
+test('session ids lead with the open time, so sessions sort chronologically', () => {
+  const early = timeOrderedSessionId(Date.UTC(2026, 7, 6, 7, 26, 13));
+  const late = timeOrderedSessionId(Date.UTC(2026, 7, 6, 7, 27, 27));
+
+  assert.match(early, /^2026-08-06T07:26:13\.000Z#[0-9a-f]{8}$/u);
+  // The bug this replaced, taken from the real staging table: session
+  // 24a89949… started at 07:27:27 and sorted *before* 53e698f6… from 07:26:13,
+  // because bare UUIDs sort by random hex. A student's sessions came back
+  // shuffled and a date range was not expressible at all.
+  assert.ok(sessionMetaKey(early) < sessionMetaKey(late));
+  assert.deepEqual([late, early].sort(), [early, late]);
+});
+
+test('two sessions opened in the same millisecond stay distinct', () => {
+  const sameMs = Date.UTC(2026, 7, 6, 7, 26, 13);
+
+  // A fast reconnect. Without the random suffix both sockets would share an id
+  // and interleave their turns into a single garbled transcript.
+  assert.notEqual(timeOrderedSessionId(sameMs), timeOrderedSessionId(sameMs));
+});
+
+test('signInDayKey buckets an event to its calendar day', () => {
+  assert.equal(signInDayKey('2026-08-06T07:15:31.394Z'), '2026-08-06');
+  // 17:00Z is already 1am on the 7th in Singapore. Days in this index are UTC
+  // days, like every other timestamp in the table — worth knowing before
+  // reading a daily count as "one school day".
+  assert.equal(signInDayKey('2026-08-06T17:00:00.000Z'), '2026-08-06');
+});
+
+test('only sign-in events carry the index attribute, keeping it sparse', async () => {
+  const { store, items } = harness();
+
+  store.recordSignIn(IDENTITY, { event: true });
+  const session = store.openSession(IDENTITY);
+  session.recordTurn({ role: 'user', text: 'hello' });
+  await flush();
+
+  const indexed = items.filter((item) => item.signInDay !== undefined);
+
+  // Profile, session meta and turn rows must all stay out of it: a secondary
+  // index costs in proportion to what it holds, and only logins belong here.
+  assert.equal(indexed.length, 1);
+  assert.equal(indexed[0].SK, signInEventKey('2026-08-03T09:30:00.000Z'));
+  assert.equal(indexed[0].signInDay, '2026-08-03');
+  assert.ok(items.length > 3, 'expected profile, meta and turn rows alongside');
 });
 
 test('the first turn writes session metadata then the turn itself', async () => {
@@ -171,6 +220,7 @@ test('event: true adds a per-visit row alongside the profile', async () => {
     PK: `USER#${OID}`,
     SK: 'SIGNIN#2026-08-03T09:30:00.000Z',
     signedInAt: '2026-08-03T09:30:00.000Z',
+    signInDay: '2026-08-03',
     email: 'cs-nathanael.ng@assoc.main.ntu.edu.sg',
     displayName: 'Nathanael Ng',
     ttl: Math.floor(NOW_MS / 1000) + 90 * 86_400,
