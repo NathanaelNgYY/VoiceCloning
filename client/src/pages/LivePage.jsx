@@ -173,7 +173,7 @@ const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 
 // Advanced settings are still fully wired up (state + auto-applied defaults);
 // this just hides the collapsible UI so it doesn't confuse end users. Flip to
 // true to expose the panel again.
-const SHOW_ADVANCED_SETTINGS = false;
+const SHOW_ADVANCED_SETTINGS = true;
 
 function buildConfigId(seed = '') {
   const slug = String(seed || 'config')
