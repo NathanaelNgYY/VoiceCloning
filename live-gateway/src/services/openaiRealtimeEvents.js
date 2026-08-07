@@ -46,20 +46,46 @@ export function normalizeRealtimeLanguage(language) {
     : REALTIME_LANGUAGES.en.code;
 }
 
+// Tidy the debris the language-instruction removals leave behind — double
+// spaces, orphaned blank lines — WITHOUT flattening line structure.
+//
+// This used to be a blanket `/\s+/g -> ' '`, which collapsed the whole prompt
+// onto one line. That matters because the prompts these sessions run on are
+// markdown (client/src/lib/chatbotSystemPrompt.js: ~25k characters of teaching
+// material wrapped in a scope gate), and the headings are what separate the
+// gate from the material it governs. Flattened, the gate stopped reading as a
+// section and became one clause in an unbroken wall of text — enough that
+// blatant off-topic requests were still refused, but small talk sailed through
+// and became the off-character history that later turns then built on.
+function tidyPromptWhitespace(prompt) {
+  return prompt
+    // Runs of horizontal whitespace collapse to one space. Safe here: these
+    // prompts carry no indentation, so no list nesting is lost.
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/ +\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function languageOnlyPrompt(systemPrompt, language) {
   const languageConfig = REALTIME_LANGUAGES[normalizeRealtimeLanguage(language)];
   const languageInstruction = languageConfig.code === REALTIME_LANGUAGES.zh.code
     ? 'Always respond only in Chinese. Use Simplified Chinese characters. Do not include English words, Latin letters, pinyin, or English number words; write numbers as Arabic numerals or Chinese characters.'
     : `Always respond only in ${languageConfig.name}.`;
   const prompt = cleanText(systemPrompt) || DEFAULT_SYSTEM_PROMPT;
-  const neutralPrompt = cleanText(
+  const neutralPrompt = tidyPromptWhitespace(
     prompt
       .replace(LANGUAGE_INSTRUCTION_RE, '')
       .replace(LANGUAGE_ONLY_RE, '')
-      .replace(/\s+/g, ' ')
   );
   const basePrompt = neutralPrompt || 'You are a casual, helpful assistant. Keep replies concise and conversational.';
-  return `${basePrompt} ${languageInstruction} ${PROSODY_GUIDANCE}`;
+  // Delivery constraints go FIRST so the prompt body keeps the last word.
+  // A scoped prompt ends with a "verify this before you reply" section, and
+  // whatever sits closest to the end of the instructions is what the model
+  // weighs most heavily each turn. That slot belongs to the scope check.
+  // Previously PROSODY_GUIDANCE held it, which is why replies opened with a
+  // breezy eight-word greeting instead of the refusal the gate asks for.
+  return `${languageInstruction}\n\n${PROSODY_GUIDANCE}\n\n${basePrompt}`;
 }
 
 // Mid-session note telling the model where the student's lesson video is, so
