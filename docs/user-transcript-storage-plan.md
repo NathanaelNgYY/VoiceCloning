@@ -620,6 +620,9 @@ resource changed. A real NTU sign-in and the resulting profile/evidence/summary,
 personalization, and supervisor flows remain unverified.
 
 Repeated-question scoring is also live in dev. Near-duplicate questions asked 8 seconds to
-10 minutes apart receive 1.25 evidence only when both question timestamps map to the same
-lesson concept. One cluster is capped at two signals. Raw question text remains in the
-transcript table as before but is not copied into the analytics event/S3 batch.
+10 minutes apart receive 1.25 evidence. A deterministic curated classifier can preserve a
+clear concept across different video timestamps only when both questions agree at confidence
+0.75 or higher; ambiguous, tied, or unknown classifications fall back to requiring the same
+timestamp-authored concept. One cluster is capped at two signals. Raw question text remains
+in the DynamoDB transcript table as before but is not copied into the analytics event/S3
+batch, which stores only derived concept, similarity, and timing metadata.

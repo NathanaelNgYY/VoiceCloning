@@ -6,7 +6,7 @@ Last updated: 2026-08-07
 
 - Current scope includes dev parity plus a separately confirmed staging event action; repo/branch is `VoiceCloning` / `separate-containers-new`.
 - Dev host is at feature commit `4c8911a`; local checkout has unpushed deployment/docs and
-  repeated-question commits because GitHub authentication is unavailable. Preserve the host's
+  hybrid repeated-question commits because GitHub authentication is unavailable. Preserve the host's
   unrelated deleted verifier file and archives; do not clean them up.
 - Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
   `scripts/deploy.config.json` before changing AWS or code.
@@ -30,7 +30,7 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Bundle `assets/index-DfEDWAsH.js` scores same-concept repeated questions at 1.25 (8-second floor, 10-minute window, 0.65 similarity, two-signal cap).
+  Bundle `assets/index-BXcd6-Hm.js` scores repeated questions at 1.25; clear deterministic concept matches can cross timestamps, while ambiguous matches require the same authored timestamp concept (0.75 concept confidence, 8-second floor, 10-minute window, 0.65 similarity, two-signal cap).
 
 ## Current AWS Operating State
 

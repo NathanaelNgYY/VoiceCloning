@@ -2,10 +2,13 @@
 
 ## 2026-08-07
 
-- Added and deployed dev-only repeated-question evidence: same-concept matches score 1.25
+- Improved and redeployed dev-only repeated-question evidence: deterministic concept matches
+  at confidence 0.75 or higher may cross video timestamps; ambiguous, tied, or unknown
+  questions still require the same timestamp-authored concept. Accepted matches score 1.25
   with an 8-second floor, 10-minute window, 0.65 similarity threshold, and two-signal cap.
-  Analytics stores only similarity/timing metadata, not question text. Lambda 137/137,
-  client 330/330, GI build, dev Lambda update, bundle and invalidation all passed.
+  Analytics/S3 excludes question text; DynamoDB transcripts retain it. Lambda 139/139,
+  client 331/331, GI build, dev Lambda update, live bundle `assets/index-BXcd6-Hm.js`,
+  completed invalidation, config check, and anonymous learner 401 all passed.
 
 - Enabled PITR and deployed authenticated per-user learner analytics to dev only: the
   non-staging Lambda, fixed dev gateway, dev chatbot CloudFront/S3 target, and

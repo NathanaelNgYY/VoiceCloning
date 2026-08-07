@@ -287,13 +287,16 @@ sign-in route's missing-token 401. Remaining verification requires a real NTU si
 identified S3 analytics subject, DynamoDB profile/evidence/summary rows, personalized
 prompt retrieval, and supervisor-role rejection/acceptance. Do not promote to staging.
 
-Repeated-question evidence was added and deployed to dev on 2026-08-07. The client keeps
-question text only in memory, compares content-token overlap for up to ten minutes, ignores
-matches within eight seconds, and emits at most two repeat signals per question cluster.
-Lambda accepts the signal only when both video timestamps map to the same authored concept
-and similarity is at least 0.65; it adds `repeated_question` at weight 1.25. The analytics
-batch contains similarity/timing metadata but no question text. Live dev bundle is
-`assets/index-DfEDWAsH.js`; the non-staging Lambda update completed successfully.
+Repeated-question evidence was added and deployed to dev on 2026-08-07. The client compares
+content-token overlap for up to ten minutes, ignores matches within eight seconds, and emits
+at most two repeat signals per question cluster. A deterministic curated classifier may
+assign both questions to the same concept across different video timestamps only at
+confidence 0.75 or higher; ambiguous or tied matches cannot override time. Otherwise Lambda
+requires both timestamps to map to the same authored concept. Similarity must be at least
+0.65 and accepted evidence weighs 1.25. The analytics/S3 batch contains concept,
+similarity, and timing metadata but no question text; the existing DynamoDB transcript row
+still contains the chat text. Live dev bundle is `assets/index-BXcd6-Hm.js`; the non-staging
+Lambda update and CloudFront invalidation completed successfully.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 

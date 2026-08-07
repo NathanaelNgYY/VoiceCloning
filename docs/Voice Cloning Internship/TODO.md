@@ -4,7 +4,7 @@
   gateway `PutItem` and public fail-closed routes are proven. With a real NTU sign-in,
   verify the PROFILE row, identified analytics, concept evidence/summary rows, chatbot
   personalization, repeated-question evidence, and supervisor allow/deny behavior. Also
-  push the two local commits when GitHub authentication is restored. Do not deploy to staging.
+  push the local commits when GitHub authentication is restored. Do not deploy to staging.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.
