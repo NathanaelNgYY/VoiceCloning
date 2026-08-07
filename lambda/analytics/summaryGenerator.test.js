@@ -6,7 +6,7 @@ import { createSummaryGenerator } from './summaryGenerator.js';
 const states = [{
   conceptId: 'risk',
   conceptLabel: 'Risk stratification',
-  status: 'needs_review',
+  status: 'support_recommended',
   evidenceScore: 3,
   evidenceCount: 3,
   signals: new Set(['rewatched_segment']),
@@ -36,4 +36,21 @@ test('accepts structured LLM output and filters invented concept ids', async () 
   const result = await generate(states);
   assert.equal(result.source, 'llm');
   assert.deepEqual(result.focusConcepts, ['risk']);
+});
+
+test('does not ask the LLM to promote a concept below the support threshold', async () => {
+  let called = false;
+  const generate = createSummaryGenerator({
+    apiKey: 'test-key',
+    fetchImpl: async () => { called = true; throw new Error('must not be called'); },
+  });
+  const result = await generate([{
+    conceptId: 'risk',
+    conceptLabel: 'Risk stratification',
+    evidenceScore: 0.5,
+    evidenceCount: 1,
+    signals: new Set(['rewatched_segment']),
+  }]);
+  assert.equal(called, false);
+  assert.deepEqual(result.focusConcepts, []);
 });

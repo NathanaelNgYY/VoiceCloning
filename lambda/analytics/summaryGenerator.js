@@ -22,14 +22,17 @@ export function createSummaryGenerator({
     const fallback = buildLearnerSummary(conceptStates);
     if (!apiKey || conceptStates.length === 0) return { ...fallback, source: 'rules' };
 
-    const evidence = conceptStates.map((state) => ({
+    const evidence = conceptStates
+      .filter((state) => Number(state.evidenceScore) >= 1)
+      .map((state) => ({
       conceptId: state.conceptId,
       conceptLabel: state.conceptLabel,
       status: state.status,
       evidenceScore: state.evidenceScore,
       evidenceCount: state.evidenceCount,
       signals: [...(state.signals || [])],
-    }));
+      }));
+    if (evidence.length === 0) return { ...fallback, source: 'rules' };
 
     try {
       const response = await fetchImpl(RESPONSES_URL, {
@@ -47,7 +50,7 @@ export function createSummaryGenerator({
               role: 'system',
               content: [{
                 type: 'input_text',
-                text: 'Summarize uncertain learning-behaviour evidence as cautious teaching guidance. Do not diagnose, grade, identify, or claim certainty. Mention only concepts supported by the supplied evidence.',
+                text: 'Convert recent support signals into cautious teaching guidance. Suggest only that additional support may be useful. Never claim the learner is uncertain, confused, deficient, assessed, or lacking knowledge. Mention only concepts supported by the supplied evidence.',
               }],
             },
             {

@@ -1,5 +1,10 @@
 # Bugs
 
+- Fixed: passive long pauses and transcript scrolling previously increased the same numeric
+  score used for concept personalization, allowing ambiguous behaviour to imply uncertainty.
+  They are now retained only as raw analytics; only bounded rewatches and clarification
+  requests derive a cautious support state.
+
 ## Active
 
 - 2026-08-07 fixed: learner evidence accumulated without bound and short clarification repeats

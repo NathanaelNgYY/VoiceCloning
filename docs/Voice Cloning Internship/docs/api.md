@@ -17,9 +17,10 @@ Primary router: `lambda/router.js`
 - `POST /api/analytics/events`
   - Accepts schema version 1 with 1-50 allowlisted lesson events and requires a verified
     Entra token in dev. Immutable gzip NDJSON batches remain in hourly S3 partitions.
-  - Maintains a 30-day per-concept evidence window. Concept score is capped at `5`;
-    each signal type contributes at most twice and retained evidence count is capped at
-    eight. Duplicate event IDs are idempotent.
+  - Maintains a 30-day per-concept support window. Two rewinds contribute at most `1`
+    total; two clarification requests contribute at most `2` total. The internal support
+    score caps at `3` and qualifying count at four. Long pauses and transcript scrolling
+    remain raw analytics only and do not affect support state. Duplicate IDs are idempotent.
 - `GET /api/learner/me?lesson=<slug>`
   - Recalculates and returns only the authenticated user's current rolling summary.
 - `GET /api/supervisor/users`

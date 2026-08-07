@@ -35,11 +35,11 @@ export function evidenceFromEvent(event) {
     const semanticConfidence = Number(event.properties?.semanticConfidence);
     const similarity = Number(event.properties?.similarity);
     if (semanticConcept && semanticConfidence >= 0.75 && similarity >= REPEATED_QUESTION_SIMILARITY) {
-      return { concept: semanticConcept, signal: 'repeated_question', weight: 1.25 };
+      return { concept: semanticConcept, signal: 'repeated_question', weight: 1 };
     }
     const previousConcept = conceptAt(event.lessonSlug, event.properties?.previousVideoTime);
     if (concept && previousConcept?.id === concept.id && similarity >= REPEATED_QUESTION_SIMILARITY) {
-      return { concept, signal: 'repeated_question', weight: 1.25 };
+      return { concept, signal: 'repeated_question', weight: 1 };
     }
     return null;
   }
@@ -51,18 +51,18 @@ export function evidenceFromEvent(event) {
     && (event.properties?.direction === 'backward'
       || Number(event.properties?.toSeconds) < Number(event.properties?.fromSeconds))
   ) {
-    return { concept, signal: 'rewatched_segment', weight: 1 };
+    return { concept, signal: 'rewatched_segment', weight: 0.5 };
   }
 
   if (
     event.eventName === 'video_play'
     && Number(event.properties?.pauseDurationSeconds) >= 15
   ) {
-    return { concept, signal: 'long_pause', weight: 0.5 };
+    return null;
   }
 
   if (event.eventName === 'transcript_scrolled') {
-    return { concept, signal: 'reviewed_transcript', weight: 0.25 };
+    return null;
   }
 
   return null;
@@ -70,25 +70,25 @@ export function evidenceFromEvent(event) {
 
 export function statusForEvidence(score) {
   const value = Number(score) || 0;
-  if (value >= 3) return 'needs_review';
-  if (value >= 1.5) return 'possible_uncertainty';
-  return 'insufficient_evidence';
+  if (value >= 2) return 'support_recommended';
+  if (value >= 1) return 'possible_support';
+  return 'no_support_inference';
 }
 
 export function buildLearnerSummary(conceptStates) {
   const ranked = [...conceptStates]
-    .filter((item) => Number(item.evidenceScore) >= 1.5)
+    .filter((item) => Number(item.evidenceScore) >= 1)
     .sort((left, right) => Number(right.evidenceScore) - Number(left.evidenceScore));
   if (ranked.length === 0) {
     return {
-      summary: 'There is not yet enough evidence to identify a learning focus.',
+      summary: 'There are no recent behaviour signals strong enough to suggest additional concept support.',
       focusConcepts: [],
     };
   }
 
   const focus = ranked.slice(0, 3);
   return {
-    summary: `Recent learning behaviour suggests reviewing ${focus.map((item) => item.conceptLabel).join(', ')}. Treat these as teaching signals, not a formal assessment.`,
+    summary: `Recent behaviour suggests gently offering additional support for ${focus.map((item) => item.conceptLabel).join(', ')}. Do not claim that the learner is uncertain or lacks knowledge.`,
     focusConcepts: focus.map((item) => item.conceptId),
   };
 }

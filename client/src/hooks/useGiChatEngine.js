@@ -23,6 +23,7 @@ import {
 import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 import { getMyLearnerSummary } from '@/services/learnerAnalytics';
+import { buildLearnerSupportGuidance } from '@/lib/learnerGuidance';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
@@ -77,9 +78,8 @@ export function useGiChatEngine({
     );
     const lesson = String(lessonContext || '').trim();
     const withLesson = lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
-    const personalized = learnerSummary?.summary
-      ? `${withLesson}\n\nPRIVATE LEARNER GUIDANCE (do not quote or mention tracking):\n${learnerSummary.summary}\nUse this only to choose explanations and gentle comprehension checks. Treat it as uncertain evidence, not a diagnosis or grade.`
-      : withLesson;
+    const supportGuidance = buildLearnerSupportGuidance(learnerSummary);
+    const personalized = supportGuidance ? `${withLesson}\n\n${supportGuidance}` : withLesson;
     return buildGiBleedingScopedSystemPrompt(personalized);
   }, [learnerSummary, lessonContext]);
 

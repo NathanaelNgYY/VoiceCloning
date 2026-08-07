@@ -43,11 +43,12 @@ always read and live-verify it before AWS work.
 - `vcs-dev-transcripts` is live in Seoul with deletion protection, TTL, and point-in-time
   recovery. Real NTU sign-in has proven the profile, session/turn, concept, and summary rows.
 - Query the raw partition value `USER#<oid>`; do not include `PK = ` inside the value field.
-- Evidence uses a 30-day rolling window. Each concept caps at score `5`; each signal type
-  contributes at most twice and evidence count caps at eight. Supervisors can reset one
-  learner concept from the dashboard, which rebuilds the lesson summary.
-- Dev bundle `assets/index-Bciq7I20.js` also coalesces scrubs, records transcript review once
-  per visit, and recognizes short clarification repeats such as “even simpler.”
+- Support inference uses a 30-day rolling window. Two rewinds produce only
+  `possible_support`; two clarification requests produce `support_recommended`. The internal
+  score caps at `3` and qualifying count at four. Long pauses and transcript scrolling are
+  raw analytics only. Supervisors can reset one learner concept and rebuild its summary.
+- Dev bundle `assets/index-DnMxwfqH.js` coalesces scrubs, recognizes short clarification repeats,
+  hides the internal score, and keeps concept ranking supervisor-only.
 
 | Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
 |---|---|---|---|---|

@@ -1,10 +1,10 @@
 # Active TODO
 
-- [ ] Verify the live 30-day/capped learner model with real actions: two events per signal must
-  saturate, “even simpler” must count as a repeated clarification after eight seconds, and the
-  supervisor Reset button must remove one concept and rebuild its summary. Confirm/request the
-  Entra `Supervisor` role. Define positive mastery only after a trustworthy correctness signal;
-  ordinary chat text must not lower uncertainty. Do not deploy this to staging.
+- [ ] Verify the live conservative support model: a pause/transcript scroll must not affect a
+  concept, two rewinds must produce only `possible_support`, and two delayed “even simpler”
+  requests must produce `support_recommended` then saturate. Verify supervisor Reset. Future:
+  add learner confirmation, knowledge checks, and a separate learner-controlled persistent
+  explanation-style preference. Do not deploy analytics to staging.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.

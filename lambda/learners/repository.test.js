@@ -35,7 +35,7 @@ test('resetting one concept rebuilds the summary from remaining concepts', async
           conceptLabel: 'Risk stratification',
           evidenceScore: 2,
           evidenceCount: 2,
-          signals: new Set(['long_pause']),
+          signals: new Set(['repeated_question']),
           updatedAt: '2026-08-07T11:00:00.000Z',
         }] };
       }
@@ -51,7 +51,7 @@ test('resetting one concept rebuilds the summary from remaining concepts', async
   assert.equal(result.summary.focusConcepts[0], 'risk');
   const put = commands.find((command) => command.constructor.name === 'PutCommand');
   assert.equal(put.input.Item.source, 'rules');
-  assert.equal(put.input.Item.concepts[0].status, 'possible_uncertainty');
+  assert.equal(put.input.Item.concepts[0].status, 'support_recommended');
 });
 
 test('learner summary reads drop evidence after the rolling window without a new write', async () => {
@@ -76,5 +76,5 @@ test('learner summary reads drop evidence after the rolling window without a new
   const summary = await repository.getSummary('user-1', 'gi-bleeding');
   assert.equal(summary.concepts[0].evidenceScore, 0);
   assert.deepEqual(summary.focusConcepts, []);
-  assert.match(summary.summary, /not yet enough evidence/i);
+  assert.match(summary.summary, /no recent behaviour signals/i);
 });

@@ -12,7 +12,7 @@ Last updated: 2026-08-07
 - Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
   dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
   gateway instance role's `PutItem` was proven with an expiring probe.
-- Dev evidence now rolls 30 days, caps concepts at 5 and each signal at two events; supervisor concept reset and “even simpler” repeat detection are live.
+- Dev support rolls 30 days: two bounded rewinds/clarifications count; passive actions do not infer support. Live on dev.
 - Learner analytics remains dev-only. GI fixes Dean by ID in both clients/Lambdas;
   no staging analytics, scaling, gateway, TTS, or training resource changed.
 
@@ -28,9 +28,9 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Dev bundle `assets/index-Bciq7I20.js` fixes bounded analytics, `deanvoice-v1`, supervisor
+  Dev bundle `assets/index-DnMxwfqH.js` provides conservative concept-matched support, `deanvoice-v1`, supervisor
   analytics, setup failures, and Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
-  Normal dev TTS/Training/Dean stay public. Repeats score 1.25.
+  Normal dev TTS/Training/Dean stay public. Ranking is supervisor-only; chatbot guidance applies only the concept matching the current question.
 
 ## Current AWS Operating State
 

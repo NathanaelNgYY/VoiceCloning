@@ -72,7 +72,7 @@ export function SupervisorDashboardPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Supervisor view</p>
           <h1 className="mt-2 text-3xl font-semibold">Learner signals</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
-            Behaviour signals support teaching decisions; they are not formal assessments.
+            Support signals guide optional teaching emphasis; they do not establish uncertainty or mastery.
           </p>
         </header>
 
@@ -155,7 +155,7 @@ export function SupervisorDashboardPage() {
                                     </span>
                                   ))}
                                   {analytics.visibleConcepts.length === 0 && (
-                                    <span className="text-xs text-slate-500">Not enough evidence to identify a review topic.</span>
+                                    <span className="text-xs text-slate-500">No recent signals suggest offering additional support.</span>
                                   )}
                                 </div>
                               </>
@@ -168,7 +168,7 @@ export function SupervisorDashboardPage() {
                                   </div>
                                   <div className="pl-4">
                                     <span className="block text-2xl font-semibold tabular-nums text-slate-900">{analytics.totalEvidence}</span>
-                                    <span className="text-xs text-slate-500">Evidence events</span>
+                                    <span className="text-xs text-slate-500">Qualifying support signals</span>
                                   </div>
                                 </div>
 
@@ -178,10 +178,9 @@ export function SupervisorDashboardPage() {
                                       <div className="mb-1.5 flex items-end justify-between gap-4">
                                         <div>
                                           <p className="text-sm font-medium text-slate-800">{concept.conceptLabel}</p>
-                                          <p className="text-xs text-slate-500">{conceptStatusLabel(concept.status)} · {concept.evidenceCount} evidence event{concept.evidenceCount === 1 ? '' : 's'}</p>
+                                          <p className="text-xs text-slate-500">{conceptStatusLabel(concept.status)} · {concept.evidenceCount} recent signal{concept.evidenceCount === 1 ? '' : 's'}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                          <span className="font-mono text-xs font-semibold text-slate-700">{concept.evidenceScore.toFixed(2)}</span>
                                           <button
                                             type="button"
                                             onClick={() => resetConcept(lesson.lessonSlug, concept)}
@@ -192,12 +191,6 @@ export function SupervisorDashboardPage() {
                                           </button>
                                         </div>
                                       </div>
-                                      <div className="h-2 overflow-hidden rounded-full bg-slate-200" role="img" aria-label={`${concept.conceptLabel} evidence score ${concept.evidenceScore.toFixed(2)}`}>
-                                        <div
-                                          className={`h-full rounded-full ${concept.status === 'needs_review' ? 'bg-amber-600' : 'bg-sky-700'}`}
-                                          style={{ width: `${Math.max(5, (concept.evidenceScore / analytics.maxScore) * 100)}%` }}
-                                        />
-                                      </div>
                                       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
                                         {concept.signals.map((signal) => (
                                           <span key={signal} className="text-xs text-slate-500">{SIGNAL_LABELS[signal] || signal.replaceAll('_', ' ')}</span>
@@ -206,11 +199,11 @@ export function SupervisorDashboardPage() {
                                     </div>
                                   ))}
                                   {analytics.visibleConcepts.length === 0 && (
-                                    <p className="text-sm text-slate-500">No topics have enough evidence for a chart yet.</p>
+                                    <p className="text-sm text-slate-500">No recent signals suggest offering additional support.</p>
                                   )}
                                 </div>
                                 <p className="mt-5 border-t border-slate-200 pt-3 text-xs leading-5 text-slate-500">
-                                  Scores rank behavioural signals for review. They are not grades or diagnoses.
+                                  These are bounded recent support signals, not grades, diagnoses, or conclusions about understanding.
                                 </p>
                               </div>
                             )}

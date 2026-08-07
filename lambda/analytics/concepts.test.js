@@ -27,7 +27,7 @@ test('derives evidence from recorded behavior rather than inventing it', () => {
       end: 187.5,
     },
     signal: 'rewatched_segment',
-    weight: 1,
+    weight: 0.5,
   });
 });
 
@@ -38,7 +38,7 @@ test('weights a repeated question only when both timestamps belong to the same c
     videoTime: 390,
     properties: { previousVideoTime: 380, similarity: 0.8 },
   };
-  assert.equal(evidenceFromEvent(event)?.weight, 1.25);
+  assert.equal(evidenceFromEvent(event)?.weight, 1);
   assert.equal(evidenceFromEvent({
     ...event,
     properties: { previousVideoTime: 520, similarity: 0.8 },
@@ -62,7 +62,7 @@ test('semantic agreement keeps repeated-question evidence when the video moved',
     },
   });
   assert.equal(result?.concept.id, 'endoscopy');
-  assert.equal(result?.weight, 1.25);
+  assert.equal(result?.weight, 1);
 });
 
 test('unknown or low-confidence semantic concepts cannot override timestamp disagreement', () => {
@@ -82,18 +82,32 @@ test('unknown or low-confidence semantic concepts cannot override timestamp disa
   }), null);
 });
 
-test('uses fixed evidence thresholds for learner status', () => {
-  assert.equal(statusForEvidence(1), 'insufficient_evidence');
-  assert.equal(statusForEvidence(2), 'possible_uncertainty');
-  assert.equal(statusForEvidence(3), 'needs_review');
+test('uses conservative support thresholds without claiming uncertainty', () => {
+  assert.equal(statusForEvidence(0.5), 'no_support_inference');
+  assert.equal(statusForEvidence(1), 'possible_support');
+  assert.equal(statusForEvidence(2), 'support_recommended');
+});
+
+test('passive pause and transcript behaviour does not infer support need', () => {
+  assert.equal(evidenceFromEvent({
+    lessonSlug: 'gi-bleeding',
+    eventName: 'video_play',
+    videoTime: 390,
+    properties: { pauseDurationSeconds: 30 },
+  }), null);
+  assert.equal(evidenceFromEvent({
+    lessonSlug: 'gi-bleeding',
+    eventName: 'transcript_scrolled',
+    videoTime: 390,
+  }), null);
 });
 
 test('summary exposes only sufficiently supported learning focuses', () => {
   assert.deepEqual(buildLearnerSummary([
     { conceptId: 'a', conceptLabel: 'Concept A', evidenceScore: 3 },
-    { conceptId: 'b', conceptLabel: 'Concept B', evidenceScore: 1 },
+    { conceptId: 'b', conceptLabel: 'Concept B', evidenceScore: 0.5 },
   ]), {
-    summary: 'Recent learning behaviour suggests reviewing Concept A. Treat these as teaching signals, not a formal assessment.',
+    summary: 'Recent behaviour suggests gently offering additional support for Concept A. Do not claim that the learner is uncertain or lacks knowledge.',
     focusConcepts: ['a'],
   });
 });

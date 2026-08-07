@@ -1,5 +1,18 @@
 # Changelog
 
+- Reframed dev learner analytics as conservative support guidance rather than uncertainty
+  prediction. Rewinds now contribute `0.5` at most twice, clarification requests contribute
+  `1` at most twice, and the internal score caps at `3`. Long pauses and transcript scrolling
+  remain in raw analytics but no longer affect concept state. Statuses are now
+  `no_support_inference`, `possible_support`, and `support_recommended`; the supervisor UI no
+  longer displays a pseudo-assessment score. Detailed current-turn explanation requests are
+  explicitly preserved, while persistent style preferences, learner confirmation, and
+  knowledge checks remain future work.
+- Chatbot personalization now receives structured concept-specific guidance and must match the
+  current question's concept before applying it. It ignores supervisor `focusConcepts` and
+  receives every qualifying concept. Concept ranking remains dashboard-only, and
+  low-signal concepts cannot be promoted by the optional summary LLM.
+
 ## 2026-08-07
 
 - Replaced unlimited dev learner accumulation with a 30-day rolling model: score cap 5,

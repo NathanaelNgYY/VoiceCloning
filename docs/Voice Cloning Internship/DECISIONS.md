@@ -32,20 +32,30 @@
 - The dev-first identified design is implemented locally: Lambda validates the token,
   writes only verified `oid` as the analytics subject, maps video times through an authored
   lesson concept map, and aggregates cautious evidence in a dev-only DynamoDB table.
-- Learner summaries use fixed evidence thresholds and may use a structured OpenAI response;
+- Learner summaries use conservative support-signal thresholds and may use a structured OpenAI response;
   API failure or missing credentials falls back to deterministic wording. The chatbot gets
   only the compact summary, never another user's history or an unsupported formal grade.
-- Evidence is per learner, lesson, and concept in a rolling 30-day window. Scores cap at
-  `5`; each signal type contributes at most twice, retained count caps at eight, and event IDs
-  are idempotent. Reads recalculate recency even when no new event arrives. Legacy aggregates
-  carry forward for at most 30 days. Positive mastery evidence remains unimplemented until a
-  trustworthy correctness signal exists; ordinary chat wording must not reduce uncertainty.
+- Derived support signals are per learner, lesson, and concept in a rolling 30-day window.
+  Rewinds contribute `0.5` at most twice and clarification requests contribute `1` at most
+  twice; the internal support score caps at `3` and retained qualifying count caps at four.
+  Long pauses and transcript scrolling remain only in the immutable event log and contribute
+  nothing to the support state. Event IDs are idempotent and reads recalculate recency.
+  Positive mastery remains unimplemented until a trustworthy correctness signal exists.
 - Supervisor reads require an Entra `Supervisor` app role (with an explicit OID allowlist
   only as a temporary provisioning bridge), and query a user index rather than scanning.
   Supervisors may reset one learner concept; the backend rebuilds the affected summary.
 - Rewinds, skips, and long transcript pauses are ambiguous signals. They may calibrate
   a relevant chatbot answer or prompt a check for understanding, but cannot establish
   that a learner is confused, clear, attentive, or has mastered the material.
+- Explanation style is separate from concept support. A detailed current-turn request such as
+  “explain like I am nine while preserving medical terms” must be followed as written; a
+  generic simplification request supports only generic simplification. Persistent style
+  preferences require a separate learner-controlled model and are future work, alongside
+  learner confirmation prompts and concept knowledge checks.
+- Concept ranking is supervisor presentation only. The chatbot ignores `focusConcepts`, receives
+  every concept with a current support state, first resolves the concept in the current question,
+  and applies only the matching entry; an
+  unrelated higher-ranked concept must never redirect the answer.
 
 ## Pronunciation Dictionary
 

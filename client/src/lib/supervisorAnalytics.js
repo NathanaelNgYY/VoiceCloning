@@ -1,7 +1,7 @@
 const STATUS_ORDER = Object.freeze({
-  needs_review: 2,
-  possible_uncertainty: 1,
-  insufficient_evidence: 0,
+  support_recommended: 2,
+  possible_support: 1,
+  no_support_inference: 0,
 });
 
 export const SIGNAL_LABELS = Object.freeze({
@@ -12,9 +12,9 @@ export const SIGNAL_LABELS = Object.freeze({
 });
 
 export function conceptStatusLabel(status) {
-  if (status === 'needs_review') return 'Needs review';
-  if (status === 'possible_uncertainty') return 'Possible uncertainty';
-  return 'Not enough evidence';
+  if (status === 'support_recommended') return 'Support recommended';
+  if (status === 'possible_support') return 'Possible support';
+  return 'No support inference';
 }
 
 export function rankConcepts(lesson) {
@@ -34,14 +34,14 @@ export function rankConcepts(lesson) {
 
 export function lessonAnalytics(lesson) {
   const concepts = rankConcepts(lesson);
-  const visibleConcepts = concepts.filter((concept) => concept.status !== 'insufficient_evidence');
+  const visibleConcepts = concepts.filter((concept) => concept.status !== 'no_support_inference');
   const maxScore = Math.max(1, ...visibleConcepts.map((concept) => concept.evidenceScore));
   return {
     concepts,
     visibleConcepts,
     maxScore,
     totalEvidence: concepts.reduce((total, concept) => total + concept.evidenceCount, 0),
-    needsReviewCount: concepts.filter((concept) => concept.status === 'needs_review').length,
+    needsReviewCount: concepts.filter((concept) => concept.status === 'support_recommended').length,
   };
 }
 

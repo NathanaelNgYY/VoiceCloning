@@ -12,12 +12,10 @@ import { createSummaryGenerator } from './summaryGenerator.js';
 
 const SECONDS_PER_DAY = 86_400;
 export const EVIDENCE_WINDOW_DAYS = 30;
-export const CONCEPT_SCORE_CAP = 5;
+export const CONCEPT_SCORE_CAP = 3;
 export const SIGNAL_EVENT_CAPS = Object.freeze({
   rewatched_segment: 2,
   repeated_question: 2,
-  long_pause: 2,
-  reviewed_transcript: 2,
 });
 
 function asSignalArray(value) {
