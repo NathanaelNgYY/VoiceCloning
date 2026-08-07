@@ -193,7 +193,7 @@ test("the shared voice API attaches the configured Microsoft token", () => {
   );
   assert.match(
     apiServiceSource,
-    /if \(shouldAttachApiToken\(\)\)[\s\S]*?acquireApiToken\(\)[\s\S]*?['\"]Authorization['\"][\s\S]*?`Bearer \$\{token\}`/,
+    /if \(shouldAttachApiToken\(\)\)[\s\S]*?acquireApiToken\(\)[\s\S]*?['\"]X-VCS-Entra-Token['\"][\s\S]*?token/,
   );
   assert.match(apiServiceSource, /api\.post\(['\"]\/live\/tts-sentence['\"]/);
 });

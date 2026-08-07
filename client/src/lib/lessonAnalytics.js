@@ -238,7 +238,7 @@ export function createLessonAnalyticsClient({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(token ? { 'X-VCS-Entra-Token': token } : {}),
         },
         body,
         keepalive: true,

@@ -8,7 +8,7 @@ function apiUrl(path) {
 async function authorizedGet(path, fetchImpl = fetch) {
   const token = await acquireApiToken();
   const response = await fetchImpl(apiUrl(path), {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { 'X-VCS-Entra-Token': token },
     credentials: 'same-origin',
   });
   if (!response.ok) {

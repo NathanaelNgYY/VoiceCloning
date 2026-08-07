@@ -74,7 +74,9 @@ api.interceptors.request.use(async (config) => {
   if (shouldAttachApiToken()) {
     const token = await acquireApiToken();
     if (!token) throw new Error('Authentication token is unavailable. Please sign in again.');
-    setHeader(config.headers, 'Authorization', `Bearer ${token}`);
+    // CloudFront signs the Lambda origin request with SigV4, which owns the
+    // standard Authorization header. This separate header reaches Lambda intact.
+    setHeader(config.headers, 'X-VCS-Entra-Token', token);
   }
 
   const method = String(config.method || 'get').toLowerCase();

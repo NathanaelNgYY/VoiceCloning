@@ -56,7 +56,7 @@ test('identified analytics attaches the backend token and never trusts a browser
 
   assert.equal(await analytics.flush(), true);
   assert.equal(request.url, '/api/analytics/events');
-  assert.equal(request.options.headers.Authorization, 'Bearer verified-token');
+  assert.equal(request.options.headers['X-VCS-Entra-Token'], 'verified-token');
   assert.equal(JSON.parse(request.options.body).userId, undefined);
 });
 
