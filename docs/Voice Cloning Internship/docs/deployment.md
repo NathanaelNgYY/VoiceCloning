@@ -49,6 +49,15 @@ always read and live-verify it before AWS work.
   raw analytics only. Supervisors can reset one learner concept and rebuild its summary.
 - Dev bundle `assets/index-DUXyI87I.js` coalesces scrubs, recognizes clarification repeats,
   hides per-learner score, and shows the supervisor-only distinct-learner cohort ranking.
+- Operational interpretation: a concept row holds rolling qualifying events; its separate
+  lesson summary row is derived chatbot/dashboard guidance. Two rewinds should produce score
+  `1`, count `2`, and `possible_support`. After an initial question, two clarification
+  follow-ups at least eight seconds apart should produce the maximum score `3`, count `4`,
+  and `support_recommended`. Wait ten seconds before reading the table.
+- A learner/concept reset clears only derived support state. Old session/transcript rows and
+  immutable raw event batches remain for audit and do not restore or influence the cleared
+  score. Use two distinct authenticated learners to validate cohort ranking; repeated actions
+  by one learner still count as one learner for that concept.
 
 | Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
 |---|---|---|---|---|
