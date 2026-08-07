@@ -1,9 +1,10 @@
 # Active TODO
 
-- [ ] Before SSO analytics rollout, validate the access token server-side and enrich
-  stored batches with an immutable subject identifier; never accept a browser-claimed
-  user ID. Add a Glue/Athena table and supervisor dashboard only after event volume
-  and reporting questions justify them; define retention and learner disclosure first.
+- [ ] Finish dev per-user learner analytics verification. Deployment and PITR are complete;
+  gateway `PutItem` and public fail-closed routes are proven. With a real NTU sign-in,
+  verify the PROFILE row, identified analytics, concept evidence/summary rows, chatbot
+  personalization, and supervisor allow/deny behavior. Also push local deployment-tooling
+  commit when GitHub authentication is restored. Do not deploy to staging yet.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.

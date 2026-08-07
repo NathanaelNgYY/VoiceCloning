@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-08-07
+
+- Enabled PITR and deployed authenticated per-user learner analytics to dev only: the
+  non-staging Lambda, fixed dev gateway, dev chatbot CloudFront/S3 target, and
+  `vcs-dev-transcripts`. Added the dev `/api/live/session/*` gateway behavior.
+- Proved gateway `PutItem` through the actual instance profile with an expiring probe;
+  verified gateway readiness, public login/retention notice, completed CloudFront rollout,
+  and anonymous 401 responses for learner, supervisor, and sign-in routes.
+- Fixed dev deployment env selection, scoped host Git safe-directory handling, and failed
+  SSM status reporting in the local commit; push remains blocked by missing GitHub auth.
+- Tests: Lambda 135/135, gateway 154/154, client 327/327, GI production build. Still
+  unverified: real NTU sign-in, resulting rows, personalization, and supervisor acceptance.
+
+## 2026-08-06
+
+- Implemented a dev-first identified learner analytics MVP: verified-token event ingestion,
+  authored GI concept mapping, DynamoDB evidence aggregation, deterministic/optional
+  structured-LLM summaries, chatbot personalization retrieval, and supervisor-protected
+  API/UI paths.
+- Created the dev DynamoDB table with its user index, TTL, deletion protection, and tags.
+  Stopped before deployment when PITR and runtime-policy operations were denied; the live
+  dev application remains unchanged.
+- Tests run: Lambda 135/135, gateway 154/154, client 327/327, and dev GI production build.
+- Untested: real NTU sign-in, live Lambda/gateway writes, OpenAI summary call, CloudFront
+  supervisor/session routing, browser dashboard, and end-to-end personalization.
+
+- Restored the Live Fast TTS advanced-settings collapsible by enabling the existing
+  shared frontend feature flag, then deployed only the dev and staging `live-fast`
+  clients. Training and chatbot/GI distributions were not changed.
+- Verification: `npm.cmd run build:live-fast` passed; both CloudFront invalidations
+  completed; both public TTS bundles contain the restored advanced-settings UI.
+
 ## 2026-08-05
 
 - Unified the dev and staging application histories, including staging SSO,

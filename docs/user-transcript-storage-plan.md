@@ -1,6 +1,6 @@
 # Per-user chat transcript storage — design plan
 
-**Status:** implemented and verified locally; **not deployed**.
+**Status:** deployed to dev on 2026-08-07; real NTU sign-in verification remains.
 **Related:** `docs/staging-architecture.md` (staging stack), `client/env/staging/gi.env` (SSO config, staged but **not deployed**).
 
 ## Decision log
@@ -610,3 +610,11 @@ deletion protection, and tags. Deployment is intentionally paused: the operator 
 grant the Lambda/gateway runtime access or enable point-in-time recovery. Exact grants and
 the safe continuation order are recorded in `docs/staging-architecture.md` and project
 memory.
+
+### Dev deployment update — 2026-08-07
+
+PITR is enabled. The dev Lambda, fixed dev gateway, `/api/live/session/*` CloudFront
+behavior, and dev GI client are deployed. The gateway instance role proved `PutItem` with
+an expiring probe; anonymous learner/supervisor/sign-in calls fail closed. No staging
+resource changed. A real NTU sign-in and the resulting profile/evidence/summary,
+personalization, and supervisor flows remain unverified.

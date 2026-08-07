@@ -12,7 +12,8 @@ npm run package:function-url
 $rc = $LASTEXITCODE
 Pop-Location
 if ($rc -ne 0) { throw "package failed" }
-$deploymentEnv = Join-Path $repo "lambda\.env.deployment.$Env"
+$deploymentEnvName = if ($Env -eq 'dev') { '.env.deployment' } else { ".env.deployment.$Env" }
+$deploymentEnv = Join-Path $repo "lambda\$deploymentEnvName"
 if (Test-Path $deploymentEnv) {
   $currentConfig = aws lambda get-function-configuration `
     --region $cfg.region `

@@ -1,29 +1,35 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-03
+Last updated: 2026-08-07
 
 ## Start Here
 
-- Current scope includes dev parity plus a separately confirmed staging event action.
-- Repo/branch: `VoiceCloning` / `separate-containers-new`.
-- Dev-host checkout and GitHub `separate-containers-new` are synchronized at `ce75eab`;
-  the gateway restarted and passed 56/56 tests. A recovery backup and two unrelated
-  archives remain untracked on the host; do not remove them as deployment cleanup.
+- Current scope includes dev parity plus a separately confirmed staging event action; repo/branch is `VoiceCloning` / `separate-containers-new`.
+- Dev host is at feature commit `4c8911a`; local checkout has one unpushed deployment-tooling
+  and documentation commit because GitHub authentication was unavailable. Preserve the host's
+  unrelated deleted verifier file and archives; do not clean them up.
 - Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
   `scripts/deploy.config.json` before changing AWS or code.
 - Never print or save credentials, tokens, private URLs, or secret values.
+- Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
+  dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
+  gateway instance role's `PutItem` was proven with an expiring probe.
+- No staging AWS resource was changed. Keep this checkpoint dev-only until the remaining
+  real NTU sign-in, data-row, personalization, and supervisor checks pass.
 
 ## Deployed Dev State
 
-- Dev training/live/GI CloudFront configs match their staging counterparts after
-  substituting dev Lambda, ALB, and `echolect/` origins; all three are deployed.
-- Dev Lambda includes the `ce75eab` analytics route, 512 MB, 120 seconds, and a 30-second inference
+- Dev and staging Live Fast TTS show advanced settings from commit `85303e2`; only
+  those clients changed. Other dev CloudFront configs retain staging parity.
+- Dev Lambda includes the `4c8911a` authenticated analytics/learner routes, 512 MB, 120 seconds, and a 30-second inference
   retry budget. `GPU_SCHEDULE_ENABLED=false` and no inference ASG name is configured.
-- Fixed GPU `VoiClo-GPU-Seoul` checkout is `ce75eab`; inference
+- Fixed GPU `VoiClo-GPU-Seoul` checkout is `4c8911a`; inference
   has two synthesis slots, the 100-item/25-second queue, and boot warming enabled.
 - Dev has no ASG, scaling alarms, or ASG scheduled actions. The enabled five-minute
   EventBridge rule invokes idle-check only; activity requests own GPU startup.
-- Dev GI now batches anonymous lesson/video events to partitioned S3 through Lambda;
+- Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
+  per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
+  routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
   the patched gateway also gives uncertain rewind/pause/skip signals to the chatbot.
 
 ## Current AWS Operating State
@@ -34,15 +40,9 @@ Last updated: 2026-08-03
   `lt-07728350a25e691a4` defaults to v20; two synthesis slots per `g6.xlarge`.
 - Optimized target group is `vcs-stg-opt-3103`. The separate live gateway is running
   and healthy in `vcs-staging-tg-3002`; do not stop it during event preparation.
-- Verified one-time actions set min/desired 50 at 13:30 SGT and return to 1 at
-  16:00 SGT on 2026-08-04. Do not admit users until strict readiness passes;
-  observed launch-to-readiness can take about 8 minutes.
 - `GPU_SCHEDULE_ENABLED=true` with a live 07:00-19:00 Singapore fixed-GPU window.
   Matching verified ASG actions set 1 at 07:00 and 0 at 19:00. Exact manual-state
   coupling is deployed but disabled pending Lambda-role Auto Scaling permissions.
-- Live read at 2026-08-03 11:36 SGT found min 50 / desired 56 from today's event;
-  legacy action `vcs-staging-scale-down` restores min/desired 1 at 17:00 today.
-  Tomorrow's 13:30/16:00 actions are separate and remain scheduled as documented.
 
 ## Autoscaling and Readiness
 

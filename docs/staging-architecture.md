@@ -261,28 +261,31 @@ the fixed instance. `WARM_ON_BOOT=true` keeps inference ALB-ready after service
 restarts. GitHub `separate-containers-new` was verified synchronized through
 operations/docs commit `8b963eb`; AWS dev application source remains `070a99a`.
 
-### Dev identified learner analytics checkpoint (2026-08-06)
+### Dev identified learner analytics deployment (2026-08-07)
 
 `vcs-dev-transcripts` now exists in `ap-northeast-2` with `PK`/`SK`, on-demand
 billing, GSI `GSI1` (`GSI1PK`/`GSI1SK`), deletion protection, project/environment/data
-classification tags, and TTL on `ttl`. Point-in-time recovery is not enabled because
-the operator role is denied `dynamodb:UpdateContinuousBackups`.
+classification tags, TTL on `ttl`, and point-in-time recovery. PITR was enabled and
+read back from the successful `UpdateContinuousBackups` response on 2026-08-07.
 
-The dev-first implementation is committed on `separate-containers-new` but must not be
-deployed until runtime access is granted. The operator role is denied
-`dynamodb:PutResourcePolicy`, and cannot inspect or edit IAM. An administrator must either
-apply a DynamoDB resource policy or equivalent identity policies granting:
+The dev-first implementation at `4c8911a` is deployed to dev only. The non-staging
+Lambda has authentication and `LEARNER_TABLE_NAME=vcs-dev-transcripts`; the fixed dev
+gateway is running the same commit with transcript storage/authentication enabled; and
+the GI client bundle `assets/index-BIiMcuh6.js` is live on distribution `EYZ4NLNGITY7T`.
+That distribution routes `/api/live/session/*` to the existing dev ALB before the
+general `/api/*` Lambda behavior. No staging resource was changed.
 
-- `Liu_Teng_Yu_Intern2026-LambdaExecutionRole`: `dynamodb:GetItem`, `PutItem`,
-  `UpdateItem`, and `Query` on the dev table and `.../index/*`.
-- `VoiClo_GPU`: `dynamodb:PutItem` on the dev table for gateway sign-in/transcript rows.
-- Operator or administrator: `dynamodb:UpdateContinuousBackups` on the dev table, then
-  enable and read back point-in-time recovery.
+- `VoiClo_GPU` performed a controlled `PutItem` through SSM using the instance profile;
+  the probe row had a ten-minute TTL.
+- The operator successfully enabled PITR.
+- IAM policy inspection remains denied, so Lambda table access has not been independently
+  proven without a real signed-in analytics request.
 
-After those grants, deploy dev only in this order: Lambda, fixed dev gateway, dev
-CloudFront `/api/live/session/*` behavior, then GI client. Verify a real NTU token,
+Public checks pass for the login page/90-day notice, gateway readiness, completed
+CloudFront deployment, `/api/learner/me` and supervisor anonymous 401s, and the gateway
+sign-in route's missing-token 401. Remaining verification requires a real NTU sign-in:
 identified S3 analytics subject, DynamoDB profile/evidence/summary rows, personalized
-prompt retrieval, and supervisor-role rejection/acceptance before considering staging.
+prompt retrieval, and supervisor-role rejection/acceptance. Do not promote to staging.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
