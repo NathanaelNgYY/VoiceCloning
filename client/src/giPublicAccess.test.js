@@ -198,10 +198,10 @@ test("the shared voice API attaches the configured Microsoft token", () => {
   assert.match(apiServiceSource, /api\.post\(['\"]\/live\/tts-sentence['\"]/);
 });
 
-test("the dev GI build pins dev's own cloned voice, not staging's", () => {
+test("both GI builds pin the same saved Dean voice profile", () => {
   // The active voice profile is one shared backend setting; the wrong pin here
   // makes the chat refuse to start rather than speak in someone else's voice.
-  assert.match(devGiEnv, /^VITE_GI_VOICE_PROFILE_ID=DeanVoice$/m);
+  assert.match(devGiEnv, /^VITE_GI_VOICE_PROFILE_ID=deanvoice-v1$/m);
   assert.match(stagingGiEnv, /^VITE_GI_VOICE_PROFILE_ID=deanvoice-v1$/m);
 });
 

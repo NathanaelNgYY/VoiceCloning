@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { matchesPinnedVoice, resolvePinnedVoiceKey } from './giVoicePin.js';
+import {
+  matchesPinnedVoice,
+  resolvePinnedVoiceKey,
+  resolvePinnedVoiceProfileId,
+} from './giVoicePin.js';
 
 const DEAN = { displayName: 'DeanVoice', voiceProfileId: 'deanvoice-v1' };
 
@@ -19,13 +23,13 @@ test('resolvePinnedVoiceKey falls back to the kiosk env var', () => {
   );
 });
 
-test('resolvePinnedVoiceKey lets ?voice= win over env', () => {
+test('the configured GI profile cannot be overridden by a query string', () => {
   assert.equal(
-    resolvePinnedVoiceKey({
+    resolvePinnedVoiceProfileId({
       search: '?voice=theo',
-      env: { VITE_GI_VOICE_PROFILE_ID: 'DeanVoice' },
+      env: { VITE_GI_VOICE_PROFILE_ID: 'deanvoice-v1' },
     }),
-    'theo'
+    'deanvoice-v1'
   );
 });
 
