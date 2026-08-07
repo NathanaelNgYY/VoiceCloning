@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
 import {
   createVoiceProfileBrowserDebugSummary,
   writeVoiceProfileBrowserDebug,
@@ -69,6 +70,13 @@ async function sha256Hex(text) {
 }
 
 api.interceptors.request.use(async (config) => {
+  config.headers = config.headers || {};
+  if (shouldAttachApiToken()) {
+    const token = await acquireApiToken();
+    if (!token) throw new Error('Authentication token is unavailable. Please sign in again.');
+    setHeader(config.headers, 'Authorization', `Bearer ${token}`);
+  }
+
   const method = String(config.method || 'get').toLowerCase();
   if (!METHODS_REQUIRING_PAYLOAD_HASH.has(method) || !isJsonBody(config.data)) {
     return config;
@@ -77,7 +85,6 @@ api.interceptors.request.use(async (config) => {
   const body = serializeJsonBody(config.data);
   config.data = body;
   config.transformRequest = [(data) => data];
-  config.headers = config.headers || {};
   setHeader(config.headers, 'Content-Type', 'application/json');
   setHeader(config.headers, 'x-amz-content-sha256', await sha256Hex(body));
   return config;

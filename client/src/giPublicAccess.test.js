@@ -17,6 +17,10 @@ const lessonPageSource = readFileSync(
   new URL("./pages/LessonPage.jsx", import.meta.url),
   "utf8",
 );
+const apiServiceSource = readFileSync(
+  new URL("./services/api.js", import.meta.url),
+  "utf8",
+);
 const stagingGiEnv = readFileSync(
   new URL("../env/staging/gi.env", import.meta.url),
   "utf8",
@@ -180,6 +184,18 @@ test("the dev client sends a token type both dev backends verify", () => {
   if (mode === "entra-id") {
     assert.doesNotMatch(devGiEnv, /^VITE_ENTRA_API_SCOPE=.+$/m);
   }
+});
+
+test("the shared voice API attaches the configured Microsoft token", () => {
+  assert.match(
+    apiServiceSource,
+    /import\s*\{\s*acquireApiToken,\s*shouldAttachApiToken\s*\}\s*from\s*['\"]@\/auth\/msalClient['\"]/,
+  );
+  assert.match(
+    apiServiceSource,
+    /if \(shouldAttachApiToken\(\)\)[\s\S]*?acquireApiToken\(\)[\s\S]*?['\"]Authorization['\"][\s\S]*?`Bearer \$\{token\}`/,
+  );
+  assert.match(apiServiceSource, /api\.post\(['\"]\/live\/tts-sentence['\"]/);
 });
 
 test("the dev GI build pins dev's own cloned voice, not staging's", () => {
