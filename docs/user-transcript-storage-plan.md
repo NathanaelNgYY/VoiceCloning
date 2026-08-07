@@ -618,3 +618,8 @@ behavior, and dev GI client are deployed. The gateway instance role proved `PutI
 an expiring probe; anonymous learner/supervisor/sign-in calls fail closed. No staging
 resource changed. A real NTU sign-in and the resulting profile/evidence/summary,
 personalization, and supervisor flows remain unverified.
+
+Repeated-question scoring is also live in dev. Near-duplicate questions asked 8 seconds to
+10 minutes apart receive 1.25 evidence only when both question timestamps map to the same
+lesson concept. One cluster is capped at two signals. Raw question text remains in the
+transcript table as before but is not copied into the analytics event/S3 batch.

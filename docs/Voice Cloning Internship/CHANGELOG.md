@@ -2,6 +2,11 @@
 
 ## 2026-08-07
 
+- Added and deployed dev-only repeated-question evidence: same-concept matches score 1.25
+  with an 8-second floor, 10-minute window, 0.65 similarity threshold, and two-signal cap.
+  Analytics stores only similarity/timing metadata, not question text. Lambda 137/137,
+  client 330/330, GI build, dev Lambda update, bundle and invalidation all passed.
+
 - Enabled PITR and deployed authenticated per-user learner analytics to dev only: the
   non-staging Lambda, fixed dev gateway, dev chatbot CloudFront/S3 target, and
   `vcs-dev-transcripts`. Added the dev `/api/live/session/*` gateway behavior.
