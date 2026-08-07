@@ -5,6 +5,7 @@ import {
   createLessonAnalyticsClient,
   createLessonBehaviorState,
   createRepeatedQuestionTracker,
+  createSeekGestureTracker,
 } from '@/lib/lessonAnalytics.js';
 import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
 
@@ -14,6 +15,7 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
   const activeTabRef = useRef(activeTab);
   const preSeekTimeRef = useRef(null);
   const lastVideoTimeRef = useRef(0);
+  const transcriptReviewedRef = useRef(false);
   const repeatedQuestionRef = useRef(null);
 
   if (!analyticsRef.current) {
@@ -37,6 +39,7 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
 
   useEffect(() => {
     analyticsRef.current.track('lesson_tab_viewed', { properties: { activeTab } });
+    if (activeTab !== 'transcript') transcriptReviewedRef.current = false;
   }, [activeTab]);
 
   useEffect(() => {
@@ -45,10 +48,27 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
     const analytics = analyticsRef.current;
     const behavior = behaviorRef.current;
 
+    const recordSeek = (fromSeconds, toSeconds) => {
+      lastVideoTimeRef.current = toSeconds;
+      const seek = behavior.recordSeek(fromSeconds, toSeconds);
+      if (!seek) return;
+      analytics.track('video_seek', {
+        videoTime: toSeconds,
+        properties: {
+          fromSeconds: Math.round(fromSeconds * 1000) / 1000,
+          toSeconds: Math.round(toSeconds * 1000) / 1000,
+          deltaSeconds: Math.round(seek.deltaSeconds * 1000) / 1000,
+          direction: seek.deltaSeconds < 0 ? 'backward' : 'forward',
+        },
+      });
+    };
+    const seekGesture = createSeekGestureTracker({ onGesture: recordSeek });
+
     const onTimeUpdate = () => {
       if (!video.seeking) lastVideoTimeRef.current = video.currentTime;
     };
     const onPlay = () => {
+      seekGesture.flush();
       const pauseDurationSeconds = behavior.recordResume();
       analytics.track('video_play', {
         videoTime: video.currentTime,
@@ -67,18 +87,7 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
       const fromSeconds = preSeekTimeRef.current;
       const toSeconds = video.currentTime;
       preSeekTimeRef.current = null;
-      lastVideoTimeRef.current = toSeconds;
-      const seek = behavior.recordSeek(fromSeconds, toSeconds);
-      if (!seek) return;
-      analytics.track('video_seek', {
-        videoTime: toSeconds,
-        properties: {
-          fromSeconds: Math.round(fromSeconds * 1000) / 1000,
-          toSeconds: Math.round(toSeconds * 1000) / 1000,
-          deltaSeconds: Math.round(seek.deltaSeconds * 1000) / 1000,
-          direction: seek.deltaSeconds < 0 ? 'backward' : 'forward',
-        },
-      });
+      seekGesture.record(fromSeconds, toSeconds);
     };
     const onEnded = () => analytics.track('video_ended', { videoTime: video.currentTime });
 
@@ -96,6 +105,7 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
       video.removeEventListener('seeking', onSeeking);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('ended', onEnded);
+      seekGesture.cancel();
     };
   }, [videoRef, videoUrl]);
 
@@ -104,9 +114,11 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
     if (!panel) return undefined;
     let timer = null;
     const onScroll = () => {
+      if (activeTabRef.current !== 'transcript' || transcriptReviewedRef.current) return;
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
+        transcriptReviewedRef.current = true;
         analyticsRef.current.track('transcript_scrolled', {
           videoTime: videoRef.current?.currentTime,
         });

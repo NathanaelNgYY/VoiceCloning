@@ -60,13 +60,15 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 
 **Complete environment map (do not infer environment from a similar name):**
 
-| Environment | GPU EC2 | Lambda | Training | Live TTS | Chatbot | S3 application prefix |
-|---|---|---|---|---|---|---|
-| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net (gi) + d3k2rz0hqm8nxi.cloudfront.net (kiosk) | `echolect-staging/` |
-| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
+| Environment | GPU EC2 | Lambda | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) | S3 application prefix |
+|---|---|---|---|---|---|---|---|
+| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | d3k2rz0hqm8nxi.cloudfront.net | `echolect-staging/` |
+| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | none | `echolect/` |
 
-`d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot, not the dev
-Dean chatbot.
+These names are authoritative: `chatbot`/`chatbot-text` in deployment tooling mean
+the video GI and non-video Dean builds respectively. Dev has no separate Dean
+distribution. `d3fwx6qxeaxfmo.cloudfront.net` is a separate legacy GI-bleeding
+chatbot and is not part of this dev/staging map.
 
 **AWS ownership and runtime roles:** both rows are in account `329599637774` and
 are operated by assuming

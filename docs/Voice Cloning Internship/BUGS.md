@@ -2,6 +2,11 @@
 
 ## Active
 
+- 2026-08-07 fixed: one GI scrub gesture could emit several `seeked` events, and scroll
+  bursts in one transcript visit each counted as review. A real run therefore stored score 8.
+  Dev now coalesces the gesture and limits transcript review to once per visit; verify the
+  next run by a `+2.75` before/after score delta.
+
 - 2026-08-07: dev GI text chat recovered, but Dean audio returned an unsigned 401. Root cause:
   CloudFront OAC signs the Lambda origin with SigV4 `Authorization`, replacing the viewer bearer
   header. Dev now sends Entra REST auth as `X-VCS-Entra-Token`; Lambda accepts it before falling

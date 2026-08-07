@@ -2,6 +2,12 @@
 
 ## 2026-08-07
 
+- Fixed inflated dev GI learner evidence after a real NTU test. One scrubber drag emitted
+  several native `seeked` events and repeated transcript scrolling emitted duplicate review
+  signals, producing score 8 instead of 2.75. The client now coalesces one seek gesture and
+  records one transcript review per visit. Client tests pass 348/348; dev bundle
+  `assets/index-DBQt8Fr-.js` is live. A cold check also proved GI starts the dev GPU.
+
 - Fixed the dev GI text-working/Dean-audio-401 split. CloudFront OAC signs the Lambda Function URL
   with SigV4 `Authorization`, so the browser's bearer header could not survive to Lambda. Authenticated
   Lambda REST calls now use forwarded `X-VCS-Entra-Token`; Lambda prefers it and retains bearer fallback

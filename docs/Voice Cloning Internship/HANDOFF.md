@@ -12,6 +12,7 @@ Last updated: 2026-08-07
 - Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
   dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
   gateway instance role's `PutItem` was proven with an expiring probe.
+- Real evidence is proven. Score 8 exposed duplicate seek/scroll signals; bundle `assets/index-DBQt8Fr-.js` fixes them. Validate a `+2.75` delta. GI GPU auto-start also passed.
 - Learner analytics remains dev-only. GI fixes Dean by ID in both clients/Lambdas;
   no staging analytics, scaling, gateway, TTS, or training resource changed.
 
@@ -19,17 +20,16 @@ Last updated: 2026-08-07
 
 - Dev and staging Live Fast TTS show advanced settings from commit `85303e2`; only
   those clients changed. Other dev CloudFront configs retain staging parity.
-- Dev Lambda includes the `4c8911a` authenticated analytics/learner routes, 512 MB, 120 seconds, and a 30-second inference
-  retry budget. `GPU_SCHEDULE_ENABLED=false` and no inference ASG name is configured.
-- Fixed GPU `VoiClo-GPU-Seoul` checkout is `4c8911a`; inference
-  has two synthesis slots, the 100-item/25-second queue, and boot warming enabled.
+- Dev Lambda includes the `4c8911a` analytics routes, 512 MB, 120 seconds, and a 30-second retry
+  budget. `GPU_SCHEDULE_ENABLED=false`; no inference ASG name is configured.
+- Fixed GPU `VoiClo-GPU-Seoul` at `4c8911a` has two synthesis slots, the 100-item/25-second queue, and boot warming.
 - Dev has no ASG, scaling alarms, or ASG scheduled actions. The enabled five-minute
   EventBridge rule invokes idle-check only; activity requests own GPU startup.
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Dev bundle `assets/index-6qG3aJlL.js` fixes `deanvoice-v1`, adds supervisor analytics, surfaces
-  setup failures, and carries Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
+  Dev bundle `assets/index-DBQt8Fr-.js` fixes analytics coalescing, `deanvoice-v1`, supervisor
+  analytics, setup failures, and Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
   Normal dev TTS/Training/Dean stay public. Repeats score 1.25.
 
 ## Current AWS Operating State

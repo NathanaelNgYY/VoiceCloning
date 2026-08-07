@@ -5,9 +5,41 @@ import {
   createLessonAnalyticsClient,
   createLessonBehaviorState,
   createRepeatedQuestionTracker,
+  createSeekGestureTracker,
   classifyQuestionConcept,
   questionSimilarity,
 } from './lessonAnalytics.js';
+
+test('coalesces one scrubber gesture into one seek from the first start to final destination', () => {
+  let scheduled;
+  const gestures = [];
+  const tracker = createSeekGestureTracker({
+    onGesture: (from, to) => gestures.push({ from, to }),
+    setTimer: (callback) => { scheduled = callback; return 1; },
+    clearTimer: () => {},
+  });
+  tracker.record(400, 397);
+  tracker.record(397, 392);
+  tracker.record(392, 380);
+  assert.deepEqual(gestures, []);
+  scheduled();
+  assert.deepEqual(gestures, [{ from: 400, to: 380 }]);
+});
+
+test('keeps separate seek gestures separate after the settle window', () => {
+  let scheduled;
+  const gestures = [];
+  const tracker = createSeekGestureTracker({
+    onGesture: (from, to) => gestures.push({ from, to }),
+    setTimer: (callback) => { scheduled = callback; return 1; },
+    clearTimer: () => {},
+  });
+  tracker.record(400, 380);
+  scheduled();
+  tracker.record(405, 385);
+  scheduled();
+  assert.deepEqual(gestures, [{ from: 400, to: 380 }, { from: 405, to: 385 }]);
+});
 
 test('lesson behavior reports a two-minute rewind without labeling the learner', () => {
   let timestamp = 1000;

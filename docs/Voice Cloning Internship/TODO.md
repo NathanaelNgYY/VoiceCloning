@@ -1,12 +1,10 @@
 # Active TODO
 
-- [ ] Finish dev per-user learner analytics verification. Deployment and PITR are complete;
-  gateway `PutItem` and public fail-closed routes are proven. With a real NTU sign-in, hard-refresh
-  dev, confirm text plus Dean audio, then verify the PROFILE row, identified analytics, concept
-  evidence/summary rows, chatbot personalization, cross-timestamp repeated-question evidence,
-  and supervisor allow/deny behavior. Confirm or request the Entra `Supervisor` role separately;
-  no user is known to have been assigned it. Push local commits when GitHub authentication is
-  restored. Do not deploy any learner-analytics or follow-up fix to staging.
+- [ ] Finish remaining dev learner analytics checks. Real NTU sign-in, PROFILE, identified
+  sessions/turns, concept evidence, endoscopy summary, and GI GPU auto-start are proven. Re-run
+  the prescribed evidence actions and confirm a `+2.75` score delta; then verify Dean audio,
+  personalized follow-up, cross-timestamp repeated-question evidence, and supervisor allow/deny.
+  Confirm or request the Entra `Supervisor` role separately. Do not deploy this to staging.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.

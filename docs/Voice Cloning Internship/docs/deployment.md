@@ -38,14 +38,25 @@ The repo docs describe a split cloud deployment:
 The authoritative resource-level inventory is repo `docs/staging-architecture.md`;
 always read and live-verify it before AWS work.
 
-| Environment | GPU | Lambda | Training CF | Live TTS CF | Chatbot CF | S3 prefix |
-|---|---|---|---|---|---|---|
-| staging | `voice-gpu-staging` | function ending `-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
-| dev | `VoiClo-GPU-Seoul` | function without `-staging` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
+### Dev learner analytics checkpoint (2026-08-07)
 
-Staging additionally owns kiosk chatbot `d3k2rz0hqm8nxi.cloudfront.net`; dev does
-not need or have its counterpart. `d3fwx6qxeaxfmo.cloudfront.net` is the separate
-GI-bleeding chatbot and is not part of the dev/staging pairing above.
+- `vcs-dev-transcripts` is live in Seoul with deletion protection, TTL, and point-in-time
+  recovery. Real NTU sign-in has proven the profile, session/turn, concept, and summary rows.
+- Query the raw partition value `USER#<oid>`; do not include `PK = ` inside the value field.
+- Scores accumulate. Verify the prescribed actions as a `+2.75` before/after delta. A clean
+  absolute score requires a new learner or intentional deletion of that learner's concept and
+  summary rows before the run.
+- Dev bundle `assets/index-DBQt8Fr-.js` coalesces one scrub gesture and records transcript
+  review once per transcript visit.
+
+| Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
+|---|---|---|---|---|
+| staging | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | d3k2rz0hqm8nxi.cloudfront.net |
+| dev | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | none |
+
+Staging uses the `echolect-staging/` application prefix and the `-staging` Lambda;
+dev uses `echolect/` and the Lambda without a suffix. `d3fwx6qxeaxfmo.cloudfront.net`
+is a separate legacy GI-bleeding chatbot and is not part of this dev/staging map.
 
 Both environments are in account `329599637774`, primarily in Seoul
 (`ap-northeast-2`). Operators assume

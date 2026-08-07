@@ -6,6 +6,7 @@ export const LONG_PAUSE_SECONDS = 15;
 export const REPEATED_QUESTION_MIN_SECONDS = 8;
 export const REPEATED_QUESTION_MAX_SECONDS = 10 * 60;
 export const REPEATED_QUESTION_SIMILARITY = 0.65;
+export const SEEK_GESTURE_SETTLE_MS = 1500;
 
 const QUESTION_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'can', 'could', 'do', 'does', 'for', 'how', 'i', 'in',
@@ -190,6 +191,49 @@ export function createLessonBehaviorState({ now = () => Date.now() } = {}) {
         pauseDurationSeconds,
         transcriptReading: Boolean(transcriptReading && pauseDurationSeconds >= LONG_PAUSE_SECONDS),
       };
+    },
+  };
+}
+
+// Native video controls may emit several seeking/seeked pairs while one scrubber
+// gesture is still in progress. Collapse that burst to its original start and
+// final destination so a single rewind cannot be counted several times.
+export function createSeekGestureTracker({
+  onGesture,
+  delayMs = SEEK_GESTURE_SETTLE_MS,
+  setTimer = (callback, delay) => window.setTimeout(callback, delay),
+  clearTimer = (timer) => window.clearTimeout(timer),
+} = {}) {
+  let startSeconds = null;
+  let endSeconds = null;
+  let timer = null;
+
+  function flush() {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    if (startSeconds !== null && endSeconds !== null) {
+      onGesture?.(startSeconds, endSeconds);
+    }
+    startSeconds = null;
+    endSeconds = null;
+  }
+
+  return {
+    record(fromSeconds, toSeconds) {
+      const from = finiteSeconds(fromSeconds);
+      const to = finiteSeconds(toSeconds);
+      if (from === null || to === null) return;
+      if (startSeconds === null) startSeconds = from;
+      endSeconds = to;
+      if (timer !== null) clearTimer(timer);
+      timer = setTimer(flush, delayMs);
+    },
+    flush,
+    cancel() {
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+      startSeconds = null;
+      endSeconds = null;
     },
   };
 }
