@@ -302,7 +302,7 @@ Lessons are collapsible; the tab ranks qualifying concepts with proportional sco
 status, total evidence-event count, contributing signal types, and updated time. DynamoDB
 currently stores a total evidence count and a set of signal types, not counts by signal type,
 so the UI deliberately does not claim per-signal frequencies. Live dev bundle is
-`assets/index-Bbo8Meyn.js`.
+`assets/index-DYklguXz.js`.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 

@@ -30,7 +30,7 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Bundle `assets/index-Bbo8Meyn.js` adds collapsible Summary/Learning signals supervisor tabs and scores repeated questions at 1.25; clear deterministic concept matches can cross timestamps, while ambiguous matches require the same authored timestamp concept (0.75 confidence, 8-second floor, 10-minute window, 0.65 similarity, two-signal cap).
+  Bundle `assets/index-DYklguXz.js` adds collapsible Summary/Learning signals supervisor tabs and scores repeated questions at 1.25; clear deterministic concept matches can cross timestamps, while ambiguous matches require the same authored timestamp concept (0.75 confidence, 8-second floor, 10-minute window, 0.65 similarity, two-signal cap).
 
 ## Current AWS Operating State
 

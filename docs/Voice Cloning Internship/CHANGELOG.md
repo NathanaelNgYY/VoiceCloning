@@ -6,8 +6,9 @@
   Summary as the default tab; Learning signals is optional, lessons are collapsible, and
   qualifying concepts show ranked score bars, cautious status, total evidence-event count,
   contributing signal types, and update time. The UI does not invent unavailable per-signal
-  counts. Client 334/334 and GI build passed; bundle `assets/index-Bbo8Meyn.js`, completed
-  invalidation, and anonymous supervisor 401 were verified.
+  counts. After rebasing onto the latest remote dev-parity changes, client 342/342, Lambda
+  139/139, and GI build passed; bundle `assets/index-DYklguXz.js`, completed invalidation,
+  and anonymous supervisor 401 were verified.
 
 - Improved and redeployed dev-only repeated-question evidence: deterministic concept matches
   at confidence 0.75 or higher may cross video timestamps; ambiguous, tied, or unknown
