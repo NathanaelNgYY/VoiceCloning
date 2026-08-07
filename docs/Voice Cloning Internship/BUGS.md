@@ -48,6 +48,9 @@
 
 ## Recently Fixed
 
+- 2026-08-07: GI's replacement authenticated startup profile GET could race client token availability,
+  falsely claiming a signed-in user was unsigned and leaving voice readiness empty. GI now makes no
+  startup profile request: it sends fixed `deanvoice-v1` with synthesis and lets the backend resolve it.
 - 2026-08-07: GI previously compared its configured Dean voice against shared `active.json`, so a
   TTS/training user activating another profile blocked GI. Dev and staging now load saved
   `deanvoice-v1` directly through an authenticated read-only route and pin its snapshot without

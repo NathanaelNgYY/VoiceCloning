@@ -2,6 +2,13 @@
 
 ## 2026-08-07
 
+- Removed GI's unnecessary startup profile request, which could race token availability and falsely
+  show `Sign in to load the lesson voice` plus `No cloned voice is set up`. Both GI clients now become
+  ready from configured ID `deanvoice-v1` and include it in every synthesis request; the backend
+  resolves the saved model/reference profile during synthesis. Dev `d2o` bundle
+  `assets/index-CplLB5_6.js` and staging bundle `assets/index-Cklj8mCD.js` are live. Full client tests
+  passed 344/344 dev and 328/328 staging; both builds and live no-old-route inspections passed.
+
 - Fixed GI startup voice selection in dev and staging. Both GI builds now fetch the saved
   `deanvoice-v1` profile through an authenticated read-only endpoint and pin that exact model/reference
   snapshot for the conversation. They neither depend on nor mutate shared `active.json`, so TTS or
