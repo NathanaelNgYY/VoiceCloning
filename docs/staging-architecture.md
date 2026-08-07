@@ -280,6 +280,43 @@ Two more things that cost an hour if you meet them cold:
   disk even when only `voice-live-gateway` is restarted; it activates at their next restart
   or reboot. Check `git status --porcelain` first — `gpu-inference-worker/src/index.js`
   carries an uncommitted local edit that must survive.
+- **The script reports success even when the remote command failed.** It prints "Deployed
+  workers to staging" unconditionally after `aws ssm wait`, with no check of the invocation's
+  exit code. Read the invocation output, never the script's last line.
+
+### ⚠️ Root-owned files, the delayed cost of one root-run deploy
+
+Because SSM runs as root, a deploy whose `npm`/`git` steps were *not* prefixed with
+`sudo -iu ubuntu` leaves files on disk owned by `root`. This happened at least once before
+2026-08-06 and left **14,802** root-owned paths: all three `node_modules` trees, plus ~31
+tracked source files (`live-gateway/src/routes/liveChat.js`, `lambda/router.js`,
+`gpu-inference-worker/src/index.js`, `scripts/`, `docs/`, `systemd/`).
+
+It stays hidden for months, because the two things you normally do still work:
+
+- **`git pull` succeeds even on root-owned tracked files.** Git replaces a file by writing a
+  new one into the directory, so it needs write permission on the *parent directory* — which
+  is still `ubuntu`. Only an **in-place** edit of those paths fails.
+- **`npm ci --dry-run` reports "up to date".** It resolves the tree without writing, so it
+  cannot see the permission problem. Only a real `npm ci` fails, with `EACCES` on something
+  like `node_modules/.bin/mime`.
+
+So the bill arrives at the next deploy that changes a dependency — the one deploy where you
+least want a surprise. Detect and fix:
+
+```bash
+R=/home/ubuntu/VoiceCloning
+sudo find $R -user root -not -path '*/.git/*' | wc -l        # expect 0
+sudo find $R -user root -not -path '*/.git/*' -not -path '*/node_modules/*'   # tracked files
+for d in gpu-worker gpu-inference-worker live-gateway; do
+  sudo chown -R ubuntu:ubuntu $R/$d/node_modules
+done
+sudo -iu ubuntu npm --prefix $R/live-gateway ci --omit=dev   # a REAL ci is the only proof
+```
+
+Fixed 2026-08-06 for `node_modules` (14,802 → 31, verified by a real `npm ci` on all three
+packages). The ~31 tracked source files are **still root-owned** — harmless until something
+edits one in place.
 
 ### Gateway deploy and rollback (staging)
 
@@ -318,6 +355,14 @@ past a dependency *addition* without it leaves the tree fine and the lockfile ly
 **2026-08-05 deploy:** `c70bf7d` → `755562a`, backup `.env.bak-20260805`. Rollback SHA is
 therefore `c70bf7d`. Shipped the auth + transcript gateway with `LIVE_AUTH_ENABLED=false`
 and an empty `TRANSCRIPT_TABLE_NAME` — deliberately inert, see below.
+
+**2026-08-06 deploy:** `dbfd763` → `550f9a2` (fast-forward; rollback SHA `dbfd763`). No env
+change. Shipped time-ordered session ids, the `signInDay` attribute and the
+`signins-by-day` GSI. Note the on-box HEAD was `dbfd763`, not the `755562a` recorded above —
+confirm `rev-parse HEAD` on the box rather than assuming this ledger is the last word.
+Verified after restart: a sign-in wrote `SIGNIN#2026-08-06T08:17:12.780Z` with
+`signInDay 2026-08-06`, the next socket wrote `SESSION#2026-08-06T08:17:30.839Z#878516d1#META`
+in the new format, and `npm run report -- --day 2026-08-06` resolved it through the index.
 
 ### Switching transcript storage on
 
