@@ -9,6 +9,8 @@ import {
 } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
 import { acquireApiToken, shouldAttachApiToken } from '../auth/msalClient.js';
+
+export const LIVE_SESSION_READY_TIMEOUT_MS = 15_000;
 import { connectInferenceSSE } from '../services/sse.js';
 import { sanitizeBackendError } from '../lib/backendErrors.js';
 import {
@@ -202,6 +204,7 @@ export function useLiveSpeech({
   // cannot accept a turn before session.ready, so a message sent from a cold
   // start is held here and flushed by that event.
   const pendingTextRef = useRef('');
+  const sessionReadyTimerRef = useRef(null);
   const inferenceEventSourceRef = useRef(null);
   const activeInferenceSessionIdRef = useRef('');
   const conversationSynthesisRef = useRef(null);
@@ -356,6 +359,10 @@ export function useLiveSpeech({
   }
 
   function cleanupConversation() {
+    if (sessionReadyTimerRef.current) {
+      window.clearTimeout(sessionReadyTimerRef.current);
+      sessionReadyTimerRef.current = null;
+    }
     if (inferenceEventSourceRef.current) {
       inferenceEventSourceRef.current.close();
       inferenceEventSourceRef.current = null;
@@ -1448,7 +1455,24 @@ export function useLiveSpeech({
     if (runId !== runIdRef.current || isCancelledRef.current) return;
 
     switch (event.type) {
+      case 'session.authenticated':
+        setNotice('Signed in. Preparing live chat...');
+        break;
+
+      case 'session.auth.failed':
+        if (sessionReadyTimerRef.current) {
+          window.clearTimeout(sessionReadyTimerRef.current);
+          sessionReadyTimerRef.current = null;
+        }
+        setError(`Live chat sign-in failed (${event.code || 'unauthorized'}). Sign out, then sign in again.`);
+        endConversationFromSocket();
+        break;
+
       case 'session.ready':
+        if (sessionReadyTimerRef.current) {
+          window.clearTimeout(sessionReadyTimerRef.current);
+          sessionReadyTimerRef.current = null;
+        }
         setPhase('listening');
         // A text-only session has no mic, so "Listening..." would be a lie.
         setInterimTranscript(micInputEnabledRef.current ? 'Listening...' : '');
@@ -1729,6 +1753,12 @@ export function useLiveSpeech({
       },
     });
     socketRef.current = socket;
+    sessionReadyTimerRef.current = window.setTimeout(() => {
+      if (runId !== runIdRef.current || phaseRef.current !== 'connecting') return;
+      sessionReadyTimerRef.current = null;
+      setError('Live chat setup timed out before the AI session became ready. End the chat and try once more.');
+      endConversationFromSocket();
+    }, LIVE_SESSION_READY_TIMEOUT_MS);
     startKeepAlive();
     startVideoPositionSync();
     return true;
