@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-07
+
+- GI now loads the environment's saved `deanvoice-v1` through an authenticated read-only endpoint
+  and pins that snapshot without reading or changing shared `active.json`. Staging GI bundle
+  `assets/index-C3Y7_cZC.js` is live; client 327/327, Lambda 125/125, GI build, live bundle inspection,
+  and unsigned endpoint 401 passed. No staging ASG, gateway, TTS, or training resource changed.
+
 ## 2026-08-05
 
 - Unified the dev and staging application histories, including staging SSO,
