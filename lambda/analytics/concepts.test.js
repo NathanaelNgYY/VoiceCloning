@@ -49,6 +49,39 @@ test('weights a repeated question only when both timestamps belong to the same c
   }), null);
 });
 
+test('semantic agreement keeps repeated-question evidence when the video moved', () => {
+  const result = evidenceFromEvent({
+    lessonSlug: 'gi-bleeding',
+    eventName: 'repeated_question',
+    videoTime: 520,
+    properties: {
+      previousVideoTime: 380,
+      similarity: 0.8,
+      semanticConceptId: 'endoscopy',
+      semanticConfidence: 1,
+    },
+  });
+  assert.equal(result?.concept.id, 'endoscopy');
+  assert.equal(result?.weight, 1.25);
+});
+
+test('unknown or low-confidence semantic concepts cannot override timestamp disagreement', () => {
+  const base = {
+    lessonSlug: 'gi-bleeding',
+    eventName: 'repeated_question',
+    videoTime: 520,
+    properties: { previousVideoTime: 380, similarity: 0.8 },
+  };
+  assert.equal(evidenceFromEvent({
+    ...base,
+    properties: { ...base.properties, semanticConceptId: 'invented', semanticConfidence: 1 },
+  }), null);
+  assert.equal(evidenceFromEvent({
+    ...base,
+    properties: { ...base.properties, semanticConceptId: 'endoscopy', semanticConfidence: 0.5 },
+  }), null);
+});
+
 test('uses fixed evidence thresholds for learner status', () => {
   assert.equal(statusForEvidence(1), 'insufficient_evidence');
   assert.equal(statusForEvidence(2), 'possible_uncertainty');

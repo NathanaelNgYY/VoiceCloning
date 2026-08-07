@@ -33,6 +33,8 @@ const PROPERTY_KEYS = new Set([
   'previousVideoTime',
   'similarity',
   'timeSincePreviousSeconds',
+  'semanticConceptId',
+  'semanticConfidence',
 ]);
 
 function safeString(value, maxLength) {

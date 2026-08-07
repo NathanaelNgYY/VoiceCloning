@@ -140,6 +140,8 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
         previousVideoTime: repeated.previousVideoTime,
         similarity: repeated.similarity,
         timeSincePreviousSeconds: Math.round(repeated.elapsedSeconds * 10) / 10,
+        semanticConceptId: repeated.semanticConceptId,
+        semanticConfidence: repeated.semanticConfidence,
       },
     });
     return true;

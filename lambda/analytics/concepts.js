@@ -22,8 +22,28 @@ export function conceptAt(lessonSlug, seconds) {
   return concepts.find((concept) => time >= concept.start && time < concept.end) || null;
 }
 
+export function conceptById(lessonSlug, conceptId) {
+  return (LESSON_CONCEPTS.get(lessonSlug) || [])
+    .find((concept) => concept.id === conceptId) || null;
+}
+
 export function evidenceFromEvent(event) {
   const concept = conceptAt(event?.lessonSlug, event?.videoTime);
+
+  if (event?.eventName === 'repeated_question') {
+    const semanticConcept = conceptById(event.lessonSlug, event.properties?.semanticConceptId);
+    const semanticConfidence = Number(event.properties?.semanticConfidence);
+    const similarity = Number(event.properties?.similarity);
+    if (semanticConcept && semanticConfidence >= 0.75 && similarity >= REPEATED_QUESTION_SIMILARITY) {
+      return { concept: semanticConcept, signal: 'repeated_question', weight: 1.25 };
+    }
+    const previousConcept = conceptAt(event.lessonSlug, event.properties?.previousVideoTime);
+    if (concept && previousConcept?.id === concept.id && similarity >= REPEATED_QUESTION_SIMILARITY) {
+      return { concept, signal: 'repeated_question', weight: 1.25 };
+    }
+    return null;
+  }
+
   if (!concept) return null;
 
   if (
@@ -43,14 +63,6 @@ export function evidenceFromEvent(event) {
 
   if (event.eventName === 'transcript_scrolled') {
     return { concept, signal: 'reviewed_transcript', weight: 0.25 };
-  }
-
-  if (event.eventName === 'repeated_question') {
-    const previousConcept = conceptAt(event.lessonSlug, event.properties?.previousVideoTime);
-    const similarity = Number(event.properties?.similarity);
-    if (previousConcept?.id === concept.id && similarity >= REPEATED_QUESTION_SIMILARITY) {
-      return { concept, signal: 'repeated_question', weight: 1.25 };
-    }
   }
 
   return null;

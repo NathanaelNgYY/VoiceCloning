@@ -5,6 +5,7 @@ import {
   createLessonAnalyticsClient,
   createLessonBehaviorState,
   createRepeatedQuestionTracker,
+  classifyQuestionConcept,
   questionSimilarity,
 } from './lessonAnalytics.js';
 
@@ -67,7 +68,18 @@ test('detects a delayed near-duplicate question without storing it in the signal
   const repeated = tracker.record('Explain again why we need endoscopy for an upper GI bleed', 390);
   assert.equal(repeated.previousVideoTime, 380);
   assert.ok(repeated.similarity >= 0.65);
+  assert.equal(repeated.semanticConceptId, 'endoscopy');
+  assert.equal(repeated.semanticConfidence, 1);
   assert.equal('text' in repeated, false);
+});
+
+test('classifies clear lesson terms and leaves ambiguous questions unclassified', () => {
+  assert.deepEqual(classifyQuestionConcept('Why is endoscopy required?'), {
+    conceptId: 'endoscopy',
+    confidence: 1,
+  });
+  assert.equal(classifyQuestionConcept('Can you explain this again?'), null);
+  assert.equal(classifyQuestionConcept('Compare endoscopy and colonoscopy'), null);
 });
 
 test('ignores accidental rapid duplicates and caps one question cluster at two signals', () => {

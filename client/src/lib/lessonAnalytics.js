@@ -13,6 +13,34 @@ const QUESTION_STOP_WORDS = new Set([
   'what', 'when', 'why', 'with', 'would', 'you',
 ]);
 
+const QUESTION_CONCEPT_TERMS = Object.freeze({
+  'presentation-epidemiology': ['epidemiology', 'incidence', 'prevalence', 'mortality'],
+  'initial-assessment-stabilization': [
+    'initial assessment', 'stabilization', 'stabilisation', 'resuscitation',
+    'hemodynamic', 'haemodynamic', 'airway', 'iv access',
+  ],
+  'investigations-risk-stratification': [
+    'risk stratification', 'glasgow blatchford', 'blatchford', 'rockall',
+    'investigation', 'blood test',
+  ],
+  'upper-gi-causes-presentation': [
+    'upper gi cause', 'upper gastrointestinal cause', 'peptic ulcer', 'varices',
+    'variceal', 'hematemesis', 'haematemesis', 'melena', 'melaena',
+  ],
+  'upper-gi-management': [
+    'proton pump inhibitor', 'ppi', 'octreotide', 'terlipressin', 'transfusion threshold',
+  ],
+  endoscopy: [
+    'endoscopy', 'endoscopic', 'gastroscopy', 'hemostasis', 'haemostasis',
+    'endoscopic clip', 'thermal therapy', 'band ligation',
+  ],
+  'lower-gi-bleeding': [
+    'lower gi', 'lower gastrointestinal', 'hematochezia', 'haematochezia',
+    'diverticular', 'colonoscopy',
+  ],
+  'key-messages': ['key message', 'takeaway', 'take away', 'remember from this lesson'],
+});
+
 const ANALYTICS_ENDPOINT = '/api/analytics/events';
 
 function createId() {
@@ -49,7 +77,27 @@ export function questionSimilarity(left, right) {
   return Math.round((shared / Math.min(a.length, b.length)) * 1000) / 1000;
 }
 
-export function createRepeatedQuestionTracker({ now = () => Date.now() } = {}) {
+export function classifyQuestionConcept(value) {
+  const normalized = String(value || '').toLowerCase().replace(/[^a-z0-9\s]/gu, ' ');
+  const ranked = Object.entries(QUESTION_CONCEPT_TERMS)
+    .map(([conceptId, terms]) => ({
+      conceptId,
+      score: terms.reduce((total, term) => total + (normalized.includes(term) ? 1 : 0), 0),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score);
+  if (ranked.length === 0 || (ranked[1] && ranked[0].score === ranked[1].score)) return null;
+  const confidence = ranked[1]
+    ? ranked[0].score / (ranked[0].score + ranked[1].score)
+    : 1;
+  if (confidence < 0.75) return null;
+  return { conceptId: ranked[0].conceptId, confidence: Math.round(confidence * 1000) / 1000 };
+}
+
+export function createRepeatedQuestionTracker({
+  now = () => Date.now(),
+  classifyConcept = classifyQuestionConcept,
+} = {}) {
   const questions = [];
   const repeatCounts = new Map();
   let nextClusterId = 1;
@@ -59,6 +107,7 @@ export function createRepeatedQuestionTracker({ now = () => Date.now() } = {}) {
       const seconds = finiteSeconds(videoTime);
       if (tokens.length < 2 || seconds === null) return null;
       const atMs = now();
+      const classification = classifyConcept(text);
       while (questions.length && atMs - questions[0].atMs > REPEATED_QUESTION_MAX_SECONDS * 1000) {
         questions.shift();
       }
@@ -72,11 +121,19 @@ export function createRepeatedQuestionTracker({ now = () => Date.now() } = {}) {
             previousVideoTime: previous.videoTime,
             similarity,
             elapsedSeconds,
+            semanticConceptId:
+              classification?.conceptId === previous.classification?.conceptId
+                ? classification.conceptId
+                : '',
+            semanticConfidence:
+              classification?.conceptId === previous.classification?.conceptId
+                ? Math.min(classification.confidence, previous.classification.confidence)
+                : 0,
           };
         }
       }
       const clusterId = best?.clusterId || nextClusterId++;
-      questions.push({ text: String(text), videoTime: seconds, atMs, clusterId });
+      questions.push({ text: String(text), videoTime: seconds, atMs, clusterId, classification });
       if (
         !best
         || best.elapsedSeconds < REPEATED_QUESTION_MIN_SECONDS

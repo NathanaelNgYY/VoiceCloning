@@ -37,6 +37,8 @@ test('repeated-question analytics keeps similarity metadata but no question text
       previousVideoTime: 380,
       similarity: 0.8,
       timeSincePreviousSeconds: 12,
+      semanticConceptId: 'endoscopy',
+      semanticConfidence: 1,
       questionText: 'must not be stored',
     },
   }), NOW);
@@ -44,6 +46,8 @@ test('repeated-question analytics keeps similarity metadata but no question text
     previousVideoTime: 380,
     similarity: 0.8,
     timeSincePreviousSeconds: 12,
+    semanticConceptId: 'endoscopy',
+    semanticConfidence: 1,
   });
 });
 test('buildAnalyticsObjectKey partitions batches by UTC date and hour', () => {
