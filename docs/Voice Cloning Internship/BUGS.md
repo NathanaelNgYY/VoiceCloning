@@ -48,6 +48,12 @@
 
 ## Recently Fixed
 
+- 2026-08-07: dev GI Microsoft sign-in created learner profiles and authenticated the
+  WebSocket, but cloned-voice REST calls omitted the bearer token and returned 401. The shared
+  API client now attaches the configured token. Voice auth is required only for GI-tagged
+  CloudFront requests, preserving public dev TTS/Training/Dean access; analytics and supervisor
+  routes remain independently authenticated.
+
 - 2026-07-31: fixed the 4.618-second first Live lazy import by eagerly loading Live at
   512 MB. GI now sends the pinned GPT/SoVITS snapshot, reducing its synthesis-time
   profile resolution to 0 ms p50. ID-only callers still resolve normally, and regular

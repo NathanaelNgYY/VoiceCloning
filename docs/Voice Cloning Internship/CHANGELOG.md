@@ -2,6 +2,14 @@
 
 ## 2026-08-07
 
+- Fixed dev GI cloned voice returning `Sign in to use the voice assistant` after a valid
+  Microsoft sign-in. The shared Axios voice client omitted the bearer token even though the
+  WebSocket and learner APIs sent it. Dev bundle `assets/index-BPBBhsIk.js` now attaches the
+  configured token. Lambda voice auth is scoped to GI requests using its deployment-controlled
+  `X-Demo-Request` CloudFront origin header; normal dev TTS, Training, and Dean tools remain
+  public, while analytics/supervisor routes remain authenticated. Client 343/343, Lambda
+  140/140, GI build/package, live GI unsigned 401, and public-dev unsigned 400 validation pass.
+
 - Added and deployed a secondary supervisor analytics view to dev only. Each learner keeps
   Summary as the default tab; Learning signals is optional, lessons are collapsible, and
   qualifying concepts show ranked score bars, cautious status, total evidence-event count,

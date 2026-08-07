@@ -631,3 +631,9 @@ The dev supervisor UI now presents each learner's lessons as collapsible section
 Summary and Learning signals tabs. The secondary tab charts qualifying concepts using the
 stored evidence score and shows total evidence events plus contributing signal types. It
 does not show counts per signal type because that aggregation is not stored.
+
+GI cloned-voice REST calls now attach the same Microsoft ID token as the authenticated
+WebSocket. The dev Lambda enforces voice auth only when GI's CloudFront origin supplies its
+deployment-controlled `X-Demo-Request` marker, preserving unsigned access for the separate
+normal dev TTS, Training, and Dean clients. Analytics and learner/supervisor routes remain
+authenticated regardless of that marker.
