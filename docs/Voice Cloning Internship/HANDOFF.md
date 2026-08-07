@@ -105,8 +105,9 @@ Last updated: 2026-08-07
 
 ## Next Session Priorities and Blockers
 
-- Dev GI text chat now works; signed-in browser verification of Dean audio and learner REST calls
-  remains. Their OAC header fix is deployed, but successful real-token synthesis is not yet observed.
+- First hard-refresh dev GI and confirm text plus Dean audio. Exercise rewind, long pause, transcript
+  review, and similar questions across timestamps; verify DynamoDB and `/supervisor`. The Entra
+  `Supervisor` role is not known assigned. Capture failures and inspect dev logs only.
 - Keep alias/provisioned concurrency as a future option only. The next latency targets
   are 150-user admission retries and rare outside-Lambda transit outliers.
 - For faster reactive scaling, build a real fleet-wide high-resolution occupancy
