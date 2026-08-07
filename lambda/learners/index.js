@@ -42,6 +42,11 @@ export async function handleLearners(event, {
     return ok({ users: await repository.listUsers() }, {}, event);
   }
 
+  if (pathname === '/api/supervisor/concepts') {
+    const lessonSlug = String(event?.queryStringParameters?.lesson || 'gi-bleeding').slice(0, 80);
+    return ok(await repository.getConceptCohort(lessonSlug), {}, event);
+  }
+
   const match = /^\/api\/supervisor\/users\/([^/]+)$/u.exec(pathname);
   if (match) {
     return ok(await repository.getUserLearningState(decodeURIComponent(match[1])), {}, event);

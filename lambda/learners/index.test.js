@@ -9,6 +9,7 @@ const repository = {
   getSummary: async (oid, lesson) => ({ oid, lesson, summary: 'Review risk stratification.' }),
   listUsers: async () => [{ oid: 'user-1', displayName: 'Student One' }],
   getUserLearningState: async (oid) => ({ profile: { oid }, lessons: [] }),
+  getConceptCohort: async (lessonSlug) => ({ lessonSlug, totalLearners: 1, concepts: [] }),
   resetConcept: async (oid, lessonSlug, conceptId) => ({ reset: true, oid, lessonSlug, conceptId }),
 };
 
@@ -52,6 +53,19 @@ test('a supervisor app role can list users and inspect learning state', async ()
   assert.equal(list.statusCode, 200);
   assert.equal(JSON.parse(list.body).users.length, 1);
   assert.equal(JSON.parse(detail.body).profile.oid, 'user-1');
+});
+
+test('only a supervisor can load the cross-learner concept ranking', async () => {
+  const path = '/api/supervisor/concepts';
+  const denied = await handleLearners(event(path, { lesson: 'gi-bleeding' }), { guard, repository });
+  assert.equal(denied.statusCode, 403);
+  const supervisorGuard = { authorize: async () => ({ ...identity, roles: ['Supervisor'] }) };
+  const response = await handleLearners(event(path, { lesson: 'gi-bleeding' }), {
+    guard: supervisorGuard,
+    repository,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).lessonSlug, 'gi-bleeding');
 });
 
 test('a configured supervisor oid works before Entra app roles are provisioned', async () => {

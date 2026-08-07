@@ -5,8 +5,14 @@ import {
   PutCommand,
   QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
-import { buildLearnerSummary, statusForEvidence } from '../analytics/concepts.js';
-import { buildRollingEvidenceState } from '../analytics/learnerStore.js';
+import { buildLearnerSummary, conceptsForLesson, statusForEvidence } from '../analytics/concepts.js';
+import { buildRollingEvidenceState, CONCEPT_SCORE_CAP } from '../analytics/learnerStore.js';
+
+function chunks(values, size) {
+  const result = [];
+  for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
+  return result;
+}
 
 export function createLearnerRepository({
   tableName = process.env.LEARNER_TABLE_NAME || '',
@@ -103,6 +109,59 @@ export function createLearnerRepository({
     };
   }
 
+  async function getConceptCohort(lessonSlug, { limit = 100 } = {}) {
+    const users = await listUsers({ limit });
+    const concepts = conceptsForLesson(lessonSlug);
+    const items = [];
+    for (const userBatch of chunks(users, 10)) {
+      const responses = await Promise.all(userBatch.map((user) => documentClient.send(new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `USER#${user.oid}`,
+          ':prefix': `LESSON#${lessonSlug}#CONCEPT#`,
+        },
+      }))));
+      for (const response of responses) items.push(...(response.Items || []));
+    }
+    const at = now();
+    const byConcept = new Map(concepts.map((concept) => [concept.id, {
+      conceptId: concept.id,
+      conceptLabel: concept.label,
+      strongSupportLearners: 0,
+      supportRecommendedLearners: 0,
+      possibleSupportLearners: 0,
+    }]));
+    for (const item of items) {
+      const aggregate = byConcept.get(item.conceptId);
+      if (!aggregate) continue;
+      const state = currentConcept(item, at);
+      if (state.evidenceScore >= CONCEPT_SCORE_CAP) aggregate.strongSupportLearners += 1;
+      if (state.status === 'support_recommended') aggregate.supportRecommendedLearners += 1;
+      if (state.status === 'possible_support') aggregate.possibleSupportLearners += 1;
+    }
+    const totalLearners = users.length;
+    const rankedConcepts = [...byConcept.values()]
+      .map((concept) => ({
+        ...concept,
+        strongSupportPercent: totalLearners > 0
+          ? Math.round((concept.strongSupportLearners / totalLearners) * 1000) / 10
+          : 0,
+      }))
+      .sort((left, right) => (
+        right.strongSupportLearners - left.strongSupportLearners
+        || right.supportRecommendedLearners - left.supportRecommendedLearners
+        || right.possibleSupportLearners - left.possibleSupportLearners
+        || left.conceptLabel.localeCompare(right.conceptLabel)
+      ));
+    return {
+      lessonSlug,
+      totalLearners,
+      strongSupportThreshold: CONCEPT_SCORE_CAP,
+      concepts: rankedConcepts,
+    };
+  }
+
   async function resetConcept(oid, lessonSlug, conceptId) {
     const pk = `USER#${oid}`;
     await documentClient.send(new DeleteCommand({
@@ -133,5 +192,5 @@ export function createLearnerRepository({
     return { reset: true, summary: item };
   }
 
-  return { getSummary, listUsers, getUserLearningState, resetConcept };
+  return { getSummary, listUsers, getUserLearningState, getConceptCohort, resetConcept };
 }

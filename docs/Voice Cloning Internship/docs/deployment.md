@@ -47,8 +47,8 @@ always read and live-verify it before AWS work.
   `possible_support`; two clarification requests produce `support_recommended`. The internal
   score caps at `3` and qualifying count at four. Long pauses and transcript scrolling are
   raw analytics only. Supervisors can reset one learner concept and rebuild its summary.
-- Dev bundle `assets/index-DnMxwfqH.js` coalesces scrubs, recognizes short clarification repeats,
-  hides the internal score, and keeps concept ranking supervisor-only.
+- Dev bundle `assets/index-DUXyI87I.js` coalesces scrubs, recognizes clarification repeats,
+  hides per-learner score, and shows the supervisor-only distinct-learner cohort ranking.
 
 | Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
 |---|---|---|---|---|

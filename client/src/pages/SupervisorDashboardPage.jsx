@@ -8,6 +8,7 @@ import {
   SIGNAL_LABELS,
 } from '@/lib/supervisorAnalytics';
 import {
+  getSupervisorConceptCohort,
   getSupervisorUser,
   listSupervisorUsers,
   resetSupervisorConcept,
@@ -15,6 +16,7 @@ import {
 
 export function SupervisorDashboardPage() {
   const [users, setUsers] = useState([]);
+  const [conceptCohort, setConceptCohort] = useState(null);
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState('summary');
   const [error, setError] = useState('');
@@ -23,8 +25,12 @@ export function SupervisorDashboardPage() {
 
   useEffect(() => {
     let active = true;
-    listSupervisorUsers()
-      .then((items) => { if (active) setUsers(items); })
+    Promise.all([listSupervisorUsers(), getSupervisorConceptCohort('gi-bleeding')])
+      .then(([items, cohort]) => {
+        if (!active) return;
+        setUsers(items);
+        setConceptCohort(cohort);
+      })
       .catch((requestError) => {
         if (!active) return;
         setError(requestError.status === 403
@@ -77,6 +83,42 @@ export function SupervisorDashboardPage() {
         </header>
 
         {error && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
+        {!loading && conceptCohort && (
+          <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="hardest-concepts-heading">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 id="hardest-concepts-heading" className="text-lg font-semibold">Concepts with strongest support signals</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Ranked by distinct learners reaching the maximum signal threshold of {conceptCohort.strongSupportThreshold}.
+                </p>
+              </div>
+              <span className="text-xs text-slate-500">{conceptCohort.totalLearners} identified learner{conceptCohort.totalLearners === 1 ? '' : 's'}</span>
+            </div>
+            <div className="mt-4 divide-y divide-slate-100">
+              {(conceptCohort.concepts || []).filter((concept) => concept.strongSupportLearners > 0).map((concept, index) => (
+                <div key={concept.conceptId} className="grid grid-cols-[2rem_1fr_auto] items-center gap-3 py-3">
+                  <span className="text-sm font-semibold tabular-nums text-slate-400">#{index + 1}</span>
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">{concept.conceptLabel}</p>
+                    <p className="text-xs text-slate-500">
+                      {concept.supportRecommendedLearners} learner{concept.supportRecommendedLearners === 1 ? '' : 's'} at support-recommended or stronger
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="block text-lg font-semibold tabular-nums text-amber-700">{concept.strongSupportLearners}</span>
+                    <span className="text-xs text-slate-500">{concept.strongSupportPercent}%</span>
+                  </div>
+                </div>
+              ))}
+              {!(conceptCohort.concepts || []).some((concept) => concept.strongSupportLearners > 0) && (
+                <p className="py-4 text-sm text-slate-500">No learner has reached the maximum support-signal threshold yet.</p>
+              )}
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              This cohort ranking is for supervisor review only. It is not sent to the chatbot and does not establish that a learner is uncertain.
+            </p>
+          </section>
+        )}
         {loading ? <p className="text-sm text-slate-500">Loading learners…</p> : (
           <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

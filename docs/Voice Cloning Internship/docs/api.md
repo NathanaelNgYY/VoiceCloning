@@ -24,6 +24,10 @@ Primary router: `lambda/router.js`
 - `GET /api/learner/me?lesson=<slug>`
   - Recalculates and returns only the authenticated user's current rolling summary.
 - `GET /api/supervisor/users`
+- `GET /api/supervisor/concepts?lesson=<slug>`
+  - Supervisor-only cohort ranking. Counts distinct identified learners reaching the maximum
+    support threshold per concept and returns the denominator and percentage. Ranking data is
+    never included in learner chatbot guidance.
 - `GET /api/supervisor/users/<oid>`
   - Require the configured Entra supervisor app role; return profile and summary data.
 - `DELETE /api/supervisor/users/<oid>/lessons/<slug>/concepts/<conceptId>`

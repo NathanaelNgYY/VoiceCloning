@@ -28,7 +28,7 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Dev bundle `assets/index-DnMxwfqH.js` provides conservative concept-matched support, `deanvoice-v1`, supervisor
+  Dev bundle `assets/index-DUXyI87I.js` provides concept-matched support, `deanvoice-v1`, supervisor cohort ranking,
   analytics, setup failures, and Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
   Normal dev TTS/Training/Dean stay public. Ranking is supervisor-only; chatbot guidance applies only the concept matching the current question.
 

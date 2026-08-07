@@ -56,6 +56,11 @@
   every concept with a current support state, first resolves the concept in the current question,
   and applies only the matching entry; an
   unrelated higher-ranked concept must never redirect the answer.
+- Supervisor cohort ranking counts distinct identified learners per concept. Primary rank is the
+  number reaching the current maximum support-signal score (`3`); support-recommended and possible-
+  support learner counts break ties. Event volume and uncapped score sums never determine rank.
+  Report the learner denominator and percentage, and describe this as support signals rather than
+  proven uncertainty or objective concept difficulty.
 
 ## Pronunciation Dictionary
 

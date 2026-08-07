@@ -5,6 +5,9 @@
   requests must produce `support_recommended` then saturate. Verify supervisor Reset. Future:
   add learner confirmation, knowledge checks, and a separate learner-controlled persistent
   explanation-style preference. Do not deploy analytics to staging.
+- [ ] Verify the supervisor cohort ranking with at least two identified test learners: only one
+  row per learner/concept may count, maximum-score learners drive primary rank, percentages use
+  the displayed identified-learner denominator, and the ranking never affects chatbot replies.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.

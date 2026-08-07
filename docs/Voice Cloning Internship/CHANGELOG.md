@@ -1,5 +1,10 @@
 # Changelog
 
+- Added a supervisor-only cross-learner concept ranking. It ranks by the number of distinct
+  identified learners at the maximum bounded support-signal score (`3`), then uses broader
+  support-state learner counts only to break ties. The dashboard shows count, denominator, and
+  percentage; chatbot personalization never receives the cohort rank.
+
 - Reframed dev learner analytics as conservative support guidance rather than uncertainty
   prediction. Rewinds now contribute `0.5` at most twice, clarification requests contribute
   `1` at most twice, and the internal score caps at `3`. Long pauses and transcript scrolling

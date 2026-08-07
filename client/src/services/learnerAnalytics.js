@@ -44,6 +44,10 @@ export async function listSupervisorUsers() {
   return result.users || [];
 }
 
+export function getSupervisorConceptCohort(lessonSlug = 'gi-bleeding') {
+  return authorizedGet(`/api/supervisor/concepts?lesson=${encodeURIComponent(lessonSlug)}`);
+}
+
 export function getSupervisorUser(oid) {
   return authorizedGet(`/api/supervisor/users/${encodeURIComponent(oid)}`);
 }

@@ -27,6 +27,10 @@ export function conceptById(lessonSlug, conceptId) {
     .find((concept) => concept.id === conceptId) || null;
 }
 
+export function conceptsForLesson(lessonSlug) {
+  return [...(LESSON_CONCEPTS.get(lessonSlug) || [])];
+}
+
 export function evidenceFromEvent(event) {
   const concept = conceptAt(event?.lessonSlug, event?.videoTime);
 

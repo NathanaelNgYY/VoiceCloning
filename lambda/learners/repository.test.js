@@ -78,3 +78,57 @@ test('learner summary reads drop evidence after the rolling window without a new
   assert.deepEqual(summary.focusConcepts, []);
   assert.match(summary.summary, /no recent behaviour signals/i);
 });
+
+test('concept cohort ranks by distinct learners at the maximum support threshold', async () => {
+  const occurredAt = '2026-08-07T11:00:00.000Z';
+  const conceptItem = (oid, conceptId, conceptLabel, events) => ({
+    PK: `USER#${oid}`,
+    SK: `LESSON#gi-bleeding#CONCEPT#${conceptId}`,
+    conceptId,
+    conceptLabel,
+    evidenceEvents: events.map(([signal, weight], index) => ({
+      eventId: `${oid}-${conceptId}-${index}`,
+      signal,
+      weight,
+      occurredAt,
+    })),
+    updatedAt: occurredAt,
+  });
+  const client = {
+    async send(command) {
+      if (command.input.IndexName === 'GSI1') {
+        return { Items: ['one', 'two', 'three'].map((oid) => ({ PK: `USER#${oid}` })) };
+      }
+      if (command.input.ExpressionAttributeValues?.[':pk'] === 'USER#one') {
+        return { Items: [
+          conceptItem('one', 'endoscopy', 'Endoscopy timing and therapy', [
+            ['rewatched_segment', 0.5], ['rewatched_segment', 0.5],
+            ['repeated_question', 1], ['repeated_question', 1],
+          ]),
+          conceptItem('one', 'investigations-risk-stratification', 'Investigations and risk stratification', [
+            ['rewatched_segment', 0.5], ['rewatched_segment', 0.5],
+            ['repeated_question', 1], ['repeated_question', 1],
+          ]),
+        ] };
+      }
+      if (command.input.ExpressionAttributeValues?.[':pk'] === 'USER#two') {
+        return { Items: [conceptItem('two', 'endoscopy', 'Endoscopy timing and therapy', [
+          ['repeated_question', 1], ['repeated_question', 1],
+        ])] };
+      }
+      return { Items: [] };
+    },
+  };
+  const repository = createLearnerRepository({
+    tableName: 'learners',
+    client,
+    now: () => new Date('2026-08-07T12:00:00.000Z'),
+  });
+  const cohort = await repository.getConceptCohort('gi-bleeding');
+  assert.equal(cohort.totalLearners, 3);
+  assert.equal(cohort.strongSupportThreshold, 3);
+  assert.equal(cohort.concepts[0].conceptId, 'endoscopy');
+  assert.equal(cohort.concepts[0].strongSupportLearners, 1);
+  assert.equal(cohort.concepts[0].supportRecommendedLearners, 2);
+  assert.equal(cohort.concepts[0].strongSupportPercent, 33.3);
+});
