@@ -2,6 +2,13 @@
 
 ## 2026-08-07
 
+- Added dev-only GI live-chat handshake visibility after a signed-in session was reported stuck on
+  `Connected. Preparing live chat...`. The client now handles gateway auth rejection explicitly and
+  ends setup after 15 seconds without `session.ready`. Client tests passed 346/346, the GI build
+  passed, and live dev serves `assets/index-CXMDfndS.js` with both messages and `deanvoice-v1`.
+  Dev gateway/ALB and direct OpenAI Realtime setup were healthy; a signed-in browser retry remains
+  necessary to identify the actual auth/init failure. Staging was not changed.
+
 - Removed GI's unnecessary startup profile request, which could race token availability and falsely
   show `Sign in to load the lesson voice` plus `No cloned voice is set up`. Both GI clients now become
   ready from configured ID `deanvoice-v1` and include it in every synthesis request; the backend

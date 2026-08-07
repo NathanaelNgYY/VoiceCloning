@@ -28,8 +28,8 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Bundle `assets/index-CplLB5_6.js` sends fixed `deanvoice-v1` on synthesis without a startup profile
-  request and adds supervisor analytics. Staging GI does the same in `assets/index-Cklj8mCD.js`.
+  Dev bundle `assets/index-CXMDfndS.js` fixes `deanvoice-v1`, adds supervisor analytics, and surfaces
+  WebSocket auth failures/15-second setup timeout. Staging remains `assets/index-Cklj8mCD.js`.
   Normal dev TTS/Training/Dean stay public. Repeats score 1.25.
 
 ## Current AWS Operating State
@@ -89,9 +89,6 @@ Last updated: 2026-08-07
   full model snapshot. ID-only/direct callers still resolve saved profiles; regular
   Live Fast/Full already pins its selected model. No-GPU first invocation fell
   4.618 s -> 15.71 ms. Full reruns passed 100/100 and 150/150 three-turn users.
-- Relevant checks passed: client, Lambda, gateway, build, public RIFF, and browser flow.
-- One passing burst is not production proof. The 60-minute soak and target-loss/
-  draining rehearsal remain undone.
 
 ## Event Procedure
 
@@ -108,6 +105,8 @@ Last updated: 2026-08-07
 
 ## Next Session Priorities and Blockers
 
+- Dev GI's reported `Preparing live chat` hang still needs a signed-in retry. ALB/gateway/OpenAI
+  checks pass, but browser auth/init remains unknown; record the new error, timeout, or success.
 - Keep alias/provisioned concurrency as a future option only. The next latency targets
   are 150-user admission retries and rare outside-Lambda transit outliers.
 - For faster reactive scaling, build a real fleet-wide high-resolution occupancy
