@@ -200,6 +200,52 @@ test('buildRealtimeSessionUpdate appends prosody guidance for the Chinese prompt
   );
 });
 
+test('buildRealtimeSessionUpdate keeps the markdown structure of a scoped prompt', () => {
+  // The GI lesson prompt is markdown: headings are what separate the scope gate
+  // from the teaching material it governs. Flattening it to one line left the
+  // gate as a clause in a wall of text and off-topic small talk stopped being
+  // refused, so line structure has to survive verbatim.
+  const scoped = [
+    '# Non-Negotiable Scope Gate',
+    '',
+    'Apply this gate before answering every user message.',
+    '',
+    '',
+    '',
+    'Out-of-scope examples include weather, sports, and personal conversation.   ',
+    '',
+    '# Final Scope Check',
+    '',
+    'Verify every sentence before sending.',
+  ].join('\n');
+
+  const { session: { instructions } } = buildRealtimeSessionUpdate({ language: 'en', systemPrompt: scoped });
+
+  assert.match(instructions, /^# Non-Negotiable Scope Gate$/m);
+  assert.match(instructions, /^# Final Scope Check$/m);
+  assert.match(instructions, /# Non-Negotiable Scope Gate\n\nApply this gate/);
+  // Blank runs are capped and trailing spaces stripped, but nothing is joined.
+  assert.doesNotMatch(instructions, /\n{3,}/);
+  assert.doesNotMatch(instructions, / \n/);
+});
+
+test('buildRealtimeSessionUpdate gives the prompt body the last word, not prosody', () => {
+  // Whatever sits closest to the end of the instructions is weighed most each
+  // turn. A scoped prompt ends with its scope check; prosody must not displace it.
+  const scoped = '# Scope Gate\n\nRefuse anything off topic.\n\n# Final Scope Check\n\nVerify before sending.';
+  const { session: { instructions } } = buildRealtimeSessionUpdate({ language: 'en', systemPrompt: scoped });
+
+  assert.ok(
+    instructions.indexOf('Never write lists') < instructions.indexOf('# Final Scope Check'),
+    'prosody guidance must come before the prompt body',
+  );
+  assert.ok(
+    instructions.indexOf('Always respond only in English') < instructions.indexOf('# Scope Gate'),
+    'language instruction must come before the prompt body',
+  );
+  assert.match(instructions, /Verify before sending\.$/);
+});
+
 test('RealtimeEventMapper forwards the item id on speech start/stop so the client can key turn bubbles', () => {
   const mapper = new RealtimeEventMapper({ language: 'en' });
 
