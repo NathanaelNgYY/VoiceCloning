@@ -2,11 +2,17 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 
 import { config } from '@/config';
+import {
+  conceptStatusLabel,
+  lessonAnalytics,
+  SIGNAL_LABELS,
+} from '@/lib/supervisorAnalytics';
 import { getSupervisorUser, listSupervisorUsers } from '@/services/learnerAnalytics';
 
 export function SupervisorDashboardPage() {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [activeTab, setActiveTab] = useState('summary');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -28,6 +34,7 @@ export function SupervisorDashboardPage() {
 
   async function selectUser(user) {
     setError('');
+    setActiveTab('summary');
     try {
       setSelected(await getSupervisorUser(user.oid));
     } catch {
@@ -71,20 +78,113 @@ export function SupervisorDashboardPage() {
                 <>
                   <h2 className="text-xl font-semibold">{selected.profile?.displayName || 'Learner'}</h2>
                   <p className="mt-1 text-sm text-slate-500">{selected.profile?.email}</p>
-                  <div className="mt-5 space-y-4">
-                    {(selected.lessons || []).map((lesson) => (
-                      <article key={lesson.SK} className="rounded-xl bg-slate-50 p-4">
-                        <h3 className="text-sm font-semibold">{lesson.lessonSlug}</h3>
-                        <p className="mt-2 text-sm leading-6 text-slate-700">{lesson.summary}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {(lesson.concepts || []).filter((concept) => concept.status !== 'insufficient_evidence').map((concept) => (
-                            <span key={concept.conceptId} className="rounded-full bg-amber-100 px-2.5 py-1 text-xs text-amber-900">
-                              {concept.conceptLabel}: {concept.status.replaceAll('_', ' ')}
-                            </span>
-                          ))}
-                        </div>
-                      </article>
+                  <div className="mt-5 flex gap-1 border-b border-slate-200" role="tablist" aria-label="Learner detail">
+                    {[
+                      ['summary', 'Summary'],
+                      ['signals', 'Learning signals'],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === value}
+                        onClick={() => setActiveTab(value)}
+                        className={`border-b-2 px-3 py-2 text-sm font-medium transition active:translate-y-px ${activeTab === value
+                          ? 'border-sky-700 text-sky-800'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                      >
+                        {label}
+                      </button>
                     ))}
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {(selected.lessons || []).length === 0 && (
+                      <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+                        No lesson evidence has been recorded for this learner yet.
+                      </p>
+                    )}
+                    {(selected.lessons || []).map((lesson, index) => {
+                      const analytics = lessonAnalytics(lesson);
+                      return (
+                        <details key={lesson.SK} open={index === 0} className="group rounded-xl border border-slate-200 bg-slate-50/70">
+                          <summary className="cursor-pointer list-none px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-700">
+                            <span className="flex items-center justify-between gap-4">
+                              <span>
+                                <span className="block text-sm font-semibold">{lesson.lessonSlug}</span>
+                                <span className="mt-0.5 block text-xs text-slate-500">
+                                  Updated {lesson.updatedAt ? new Date(lesson.updatedAt).toLocaleString() : 'time unavailable'}
+                                </span>
+                              </span>
+                              <span className="text-xs font-medium text-slate-500 group-open:hidden">View</span>
+                              <span className="hidden text-xs font-medium text-slate-500 group-open:inline">Hide</span>
+                            </span>
+                          </summary>
+
+                          <div className="border-t border-slate-200 px-4 py-4">
+                            {activeTab === 'summary' ? (
+                              <>
+                                <p className="text-sm leading-6 text-slate-700">{lesson.summary}</p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {analytics.visibleConcepts.map((concept) => (
+                                    <span key={concept.conceptId} className="rounded-full bg-amber-100 px-2.5 py-1 text-xs text-amber-900">
+                                      {concept.conceptLabel}: {conceptStatusLabel(concept.status).toLowerCase()}
+                                    </span>
+                                  ))}
+                                  {analytics.visibleConcepts.length === 0 && (
+                                    <span className="text-xs text-slate-500">Not enough evidence to identify a review topic.</span>
+                                  )}
+                                </div>
+                              </>
+                            ) : (
+                              <div>
+                                <div className="grid grid-cols-2 divide-x divide-slate-200 border-y border-slate-200 py-3">
+                                  <div className="pr-4">
+                                    <span className="block text-2xl font-semibold tabular-nums text-slate-900">{analytics.visibleConcepts.length}</span>
+                                    <span className="text-xs text-slate-500">Topics with signals</span>
+                                  </div>
+                                  <div className="pl-4">
+                                    <span className="block text-2xl font-semibold tabular-nums text-slate-900">{analytics.totalEvidence}</span>
+                                    <span className="text-xs text-slate-500">Evidence events</span>
+                                  </div>
+                                </div>
+
+                                <div className="mt-5 space-y-5" aria-label="Topics needing review">
+                                  {analytics.visibleConcepts.map((concept) => (
+                                    <div key={concept.conceptId}>
+                                      <div className="mb-1.5 flex items-end justify-between gap-4">
+                                        <div>
+                                          <p className="text-sm font-medium text-slate-800">{concept.conceptLabel}</p>
+                                          <p className="text-xs text-slate-500">{conceptStatusLabel(concept.status)} · {concept.evidenceCount} evidence event{concept.evidenceCount === 1 ? '' : 's'}</p>
+                                        </div>
+                                        <span className="font-mono text-xs font-semibold text-slate-700">{concept.evidenceScore.toFixed(2)}</span>
+                                      </div>
+                                      <div className="h-2 overflow-hidden rounded-full bg-slate-200" role="img" aria-label={`${concept.conceptLabel} evidence score ${concept.evidenceScore.toFixed(2)}`}>
+                                        <div
+                                          className={`h-full rounded-full ${concept.status === 'needs_review' ? 'bg-amber-600' : 'bg-sky-700'}`}
+                                          style={{ width: `${Math.max(5, (concept.evidenceScore / analytics.maxScore) * 100)}%` }}
+                                        />
+                                      </div>
+                                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                                        {concept.signals.map((signal) => (
+                                          <span key={signal} className="text-xs text-slate-500">{SIGNAL_LABELS[signal] || signal.replaceAll('_', ' ')}</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {analytics.visibleConcepts.length === 0 && (
+                                    <p className="text-sm text-slate-500">No topics have enough evidence for a chart yet.</p>
+                                  )}
+                                </div>
+                                <p className="mt-5 border-t border-slate-200 pt-3 text-xs leading-5 text-slate-500">
+                                  Scores rank behavioural signals for review. They are not grades or diagnoses.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      );
+                    })}
                   </div>
                 </>
               )}
