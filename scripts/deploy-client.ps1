@@ -40,18 +40,55 @@ if ($DryRun) {
   Write-Host "[dry-run] build client --mode $buildMode with $envSrc; sync $dist -> $target; invalidate $distro ($Env)"
   exit 0
 }
-$hasEnvOverride = Test-Path $envSrc
-if ($hasEnvOverride) {
-  Copy-Item $envSrc $envDst -Force
-}
+$hasEnvOverride = Test-Path -LiteralPath $envSrc
+$envBackup = $null
+# Distinct from $envBackup on purpose. "I made a backup" and "I overwrote the
+# destination" are different questions, and they diverge precisely when the
+# backup fails: the override was then never copied in, so $envDst still holds
+# the developer's untouched file and cleanup must leave it alone. Keying the
+# cleanup off $envBackup alone deletes the very file this block exists to
+# protect.
+$envDstOverwritten = $false
+$clientLocationPushed = $false
 try {
+  if ($hasEnvOverride) {
+    # .env.<mode>.local may hold a developer's private local-server settings.
+    # Preserve it while the deployment-specific override owns that filename.
+    if (Test-Path -LiteralPath $envDst) {
+      # Beside the file rather than in $env:TEMP with a random name: if this
+      # process is killed mid-build (a 40s vite build is an easy Ctrl-C target)
+      # the finally block never runs, and a backup the developer cannot find is
+      # the same as no backup. This path is covered by .gitignore's `.env.*`.
+      $backupPath = "$envDst.deploy-backup"
+      # Assign only after Copy-Item succeeds. A failed backup must never make
+      # cleanup mistake an empty/partial file for a restorable copy.
+      $envBackup = (Copy-Item -LiteralPath $envDst -Destination $backupPath -Force -PassThru).FullName
+    }
+    Copy-Item -LiteralPath $envSrc -Destination $envDst -Force
+    $envDstOverwritten = $true
+  }
   Push-Location "$repo\client"
+  $clientLocationPushed = $true
   npm run "build:$buildMode"
   if ($LASTEXITCODE -ne 0) { throw "vite build failed" }
 } finally {
-  Pop-Location
-  if ($hasEnvOverride) {
-    Remove-Item $envDst -Force -ErrorAction SilentlyContinue
+  if ($clientLocationPushed) {
+    Pop-Location
+  }
+  if ($envDstOverwritten) {
+    if ($envBackup) {
+      # A throw in finally would replace the real build error with a confusing
+      # one AND leave the deployment override sitting in the developer's local
+      # file. Warn with the path instead, so the copy is recoverable by hand.
+      try {
+        Copy-Item -LiteralPath $envBackup -Destination $envDst -Force -ErrorAction Stop
+        Remove-Item -LiteralPath $envBackup -Force -ErrorAction SilentlyContinue
+      } catch {
+        Write-Warning "Could not restore $envDst from backup. Your original file is at $envBackup - restore it by hand. ($($_.Exception.Message))"
+      }
+    } else {
+      Remove-Item -LiteralPath $envDst -Force -ErrorAction SilentlyContinue
+    }
   }
 }
 if ($buildMode -eq 'gi') {

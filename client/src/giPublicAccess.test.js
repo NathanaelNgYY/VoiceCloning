@@ -5,6 +5,10 @@ import test from "node:test";
 const configSource = readFileSync(new URL("./config.js", import.meta.url), "utf8");
 const giAppSource = readFileSync(new URL("./GiApp.jsx", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("./main.jsx", import.meta.url), "utf8");
+const deployClientSource = readFileSync(
+  new URL("../../scripts/deploy-client.ps1", import.meta.url),
+  "utf8",
+);
 const searchPageSource = readFileSync(
   new URL("./pages/SearchPage.jsx", import.meta.url),
   "utf8",
@@ -15,6 +19,16 @@ const lessonPageSource = readFileSync(
 );
 const stagingGiEnv = readFileSync(
   new URL("../env/staging/gi.env", import.meta.url),
+  "utf8",
+);
+// Dev runs the same gated build against its own backends. It went without an
+// env override entirely for a while, which deploy-client.ps1 treats as "no
+// override needed" rather than as an error, so
+// dev shipped an unauthenticated site against backends that required tokens.
+// readFileSync throwing is the point: a missing file must fail the suite, not
+// be skipped.
+const devGiEnv = readFileSync(
+  new URL("../env/dev/gi.env", import.meta.url),
   "utf8",
 );
 // Reaching outside client/ on purpose: the scope the browser requests and the
@@ -115,6 +129,121 @@ test("both staging backends actually turn their token checks on", () => {
   // catches, and it looks exactly like success from the browser.
   assert.match(stagingGatewayEnv, /^LIVE_AUTH_ENABLED=true$/m);
   assert.match(stagingLambdaEnv, /^LIVE_AUTH_ENABLED=true$/m);
+});
+
+// Dev and staging are separate distributions with separate backends, but the
+// client/gateway/Lambda auth invariant is identical in both. These run the same
+// checks against the dev triple so the two environments cannot drift apart —
+// which is what left dev unauthenticated while staging was gated.
+const devBackendEnvs = {
+  gateway: readFileSync(
+    new URL("../../live-gateway/.env.livegateway.deployment", import.meta.url),
+    "utf8",
+  ),
+  lambda: readFileSync(
+    new URL("../../lambda/.env.deployment", import.meta.url),
+    "utf8",
+  ),
+};
+
+test("the dev GI build gates behind sign-in with a usable Entra config", () => {
+  assert.match(devGiEnv, /^VITE_GI_AUTH_ENABLED=true$/m);
+  // Without msal, giAuthEnabled leaves config.js in "mock" mode: the gate looks
+  // on but accepts a localStorage flag instead of an identity.
+  assert.match(devGiEnv, /^VITE_AUTH_MODE=msal$/m);
+  assert.match(
+    devGiEnv,
+    /^VITE_ENTRA_CLIENT_ID=9b5c52c0-5f02-4dbf-83ac-c68d246abc68$/m,
+  );
+  assert.match(
+    devGiEnv,
+    /^VITE_ENTRA_TENANT_AUTHORITY=https:\/\/login\.microsoftonline\.com\/common$/m,
+  );
+});
+
+test("the dev client sends a token type both dev backends verify", () => {
+  const CLIENT_ID = "9b5c52c0-5f02-4dbf-83ac-c68d246abc68";
+  const mode = devGiEnv.match(/^VITE_API_AUTH_MODE=(.+)$/m)?.[1] ?? "";
+  const expected = mode === "entra-id" ? CLIENT_ID : `api://${CLIENT_ID}`;
+  const expectsAudience = new RegExp(
+    `^ENTRA_AUDIENCE=${expected.replace(/[/]/gu, "\\/")}$`,
+    "m",
+  );
+
+  for (const env of Object.values(devBackendEnvs)) {
+    assert.match(env, expectsAudience);
+    // ENTRA_AUDIENCE is inert unless the check is switched on.
+    assert.match(env, /^LIVE_AUTH_ENABLED=true$/m);
+    assert.match(env, /^ENTRA_TENANT_ID=15ce9348-be2a-462b-8fc0-e1765a9b204a$/m);
+  }
+
+  if (mode === "entra-id") {
+    assert.doesNotMatch(devGiEnv, /^VITE_ENTRA_API_SCOPE=.+$/m);
+  }
+});
+
+test("the dev GI build pins dev's own cloned voice, not staging's", () => {
+  // The active voice profile is one shared backend setting; the wrong pin here
+  // makes the chat refuse to start rather than speak in someone else's voice.
+  assert.match(devGiEnv, /^VITE_GI_VOICE_PROFILE_ID=DeanVoice$/m);
+  assert.match(stagingGiEnv, /^VITE_GI_VOICE_PROFILE_ID=deanvoice-v1$/m);
+});
+
+test("both GI builds stay origin-relative so one artifact suits any distribution", () => {
+  // A hardcoded host here silently sends dev's traffic to staging's backend (or
+  // to doovx82fh9tfs, which .env pins and neither environment uses).
+  for (const env of [devGiEnv, stagingGiEnv]) {
+    assert.match(env, /^VITE_API_BASE_URL=$/m);
+    assert.match(env, /^VITE_GPU_WORKER_URL=$/m);
+    assert.match(env, /^VITE_LIVE_GATEWAY_URL=$/m);
+  }
+});
+
+test("a GI deployment restores a developer's pre-existing local env override", () => {
+  // Adding env/dev/gi.env makes the deploy script start copying over
+  // .env.gi.local in dev. That file is also used for private local-server
+  // settings, so cleanup must restore it rather than delete it.
+  //
+  // This inspects the script's source rather than running it: the env swap is
+  // welded to a real vite build and live AWS calls, so there is nothing to
+  // execute from here. It therefore pins the shape of the guard, not the
+  // behaviour — treat a change here as a prompt to re-reason about the
+  // three cleanup paths below, not as proof they still hold.
+  assert.match(deployClientSource, /\$envBackup\s*=/);
+  assert.match(
+    deployClientSource,
+    /Copy-Item\s+-LiteralPath\s+\$envDst\s+-Destination\s+\$backupPath/,
+  );
+  assert.match(
+    deployClientSource,
+    /Copy-Item\s+-LiteralPath\s+\$envBackup\s+-Destination\s+\$envDst\s+-Force/,
+  );
+});
+
+test("deploy cleanup keys off overwriting the file, not off having a backup", () => {
+  // The three cleanup paths, and why they need two separate flags:
+  //   no pre-existing file  -> override copied in -> delete it
+  //   pre-existing + backup -> override copied in -> restore from backup
+  //   backup FAILED         -> override never copied, file untouched -> do nothing
+  //
+  // Collapsing those onto `if ($envBackup)` alone makes the third case fall
+  // into the delete branch, destroying a file that was never overwritten —
+  // the exact file the backup exists to protect.
+  assert.match(deployClientSource, /\$envDstOverwritten\s*=\s*\$false/);
+  // Set only after the override copy succeeds, never before it.
+  assert.match(
+    deployClientSource,
+    /Copy-Item\s+-LiteralPath\s+\$envSrc\s+-Destination\s+\$envDst\s+-Force\s*\r?\n\s*\$envDstOverwritten\s*=\s*\$true/,
+  );
+  // The destructive branch is reachable only through that flag.
+  assert.match(
+    deployClientSource,
+    /if\s*\(\$envDstOverwritten\)\s*\{[\s\S]*?Remove-Item\s+-LiteralPath\s+\$envDst/,
+  );
+  assert.doesNotMatch(
+    deployClientSource,
+    /if\s*\(\$hasEnvOverride\)\s*\{\s*\r?\n\s*if\s*\(\$envBackup\)/,
+  );
 });
 
 test("public GI visitors bypass protected routes and cannot render the login page", () => {
