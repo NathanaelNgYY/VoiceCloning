@@ -28,8 +28,8 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Dev bundle `assets/index-CXMDfndS.js` fixes `deanvoice-v1`, adds supervisor analytics, and surfaces
-  WebSocket auth failures/15-second setup timeout. Staging remains `assets/index-Cklj8mCD.js`.
+  Dev bundle `assets/index-6qG3aJlL.js` fixes `deanvoice-v1`, adds supervisor analytics, surfaces
+  setup failures, and carries Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
   Normal dev TTS/Training/Dean stay public. Repeats score 1.25.
 
 ## Current AWS Operating State
@@ -105,8 +105,8 @@ Last updated: 2026-08-07
 
 ## Next Session Priorities and Blockers
 
-- Dev GI's reported `Preparing live chat` hang still needs a signed-in retry. ALB/gateway/OpenAI
-  checks pass, but browser auth/init remains unknown; record the new error, timeout, or success.
+- Dev GI text chat now works; signed-in browser verification of Dean audio and learner REST calls
+  remains. Their OAC header fix is deployed, but successful real-token synthesis is not yet observed.
 - Keep alias/provisioned concurrency as a future option only. The next latency targets
   are 150-user admission retries and rare outside-Lambda transit outliers.
 - For faster reactive scaling, build a real fleet-wide high-resolution occupancy

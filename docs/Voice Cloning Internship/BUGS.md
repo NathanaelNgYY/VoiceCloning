@@ -2,11 +2,11 @@
 
 ## Active
 
-- 2026-08-07: signed-in dev GI was reported stuck on `Connected. Preparing live chat...`.
-  The dev ALB target is healthy and the gateway can open an OpenAI Realtime session directly,
-  so the remaining fault is narrowed to the browser-to-gateway auth/init exchange. Dev bundle
-  `assets/index-CXMDfndS.js` now exposes `session.auth.failed` codes and stops after a 15-second
-  readiness timeout. A signed-in browser retry is still needed; the root cause is not yet proven.
+- 2026-08-07: dev GI text chat recovered, but Dean audio returned an unsigned 401. Root cause:
+  CloudFront OAC signs the Lambda origin with SigV4 `Authorization`, replacing the viewer bearer
+  header. Dev now sends Entra REST auth as `X-VCS-Entra-Token`; Lambda accepts it before falling
+  back to ordinary bearer auth. Bundle `assets/index-6qG3aJlL.js` and Lambda are live. Unit/build,
+  policy, bundle, and deployment checks pass; signed-in Dean audio still needs browser verification.
 - 2026-08-03: staging fixed inference and ASG AMI `ami-021aeb72894b8c79b`
   lack `resemblyzer`, so speaker-identity scoring degrades to ASR/audio-quality checks.
   History shows the gate was added intentionally; no evidence supports removal as a

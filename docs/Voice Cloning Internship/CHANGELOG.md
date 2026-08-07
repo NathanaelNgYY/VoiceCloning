@@ -2,6 +2,12 @@
 
 ## 2026-08-07
 
+- Fixed the dev GI text-working/Dean-audio-401 split. CloudFront OAC signs the Lambda Function URL
+  with SigV4 `Authorization`, so the browser's bearer header could not survive to Lambda. Authenticated
+  Lambda REST calls now use forwarded `X-VCS-Entra-Token`; Lambda prefers it and retains bearer fallback
+  for direct callers. Client 346/346 and Lambda 143/143 passed, as did GI build/package. Dev Lambda and
+  bundle `assets/index-6qG3aJlL.js` are live after completed invalidation; staging was untouched.
+
 - Added dev-only GI live-chat handshake visibility after a signed-in session was reported stuck on
   `Connected. Preparing live chat...`. The client now handles gateway auth rejection explicitly and
   ends setup after 15 seconds without `session.ready`. Client tests passed 346/346, the GI build

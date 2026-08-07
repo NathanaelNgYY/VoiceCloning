@@ -13,6 +13,9 @@
 - The deployed frontend is expected to use same-origin CloudFront paths rather than calling raw backend origins directly.
 - `/api/*` goes through Lambda Function URL.
 - Browser SSE and the live WebSocket go through the GPU ALB.
+- Entra tokens for authenticated Lambda REST calls use `X-VCS-Entra-Token`, not `Authorization`:
+  Lambda-origin OAC always signs with SigV4 and owns the standard header. Gateway/WebSocket auth
+  keeps its bearer/frame transport because those paths do not traverse Lambda OAC.
 
 ## Storage Model
 
@@ -26,6 +29,14 @@
   volume requires buffering; Glue/Athena and a dashboard are separate query-layer work.
 - Current batches are session-anonymous and exclude mock-auth identity. Future SSO
   identity must be derived from a backend-validated token, not a browser field.
+- The dev-first identified design is implemented locally: Lambda validates the token,
+  writes only verified `oid` as the analytics subject, maps video times through an authored
+  lesson concept map, and aggregates cautious evidence in a dev-only DynamoDB table.
+- Learner summaries use fixed evidence thresholds and may use a structured OpenAI response;
+  API failure or missing credentials falls back to deterministic wording. The chatbot gets
+  only the compact summary, never another user's history or an unsupported formal grade.
+- Supervisor reads require an Entra `Supervisor` app role (with an explicit OID allowlist
+  only as a temporary provisioning bridge), and query a user index rather than scanning.
 - Rewinds, skips, and long transcript pauses are ambiguous signals. They may calibrate
   a relevant chatbot answer or prompt a check for understanding, but cannot establish
   that a learner is confused, clear, attentive, or has mastered the material.
