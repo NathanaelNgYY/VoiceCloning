@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { getFullActiveVoiceProfile, getPinnedVoiceProfile } from '@/services/api.js';
+import { getFullActiveVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
 import {
@@ -94,9 +94,7 @@ export function useGiChatEngine({
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;
     try {
-      const res = pinnedVoiceProfileId
-        ? await getPinnedVoiceProfile(pinnedVoiceProfileId)
-        : await getFullActiveVoiceProfile();
+      const res = await getFullActiveVoiceProfile();
       if (profileRequestRef.current !== requestId) return;
       setActiveProfile(res.data || null);
       setProfileError('');
@@ -116,24 +114,34 @@ export function useGiChatEngine({
   }, [pinnedVoiceProfileId]);
 
   useEffect(() => {
-    if (!backendQueryable) return;
+    // A configured GI build sends its fixed voiceProfileId with every synthesis
+    // request. The synthesis backend resolves that saved profile itself, so page
+    // startup must not be blocked by a separate profile GET (or its auth timing).
+    if (!backendQueryable || pinnedVoiceProfileId) return;
     loadActiveProfile();
-  }, [backendQueryable, loadActiveProfile]);
+  }, [backendQueryable, loadActiveProfile, pinnedVoiceProfileId]);
 
   // Human-readable name of the active cloned voice, for the read-only
   // indicator. getFullActiveVoiceProfile() returns the stored profile
   // payload directly (lambda/voice-profile/index.js:197), which carries
   // displayName — no separate model-list lookup needed.
-  const activeVoiceLabel = String(activeProfile?.displayName || '').trim();
+  const activeVoiceLabel = pinnedVoiceProfileId
+    ? pinnedVoiceKey
+    : String(activeProfile?.displayName || '').trim();
 
   // The cloned voice this build expects. The active profile is a single shared
   // backend setting, so without a pin the gi app would speak in whatever voice
   // someone else activated last.
   // Only true once a profile has actually loaded and turned out to be the wrong
   // one — a not-yet-loaded profile must not read as a mismatch.
-  const voiceMismatch = Boolean(activeProfile) && !matchesPinnedVoice(activeProfile, pinnedVoiceKey);
+  const voiceMismatch = !pinnedVoiceProfileId
+    && Boolean(activeProfile)
+    && !matchesPinnedVoice(activeProfile, pinnedVoiceKey);
 
   const refParams = useMemo(() => {
+    // An empty object is intentional: createLiveSynthesisSnapshot adds the
+    // configured voiceProfileId, and Lambda resolves Dean's refs/settings.
+    if (pinnedVoiceProfileId) return {};
     if (!activeProfile) return null;
     return buildLiveFastRefParams({
       primaryPath: activeProfile.ref_audio_path || '',
@@ -142,7 +150,7 @@ export function useGiChatEngine({
       auxRefAudios: (activeProfile.aux_ref_audio_paths || []).map((path) => ({ path })),
       settings: normalizeLiveFastSettings(activeProfile.defaults || {}),
     });
-  }, [activeProfile]);
+  }, [activeProfile, pinnedVoiceProfileId]);
 
   const fastSettings = useMemo(
     () => normalizeLiveFastSettings(activeProfile?.defaults || {}),
@@ -160,7 +168,7 @@ export function useGiChatEngine({
     engine: APP_MODE_CONFIG.defaultLiveEngine,
     replyMode: 'phrases',
     language: activeProfile?.text_lang || 'en',
-    voiceProfileId: activeProfile?.voiceProfileId || '',
+    voiceProfileId: pinnedVoiceProfileId || activeProfile?.voiceProfileId || '',
     voiceModel,
     systemPrompt,
     fastMaxChunkWords: fastSettings.maxChunkWords,

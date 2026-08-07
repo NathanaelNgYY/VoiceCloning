@@ -34,3 +34,16 @@ test("visible transcript falls back to the whole list once ids stop matching", (
     /cutoff === -1 \? liveSpeech\.messages : liveSpeech\.messages\.slice\(cutoff \+ 1\)/,
   );
 });
+
+test("configured GI voice is sent by id without a startup profile request", () => {
+  assert.doesNotMatch(engineSource, /getPinnedVoiceProfile/);
+  assert.match(
+    engineSource,
+    /if \(!backendQueryable \|\| pinnedVoiceProfileId\) return;/,
+  );
+  assert.match(
+    engineSource,
+    /voiceProfileId: pinnedVoiceProfileId \|\| activeProfile\?\.voiceProfileId \|\| ''/,
+  );
+  assert.match(engineSource, /if \(pinnedVoiceProfileId\) return \{\};/);
+});
