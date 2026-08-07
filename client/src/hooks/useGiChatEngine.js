@@ -158,8 +158,10 @@ export function useGiChatEngine({
     getVideoPosition,
   });
 
-  // "New chat" clears the visible transcript without touching engine state
-  // (design decision D3 — no persistence, no conversation list).
+  // "New chat" hides the transcript so far (design decision D3 — no
+  // persistence, no conversation list). Once the next session starts,
+  // useLiveSpeech empties `messages` outright and this id no longer matches
+  // anything, which findIndex reports as -1 and the whole fresh list shows.
   const visibleMessages = useMemo(() => {
     if (!clearedBeforeId) return liveSpeech.messages;
     const cutoff = liveSpeech.messages.findIndex((message) => message.id === clearedBeforeId);
@@ -169,7 +171,14 @@ export function useGiChatEngine({
   const newChat = useCallback(() => {
     const last = liveSpeech.messages[liveSpeech.messages.length - 1];
     setClearedBeforeId(last ? last.id : '');
-  }, [liveSpeech.messages]);
+    // Hiding the bubbles is not enough on its own. The Realtime conversation
+    // lives on OpenAI's side, and the socket stays open between turns for the
+    // whole session — so every message this just hid is still context for the
+    // next reply, and a "new" chat inherits the character drift of the old one.
+    // stop() closes the socket (and no-ops when already idle); the next turn,
+    // typed or spoken, opens a fresh session from a standing start.
+    liveSpeech.stop();
+  }, [liveSpeech.messages, liveSpeech.stop]);
 
   const toggleMute = useCallback(() => {
     if (liveSpeech.isMicInputEnabled) {
