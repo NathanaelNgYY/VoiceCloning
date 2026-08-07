@@ -302,7 +302,15 @@ Lessons are collapsible; the tab ranks qualifying concepts with proportional sco
 status, total evidence-event count, contributing signal types, and updated time. DynamoDB
 currently stores a total evidence count and a set of signal types, not counts by signal type,
 so the UI deliberately does not claim per-signal frequencies. Live dev bundle is
-`assets/index-BPBBhsIk.js`.
+`assets/index-B0E_z1t1.js`.
+
+GI voice selection is environment-separated but behaviorally identical. Dev and staging each store
+their own `voice-profiles/deanvoice-v1.json` under `echolect/` and `echolect-staging/`. On entry, the
+signed-in GI client calls `GET /api/voice-profile/pinned/deanvoice-v1`; the environment's Lambda reads
+that saved profile without reading or writing shared `active.json`, and the conversation pins the
+returned model/reference snapshot. Thus another TTS/training user may activate a different voice
+without changing GI. Dev serves `assets/index-B0E_z1t1.js`; staging serves
+`assets/index-C3Y7_cZC.js`. The staging change did not alter its ASG, gateway, TTS, or training stacks.
 
 Dev voice authentication is intentionally frontend-scoped. GI's Lambda origin injects
 `X-Demo-Request: true`; with `LIVE_AUTH_DEMO_ONLY=true`, `/api/live/*` requires a Microsoft

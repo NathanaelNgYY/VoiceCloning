@@ -48,6 +48,11 @@
 
 ## Recently Fixed
 
+- 2026-08-07: GI previously compared its configured Dean voice against shared `active.json`, so a
+  TTS/training user activating another profile blocked GI. Dev and staging now load saved
+  `deanvoice-v1` directly through an authenticated read-only route and pin its snapshot without
+  changing global active state. Live unsigned route checks return 401; signed-in audio remains a
+  manual browser/listening check.
 - 2026-08-07: dev GI Microsoft sign-in created learner profiles and authenticated the
   WebSocket, but cloned-voice REST calls omitted the bearer token and returned 401. The shared
   API client now attaches the configured token. Voice auth is required only for GI-tagged

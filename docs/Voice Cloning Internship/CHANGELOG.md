@@ -2,6 +2,14 @@
 
 ## 2026-08-07
 
+- Fixed GI startup voice selection in dev and staging. Both GI builds now fetch the saved
+  `deanvoice-v1` profile through an authenticated read-only endpoint and pin that exact model/reference
+  snapshot for the conversation. They neither depend on nor mutate shared `active.json`, so TTS or
+  training users can change the globally active voice without blocking GI. Dev bundle
+  `assets/index-B0E_z1t1.js` and staging bundle `assets/index-C3Y7_cZC.js` are live after completed
+  invalidations. Client dev 343/343, client staging 327/327, Lambda dev 142/142, Lambda staging
+  125/125, both GI builds, live bundle inspection, and unsigned endpoint 401 checks passed.
+
 - Fixed dev GI cloned voice returning `Sign in to use the voice assistant` after a valid
   Microsoft sign-in. The shared Axios voice client omitted the bearer token even though the
   WebSocket and learner APIs sent it. Dev bundle `assets/index-BPBBhsIk.js` now attaches the

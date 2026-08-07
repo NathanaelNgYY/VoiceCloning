@@ -4,18 +4,16 @@ Last updated: 2026-08-07
 
 ## Start Here
 
-- Current scope includes dev parity plus a separately confirmed staging event action; repo/branch is `VoiceCloning` / `separate-containers-new`.
-- Dev host is at feature commit `4c8911a`; local checkout contains later dev analytics/UI/auth
-  commits. Preserve the host's
+- Scope: dev parity plus confirmed staging event action; repo/branch `VoiceCloning` / `separate-containers-new`.
+- Dev host is at `4c8911a`; local checkout has later analytics/UI/auth commits. Preserve the host's
   unrelated deleted verifier file and archives; do not clean them up.
-- Read this file, repo `docs/staging-architecture.md`, `TODO.md`, and
-  `scripts/deploy.config.json` before changing AWS or code.
+- Read this file, `docs/staging-architecture.md`, `TODO.md`, and `scripts/deploy.config.json` first.
 - Never print or save credentials, tokens, private URLs, or secret values.
 - Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
   dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
   gateway instance role's `PutItem` was proven with an expiring probe.
-- No staging AWS resource was changed. Keep this checkpoint dev-only until the remaining
-  real NTU sign-in, data-row, personalization, and supervisor checks pass.
+- Learner analytics remains dev-only. The GI Dean-profile loader is on both GI clients/Lambdas;
+  no staging analytics, scaling, gateway, TTS, or training resource changed.
 
 ## Deployed Dev State
 
@@ -30,7 +28,9 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Bundle `assets/index-BPBBhsIk.js` authenticates GI cloned-voice REST calls and adds collapsible supervisor analytics. Dev Lambda requires voice auth only for GI's CloudFront-tagged requests; normal dev TTS/Training/Dean tools stay public. Repeated questions score 1.25 with the documented safeguards.
+  Bundle `assets/index-B0E_z1t1.js` authenticates voice calls, loads saved `deanvoice-v1` directly,
+  and adds supervisor analytics. GI no longer uses shared active voice; staging GI has the same loader
+  in `assets/index-C3Y7_cZC.js`. Normal dev TTS/Training/Dean stay public. Repeats score 1.25.
 
 ## Current AWS Operating State
 
