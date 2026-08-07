@@ -295,8 +295,14 @@ confidence 0.75 or higher; ambiguous or tied matches cannot override time. Other
 requires both timestamps to map to the same authored concept. Similarity must be at least
 0.65 and accepted evidence weighs 1.25. The analytics/S3 batch contains concept,
 similarity, and timing metadata but no question text; the existing DynamoDB transcript row
-still contains the chat text. Live dev bundle is `assets/index-BXcd6-Hm.js`; the non-staging
-Lambda update and CloudFront invalidation completed successfully.
+still contains the chat text. The non-staging Lambda update and CloudFront invalidation
+completed successfully. The dev `/supervisor`
+learner detail keeps Summary as the default tab and adds a secondary Learning signals tab.
+Lessons are collapsible; the tab ranks qualifying concepts with proportional score bars,
+status, total evidence-event count, contributing signal types, and updated time. DynamoDB
+currently stores a total evidence count and a set of signal types, not counts by signal type,
+so the UI deliberately does not claim per-signal frequencies. Live dev bundle is
+`assets/index-Bbo8Meyn.js`.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 

@@ -626,3 +626,8 @@ clear concept across different video timestamps only when both questions agree a
 timestamp-authored concept. One cluster is capped at two signals. Raw question text remains
 in the DynamoDB transcript table as before but is not copied into the analytics event/S3
 batch, which stores only derived concept, similarity, and timing metadata.
+
+The dev supervisor UI now presents each learner's lessons as collapsible sections with
+Summary and Learning signals tabs. The secondary tab charts qualifying concepts using the
+stored evidence score and shows total evidence events plus contributing signal types. It
+does not show counts per signal type because that aggregation is not stored.

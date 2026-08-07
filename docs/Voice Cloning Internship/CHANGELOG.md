@@ -2,6 +2,13 @@
 
 ## 2026-08-07
 
+- Added and deployed a secondary supervisor analytics view to dev only. Each learner keeps
+  Summary as the default tab; Learning signals is optional, lessons are collapsible, and
+  qualifying concepts show ranked score bars, cautious status, total evidence-event count,
+  contributing signal types, and update time. The UI does not invent unavailable per-signal
+  counts. Client 334/334 and GI build passed; bundle `assets/index-Bbo8Meyn.js`, completed
+  invalidation, and anonymous supervisor 401 were verified.
+
 - Improved and redeployed dev-only repeated-question evidence: deterministic concept matches
   at confidence 0.75 or higher may cross video timestamps; ambiguous, tied, or unknown
   questions still require the same timestamp-authored concept. Accepted matches score 1.25
