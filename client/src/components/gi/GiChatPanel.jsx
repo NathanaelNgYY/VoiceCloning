@@ -26,8 +26,9 @@ export function GiChatPanel({
   lessonContext = '',
   lessonSlug = 'gi-bleeding',
   getVideoPosition = null,
+  onUserQuestion = null,
 }) {
-  const chat = useGiChatEngine({ lessonContext, lessonSlug, getVideoPosition });
+  const chat = useGiChatEngine({ lessonContext, lessonSlug, getVideoPosition, onUserQuestion });
   const audioProps = useGiReplyAudio(chat);
 
   // The panel is short inside the lesson page, so a reply that streams in while

@@ -31,6 +31,24 @@ test('derives evidence from recorded behavior rather than inventing it', () => {
   });
 });
 
+test('weights a repeated question only when both timestamps belong to the same concept', () => {
+  const event = {
+    lessonSlug: 'gi-bleeding',
+    eventName: 'repeated_question',
+    videoTime: 390,
+    properties: { previousVideoTime: 380, similarity: 0.8 },
+  };
+  assert.equal(evidenceFromEvent(event)?.weight, 1.25);
+  assert.equal(evidenceFromEvent({
+    ...event,
+    properties: { previousVideoTime: 520, similarity: 0.8 },
+  }), null);
+  assert.equal(evidenceFromEvent({
+    ...event,
+    properties: { previousVideoTime: 380, similarity: 0.5 },
+  }), null);
+});
+
 test('uses fixed evidence thresholds for learner status', () => {
   assert.equal(statusForEvidence(1), 'insufficient_evidence');
   assert.equal(statusForEvidence(2), 'possible_uncertainty');

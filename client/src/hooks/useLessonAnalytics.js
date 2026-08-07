@@ -4,6 +4,7 @@ import {
   LONG_PAUSE_SECONDS,
   createLessonAnalyticsClient,
   createLessonBehaviorState,
+  createRepeatedQuestionTracker,
 } from '@/lib/lessonAnalytics.js';
 import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
 
@@ -13,6 +14,7 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
   const activeTabRef = useRef(activeTab);
   const preSeekTimeRef = useRef(null);
   const lastVideoTimeRef = useRef(0);
+  const repeatedQuestionRef = useRef(null);
 
   if (!analyticsRef.current) {
     analyticsRef.current = createLessonAnalyticsClient({
@@ -21,6 +23,7 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
     });
   }
   if (!behaviorRef.current) behaviorRef.current = createLessonBehaviorState();
+  if (!repeatedQuestionRef.current) repeatedQuestionRef.current = createRepeatedQuestionTracker();
   activeTabRef.current = activeTab;
 
   useEffect(() => {
@@ -127,5 +130,20 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
     transcriptReading: activeTabRef.current === 'transcript',
   }), []);
 
-  return { trackNavigation, getBehaviorContext };
+  const recordQuestion = useCallback((text) => {
+    const videoTime = videoRef.current?.currentTime;
+    const repeated = repeatedQuestionRef.current.record(text, videoTime);
+    if (!repeated) return false;
+    analyticsRef.current.track('repeated_question', {
+      videoTime,
+      properties: {
+        previousVideoTime: repeated.previousVideoTime,
+        similarity: repeated.similarity,
+        timeSincePreviousSeconds: Math.round(repeated.elapsedSeconds * 10) / 10,
+      },
+    });
+    return true;
+  }, [videoRef]);
+
+  return { trackNavigation, getBehaviorContext, recordQuestion };
 }

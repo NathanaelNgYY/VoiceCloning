@@ -28,6 +28,24 @@ test('sanitizeAnalyticsEvent keeps only the versioned analytics allowlist', () =
   assert.equal(sanitized.userId, undefined);
   assert.deepEqual(sanitized.properties, { fromSeconds: 240 });
 });
+
+test('repeated-question analytics keeps similarity metadata but no question text', () => {
+  const sanitized = sanitizeAnalyticsEvent(event({
+    eventName: 'repeated_question',
+    videoTime: 390,
+    properties: {
+      previousVideoTime: 380,
+      similarity: 0.8,
+      timeSincePreviousSeconds: 12,
+      questionText: 'must not be stored',
+    },
+  }), NOW);
+  assert.deepEqual(sanitized.properties, {
+    previousVideoTime: 380,
+    similarity: 0.8,
+    timeSincePreviousSeconds: 12,
+  });
+});
 test('buildAnalyticsObjectKey partitions batches by UTC date and hour', () => {
   assert.equal(
     buildAnalyticsObjectKey(NOW, 'batch-1'),

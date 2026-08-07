@@ -34,6 +34,7 @@ export function useGiChatEngine({
   lessonContext = '',
   lessonSlug = 'gi-bleeding',
   getVideoPosition = null,
+  onUserQuestion = null,
 } = {}) {
   const { workerReady, configured } = useGpuStatus();
   const backendQueryable = !configured || workerReady;
@@ -156,6 +157,7 @@ export function useGiChatEngine({
     fastMaxChunkWords: fastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: fastSettings.maxSentencesPerChunk,
     getVideoPosition,
+    onUserQuestion,
   });
 
   // "New chat" hides the transcript so far (design decision D3 — no

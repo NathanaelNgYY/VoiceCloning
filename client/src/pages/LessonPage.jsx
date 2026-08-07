@@ -130,7 +130,7 @@ export function LessonPage() {
   const DESCRIPTION_CLAMP_CHARS = 140;
   const isDescriptionLong = (course?.description ?? "").length > DESCRIPTION_CLAMP_CHARS;
   const topicThumbnails = useVideoTopicThumbnails(course?.videoUrl ?? "", topics);
-  const { trackNavigation, getBehaviorContext } = useLessonAnalytics({
+  const { trackNavigation, getBehaviorContext, recordQuestion } = useLessonAnalytics({
     slug,
     videoRef,
     transcriptScrollRef,
@@ -653,6 +653,7 @@ export function LessonPage() {
                     emptyHint="Ask about this lesson — click the mic to start"
                     lessonContext={lessonContext}
                     getVideoPosition={videoPositionEnabled ? getVideoPosition : null}
+                    onUserQuestion={recordQuestion}
                   />
                 </div>
               </>

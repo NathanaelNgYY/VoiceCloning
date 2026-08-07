@@ -19,6 +19,7 @@ const EVENT_NAMES = new Set([
   'video_seek',
   'video_ended',
   'transcript_scrolled',
+  'repeated_question',
 ]);
 
 const PROPERTY_KEYS = new Set([
@@ -29,6 +30,9 @@ const PROPERTY_KEYS = new Set([
   'deltaSeconds',
   'direction',
   'source',
+  'previousVideoTime',
+  'similarity',
+  'timeSincePreviousSeconds',
 ]);
 
 function safeString(value, maxLength) {

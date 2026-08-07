@@ -3,6 +3,15 @@ export const ANALYTICS_FLUSH_INTERVAL_MS = 10000;
 export const ANALYTICS_BATCH_SIZE = 20;
 export const BEHAVIOR_WINDOW_MS = 120000;
 export const LONG_PAUSE_SECONDS = 15;
+export const REPEATED_QUESTION_MIN_SECONDS = 8;
+export const REPEATED_QUESTION_MAX_SECONDS = 10 * 60;
+export const REPEATED_QUESTION_SIMILARITY = 0.65;
+
+const QUESTION_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'can', 'could', 'do', 'does', 'for', 'how', 'i', 'in',
+  'is', 'it', 'me', 'of', 'on', 'please', 'tell', 'that', 'the', 'this', 'to',
+  'what', 'when', 'why', 'with', 'would', 'you',
+]);
 
 const ANALYTICS_ENDPOINT = '/api/analytics/events';
 
@@ -16,6 +25,67 @@ function createId() {
 function finiteSeconds(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.round(number * 1000) / 1000 : null;
+}
+
+export function questionTokens(value) {
+  return [...new Set(String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gu, ' ')
+    .split(/\s+/u)
+    .map((token) => {
+      if (token.length > 5) return token.replace(/(?:ing|ed|es)$/u, '');
+      if (token.length > 4) return token.replace(/s$/u, '');
+      return token;
+    })
+    .filter((token) => token.length >= 2 && !QUESTION_STOP_WORDS.has(token)))];
+}
+
+export function questionSimilarity(left, right) {
+  const a = questionTokens(left);
+  const b = questionTokens(right);
+  if (a.length < 2 || b.length < 2) return 0;
+  const rightTokens = new Set(b);
+  const shared = a.filter((token) => rightTokens.has(token)).length;
+  return Math.round((shared / Math.min(a.length, b.length)) * 1000) / 1000;
+}
+
+export function createRepeatedQuestionTracker({ now = () => Date.now() } = {}) {
+  const questions = [];
+  const repeatCounts = new Map();
+  let nextClusterId = 1;
+  return {
+    record(text, videoTime) {
+      const tokens = questionTokens(text);
+      const seconds = finiteSeconds(videoTime);
+      if (tokens.length < 2 || seconds === null) return null;
+      const atMs = now();
+      while (questions.length && atMs - questions[0].atMs > REPEATED_QUESTION_MAX_SECONDS * 1000) {
+        questions.shift();
+      }
+      let best = null;
+      for (const previous of questions) {
+        const elapsedSeconds = (atMs - previous.atMs) / 1000;
+        const similarity = questionSimilarity(previous.text, text);
+        if (similarity >= REPEATED_QUESTION_SIMILARITY && (!best || similarity > best.similarity)) {
+          best = {
+            clusterId: previous.clusterId,
+            previousVideoTime: previous.videoTime,
+            similarity,
+            elapsedSeconds,
+          };
+        }
+      }
+      const clusterId = best?.clusterId || nextClusterId++;
+      questions.push({ text: String(text), videoTime: seconds, atMs, clusterId });
+      if (
+        !best
+        || best.elapsedSeconds < REPEATED_QUESTION_MIN_SECONDS
+        || (repeatCounts.get(clusterId) || 0) >= 2
+      ) return null;
+      repeatCounts.set(clusterId, (repeatCounts.get(clusterId) || 0) + 1);
+      return best;
+    },
+  };
 }
 
 export function createLessonBehaviorState({ now = () => Date.now() } = {}) {

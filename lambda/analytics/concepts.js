@@ -13,6 +13,7 @@ export const GI_BLEEDING_CONCEPTS = Object.freeze([
 const LESSON_CONCEPTS = new Map([
   ['gi-bleeding', GI_BLEEDING_CONCEPTS],
 ]);
+const REPEATED_QUESTION_SIMILARITY = 0.65;
 
 export function conceptAt(lessonSlug, seconds) {
   const time = Number(seconds);
@@ -42,6 +43,14 @@ export function evidenceFromEvent(event) {
 
   if (event.eventName === 'transcript_scrolled') {
     return { concept, signal: 'reviewed_transcript', weight: 0.25 };
+  }
+
+  if (event.eventName === 'repeated_question') {
+    const previousConcept = conceptAt(event.lessonSlug, event.properties?.previousVideoTime);
+    const similarity = Number(event.properties?.similarity);
+    if (previousConcept?.id === concept.id && similarity >= REPEATED_QUESTION_SIMILARITY) {
+      return { concept, signal: 'repeated_question', weight: 1.25 };
+    }
   }
 
   return null;

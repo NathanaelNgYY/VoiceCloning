@@ -149,6 +149,7 @@ export function useLiveSpeech({
   fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
   getVideoPosition = null,
+  onUserQuestion = null,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -1392,6 +1393,7 @@ export function useLiveSpeech({
       text,
       status: 'done',
     }));
+    onUserQuestion?.(text);
     setPhase('thinking');
     setInterimTranscript('Thinking...');
     return true;
@@ -1504,11 +1506,13 @@ export function useLiveSpeech({
         clearUserTranscriptTimer(id);
         userTextBuffersRef.current.delete(key);
         pendingInputAudioRef.current = false;
+        const finalText = cleanLiveText(event.text) || 'Voice message sent.';
         patchMessage(id, {
           itemId: event.itemId || '',
-          text: cleanLiveText(event.text) || 'Voice message sent.',
+          text: finalText,
           status: 'done',
         });
+        if (finalText !== 'Voice message sent.') onUserQuestion?.(finalText);
         if (activeUserMessageIdRef.current === id) {
           activeUserMessageIdRef.current = '';
         }
