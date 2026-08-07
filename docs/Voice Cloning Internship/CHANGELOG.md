@@ -2,8 +2,11 @@
 
 ## 2026-08-07
 
-- GI now loads the environment's saved `deanvoice-v1` through an authenticated read-only endpoint
-  and pins that snapshot without reading or changing shared `active.json`. Staging GI bundle
+- Removed the startup profile GET that could race token availability and falsely report a signed-in
+  user as unsigned. GI now becomes ready from fixed `deanvoice-v1` and sends that ID on synthesis;
+  staging bundle `assets/index-Cklj8mCD.js` is live. Client 328/328 and GI build passed.
+- Initially added an authenticated read-only `deanvoice-v1` startup endpoint; the later fix above
+  removed that client startup dependency. Staging GI bundle
   `assets/index-C3Y7_cZC.js` is live; client 327/327, Lambda 125/125, GI build, live bundle inspection,
   and unsigned endpoint 401 passed. No staging ASG, gateway, TTS, or training resource changed.
 

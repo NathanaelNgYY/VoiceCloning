@@ -1,10 +1,10 @@
 # Staging Environment — Complete Architecture Reference
 
-As of 2026-08-07, staging GI loads `voice-profiles/deanvoice-v1.json` from the staging S3 prefix
-through authenticated `GET /api/voice-profile/pinned/deanvoice-v1`. It pins the returned model and
-reference snapshot without reading or writing shared `active.json`, so other tools may change their
-active voice independently. Live GI bundle: `assets/index-C3Y7_cZC.js`. This rollout changed the GI
-client and shared Lambda only; ASG, gateway, TTS, and training resources were not changed.
+As of 2026-08-07, staging GI becomes voice-ready from fixed ID `deanvoice-v1` without a startup
+profile GET and sends that ID with every synthesis request. The staging synthesis backend resolves
+its saved model/reference profile without reading or writing shared `active.json`, so other tools may
+change their active voice independently. Live GI bundle: `assets/index-Cklj8mCD.js`. The final rollout
+was client-only; ASG, gateway, TTS, and training resources were not changed.
 
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
 **Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
