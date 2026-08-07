@@ -7,6 +7,7 @@ import {
   createRepeatedQuestionTracker,
   createSeekGestureTracker,
   classifyQuestionConcept,
+  isClarificationFollowUp,
   questionSimilarity,
 } from './lessonAnalytics.js';
 
@@ -103,6 +104,23 @@ test('detects a delayed near-duplicate question without storing it in the signal
   assert.equal(repeated.semanticConceptId, 'endoscopy');
   assert.equal(repeated.semanticConfidence, 1);
   assert.equal('text' in repeated, false);
+});
+
+test('inherits the preceding topic for a short clarification follow-up', () => {
+  let timestamp = 0;
+  const tracker = createRepeatedQuestionTracker({ now: () => timestamp });
+  tracker.record('Can you explain endoscopy timing for upper GI bleeding?', 390);
+  timestamp = 12_000;
+  const repeated = tracker.record('even simpler', 391);
+  assert.equal(repeated.previousVideoTime, 390);
+  assert.equal(repeated.similarity, 1);
+  assert.equal(repeated.semanticConceptId, 'endoscopy');
+  assert.equal(repeated.semanticConfidence, 1);
+});
+
+test('recognizes clarification language without treating unrelated short text as a repeat', () => {
+  assert.equal(isClarificationFollowUp('Could you explain that again, even simpler?'), true);
+  assert.equal(isClarificationFollowUp('thank you'), false);
 });
 
 test('classifies clear lesson terms and leaves ambiguous questions unclassified', () => {

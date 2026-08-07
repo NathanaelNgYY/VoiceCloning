@@ -2,6 +2,10 @@
 
 ## Active
 
+- 2026-08-07 fixed: learner evidence accumulated without bound and short clarification repeats
+  lost their medical topic. Dev now uses a capped 30-day event window and inherits the preceding
+  topic for phrases such as “even simpler.” Supervisor concept reset supports controlled QA.
+
 - 2026-08-07 fixed: one GI scrub gesture could emit several `seeked` events, and scroll
   bursts in one transcript visit each counted as review. A real run therefore stored score 8.
   Dev now coalesces the gesture and limits transcript review to once per visit; verify the

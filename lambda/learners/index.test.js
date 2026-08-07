@@ -9,10 +9,16 @@ const repository = {
   getSummary: async (oid, lesson) => ({ oid, lesson, summary: 'Review risk stratification.' }),
   listUsers: async () => [{ oid: 'user-1', displayName: 'Student One' }],
   getUserLearningState: async (oid) => ({ profile: { oid }, lessons: [] }),
+  resetConcept: async (oid, lessonSlug, conceptId) => ({ reset: true, oid, lessonSlug, conceptId }),
 };
 
-function event(path, queryStringParameters = null) {
-  return { rawPath: path, headers: { authorization: 'Bearer token' }, queryStringParameters };
+function event(path, queryStringParameters = null, method = 'GET') {
+  return {
+    rawPath: path,
+    headers: { authorization: 'Bearer token' },
+    queryStringParameters,
+    requestContext: { http: { method } },
+  };
 }
 
 test('a student can load only their own learner summary', async () => {
@@ -55,4 +61,23 @@ test('a configured supervisor oid works before Entra app roles are provisioned',
     env: { SUPERVISOR_OIDS: 'user-1' },
   });
   assert.equal(response.statusCode, 200);
+});
+
+test('only a supervisor can reset one learner concept', async () => {
+  const path = '/api/supervisor/users/user-1/lessons/gi-bleeding/concepts/endoscopy';
+  const denied = await handleLearners(event(path, null, 'DELETE'), { guard, repository });
+  assert.equal(denied.statusCode, 403);
+
+  const supervisorGuard = { authorize: async () => ({ ...identity, roles: ['Supervisor'] }) };
+  const response = await handleLearners(event(path, null, 'DELETE'), {
+    guard: supervisorGuard,
+    repository,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    reset: true,
+    oid: 'user-1',
+    lessonSlug: 'gi-bleeding',
+    conceptId: 'endoscopy',
+  });
 });

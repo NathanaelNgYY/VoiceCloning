@@ -20,6 +20,10 @@ test('router resolves learner and supervisor analytics reads', () => {
   assert.equal(findRoute('GET', '/api/learner/me')?.name, 'LearnersFunction');
   assert.equal(findRoute('GET', '/api/supervisor/users')?.name, 'LearnersFunction');
   assert.equal(findRoute('GET', '/api/supervisor/users/user-1')?.name, 'LearnersFunction');
+  assert.equal(
+    findRoute('DELETE', '/api/supervisor/users/user-1/lessons/gi-bleeding/concepts/endoscopy')?.name,
+    'LearnersFunction',
+  );
 });
 
 test('router resolves voice profile activation and active-summary routes', () => {

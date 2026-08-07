@@ -2,6 +2,13 @@
 
 ## 2026-08-07
 
+- Replaced unlimited dev learner accumulation with a 30-day rolling model: score cap 5,
+  two retained events per signal, count cap 8, event-id deduplication, concurrent-update retries,
+  and read-time expiry. Short clarifications such as “even simpler” inherit the prior question's
+  topic. Supervisors can reset one concept and automatically rebuild its summary. Lambda 151/151,
+  client 350/350, GI build, live bundle/Lambda/auth/GPU checks passed. Existing dev concepts were
+  conditionally migrated to scores 5 and 1.5; staging was untouched.
+
 - Fixed inflated dev GI learner evidence after a real NTU test. One scrubber drag emitted
   several native `seeked` events and repeated transcript scrolling emitted duplicate review
   signals, producing score 8 instead of 2.75. The client now coalesces one seek gesture and

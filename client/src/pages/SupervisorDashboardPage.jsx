@@ -7,7 +7,11 @@ import {
   lessonAnalytics,
   SIGNAL_LABELS,
 } from '@/lib/supervisorAnalytics';
-import { getSupervisorUser, listSupervisorUsers } from '@/services/learnerAnalytics';
+import {
+  getSupervisorUser,
+  listSupervisorUsers,
+  resetSupervisorConcept,
+} from '@/services/learnerAnalytics';
 
 export function SupervisorDashboardPage() {
   const [users, setUsers] = useState([]);
@@ -15,6 +19,7 @@ export function SupervisorDashboardPage() {
   const [activeTab, setActiveTab] = useState('summary');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [resettingConcept, setResettingConcept] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -36,9 +41,27 @@ export function SupervisorDashboardPage() {
     setError('');
     setActiveTab('summary');
     try {
-      setSelected(await getSupervisorUser(user.oid));
+      setSelected({ ...(await getSupervisorUser(user.oid)), oid: user.oid });
     } catch {
       setError('This learner record could not be loaded.');
+    }
+  }
+
+  async function resetConcept(lessonSlug, concept) {
+    const confirmed = window.confirm(
+      `Reset ${concept.conceptLabel} evidence for this learner? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    const key = `${lessonSlug}:${concept.conceptId}`;
+    setResettingConcept(key);
+    setError('');
+    try {
+      await resetSupervisorConcept(selected.oid, lessonSlug, concept.conceptId);
+      setSelected({ ...(await getSupervisorUser(selected.oid)), oid: selected.oid });
+    } catch {
+      setError('The concept evidence could not be reset.');
+    } finally {
+      setResettingConcept('');
     }
   }
 
@@ -157,7 +180,17 @@ export function SupervisorDashboardPage() {
                                           <p className="text-sm font-medium text-slate-800">{concept.conceptLabel}</p>
                                           <p className="text-xs text-slate-500">{conceptStatusLabel(concept.status)} · {concept.evidenceCount} evidence event{concept.evidenceCount === 1 ? '' : 's'}</p>
                                         </div>
-                                        <span className="font-mono text-xs font-semibold text-slate-700">{concept.evidenceScore.toFixed(2)}</span>
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-mono text-xs font-semibold text-slate-700">{concept.evidenceScore.toFixed(2)}</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => resetConcept(lesson.lessonSlug, concept)}
+                                            disabled={resettingConcept === `${lesson.lessonSlug}:${concept.conceptId}`}
+                                            className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                                          >
+                                            {resettingConcept === `${lesson.lessonSlug}:${concept.conceptId}` ? 'Resetting…' : 'Reset'}
+                                          </button>
+                                        </div>
                                       </div>
                                       <div className="h-2 overflow-hidden rounded-full bg-slate-200" role="img" aria-label={`${concept.conceptLabel} evidence score ${concept.evidenceScore.toFixed(2)}`}>
                                         <div

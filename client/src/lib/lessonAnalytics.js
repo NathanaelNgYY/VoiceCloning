@@ -43,6 +43,7 @@ const QUESTION_CONCEPT_TERMS = Object.freeze({
 });
 
 const ANALYTICS_ENDPOINT = '/api/analytics/events';
+const CLARIFICATION_FOLLOW_UP = /\b(?:again|simpler|simplify|still (?:don'?t|do not) understand|rephrase|another way|more simply|what do you mean)\b/iu;
 
 function createId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -95,6 +96,10 @@ export function classifyQuestionConcept(value) {
   return { conceptId: ranked[0].conceptId, confidence: Math.round(confidence * 1000) / 1000 };
 }
 
+export function isClarificationFollowUp(value) {
+  return CLARIFICATION_FOLLOW_UP.test(String(value || '').trim());
+}
+
 export function createRepeatedQuestionTracker({
   now = () => Date.now(),
   classifyConcept = classifyQuestionConcept,
@@ -106,16 +111,17 @@ export function createRepeatedQuestionTracker({
     record(text, videoTime) {
       const tokens = questionTokens(text);
       const seconds = finiteSeconds(videoTime);
-      if (tokens.length < 2 || seconds === null) return null;
+      const clarification = isClarificationFollowUp(text);
+      if ((!clarification && tokens.length < 2) || seconds === null) return null;
       const atMs = now();
-      const classification = classifyConcept(text);
+      let classification = classifyConcept(text);
       while (questions.length && atMs - questions[0].atMs > REPEATED_QUESTION_MAX_SECONDS * 1000) {
         questions.shift();
       }
       let best = null;
       for (const previous of questions) {
         const elapsedSeconds = (atMs - previous.atMs) / 1000;
-        const similarity = questionSimilarity(previous.text, text);
+        const similarity = clarification ? 1 : questionSimilarity(previous.text, text);
         if (similarity >= REPEATED_QUESTION_SIMILARITY && (!best || similarity > best.similarity)) {
           best = {
             clusterId: previous.clusterId,
@@ -130,8 +136,14 @@ export function createRepeatedQuestionTracker({
               classification?.conceptId === previous.classification?.conceptId
                 ? Math.min(classification.confidence, previous.classification.confidence)
                 : 0,
+            inheritedClassification: previous.classification || null,
           };
         }
+      }
+      if (clarification && best && !classification) {
+        classification = best.inheritedClassification;
+        best.semanticConceptId = classification?.conceptId || '';
+        best.semanticConfidence = classification?.confidence || 0;
       }
       const clusterId = best?.clusterId || nextClusterId++;
       questions.push({ text: String(text), videoTime: seconds, atMs, clusterId, classification });

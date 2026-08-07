@@ -15,10 +15,19 @@ Primary router: `lambda/router.js`
 ### Lesson analytics
 
 - `POST /api/analytics/events`
-  - Accepts schema version 1 with 1-50 allowlisted anonymous lesson events.
-  - Client identity fields and unknown properties are discarded/rejected.
-  - Stores one gzip NDJSON batch in hourly S3 partitions under
-    `analytics/events/date=YYYY-MM-DD/hour=HH/` relative to `S3_PREFIX`.
+  - Accepts schema version 1 with 1-50 allowlisted lesson events and requires a verified
+    Entra token in dev. Immutable gzip NDJSON batches remain in hourly S3 partitions.
+  - Maintains a 30-day per-concept evidence window. Concept score is capped at `5`;
+    each signal type contributes at most twice and retained evidence count is capped at
+    eight. Duplicate event IDs are idempotent.
+- `GET /api/learner/me?lesson=<slug>`
+  - Recalculates and returns only the authenticated user's current rolling summary.
+- `GET /api/supervisor/users`
+- `GET /api/supervisor/users/<oid>`
+  - Require the configured Entra supervisor app role; return profile and summary data.
+- `DELETE /api/supervisor/users/<oid>/lessons/<slug>/concepts/<conceptId>`
+  - Supervisor-only destructive reset for one learner concept; rebuilds or removes its
+    lesson summary.
 
 ### Training library
 

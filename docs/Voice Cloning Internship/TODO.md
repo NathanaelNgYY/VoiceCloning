@@ -1,10 +1,10 @@
 # Active TODO
 
-- [ ] Finish remaining dev learner analytics checks. Real NTU sign-in, PROFILE, identified
-  sessions/turns, concept evidence, endoscopy summary, and GI GPU auto-start are proven. Re-run
-  the prescribed evidence actions and confirm a `+2.75` score delta; then verify Dean audio,
-  personalized follow-up, cross-timestamp repeated-question evidence, and supervisor allow/deny.
-  Confirm or request the Entra `Supervisor` role separately. Do not deploy this to staging.
+- [ ] Verify the live 30-day/capped learner model with real actions: two events per signal must
+  saturate, “even simpler” must count as a repeated clarification after eight seconds, and the
+  supervisor Reset button must remove one concept and rebuild its summary. Confirm/request the
+  Entra `Supervisor` role. Define positive mastery only after a trustworthy correctness signal;
+  ordinary chat text must not lower uncertainty. Do not deploy this to staging.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.

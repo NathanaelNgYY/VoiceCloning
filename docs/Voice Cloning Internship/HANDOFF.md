@@ -12,7 +12,7 @@ Last updated: 2026-08-07
 - Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
   dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
   gateway instance role's `PutItem` was proven with an expiring probe.
-- Real evidence is proven. Score 8 exposed duplicate seek/scroll signals; bundle `assets/index-DBQt8Fr-.js` fixes them. Validate a `+2.75` delta. GI GPU auto-start also passed.
+- Dev evidence now rolls 30 days, caps concepts at 5 and each signal at two events; supervisor concept reset and “even simpler” repeat detection are live.
 - Learner analytics remains dev-only. GI fixes Dean by ID in both clients/Lambdas;
   no staging analytics, scaling, gateway, TTS, or training resource changed.
 
@@ -28,7 +28,7 @@ Last updated: 2026-08-07
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
   per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Dev bundle `assets/index-DBQt8Fr-.js` fixes analytics coalescing, `deanvoice-v1`, supervisor
+  Dev bundle `assets/index-Bciq7I20.js` fixes bounded analytics, `deanvoice-v1`, supervisor
   analytics, setup failures, and Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
   Normal dev TTS/Training/Dean stay public. Repeats score 1.25.
 

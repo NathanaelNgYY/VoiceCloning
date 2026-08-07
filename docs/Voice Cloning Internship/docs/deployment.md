@@ -43,11 +43,11 @@ always read and live-verify it before AWS work.
 - `vcs-dev-transcripts` is live in Seoul with deletion protection, TTL, and point-in-time
   recovery. Real NTU sign-in has proven the profile, session/turn, concept, and summary rows.
 - Query the raw partition value `USER#<oid>`; do not include `PK = ` inside the value field.
-- Scores accumulate. Verify the prescribed actions as a `+2.75` before/after delta. A clean
-  absolute score requires a new learner or intentional deletion of that learner's concept and
-  summary rows before the run.
-- Dev bundle `assets/index-DBQt8Fr-.js` coalesces one scrub gesture and records transcript
-  review once per transcript visit.
+- Evidence uses a 30-day rolling window. Each concept caps at score `5`; each signal type
+  contributes at most twice and evidence count caps at eight. Supervisors can reset one
+  learner concept from the dashboard, which rebuilds the lesson summary.
+- Dev bundle `assets/index-Bciq7I20.js` also coalesces scrubs, records transcript review once
+  per visit, and recognizes short clarification repeats such as “even simpler.”
 
 | Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
 |---|---|---|---|---|

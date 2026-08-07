@@ -47,6 +47,12 @@ export async function handleLearners(event, {
     return ok(await repository.getUserLearningState(decodeURIComponent(match[1])), {}, event);
   }
 
+  const resetMatch = /^\/api\/supervisor\/users\/([^/]+)\/lessons\/([^/]+)\/concepts\/([^/]+)$/u.exec(pathname);
+  if (resetMatch && String(event?.requestContext?.http?.method || event?.httpMethod).toUpperCase() === 'DELETE') {
+    const [, oid, lessonSlug, conceptId] = resetMatch.map((value) => decodeURIComponent(value));
+    return ok(await repository.resetConcept(oid, lessonSlug, conceptId), {}, event);
+  }
+
   return err(404, 'Learner analytics route not found.', event);
 }
 

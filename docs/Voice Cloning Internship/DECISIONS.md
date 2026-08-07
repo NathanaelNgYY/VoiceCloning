@@ -35,8 +35,14 @@
 - Learner summaries use fixed evidence thresholds and may use a structured OpenAI response;
   API failure or missing credentials falls back to deterministic wording. The chatbot gets
   only the compact summary, never another user's history or an unsupported formal grade.
+- Evidence is per learner, lesson, and concept in a rolling 30-day window. Scores cap at
+  `5`; each signal type contributes at most twice, retained count caps at eight, and event IDs
+  are idempotent. Reads recalculate recency even when no new event arrives. Legacy aggregates
+  carry forward for at most 30 days. Positive mastery evidence remains unimplemented until a
+  trustworthy correctness signal exists; ordinary chat wording must not reduce uncertainty.
 - Supervisor reads require an Entra `Supervisor` app role (with an explicit OID allowlist
   only as a temporary provisioning bridge), and query a user index rather than scanning.
+  Supervisors may reset one learner concept; the backend rebuilds the affected summary.
 - Rewinds, skips, and long transcript pauses are ambiguous signals. They may calibrate
   a relevant chatbot answer or prompt a check for understanding, but cannot establish
   that a learner is confused, clear, attentive, or has mastered the material.
