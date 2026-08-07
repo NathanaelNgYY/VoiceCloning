@@ -117,6 +117,10 @@ test("both staging backends actually turn their token checks on", () => {
   assert.match(stagingLambdaEnv, /^LIVE_AUTH_ENABLED=true$/m);
 });
 
+test("staging GI pins the saved Dean voice profile directly", () => {
+  assert.match(stagingGiEnv, /^VITE_GI_VOICE_PROFILE_ID=deanvoice-v1$/m);
+});
+
 test("public GI visitors bypass protected routes and cannot render the login page", () => {
   assert.match(
     giAppSource,

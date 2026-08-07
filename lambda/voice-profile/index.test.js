@@ -287,6 +287,37 @@ test('voice profile active returns only summary data', async () => {
   });
 });
 
+test('an authenticated GI user can load the configured saved profile without changing active voice', async () => {
+  const reads = [];
+  const handler = createHandler({
+    authGuard: { authorize: async () => ({ oid: 'student-1' }) },
+    readObject: async (key) => {
+      reads.push(key);
+      return Buffer.from(JSON.stringify({
+        voiceProfileId: 'deanvoice-v1',
+        displayName: 'DeanVoice',
+        gptKey: 'models/user-models/gpt/dean.ckpt',
+        sovitsKey: 'models/user-models/sovits/dean.pth',
+        ref_audio_path: 'training/datasets/dean/ref.wav',
+      }));
+    },
+    writeObject: async () => { throw new Error('pinned reads must not mutate active voice'); },
+  });
+  const response = await handler(createEvent({ path: '/api/voice-profile/pinned/deanvoice-v1' }));
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).voiceProfileId, 'deanvoice-v1');
+  assert.deepEqual(reads, ['voice-profiles/deanvoice-v1.json']);
+});
+
+test('the pinned profile endpoint rejects an unsigned caller before reading storage', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('missing token'); } },
+    readObject: async () => { throw new Error('unauthorized requests must not read profiles'); },
+  });
+  const response = await handler(createEvent({ path: '/api/voice-profile/pinned/deanvoice-v1' }));
+  assert.equal(response.statusCode, 401);
+});
+
 test('voice profile active can return the full stored profile for browser restore when full=1 is requested', async () => {
   const handler = createHandler({
     readObject: async (key) => {

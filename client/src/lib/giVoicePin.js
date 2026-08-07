@@ -4,22 +4,26 @@ import { normalizeVoiceKey } from './chatbotVoice.js';
 // in whatever voice happens to be activated backend-wide (the active profile is
 // a single shared setting — any other build or operator can change it).
 //
-// This is a guard, not a selector: the browser cannot fetch an arbitrary
-// profile by id. The only by-id route is /api/voice-profile/internal/:id, which
-// requires a server-side secret (lambda/voice-profile/index.js:203-211), so the
-// pin verifies the active profile instead of loading a different one.
+// GI loads this saved profile through the SSO-protected pinned-profile route.
+// It does not read or mutate the backend-wide active profile, which other tools
+// may change at any time.
 
 /**
- * The voice key this build expects, from `?voice=` (wins, for demos) or env.
+ * The exact saved profile this build expects. A configured env pin always wins;
+ * GI must not silently change voice through a query string.
  * Empty string means "no pin" — whatever is active is accepted.
  */
-export function resolvePinnedVoiceKey({ search = '', env = {} } = {}) {
+export function resolvePinnedVoiceProfileId({ search = '', env = {} } = {}) {
   const fromUrl = new URLSearchParams(search).get('voice');
-  const raw =
-    fromUrl && fromUrl.trim()
-      ? fromUrl
-      : env.VITE_GI_VOICE_PROFILE_ID || env.VITE_CHATBOT_VOICE_PROFILE_ID || '';
-  return normalizeVoiceKey(raw);
+  return String(
+    env.VITE_GI_VOICE_PROFILE_ID
+    || env.VITE_CHATBOT_VOICE_PROFILE_ID
+    || (fromUrl && fromUrl.trim() ? fromUrl : '')
+  ).trim();
+}
+
+export function resolvePinnedVoiceKey(options = {}) {
+  return normalizeVoiceKey(resolvePinnedVoiceProfileId(options));
 }
 
 /**

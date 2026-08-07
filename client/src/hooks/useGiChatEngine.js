@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { getFullActiveVoiceProfile } from '@/services/api.js';
+import { getFullActiveVoiceProfile, getPinnedVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
 import {
@@ -15,7 +15,11 @@ import {
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
-import { matchesPinnedVoice, resolvePinnedVoiceKey } from '@/lib/giVoicePin';
+import {
+  matchesPinnedVoice,
+  resolvePinnedVoiceKey,
+  resolvePinnedVoiceProfileId,
+} from '@/lib/giVoicePin';
 import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 
@@ -38,6 +42,18 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   const [clearedBeforeId, setClearedBeforeId] = useState('');
 
   const profileRequestRef = useRef(0);
+  const voicePinOptions = useMemo(() => ({
+    search: typeof window === 'undefined' ? '' : window.location.search,
+    env: import.meta.env,
+  }), []);
+  const pinnedVoiceProfileId = useMemo(
+    () => resolvePinnedVoiceProfileId(voicePinOptions),
+    [voicePinOptions]
+  );
+  const pinnedVoiceKey = useMemo(
+    () => resolvePinnedVoiceKey(voicePinOptions),
+    [voicePinOptions]
+  );
 
   // System prompt + uploaded documents are read once at mount; the gi skin has
   // no editor for them (the Dean kiosk owns that UI). The lesson context is the
@@ -60,7 +76,9 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;
     try {
-      const res = await getFullActiveVoiceProfile();
+      const res = pinnedVoiceProfileId
+        ? await getPinnedVoiceProfile(pinnedVoiceProfileId)
+        : await getFullActiveVoiceProfile();
       if (profileRequestRef.current !== requestId) return;
       setActiveProfile(res.data || null);
       setProfileError('');
@@ -77,7 +95,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
         sanitizeBackendError(err.response?.data?.error || err.message || 'Could not load the voice profile.')
       );
     }
-  }, []);
+  }, [pinnedVoiceProfileId]);
 
   useEffect(() => {
     if (!backendQueryable) return;
@@ -93,15 +111,6 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   // The cloned voice this build expects. The active profile is a single shared
   // backend setting, so without a pin the gi app would speak in whatever voice
   // someone else activated last.
-  const pinnedVoiceKey = useMemo(
-    () =>
-      resolvePinnedVoiceKey({
-        search: typeof window === 'undefined' ? '' : window.location.search,
-        env: import.meta.env,
-      }),
-    []
-  );
-
   // Only true once a profile has actually loaded and turned out to be the wrong
   // one — a not-yet-loaded profile must not read as a mismatch.
   const voiceMismatch = Boolean(activeProfile) && !matchesPinnedVoice(activeProfile, pinnedVoiceKey);

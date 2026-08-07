@@ -345,6 +345,10 @@ export function getFullActiveVoiceProfile() {
   });
 }
 
+export function getPinnedVoiceProfile(voiceProfileId) {
+  return api.get(`/voice-profile/pinned/${encodeURIComponent(voiceProfileId)}`);
+}
+
 export function getVoiceProfileConfigs(voiceProfileId) {
   return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
 }
