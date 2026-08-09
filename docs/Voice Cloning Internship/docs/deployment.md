@@ -49,6 +49,9 @@ always read and live-verify it before AWS work.
   raw analytics only. Supervisors can reset one learner concept and rebuild its summary.
 - Dev bundle `assets/index-DUXyI87I.js` coalesces scrubs, recognizes clarification repeats,
   hides per-learner score, and shows the supervisor-only distinct-learner cohort ranking.
+- The two current developers have dev-only supervisor access through the Lambda
+  `SUPERVISOR_OIDS` Entra object-ID allowlist. This is independent of email domain and does
+  not change DynamoDB learner roles. Keep the IDs out of source control; staging is unchanged.
 - Operational interpretation: a concept row holds rolling qualifying events; its separate
   lesson summary row is derived chatbot/dashboard guidance. Two rewinds should produce score
   `1`, count `2`, and `possible_support`. After an initial question, two clarification

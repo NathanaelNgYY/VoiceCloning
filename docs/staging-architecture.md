@@ -289,13 +289,19 @@ sign-in route's missing-token 401. Remaining verification requires a real NTU si
 identified S3 analytics subject, DynamoDB profile/evidence/summary rows, personalized
 prompt retrieval, and supervisor-role rejection/acceptance. Do not promote to staging.
 
+On 2026-08-09, the two existing developer identities were added to the dev Lambda's
+`SUPERVISOR_OIDS` allowlist. This grants `/supervisor` access by immutable verified Entra
+object ID without requiring a staff email or changing learner-table records. The normal
+`Supervisor` app-role path remains supported, and staging remains unchanged. Do not record
+the object IDs in source control or project memory.
+
 Repeated-question evidence was added and deployed to dev on 2026-08-07. The client compares
 content-token overlap for up to ten minutes, ignores matches within eight seconds, and emits
 at most two repeat signals per question cluster. A deterministic curated classifier may
 assign both questions to the same concept across different video timestamps only at
 confidence 0.75 or higher; ambiguous or tied matches cannot override time. Otherwise Lambda
 requires both timestamps to map to the same authored concept. Similarity must be at least
-0.65 and accepted evidence weighs 1.25. The analytics/S3 batch contains concept,
+0.65 and accepted evidence weighs 1. The analytics/S3 batch contains concept,
 similarity, and timing metadata but no question text; the existing DynamoDB transcript row
 still contains the chat text. The non-staging Lambda update and CloudFront invalidation
 completed successfully. The dev `/supervisor`

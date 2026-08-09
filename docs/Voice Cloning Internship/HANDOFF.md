@@ -31,6 +31,8 @@ Last updated: 2026-08-07
   Dev bundle `assets/index-DUXyI87I.js` provides concept-matched support, `deanvoice-v1`, supervisor cohort ranking,
   analytics, setup failures, and Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
   Normal dev TTS/Training/Dean stay public. Ranking is supervisor-only; chatbot guidance applies only the concept matching the current question.
+  Both current developers are dev supervisors through the Lambda's verified Entra object-ID
+  allowlist; this does not require staff email or assign a DynamoDB role. Staging is unchanged.
 
 ## Current AWS Operating State
 

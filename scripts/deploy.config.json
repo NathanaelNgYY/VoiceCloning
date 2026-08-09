@@ -61,7 +61,9 @@
       "enabled": true,
       "learnerTableName": "vcs-dev-transcripts",
       "learnerTableRegion": "ap-northeast-2",
-      "supervisorAppRole": "Supervisor"
+      "supervisorAppRole": "Supervisor",
+      "developerSupervisorAccess": "entra-object-id-allowlist",
+      "developerSupervisorCount": 2
     },
     "distributions": { "training": "E2KTGN0G56FW71", "live-fast": "E36CNBL620DMGM", "chatbot": "EYZ4NLNGITY7T" },
     "publicUrls": {

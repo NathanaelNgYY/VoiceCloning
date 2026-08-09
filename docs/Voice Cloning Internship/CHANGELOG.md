@@ -1,5 +1,10 @@
 # Changelog
 
+- Granted the two current developers dev-only `/supervisor` access through the Lambda's
+  verified Entra object-ID allowlist. No staff email or DynamoDB role is required, no IDs
+  were committed, and staging was unchanged. Updated the deployment map and corrected the
+  recorded repeated-question weight to the deployed value of `1`.
+
 - Added a supervisor-only cross-learner concept ranking. It ranks by the number of distinct
   identified learners at the maximum bounded support-signal score (`3`), then uses broader
   support-state learner counts only to break ties. The dashboard shows count, denominator, and
