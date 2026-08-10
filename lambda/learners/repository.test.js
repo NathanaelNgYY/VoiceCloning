@@ -79,7 +79,7 @@ test('learner summary reads drop evidence after the rolling window without a new
   assert.match(summary.summary, /no recent behaviour signals/i);
 });
 
-test('concept cohort ranks by distinct learners at the maximum support threshold', async () => {
+test('concept cohort ranks by distinct learners at the strong support threshold', async () => {
   const occurredAt = '2026-08-07T11:00:00.000Z';
   const conceptItem = (oid, conceptId, conceptLabel, events) => ({
     PK: `USER#${oid}`,
@@ -116,6 +116,12 @@ test('concept cohort ranks by distinct learners at the maximum support threshold
           ['repeated_question', 1], ['repeated_question', 1],
         ])] };
       }
+      // Scores 2.5: strong support without sitting at the maximum score.
+      if (command.input.ExpressionAttributeValues?.[':pk'] === 'USER#three') {
+        return { Items: [conceptItem('three', 'endoscopy', 'Endoscopy timing and therapy', [
+          ['rewatched_segment', 0.5], ['repeated_question', 1], ['repeated_question', 1],
+        ])] };
+      }
       return { Items: [] };
     },
   };
@@ -126,9 +132,10 @@ test('concept cohort ranks by distinct learners at the maximum support threshold
   });
   const cohort = await repository.getConceptCohort('gi-bleeding');
   assert.equal(cohort.totalLearners, 3);
-  assert.equal(cohort.strongSupportThreshold, 3);
+  assert.equal(cohort.strongSupportThreshold, 2.5);
   assert.equal(cohort.concepts[0].conceptId, 'endoscopy');
-  assert.equal(cohort.concepts[0].strongSupportLearners, 1);
-  assert.equal(cohort.concepts[0].supportRecommendedLearners, 2);
-  assert.equal(cohort.concepts[0].strongSupportPercent, 33.3);
+  // 'one' is at the cap and 'three' at 2.5; 'two' at 2 is recommended but not strong.
+  assert.equal(cohort.concepts[0].strongSupportLearners, 2);
+  assert.equal(cohort.concepts[0].supportRecommendedLearners, 3);
+  assert.equal(cohort.concepts[0].strongSupportPercent, 66.7);
 });

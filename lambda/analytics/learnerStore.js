@@ -12,6 +12,10 @@ import { buildLearnerSummary, evidenceFromEvent, statusForEvidence } from './con
 const SECONDS_PER_DAY = 86_400;
 export const EVIDENCE_WINDOW_DAYS = 30;
 export const CONCEPT_SCORE_CAP = 3;
+// Cohort "strong support" is its own reporting threshold, not the score cap.
+// Reusing the cap counted only learners at the exact maximum, so a single
+// expired event silently removed them from the supervisor ranking.
+export const STRONG_SUPPORT_SCORE = 2.5;
 export const SIGNAL_EVENT_CAPS = Object.freeze({
   rewatched_segment: 2,
   repeated_question: 2,

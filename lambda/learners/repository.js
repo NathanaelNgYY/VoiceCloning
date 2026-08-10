@@ -6,7 +6,7 @@ import {
   QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { buildLearnerSummary, conceptsForLesson } from '../analytics/concepts.js';
-import { CONCEPT_SCORE_CAP, currentConceptState } from '../analytics/learnerStore.js';
+import { currentConceptState, STRONG_SUPPORT_SCORE } from '../analytics/learnerStore.js';
 
 function chunks(values, size) {
   const result = [];
@@ -128,7 +128,7 @@ export function createLearnerRepository({
       const aggregate = byConcept.get(item.conceptId);
       if (!aggregate) continue;
       const state = currentConcept(item, at);
-      if (state.evidenceScore >= CONCEPT_SCORE_CAP) aggregate.strongSupportLearners += 1;
+      if (state.evidenceScore >= STRONG_SUPPORT_SCORE) aggregate.strongSupportLearners += 1;
       if (state.status === 'support_recommended') aggregate.supportRecommendedLearners += 1;
       if (state.status === 'possible_support') aggregate.possibleSupportLearners += 1;
     }
@@ -149,7 +149,7 @@ export function createLearnerRepository({
     return {
       lessonSlug,
       totalLearners,
-      strongSupportThreshold: CONCEPT_SCORE_CAP,
+      strongSupportThreshold: STRONG_SUPPORT_SCORE,
       concepts: rankedConcepts,
     };
   }
