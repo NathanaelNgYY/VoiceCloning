@@ -5,8 +5,8 @@ import {
   PutCommand,
   QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
-import { buildLearnerSummary, conceptsForLesson, statusForEvidence } from '../analytics/concepts.js';
-import { buildRollingEvidenceState, CONCEPT_SCORE_CAP } from '../analytics/learnerStore.js';
+import { buildLearnerSummary, conceptsForLesson } from '../analytics/concepts.js';
+import { CONCEPT_SCORE_CAP, currentConceptState } from '../analytics/learnerStore.js';
 
 function chunks(values, size) {
   const result = [];
@@ -24,15 +24,7 @@ export function createLearnerRepository({
   if (!tableName) return null;
   const documentClient = client || DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
 
-  function currentConcept(item, at) {
-    const state = buildRollingEvidenceState(item, [], at);
-    return {
-      ...item,
-      ...state,
-      signals: state.signals,
-      status: statusForEvidence(state.evidenceScore),
-    };
-  }
+  const currentConcept = currentConceptState;
 
   function summaryFromStates(oid, lessonSlug, states, at) {
     if (states.length === 0) return null;

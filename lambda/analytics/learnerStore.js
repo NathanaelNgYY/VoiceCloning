@@ -7,8 +7,7 @@ import {
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 
-import { evidenceFromEvent, statusForEvidence } from './concepts.js';
-import { createSummaryGenerator } from './summaryGenerator.js';
+import { buildLearnerSummary, evidenceFromEvent, statusForEvidence } from './concepts.js';
 
 const SECONDS_PER_DAY = 86_400;
 export const EVIDENCE_WINDOW_DAYS = 30;
@@ -87,13 +86,24 @@ export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = n
   };
 }
 
+// Stored evidence is only pruned when a concept is written, so any read must
+// re-derive the rolling window before the score is used or summarised.
+export function currentConceptState(item, at) {
+  const state = buildRollingEvidenceState(item, [], at);
+  return {
+    ...item,
+    ...state,
+    signals: state.signals,
+    status: statusForEvidence(state.evidenceScore),
+  };
+}
+
 export function createLearnerStore({
   tableName = process.env.LEARNER_TABLE_NAME || '',
   region = process.env.LEARNER_TABLE_REGION || 'ap-northeast-2',
   ttlDays = Number.parseInt(process.env.LEARNER_TTL_DAYS || '90', 10),
   client = null,
   now = () => new Date(),
-  generateSummary = createSummaryGenerator(),
 } = {}) {
   if (!tableName) return null;
   const documentClient = client || DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
@@ -188,16 +198,13 @@ export function createLearnerStore({
           ':prefix': `LESSON#${lessonSlug}#CONCEPT#`,
         },
       }));
-      const states = (response.Items || []).map((item) => ({
-        ...item,
-        status: statusForEvidence(item.evidenceScore),
-      }));
-      const summary = await generateSummary(states);
+      const states = (response.Items || []).map((item) => currentConceptState(item, at));
       const item = {
         PK: `USER#${identity.oid}`,
         SK: `LESSON#${lessonSlug}#SUMMARY`,
         lessonSlug,
-        ...summary,
+        ...buildLearnerSummary(states),
+        source: 'rules',
         concepts: states.map((state) => ({
           conceptId: state.conceptId,
           conceptLabel: state.conceptLabel,

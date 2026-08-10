@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildRollingEvidenceState,
   CONCEPT_SCORE_CAP,
+  createLearnerStore,
   EVIDENCE_WINDOW_DAYS,
 } from './learnerStore.js';
 
@@ -69,4 +70,44 @@ test('carries a legacy aggregate only during its first migration window', () => 
   }, [], at);
   assert.equal(expired.evidenceScore, 0);
   assert.equal(expired.evidenceCount, 0);
+});
+
+test('a recorded batch summarises untouched concepts from the rolling window, not stored totals', async () => {
+  const stale = new Date(at.getTime() - (EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000) - 1).toISOString();
+  const commands = [];
+  const client = {
+    async send(command) {
+      commands.push(command);
+      const name = command.constructor.name;
+      if (name === 'GetCommand') return {};
+      if (name === 'QueryCommand') {
+        return { Items: [{
+          conceptId: 'endoscopy',
+          conceptLabel: 'Endoscopy timing and therapy',
+          evidenceScore: 2,
+          evidenceCount: 2,
+          evidenceEvents: [
+            event('repeated_question', 1, stale, 'stale-1'),
+            event('repeated_question', 1, stale, 'stale-2'),
+          ],
+        }] };
+      }
+      return {};
+    },
+  };
+  const store = createLearnerStore({ tableName: 'learners', client, now: () => at });
+  await store.recordBatch({ oid: 'user-1' }, [{
+    eventId: 'seek-1',
+    eventName: 'video_seek',
+    lessonSlug: 'gi-bleeding',
+    videoTime: 400,
+    occurredAt: at.toISOString(),
+    properties: { direction: 'backward' },
+  }]);
+
+  const put = commands.find((command) => command.constructor.name === 'PutCommand');
+  assert.equal(put.input.Item.source, 'rules');
+  assert.equal(put.input.Item.concepts[0].evidenceScore, 0);
+  assert.equal(put.input.Item.concepts[0].status, 'no_support_inference');
+  assert.deepEqual(put.input.Item.focusConcepts, []);
 });
