@@ -99,27 +99,22 @@ test('concept cohort ranks by distinct learners at the strong support threshold'
       if (command.input.IndexName === 'GSI1') {
         return { Items: ['one', 'two', 'three'].map((oid) => ({ PK: `USER#${oid}` })) };
       }
+      const repeats = (count) => Array.from({ length: count }, () => ['repeated_question', 1]);
       if (command.input.ExpressionAttributeValues?.[':pk'] === 'USER#one') {
+        // 2.8: strong on both concepts, well short of the score cap.
         return { Items: [
-          conceptItem('one', 'endoscopy', 'Endoscopy timing and therapy', [
-            ['rewatched_segment', 0.5], ['rewatched_segment', 0.5],
-            ['repeated_question', 1], ['repeated_question', 1],
-          ]),
-          conceptItem('one', 'investigations-risk-stratification', 'Investigations and risk stratification', [
-            ['rewatched_segment', 0.5], ['rewatched_segment', 0.5],
-            ['repeated_question', 1], ['repeated_question', 1],
-          ]),
+          conceptItem('one', 'endoscopy', 'Endoscopy timing and therapy', repeats(6)),
+          conceptItem('one', 'investigations-risk-stratification', 'Investigations and risk stratification', repeats(6)),
         ] };
       }
+      // 1.58: support recommended, but below the strong threshold.
       if (command.input.ExpressionAttributeValues?.[':pk'] === 'USER#two') {
-        return { Items: [conceptItem('two', 'endoscopy', 'Endoscopy timing and therapy', [
-          ['repeated_question', 1], ['repeated_question', 1],
-        ])] };
+        return { Items: [conceptItem('two', 'endoscopy', 'Endoscopy timing and therapy', repeats(2))] };
       }
-      // Scores 2.5: strong support without sitting at the maximum score.
+      // 2.57: strong support without sitting at the maximum score.
       if (command.input.ExpressionAttributeValues?.[':pk'] === 'USER#three') {
         return { Items: [conceptItem('three', 'endoscopy', 'Endoscopy timing and therapy', [
-          ['rewatched_segment', 0.5], ['repeated_question', 1], ['repeated_question', 1],
+          ...repeats(3), ['rewatched_segment', 0.5], ['rewatched_segment', 0.5],
         ])] };
       }
       return { Items: [] };
@@ -132,10 +127,11 @@ test('concept cohort ranks by distinct learners at the strong support threshold'
   });
   const cohort = await repository.getConceptCohort('gi-bleeding');
   assert.equal(cohort.totalLearners, 3);
-  assert.equal(cohort.strongSupportThreshold, 2.5);
+  assert.equal(cohort.strongSupportThreshold, 2.3);
   assert.equal(cohort.concepts[0].conceptId, 'endoscopy');
-  // 'one' is at the cap and 'three' at 2.5; 'two' at 2 is recommended but not strong.
+  // 'one' at 2.8 and 'three' at 2.57 are strong; 'two' at 1.58 is recommended only.
   assert.equal(cohort.concepts[0].strongSupportLearners, 2);
   assert.equal(cohort.concepts[0].supportRecommendedLearners, 3);
+  assert.equal(cohort.concepts[0].possibleSupportLearners, 0);
   assert.equal(cohort.concepts[0].strongSupportPercent, 66.7);
 });

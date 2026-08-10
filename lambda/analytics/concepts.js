@@ -72,16 +72,28 @@ export function evidenceFromEvent(event) {
   return null;
 }
 
+// Calibrated against the decayed, diminishing-returns score so that support
+// fires at about the rate the earlier linear scale produced: two fresh
+// clarification requests reach support_recommended, one reaches possible_support.
+// Two fresh clarification requests score log2(3) = 1.585, so the recommended
+// threshold sits just below that rather than at a rounder 1.6 that would miss it.
+// Likewise two fresh rewinds score 0.79, which must still register as possible
+// support the way the earlier linear scale did; one rewind alone (0.5) must not.
+export const POSSIBLE_SUPPORT_SCORE = 0.75;
+export const SUPPORT_RECOMMENDED_SCORE = 1.55;
+
 export function statusForEvidence(score) {
   const value = Number(score) || 0;
-  if (value >= 2) return 'support_recommended';
-  if (value >= 1) return 'possible_support';
+  if (value >= SUPPORT_RECOMMENDED_SCORE) return 'support_recommended';
+  if (value >= POSSIBLE_SUPPORT_SCORE) return 'possible_support';
   return 'no_support_inference';
 }
 
 export function buildLearnerSummary(conceptStates) {
+  // Same threshold as possible_support, so a concept the chatbot personalizes on
+  // can never be missing from the summary the supervisor reads.
   const ranked = [...conceptStates]
-    .filter((item) => Number(item.evidenceScore) >= 1)
+    .filter((item) => Number(item.evidenceScore) >= POSSIBLE_SUPPORT_SCORE)
     .sort((left, right) => Number(right.evidenceScore) - Number(left.evidenceScore));
   if (ranked.length === 0) {
     return {

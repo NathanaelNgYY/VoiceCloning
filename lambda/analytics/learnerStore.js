@@ -14,11 +14,19 @@ export const EVIDENCE_WINDOW_DAYS = 30;
 export const CONCEPT_SCORE_CAP = 3;
 // Cohort "strong support" is its own reporting threshold, not the score cap.
 // Reusing the cap counted only learners at the exact maximum, so a single
-// expired event silently removed them from the supervisor ranking.
-export const STRONG_SUPPORT_SCORE = 2.5;
-export const SIGNAL_EVENT_CAPS = Object.freeze({
-  rewatched_segment: 2,
-  repeated_question: 2,
+// expired event silently removed them from the supervisor ranking. Set just
+// below the old linear maximum so the strong band stays reachable under the
+// decayed, diminishing-returns score.
+export const STRONG_SUPPORT_SCORE = 2.3;
+// Evidence loses half its weight every this many days, so a concept fades
+// instead of dropping from full strength to nothing at the window edge.
+export const EVIDENCE_HALF_LIFE_DAYS = 14;
+// How many events per signal are kept on the item. This bounds the stored
+// record only; unlike the caps it replaced it does not bound the score, so
+// repeated behaviour keeps counting rather than saturating at two events.
+export const SIGNAL_EVENT_RETENTION = Object.freeze({
+  rewatched_segment: 20,
+  repeated_question: 20,
 });
 
 function asSignalArray(value) {
@@ -29,11 +37,25 @@ function asSignalArray(value) {
 function validEvidenceEvent(value, cutoffMs) {
   const occurredAtMs = Date.parse(value?.occurredAt);
   return value
-    && SIGNAL_EVENT_CAPS[value.signal]
+    && SIGNAL_EVENT_RETENTION[value.signal]
     && Number.isFinite(Number(value.weight))
     && Number(value.weight) > 0
     && Number.isFinite(occurredAtMs)
     && occurredAtMs >= cutoffMs;
+}
+
+function decayedWeight(event, atMs) {
+  const ageMs = Math.max(0, atMs - Date.parse(event.occurredAt));
+  const halfLives = ageMs / (EVIDENCE_HALF_LIFE_DAYS * SECONDS_PER_DAY * 1000);
+  return Number(event.weight) * (0.5 ** halfLives);
+}
+
+// Diminishing returns per signal type: the first event carries its full weight
+// and further events still raise the score, but by progressively less.
+function signalScore(events, atMs) {
+  if (events.length === 0) return 0;
+  const decayed = events.reduce((sum, event) => sum + decayedWeight(event, atMs), 0);
+  return (decayed * Math.log2(1 + events.length)) / events.length;
 }
 
 export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = new Date()) {
@@ -49,7 +71,7 @@ export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = n
     if (seen.has(identity)) continue;
     seen.add(identity);
     const count = counts.get(event.signal) || 0;
-    if (count >= SIGNAL_EVENT_CAPS[event.signal]) continue;
+    if (count >= SIGNAL_EVENT_RETENTION[event.signal]) continue;
     counts.set(event.signal, count + 1);
     evidenceEvents.push(event);
   }
@@ -65,12 +87,17 @@ export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = n
     : 0;
   const legacyCount = legacyActive
     ? Math.min(
-      Object.values(SIGNAL_EVENT_CAPS).reduce((sum, value) => sum + value, 0),
+      Object.values(SIGNAL_EVENT_RETENTION).reduce((sum, value) => sum + value, 0),
       Number(implicitLegacy ? item.evidenceCount : item.legacyEvidenceCount) || 0,
     )
     : 0;
-  const eventScore = evidenceEvents.reduce((sum, event) => sum + Number(event.weight), 0);
-  const evidenceCountCap = Object.values(SIGNAL_EVENT_CAPS).reduce((sum, value) => sum + value, 0);
+  const bySignal = new Map();
+  for (const event of evidenceEvents) {
+    bySignal.set(event.signal, [...(bySignal.get(event.signal) || []), event]);
+  }
+  const eventScore = [...bySignal.values()]
+    .reduce((sum, events) => sum + signalScore(events, at.getTime()), 0);
+  const evidenceCountCap = Object.values(SIGNAL_EVENT_RETENTION).reduce((sum, value) => sum + value, 0);
   const signals = new Set(evidenceEvents.map((event) => event.signal));
   const legacySignals = legacyActive
     ? asSignalArray(implicitLegacy ? item.signals : item.legacyEvidenceSignals)
