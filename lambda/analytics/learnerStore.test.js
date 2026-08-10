@@ -141,6 +141,112 @@ test('a recorded batch summarises untouched concepts from the rolling window, no
   assert.deepEqual(put.input.Item.focusConcepts, []);
 });
 
+function fakeTable() {
+  const items = new Map();
+  const commands = [];
+  const client = {
+    async send(command) {
+      commands.push(command);
+      const name = command.constructor.name;
+      const input = command.input;
+      if (name === 'GetCommand') {
+        return { Item: items.get(`${input.Key.PK}|${input.Key.SK}`) };
+      }
+      if (name === 'PutCommand') {
+        items.set(`${input.Item.PK}|${input.Item.SK}`, input.Item);
+        return {};
+      }
+      if (name === 'UpdateCommand') {
+        const key = `${input.Key.PK}|${input.Key.SK}`;
+        const values = input.ExpressionAttributeValues;
+        items.set(key, {
+          ...input.Key,
+          conceptId: values[':conceptId'],
+          conceptLabel: values[':conceptLabel'],
+          lessonSlug: values[':lesson'],
+          evidenceScore: values[':score'],
+          evidenceCount: values[':count'],
+          signals: [...values[':signals']],
+          evidenceEvents: values[':events'],
+          windowStartedAt: values[':windowStartedAt'],
+          legacyEvidenceScore: values[':legacyScore'],
+          legacyEvidenceCount: values[':legacyCount'],
+          legacyEvidenceSignals: values[':legacySignals'],
+          legacyEvidenceExpiresAt: values[':legacyExpiresAt'],
+          evidenceRevision: values[':nextRevision'],
+          updatedAt: values[':updatedAt'],
+          ...(values[':ttl'] === undefined ? {} : { ttl: values[':ttl'] }),
+        });
+        return {};
+      }
+      if (name === 'QueryCommand') {
+        const prefix = command.input.ExpressionAttributeValues[':prefix'];
+        const pk = command.input.ExpressionAttributeValues[':pk'];
+        return {
+          Items: [...items.values()]
+            .filter((item) => item.PK === pk && item.SK.startsWith(prefix))
+            .sort((left, right) => left.SK.localeCompare(right.SK)),
+        };
+      }
+      return {};
+    },
+  };
+  return { client, commands, items };
+}
+
+const batch = (eventId) => [{
+  eventId,
+  eventName: 'video_seek',
+  lessonSlug: 'gi-bleeding',
+  videoTime: 400,
+  occurredAt: at.toISOString(),
+  properties: { direction: 'backward' },
+}];
+
+const putSummaries = (commands) => commands.filter((command) => (
+  command.constructor.name === 'PutCommand' && command.input.Item.SK.endsWith('#SUMMARY')
+));
+
+test('an unchanged lesson summary is not rewritten on the next batch', async () => {
+  const { client, commands } = fakeTable();
+  const store = createLearnerStore({ tableName: 'learners', client, now: () => at });
+
+  await store.recordBatch({ oid: 'user-1' }, batch('seek-1'));
+  assert.equal(putSummaries(commands).length, 1);
+
+  // Same event id, so the concept dedupes and the summary is identical.
+  const result = await store.recordBatch({ oid: 'user-1' }, batch('seek-1'));
+  assert.equal(putSummaries(commands).length, 1);
+  assert.equal(result.summaries.length, 1);
+  assert.equal(result.summaries[0].SK, 'LESSON#gi-bleeding#SUMMARY');
+});
+
+test('a changed lesson summary is still written, and concepts stay out of the summary states', async () => {
+  const { client, commands } = fakeTable();
+  const store = createLearnerStore({ tableName: 'learners', client, now: () => at });
+
+  await store.recordBatch({ oid: 'user-1' }, batch('seek-1'));
+  await store.recordBatch({ oid: 'user-1' }, batch('seek-2'));
+
+  const puts = putSummaries(commands);
+  assert.equal(puts.length, 2);
+  const latest = puts[1].input.Item;
+  assert.equal(latest.concepts.length, 1);
+  assert.equal(latest.concepts[0].evidenceCount, 2);
+});
+
+test('an unchanged summary is rewritten once its stored TTL has run down', async () => {
+  const { client, commands, items } = fakeTable();
+  const store = createLearnerStore({ tableName: 'learners', client, now: () => at, ttlDays: 90 });
+
+  await store.recordBatch({ oid: 'user-1' }, batch('seek-1'));
+  const summary = items.get('USER#user-1|LESSON#gi-bleeding#SUMMARY');
+  summary.ttl -= 60 * 24 * 60 * 60;
+
+  await store.recordBatch({ oid: 'user-1' }, batch('seek-1'));
+  assert.equal(putSummaries(commands).length, 2);
+});
+
 test('the retuned thresholds preserve the support states the linear scale produced', () => {
   const state = (signal, weight, count) => statusForEvidence(buildRollingEvidenceState({ evidenceEvents: [] }, Array.from(
     { length: count },

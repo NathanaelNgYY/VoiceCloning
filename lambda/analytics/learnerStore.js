@@ -117,6 +117,23 @@ export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = n
   };
 }
 
+// Order-independent comparison, because a summary rebuilt in memory and the
+// same summary read back from DynamoDB need not agree on key order.
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+// `updatedAt`/`ttl` move on every batch, so they are not evidence of a change.
+function summaryContentEqual(left, right) {
+  if (!left || !right) return false;
+  const content = ({ updatedAt, ttl, ...rest }) => rest;
+  return stableJson(content(left)) === stableJson(content(right));
+}
+
 // Stored evidence is only pruned when a concept is written, so any read must
 // re-derive the rolling window before the score is used or summarised.
 export function currentConceptState(item, at) {
@@ -226,13 +243,20 @@ export function createLearnerStore({
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
         ExpressionAttributeValues: {
           ':pk': `USER#${identity.oid}`,
-          ':prefix': `LESSON#${lessonSlug}#CONCEPT#`,
+          // Widened from the CONCEPT prefix so the stored summary arrives in the
+          // same query and an unchanged one can be recognised without an extra read.
+          ':prefix': `LESSON#${lessonSlug}#`,
         },
       }));
-      const states = (response.Items || []).map((item) => currentConceptState(item, at));
+      const summaryKey = `LESSON#${lessonSlug}#SUMMARY`;
+      const items = response.Items || [];
+      const storedSummary = items.find((entry) => entry.SK === summaryKey);
+      const states = items
+        .filter((entry) => entry.SK !== summaryKey)
+        .map((entry) => currentConceptState(entry, at));
       const item = {
         PK: `USER#${identity.oid}`,
-        SK: `LESSON#${lessonSlug}#SUMMARY`,
+        SK: summaryKey,
         lessonSlug,
         ...buildLearnerSummary(states),
         source: 'rules',
@@ -247,6 +271,15 @@ export function createLearnerStore({
         updatedAt: at.toISOString(),
         ...(expiresAt === undefined ? {} : { ttl: expiresAt }),
       };
+      // Most batches nudge a concept without moving the lesson summary, so skip
+      // the write when nothing changed. The TTL still has to be refreshed before
+      // it runs down, or the summary would expire while its concepts live on.
+      const ttlIsFresh = expiresAt === undefined
+        || Number(storedSummary?.ttl) >= expiresAt - (ttlDays * SECONDS_PER_DAY) / 2;
+      if (summaryContentEqual(storedSummary, item) && ttlIsFresh) {
+        summaries.push(storedSummary);
+        continue;
+      }
       await documentClient.send(new PutCommand({ TableName: tableName, Item: item }));
       summaries.push(item);
     }

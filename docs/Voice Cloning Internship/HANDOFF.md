@@ -1,6 +1,22 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-07
+Last updated: 2026-08-10
+
+## Needs Action
+
+- The lesson-summary redundant-write skip in `lambda/analytics/learnerStore.js` is committed
+  and tested locally but **not deployed**. `scripts/deploy-lambda.ps1 -Env dev` failed on
+  expired credentials before any AWS call mutated anything. Refresh credentials and re-run it.
+- The dev Lambda environment was wiped in error on 2026-08-10 and restored from
+  `lambda/.env.deployment` plus `GPU_SCHEDULE_ENABLED=false` (21 keys, verified live).
+  `SUPERVISOR_OIDS` was not set beforehand, so nothing was lost: supervisor access runs
+  through the `SUPERVISOR_APP_ROLE` Entra app role, which is restored. If dev ever had
+  `VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME`/`_VALUE`, `DEMO_CLOUDFRONT_HOST`, or
+  `LIVE_DEMO_LOCKOUT` set, they would need re-adding; the code reads them and they are not
+  in `.env.deployment`.
+- `lambda/.env.deployment` is not a complete description of the Lambda environment. The
+  deploy script merges it into the live variables, so anything absent survives only as live
+  state. Snapshot the environment to a file before any `update-function-configuration`.
 
 ## Start Here
 
@@ -12,7 +28,12 @@ Last updated: 2026-08-07
 - Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
   dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
   gateway instance role's `PutItem` was proven with an expiring probe.
-- Dev support rolls 30 days: two bounded rewinds/clarifications count; passive actions do not infer support. Live on dev.
+- Dev support decays on a 14-day half-life inside a 30-day window; repeated behaviour keeps
+  raising the score with diminishing returns instead of saturating at two events. Passive
+  actions still infer nothing. Thresholds recalibrated so the support states match what the
+  earlier linear scale produced. Live on dev.
+- The chatbot receives concept and support state only. Signal names, scores, and counts stay
+  in analytics and never reach the model.
 - Learner analytics remains dev-only. GI fixes Dean by ID in both clients/Lambdas;
   no staging analytics, scaling, gateway, TTS, or training resource changed.
 

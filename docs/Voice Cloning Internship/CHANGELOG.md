@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-08-10
+
+- Stopped rewriting an unchanged lesson summary on every analytics batch. `recordBatch`
+  rebuilt and `Put` the `#SUMMARY` item for each touched lesson unconditionally, with no
+  dirty check. The per-lesson `Query` prefix widened from `LESSON#<slug>#CONCEPT#` to
+  `LESSON#<slug>#` so the stored summary returns in the same request (no extra read), and
+  the `Put` is skipped when the rebuilt summary is content-identical ignoring `updatedAt`
+  and `ttl`. The TTL is still refreshed once the stored value falls more than half a TTL
+  period behind the new one, so a summary cannot expire while its concepts live on. Files:
+  `lambda/analytics/learnerStore.js`, `lambda/analytics/learnerStore.test.js`.
+  Tests run: `node --test lambda/analytics/learnerStore.test.js` — 12 pass, including three
+  new cases (unchanged summary not rewritten, changed summary still written, TTL run-down
+  forces a rewrite). **Not deployed:** `scripts/deploy-lambda.ps1 -Env dev` packaged the zip
+  then failed on `ExpiredTokenException` at the first `get-function-configuration`; no AWS
+  resource was modified.
+
+- Reworked the learner support scoring model and deployed it to dev (`c6b59b4`, `c571480`).
+  Evidence now decays on a 14-day half-life instead of holding full weight until the 30-day
+  cliff, and the per-signal caps of two became a 20-event retention limit with logarithmic
+  growth per signal, so frequency keeps counting instead of saturating. Thresholds were
+  recalibrated to preserve the states the linear scale produced (`POSSIBLE_SUPPORT_SCORE`
+  0.75, `SUPPORT_RECOMMENDED_SCORE` 1.55, `STRONG_SUPPORT_SCORE` 2.3, split from the score
+  cap). Chatbot guidance now sends concept and support state only, with a test asserting no
+  signal name, score, or count can leak into the prompt. Files: `lambda/analytics/concepts.js`,
+  `lambda/analytics/learnerStore.js`, `lambda/learners/repository.js`,
+  `client/src/lib/learnerGuidance.js` and their tests. 459 lambda + client tests pass;
+  calibration is locked by tests. Retention applies only to evidence collected from here on.
+- **Incident:** while removing the dead `LEARNER_SUMMARY_MODEL` variable, a PowerShell 5.1
+  command using `Join-String` (PowerShell 7 only) interpolated to `Variables={}` and wiped
+  every dev Lambda environment variable. Restored 21 keys from `lambda/.env.deployment` plus
+  `GPU_SCHEDULE_ENABLED=false`; verified `/api/learner/me` and `/api/supervisor/users` return
+  401 rather than failing. `SUPERVISOR_OIDS` had not been set, so no value was lost and
+  supervisor access continues through the `SUPERVISOR_APP_ROLE` app role. No published Lambda
+  versions existed to roll back to, so recovery depended entirely on the repo file.
+
+- Fixed the analytics write path summarising learner concepts from raw stored DynamoDB
+  attributes, which reported expired evidence as active support for concepts not touched by
+  the current batch. Both paths now share `currentConceptState`. Removed the OpenAI learner
+  summary generator, whose output was stored but never served because reads always rebuild the
+  rule summary; rules are the single source of truth and may be revisited later. Files:
+  `lambda/analytics/learnerStore.js`, `lambda/learners/repository.js`, `lambda/.env.deployment`,
+  deleted `lambda/analytics/summaryGenerator.js(.test.js)`. Added a regression test covering
+  stale untouched concepts and confirmed it fails against the previous behaviour; full lambda
+  suite passes (153 tests).
+
 - Granted the two current developers dev-only `/supervisor` access through the Lambda's
   verified Entra object-ID allowlist. No staff email or DynamoDB role is required, no IDs
   were committed, and staging was unchanged. Updated the deployment map and corrected the
