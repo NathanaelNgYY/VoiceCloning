@@ -12,9 +12,9 @@
   `lambda/analytics/learnerStore.js`, `lambda/analytics/learnerStore.test.js`.
   Tests run: `node --test lambda/analytics/learnerStore.test.js` — 12 pass, including three
   new cases (unchanged summary not rewritten, changed summary still written, TTL run-down
-  forces a rewrite). **Not deployed:** `scripts/deploy-lambda.ps1 -Env dev` packaged the zip
-  then failed on `ExpiredTokenException` at the first `get-function-configuration`; no AWS
-  resource was modified.
+  forces a rewrite). Deployed to dev only via `scripts/deploy-lambda.ps1 -Env dev`
+  (`Liu_Teng_Yu_Intern2026-Voice_Cloning_Project`, code SHA `+BwpRwlJh62KoVSeS3NCjPt5DYFWziOt2PABXvc4fQU=`).
+  Staging unchanged. Not yet exercised against a live signed-in learner batch.
 
 - Reworked the learner support scoring model and deployed it to dev (`c6b59b4`, `c571480`).
   Evidence now decays on a 14-day half-life instead of holding full weight until the 30-day

@@ -4,9 +4,10 @@ Last updated: 2026-08-10
 
 ## Needs Action
 
-- The lesson-summary redundant-write skip in `lambda/analytics/learnerStore.js` is committed
-  and tested locally but **not deployed**. `scripts/deploy-lambda.ps1 -Env dev` failed on
-  expired credentials before any AWS call mutated anything. Refresh credentials and re-run it.
+- The lesson-summary redundant-write skip in `lambda/analytics/learnerStore.js` is deployed to
+  dev (`30729f2`). Still to confirm on a live signed-in learner: a repeated batch that changes
+  nothing should leave the `#SUMMARY` item's `updatedAt` untouched, while a batch that adds
+  evidence still moves it.
 - The dev Lambda environment was wiped in error on 2026-08-10 and restored from
   `lambda/.env.deployment` plus `GPU_SCHEDULE_ENABLED=false` (21 keys, verified live).
   `SUPERVISOR_OIDS` was not set beforehand, so nothing was lost: supervisor access runs
