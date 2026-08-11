@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import {
   buildRollingEvidenceState,
-  CONCEPT_SCORE_CAP,
   createLearnerStore,
   EVIDENCE_HALF_LIFE_DAYS,
   EVIDENCE_WINDOW_DAYS,
@@ -17,7 +16,7 @@ function event(signal, weight, occurredAt = at.toISOString(), eventId = `${signa
   return { eventId, signal, weight, occurredAt };
 }
 
-test('keeps every retained event and bounds the total concept score', () => {
+test('keeps every retained event without applying the former hard score cap', () => {
   const incoming = [
     ...Array.from({ length: 5 }, (_, index) => event('rewatched_segment', 0.5, at.toISOString(), `seek-${index}`)),
     ...Array.from({ length: 4 }, (_, index) => event('repeated_question', 1, at.toISOString(), `repeat-${index}`)),
@@ -26,7 +25,7 @@ test('keeps every retained event and bounds the total concept score', () => {
   assert.equal(state.evidenceEvents.filter((item) => item.signal === 'rewatched_segment').length, 5);
   assert.equal(state.evidenceEvents.filter((item) => item.signal === 'repeated_question').length, 4);
   assert.equal(state.evidenceCount, 9);
-  assert.ok(state.evidenceScore <= CONCEPT_SCORE_CAP);
+  assert.equal(state.evidenceScore, 3.61);
 });
 
 test('scores repeated evidence with diminishing returns instead of saturating at two', () => {
@@ -40,7 +39,7 @@ test('scores repeated evidence with diminishing returns instead of saturating at
   // Previously the third event onwards was discarded and every count scored the same.
   assert.ok(score(3) > score(2));
   assert.ok(score(8) > score(4));
-  assert.equal(score(20), CONCEPT_SCORE_CAP);
+  assert.equal(score(20), 4.39);
 });
 
 test('decays evidence by half every half-life instead of dropping at the window edge', () => {
@@ -53,6 +52,33 @@ test('decays evidence by half every half-life instead of dropping at the window 
   assert.equal(pair(EVIDENCE_HALF_LIFE_DAYS * 2), Math.round((fresh / 4) * 100) / 100);
   // Strictly decreasing, so a concept fades out rather than vanishing abruptly.
   assert.ok(pair(0) > pair(7) && pair(7) > pair(21) && pair(21) > pair(29));
+});
+
+test('a repeated-question bonus starts at its own full weight independently of ordinary questions', () => {
+  const ordinary = Array.from({ length: 8 }, (_, index) => (
+    event('concept_question', 0.5, at.toISOString(), `question-${index}`)
+  ));
+  const questionOnly = buildRollingEvidenceState({ evidenceEvents: [] }, ordinary, at).evidenceScore;
+  const withRepeat = buildRollingEvidenceState({ evidenceEvents: [] }, [
+    ...ordinary,
+    event('repeated_question', 1, at.toISOString(), 'repeat'),
+  ], at).evidenceScore;
+  assert.equal(Math.round((withRepeat - questionOnly) * 100) / 100, 1);
+});
+
+test('old decayed events do not suppress newer evidence', () => {
+  const nearlyExpired = new Date(at.getTime() - 29 * 86_400_000).toISOString();
+  const oldEvents = Array.from({ length: 19 }, (_, index) => (
+    event('repeated_question', 1, nearlyExpired, `old-${index}`)
+  ));
+  const withHistory = buildRollingEvidenceState(
+    { evidenceEvents: oldEvents },
+    [event('repeated_question', 1, at.toISOString(), 'fresh')],
+    at,
+  ).evidenceScore;
+  const historyOnly = buildRollingEvidenceState({ evidenceEvents: oldEvents }, [], at).evidenceScore;
+  assert.ok(withHistory > historyOnly);
+  assert.ok(withHistory >= 1, `${withHistory} should retain at least the fresh event's full contribution`);
 });
 
 test('drops evidence outside the rolling 30-day window', () => {
@@ -88,7 +114,7 @@ test('carries a legacy aggregate only during its first migration window', () => 
     legacyEvidenceSignals: current.legacyEvidenceSignals,
     legacyEvidenceExpiresAt: current.legacyEvidenceExpiresAt,
   }, [event('repeated_question', 1)], at);
-  assert.equal(migrated.evidenceScore, 3);
+  assert.equal(migrated.evidenceScore, 4);
   assert.equal(migrated.evidenceCount, 6);
 
   const expired = buildRollingEvidenceState({

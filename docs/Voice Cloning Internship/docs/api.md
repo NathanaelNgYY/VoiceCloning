@@ -16,25 +16,29 @@ Primary router: `lambda/router.js`
 
 - `POST /api/analytics/events`
   - Accepts schema version 1 with 1-50 allowlisted lesson events and requires a verified
-    Entra token in dev. Immutable gzip NDJSON batches remain in hourly S3 partitions.
-  - Maintains a 30-day per-concept support window. Two rewinds contribute at most `1`
-    total; two clarification requests contribute at most `2` total. The internal support
-    score caps at `3` and qualifying count at four. Long pauses and transcript scrolling
-    remain raw analytics only and do not affect support state. Duplicate IDs are idempotent.
+    Entra token in dev. Immutable gzip NDJSON batches use verified-subject per-user/date/hour
+    S3 partitions. The older global archive is retained but is no longer written or scanned.
+  - Maintains a 30-day per-concept window with a 14-day evidence half-life and logarithmic
+    diminishing returns per signal type. Scores have no hard cap; up to 20 events per signal are
+    retained. Long pauses/transcript scrolling do not affect support state; IDs are idempotent.
   - Derived support rules:
 
-    | Qualifying signal | Value | Per-concept limit | Condition |
+    | Qualifying signal | Base weight | Retention | Condition |
     |---|---:|---:|---|
-    | Rewatched segment | `0.5` | 2 | A backward seek assigned to the authored concept |
-    | Clarification request | `1` | 2 | A delayed repeated/simplification request matched to the same concept |
+    | Rewatched segment | `0.5` | 20 | A backward seek assigned to the authored concept |
+    | Clarification request | `1` | 20 | A delayed repeated/simplification request matched to the same concept |
     | Long pause | `0` | Not counted | Raw engagement analytics only |
     | Transcript scroll | `0` | Not counted | Raw engagement analytics only |
 
-    Score below `1` is `no_support_inference`; `1-1.99` is `possible_support`; and
-    `2-3` is `support_recommended`. One rewind alone is not enough. Two rewinds or one
-    clarification produce possible support. Two clarifications, or two rewinds plus one
-    clarification, produce support recommended. Two rewinds plus two clarifications reach
-    the maximum score `3` and count `4`.
+    Fresh score below `0.75` is `no_support_inference`; `0.75-1.54` is `possible_support`;
+    and `1.55+` is `support_recommended`. One rewind alone is insufficient; two fresh rewinds
+    or one clarification produce possible support, and two fresh clarifications produce
+    support recommended. Scores then decay and repeated events add progressively less.
+  - Every authenticated non-repeated question adds `concept_question` evidence at
+    weight `0.5`. A repeated question receives only the independent weight-`1.0` clarification signal;
+    its `question_asked` record remains available for history but is scoring-neutral. Question text is
+    bounded to 500 characters in the per-user lake for analytics. The Admin Questions tab reads only
+    retained DynamoDB conversation turns; S3 is not queried or merged for that list.
   - The first question establishes the comparison topic and adds no clarification evidence.
     Follow-up clarification detection requires at least eight seconds and the same mounted
     lesson page; refreshing starts a new browser-side comparison sequence. Wait at least ten
@@ -125,6 +129,18 @@ Notes:
 - `POST /api/instance/start`
 - `GET /api/instance/idle-check`
 - `POST /api/instance/idle-check`
+
+### Learner and admin analytics (dev only)
+
+- `POST /api/analytics/events` — authenticated lesson event ingestion; writes one verified-subject
+  per-user S3 batch, then updates qualifying DynamoDB support evidence.
+- `GET /api/learner/me?lesson=:slug` — current learner's rule-based support summary.
+- `GET /api/supervisor/concepts?lesson=:slug` — admin cohort counts for every authored concept.
+- `GET /api/supervisor/users` and `GET /api/supervisor/users/:oid` — admin learner list/detail.
+- `GET /api/supervisor/users/:oid/events` — newest stored lesson actions for one learner; max 500
+  events / 250 batches, with `truncated=true` when bounded. Never scans the retained global archive.
+- `DELETE /api/supervisor/users/:oid/lessons/:slug/concepts/:conceptId` — reset evidence.
+- All `/api/supervisor/*` routes require the configured Entra app role or OID allowlist.
 
 ## Streaming / Socket Paths
 

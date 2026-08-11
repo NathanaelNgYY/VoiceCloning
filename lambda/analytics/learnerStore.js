@@ -11,7 +11,6 @@ import { buildLearnerSummary, evidenceFromEvent, statusForEvidence } from './con
 
 const SECONDS_PER_DAY = 86_400;
 export const EVIDENCE_WINDOW_DAYS = 30;
-export const CONCEPT_SCORE_CAP = 3;
 // Cohort "strong support" is its own reporting threshold, not the score cap.
 // Reusing the cap counted only learners at the exact maximum, so a single
 // expired event silently removed them from the supervisor ranking. Set just
@@ -21,10 +20,14 @@ export const STRONG_SUPPORT_SCORE = 2.3;
 // Evidence loses half its weight every this many days, so a concept fades
 // instead of dropping from full strength to nothing at the window edge.
 export const EVIDENCE_HALF_LIFE_DAYS = 14;
+// Legacy aggregate records came from the former 0-3 scale. Keep only that
+// migration contribution bounded; newly recorded evidence itself is uncapped.
+const LEGACY_SCORE_CAP = 3;
 // How many events per signal are kept on the item. This bounds the stored
 // record only; unlike the caps it replaced it does not bound the score, so
 // repeated behaviour keeps counting rather than saturating at two events.
 export const SIGNAL_EVENT_RETENTION = Object.freeze({
+  concept_question: 20,
   rewatched_segment: 20,
   repeated_question: 20,
 });
@@ -50,12 +53,14 @@ function decayedWeight(event, atMs) {
   return Number(event.weight) * (0.5 ** halfLives);
 }
 
-// Diminishing returns per signal type: the first event carries its full weight
-// and further events still raise the score, but by progressively less.
+// Diminishing returns per signal type: each rank receives the next increment
+// of log2(1 + n). Applying decay to each increment keeps old evidence from
+// lowering newer evidence merely because it remains in the retained count.
 function signalScore(events, atMs) {
   if (events.length === 0) return 0;
-  const decayed = events.reduce((sum, event) => sum + decayedWeight(event, atMs), 0);
-  return (decayed * Math.log2(1 + events.length)) / events.length;
+  return events.reduce((sum, event, index) => (
+    sum + decayedWeight(event, atMs) * Math.log2((index + 2) / (index + 1))
+  ), 0);
 }
 
 export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = new Date()) {
@@ -83,7 +88,7 @@ export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = n
     : item.legacyEvidenceExpiresAt;
   const legacyActive = Number.isFinite(Date.parse(legacyExpiresAt)) && Date.parse(legacyExpiresAt) >= at.getTime();
   const legacyScore = legacyActive
-    ? Math.min(CONCEPT_SCORE_CAP, Number(implicitLegacy ? item.evidenceScore : item.legacyEvidenceScore) || 0)
+    ? Math.min(LEGACY_SCORE_CAP, Number(implicitLegacy ? item.evidenceScore : item.legacyEvidenceScore) || 0)
     : 0;
   const legacyCount = legacyActive
     ? Math.min(
@@ -106,7 +111,7 @@ export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = n
 
   return {
     evidenceEvents,
-    evidenceScore: Math.min(CONCEPT_SCORE_CAP, Math.round((legacyScore + eventScore) * 100) / 100),
+    evidenceScore: Math.round((legacyScore + eventScore) * 100) / 100,
     evidenceCount: Math.min(evidenceCountCap, legacyCount + evidenceEvents.length),
     signals,
     windowStartedAt: new Date(cutoffMs).toISOString(),

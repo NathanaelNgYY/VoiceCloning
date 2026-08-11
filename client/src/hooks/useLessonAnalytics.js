@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import {
   LONG_PAUSE_SECONDS,
+  classifyQuestionConcept,
   createLessonAnalyticsClient,
   createLessonBehaviorState,
   createRepeatedQuestionTracker,
@@ -144,7 +145,17 @@ export function useLessonAnalytics({ slug, videoRef, transcriptScrollRef, active
 
   const recordQuestion = useCallback((text) => {
     const videoTime = videoRef.current?.currentTime;
+    const classification = classifyQuestionConcept(text);
     const repeated = repeatedQuestionRef.current.record(text, videoTime);
+    analyticsRef.current.track('question_asked', {
+      videoTime,
+      properties: {
+        questionText: String(text || '').trim(),
+        semanticConceptId: classification?.conceptId || '',
+        semanticConfidence: classification?.confidence || 0,
+        isRepeated: Boolean(repeated),
+      },
+    });
     if (!repeated) return false;
     analyticsRef.current.track('repeated_question', {
       videoTime,

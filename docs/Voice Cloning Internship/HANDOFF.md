@@ -1,9 +1,10 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-10
-
+Last updated: 2026-08-11
 ## Needs Action
 
+- Hard-refresh dev and verify Questions includes retained pre-analytics transcript turns, one new
+  ordinary question adds `concept_question` evidence, and a repeated question adds only its independent bonus.
 - The lesson-summary redundant-write skip in `lambda/analytics/learnerStore.js` is deployed to
   dev (`30729f2`). Still to confirm on a live signed-in learner: a repeated batch that changes
   nothing should leave the `#SUMMARY` item's `updatedAt` untouched, while a batch that adds
@@ -20,7 +21,6 @@ Last updated: 2026-08-10
   state. Snapshot the environment to a file before any `update-function-configuration`.
 
 ## Start Here
-
 - Scope: dev parity plus confirmed staging event action; repo/branch `VoiceCloning` / `separate-containers-new`.
 - Dev host is at `4c8911a`; local checkout has later analytics/UI/auth commits. Preserve the host's
   unrelated deleted verifier file and archives; do not clean them up.
@@ -29,8 +29,8 @@ Last updated: 2026-08-10
 - Dev per-user learner analytics is deployed to the non-staging Lambda, fixed dev gateway,
   dev chatbot CloudFront/S3 target, and `vcs-dev-transcripts`. PITR is enabled and the
   gateway instance role's `PutItem` was proven with an expiring probe.
-- Dev support decays on a 14-day half-life inside a 30-day window; repeated behaviour keeps
-  raising the score with diminishing returns instead of saturating at two events. Passive
+- Dev support decays per logarithmic event rank on a 14-day half-life inside a 30-day window;
+  repeated behaviour has diminishing returns and no hard score cap. Passive
   actions still infer nothing. Thresholds recalibrated so the support states match what the
   earlier linear scale produced. Live on dev.
 - The chatbot receives concept and support state only. Signal names, scores, and counts stay
@@ -39,7 +39,6 @@ Last updated: 2026-08-10
   no staging analytics, scaling, gateway, TTS, or training resource changed.
 
 ## Deployed Dev State
-
 - Dev and staging Live Fast TTS show advanced settings from commit `85303e2`; only
   those clients changed. Other dev CloudFront configs retain staging parity.
 - Dev Lambda includes the `4c8911a` analytics routes, 512 MB, 120 seconds, and a 30-second retry
@@ -48,16 +47,18 @@ Last updated: 2026-08-10
 - Dev has no ASG, scaling alarms, or ASG scheduled actions. The enabled five-minute
   EventBridge rule invokes idle-check only; activity requests own GPU startup.
 - Dev GI requires Microsoft sign-in, records identified lesson/video evidence, retrieves
-  per-user teaching guidance, and exposes `/supervisor`. CloudFront `EYZ4NLNGITY7T`
+  per-user teaching guidance, and exposes `/admin` (`/supervisor` redirects). CloudFront `EYZ4NLNGITY7T`
   routes `/api/live/session/*` to the dev ALB and general `/api/*` to the dev Lambda.
-  Dev bundle `assets/index-DUXyI87I.js` provides concept-matched support, `deanvoice-v1`, supervisor cohort ranking,
-  analytics, setup failures, and Entra REST auth outside SigV4's `Authorization`. Staging is unchanged.
+  Dev bundle `assets/index-weH0TlqD.js` adds the home Admin button and responsive animated vertical concept graph,
+  clearer evidence detail, and prefetched S3 Events with action counts and newest-first 10-row paging. New batches write only to the per-user
+  lake. The retained 44-object global archive is no longer read at request time; 32 user batches were
+  indexed and raw evidence replayed. Questions reads retained DynamoDB turns only; S3 remains the Events lake.
+  Endoscopy read-back is 16 events/3.27. Signed-in visual timing remains unverified.
   Normal dev TTS/Training/Dean stay public. Ranking is supervisor-only; chatbot guidance applies only the concept matching the current question.
   Both current developers are dev supervisors through the Lambda's verified Entra object-ID
   allowlist; this does not require staff email or assign a DynamoDB role. Staging is unchanged.
 
 ## Current AWS Operating State
-
 - Region/account/role: Seoul / `329599637774` /
   `Liu_Teng_Yu_Intern2026`; verify the assumed identity before every mutation.
 - ASG `vcs-staging-gpu-inference`: daytime min/desired 1, off-hours 0, max 192; launch-template
@@ -70,49 +71,25 @@ Last updated: 2026-08-10
 
 ## Autoscaling and Readiness
 
-- Scaling works outside event mode. Occupancy is occupied slots divided by
-  `(healthy GPUs * 2)`, sampled in one-minute CloudWatch data.
-- Below five healthy GPUs, one sample at or above 70% sets desired capacity to five.
-  At five or more, one sample at or above 70% adds ten; later samples re-evaluate.
-- Scale-in removes one GPU after 15 no-traffic minutes, with floor one.
-- Fixed quiet scale-in: a missing-data alarm had no numeric value for Step Scaling.
-  The live/repo alarm now uses `FILL(requests,0)`. A desired-3 test changed 3->2 at
-  19:21:26 SGT and 2->1 at 19:32:38. After the first 15-minute window, conservative
-  `-1` removal plus drain/cooldown took about 11 minutes per additional GPU.
-- This is deliberately conservative at baseline but too slow for a sudden event burst.
-  A 73% sample at 07:00 alarmed at 07:03:48; launch began 07:04:01; all targets were
-  healthy at 07:09:27; all public-prime markers completed at 07:11:30.
-- Local deep warm validates each GPU. Public prime validates the fleet's public route,
-  but ALB may send a GPU's probe to another GPU. Exact per-target routed synthesis is
-  not guaranteed. A dedicated warm target group/promotion path remains future work.
-- New nodes become ALB-healthy before their public prime finishes. The event gate
-  therefore requires desired/InService/healthy coverage plus a fresh public-RIFF
-  marker newer than the current worker start.
-- The SSM polling fix only waits and checks again when a command is still pending.
-  It prevents a false failure report; it does not make GPU warming faster.
+- Occupancy is occupied slots / `(healthy GPUs * 2)` on one-minute data. Below five healthy GPUs,
+  one >=70% sample sets capacity five; at five or more it adds ten. Scale-in removes one after
+  15 quiet minutes, floor one; `FILL(requests,0)` fixed missing-data scale-in.
+- Reactive launch is too slow for sudden events: a 07:00 73% sample alarmed 07:03:48, all targets
+  were healthy 07:09:27, and public primes finished 07:11:30. Prewarm known bursts.
+- Local deep warm is exact-target; public prime is not because ALB may route elsewhere. Admit only
+  after desired/InService/healthy coverage plus a fresh public-RIFF marker. A dedicated warm target
+  group remains future work. The SSM polling fix prevents false failures, not slow warming.
 
 ## Verified Test Evidence
 
-- Two slots passed the 50/50 mandatory deep-warm gate. Three slots was rejected:
-  only 39/50 targets passed; no three-slot user load was run.
-- With browser-equivalent keepalive, real three-turn complete-flow bursts passed:
-  50 GPUs/100 users 100/100; 50/150 150/150; primed 60/100 100/100; 60/150 150/150.
-- Evening first-WAV-after-text-done repeat, with first-chunk verification enabled:
-  50/100 completed 100/100, 50/150 completed 149/150 (one 720-second no-turn
-  timeout), primed 60/150 completed 150/150, and 60/100 completed 100/100.
-  Aggregate average/p50/p95 was 3.44/2.22/9.81, 4.06/3.14/10.47,
-  5.18/2.65/11.82, and 2.42/2.02/4.19 seconds respectively.
-- Turn-one first-audio p50/p95: 50/100 12.72/13.98 s; 50/150 7.15/14.61 s;
-  60/100 13.33/22.40 s; 60/150 7.61/14.20 s. OpenAI answer length was uncontrolled,
-  so these runs prove completion/reliability, not a clean fleet-size latency comparison.
-- Deployed early-sentence browser smoke: first audio 12.42 s in a new session and
-  3.26/2.96 s on warm turns. One scripted backend control measured text done 2.06 s,
-  first TTS chunk 3.40 s, and speech-to-first-audio 5.46 s. These are functional
-  checks, not population p50/p95 evidence.
-- Fixed cold Live route cost: the router eagerly loads Live at 512 MB and GI pins the
-  full model snapshot. ID-only/direct callers still resolve saved profiles; regular
-  Live Fast/Full already pins its selected model. No-GPU first invocation fell
-  4.618 s -> 15.71 ms. Full reruns passed 100/100 and 150/150 three-turn users.
+- Two slots passed 50/50 deep warm; three slots failed 39/50 and was rejected.
+- Browser-equivalent three-turn runs: 50 GPU/100 users 100/100; 50/150 150/150;
+  primed 60/100 and 60/150 both 100%. Evening repeats were 100/100, 149/150, 100/100,
+  and 150/150. These prove completion, not a clean fleet-size latency comparison.
+- Turn-one first-audio p50/p95: 50/100 12.72/13.98s; 50/150 7.15/14.61s;
+  60/100 13.33/22.40s; 60/150 7.61/14.20s. Answer length was uncontrolled.
+- Early-sentence browser smoke was 12.42s cold and 3.26/2.96s warm. Eager 512 MB Live init
+  cut a GPU-free first invocation from 4.618s to 15.71ms; 100/150-user reruns passed.
 
 ## Event Procedure
 
@@ -130,7 +107,7 @@ Last updated: 2026-08-10
 ## Next Session Priorities and Blockers
 
 - First hard-refresh dev GI and confirm text plus Dean audio. Exercise rewind, long pause, transcript
-  review, and similar questions across timestamps; verify DynamoDB and `/supervisor`. The Entra
+  review, and similar questions across timestamps; verify DynamoDB and `/admin`. The Entra
   `Supervisor` role is not known assigned. Capture failures and inspect dev logs only.
 - Keep alias/provisioned concurrency as a future option only. The next latency targets
   are 150-user admission retries and rare outside-Lambda transit outliers.

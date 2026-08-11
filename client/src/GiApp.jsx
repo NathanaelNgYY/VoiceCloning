@@ -153,13 +153,14 @@ export default function GiApp() {
           }
         />
         <Route
-          path="/supervisor"
+          path="/admin"
           element={
             <ProtectedRoute>
               <SupervisorDashboardPage />
             </ProtectedRoute>
           }
         />
+        <Route path="/supervisor" element={<Navigate to="/admin" replace />} />
         <Route
           path="/chat"
           element={

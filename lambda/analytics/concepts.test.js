@@ -65,6 +65,33 @@ test('semantic agreement keeps repeated-question evidence when the video moved',
   assert.equal(result?.weight, 1);
 });
 
+test('a concept question is weak evidence without requiring repetition', () => {
+  const semantic = evidenceFromEvent({
+    lessonSlug: 'gi-bleeding',
+    eventName: 'question_asked',
+    videoTime: 520,
+    properties: { semanticConceptId: 'endoscopy', semanticConfidence: 1 },
+  });
+  assert.equal(semantic?.concept.id, 'endoscopy');
+  assert.equal(semantic?.signal, 'concept_question');
+  assert.equal(semantic?.weight, 0.5);
+
+  const timestamp = evidenceFromEvent({
+    lessonSlug: 'gi-bleeding',
+    eventName: 'question_asked',
+    videoTime: 520,
+    properties: {},
+  });
+  assert.equal(timestamp?.concept.id, 'lower-gi-bleeding');
+  assert.equal(timestamp?.weight, 0.5);
+  assert.equal(evidenceFromEvent({
+    lessonSlug: 'gi-bleeding',
+    eventName: 'question_asked',
+    videoTime: 390,
+    properties: { isRepeated: true, semanticConceptId: 'endoscopy', semanticConfidence: 1 },
+  }), null);
+});
+
 test('unknown or low-confidence semantic concepts cannot override timestamp disagreement', () => {
   const base = {
     lessonSlug: 'gi-bleeding',

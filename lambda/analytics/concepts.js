@@ -34,6 +34,16 @@ export function conceptsForLesson(lessonSlug) {
 export function evidenceFromEvent(event) {
   const concept = conceptAt(event?.lessonSlug, event?.videoTime);
 
+  if (event?.eventName === 'question_asked') {
+    if (event.properties?.isRepeated === true) return null;
+    const semanticConcept = conceptById(event.lessonSlug, event.properties?.semanticConceptId);
+    const semanticConfidence = Number(event.properties?.semanticConfidence);
+    if (semanticConcept && semanticConfidence >= 0.75) {
+      return { concept: semanticConcept, signal: 'concept_question', weight: 0.5 };
+    }
+    return concept ? { concept, signal: 'concept_question', weight: 0.5 } : null;
+  }
+
   if (event?.eventName === 'repeated_question') {
     const semanticConcept = conceptById(event.lessonSlug, event.properties?.semanticConceptId);
     const semanticConfidence = Number(event.properties?.semanticConfidence);

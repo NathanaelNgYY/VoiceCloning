@@ -1,8 +1,11 @@
 # Active TODO
 
+- [ ] Browser-verify deployed dev `/admin` with an allowlisted Microsoft account: home button,
+  graph sort/filter, cohort counts, detailed evidence, prefetched S3 Events, and mobile layout.
+
 - [ ] Verify the live conservative support model: a pause/transcript scroll must not affect a
   concept, two rewinds must produce only `possible_support`, and two delayed “even simpler”
-  requests must produce `support_recommended` then saturate. Verify supervisor Reset. Future:
+  requests must produce `support_recommended` and further evidence must rise with diminishing returns. Verify supervisor Reset. Future:
   add learner confirmation, knowledge checks, and a separate learner-controlled persistent
   explanation-style preference. Do not deploy analytics to staging.
 - [ ] Verify the supervisor cohort ranking with at least two identified test learners: only one

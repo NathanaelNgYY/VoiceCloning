@@ -79,6 +79,27 @@ test('learner summary reads drop evidence after the rolling window without a new
   assert.match(summary.summary, /no recent behaviour signals/i);
 });
 
+test('learner detail includes historical user questions from stored conversation turns', async () => {
+  const client = {
+    async send(command) {
+      assert.equal(command.constructor.name, 'QueryCommand');
+      return { Items: [
+        { SK: 'PROFILE', displayName: 'Student One' },
+        { SK: 'SESSION#session-1#TURN#000001', role: 'user', text: 'What is melaena?', ts: '2026-08-07T11:00:00.000Z' },
+        { SK: 'SESSION#session-1#TURN#000002', role: 'assistant', text: 'An answer', ts: '2026-08-07T11:00:01.000Z' },
+        { SK: 'SESSION#session-2#TURN#000001', role: 'user', text: 'When should endoscopy happen?', ts: '2026-08-07T12:00:00.000Z' },
+      ] };
+    },
+  };
+  const repository = createLearnerRepository({ tableName: 'learners', client });
+  const detail = await repository.getUserLearningState('user-1');
+  assert.deepEqual(detail.questions.map((question) => question.questionText), [
+    'When should endoscopy happen?',
+    'What is melaena?',
+  ]);
+  assert.equal(detail.questions[0].source, 'conversation_transcript');
+});
+
 test('concept cohort ranks by distinct learners at the strong support threshold', async () => {
   const occurredAt = '2026-08-07T11:00:00.000Z';
   const conceptItem = (oid, conceptId, conceptLabel, events) => ({

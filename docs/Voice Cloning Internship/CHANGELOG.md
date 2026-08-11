@@ -1,5 +1,74 @@
 # Changelog
 
+## 2026-08-11
+
+- Simplified the Admin Questions tab to use DynamoDB retained conversation turns as its sole source;
+  S3 remains the Events audit/analytics lake and is no longer merged into the question list. Client
+  analytics tests 4/4 and GI build passed. Deployed client `assets/index-CIZWx4bL.js`; CloudFront
+  invalidation `I7PIECXNT3I9XX7U60WL3DNSOQ` created.
+
+- Synced the Admin Questions tab with retained DynamoDB conversation turns, so questions from before
+  `question_asked` analytics was introduced now appear alongside newer S3 analytics questions. The UI
+  deduplicates matching text within 30 seconds and labels transcript-only history; this is a read-only
+  history merge and does not synthesize analytics evidence or change old scores. Also corrected repeated
+  questions so their stored `question_asked` record is scoring-neutral: a repeat receives only its
+  independent weight-1.0 signal, while an ordinary question receives weight 0.5. Lambda 169/169 and GI
+  build passed. Deployed Lambda SHA `3pOuxtlfBowhU7xwgtk1fxDqyFnjGeylhx8KAbJ5Vks=` and client
+  `assets/index-weH0TlqD.js`; invalidation `I9RZEH6YNJ7BZDUJT7YRO5JCAM` created.
+
+- Added authenticated `question_asked` events that retain question text up to 500
+  characters in the verified-subject per-user lake, add `concept_question` evidence at weight
+  0.5 without requiring repetition, and preserve the separate stronger repeated-question bonus at 1.0.
+  Admin gains
+  a newest-first Questions tab with five-row paging; the contradictory session-only history copy now
+  matches the existing 90-day login notice. Tests: Lambda 168/168, focused client 16/16, GI build.
+  Deployed dev Lambda SHA `LmaIRq5TGi84/O6k89POtqur7frl04yrrNbAv4bGDk0=` and client
+  `assets/index-BAHnDogJ.js`; invalidation `IAHLVFW2NU88X128KFDBF7F7FH` completed.
+
+- Reduced Learning signals density: each concept now starts with its five newest evidence events,
+  expands five at a time, and can collapse to five. Reworked the cohort graph to suppress zero-value
+  labels, use a clean axis/plot, and move long concept names into a numbered two-column ranking key.
+  Client analytics tests 4/4 and GI build passed. Deployed bundle `assets/index-D4DYkxRa.js`;
+  CloudFront invalidation `IB23YLOP89ML11KEWH6GKRU58M` completed.
+
+- Changed each Learning signals evidence row from a misleading base `weight` label to its current
+  effective score contribution after 14-day decay and logarithmic rank discount, while keeping the
+  base weight secondary. Added a deterministic helper/test mirroring the backend formula (4/4 client
+  analytics tests pass). Deployed GI bundle `assets/index-CpjVgO1x.js`; CloudFront invalidation
+  `IORVV4ED6Q0AX0CU95RT6JQC0` completed.
+
+- Replayed the per-user raw S3 lake through the current learner scorer after verifying that the
+  earlier two-per-signal model left DynamoDB with only four Endoscopy events while S3 contained
+  16 qualifying Endoscopy events. Added `scripts/backfill-learner-evidence.mjs` with dry-run default
+  and explicit `--apply`. Dry run found two learners, 96 raw events, and 17 qualifying events; apply
+  updated two concepts for the affected learner. DynamoDB read-back verified Endoscopy at 16 retained
+  events, score 3.27, `support_recommended`, and Presentation/epidemiology at one event/0.42.
+
+- Replaced the hidden `/supervisor` UI with a visible `/admin` analytics experience on dev;
+  `/supervisor` redirects for compatibility. The home page links to Admin analytics. The dashboard
+  shows every authored concept, ranks by support-recommended then possible-support learner counts,
+  offers interactive filters, cohort totals, individual summaries/signals, and an Events tab.
+  Events remain supervisor-authorized server-side. A slow request-time global-lake fallback was
+  removed: new batches now write once to a verified-subject per-user S3 lake, and 32 valid identified
+  batches from the retained 44-object global archive were backfilled (12 non-user/invalid records
+  skipped; nothing deleted). Events prefetch on learner selection and read newest batches 25-way in
+  parallel until the 500-event cap. The browser never receives S3 credentials. Files: `client/src/GiApp.jsx`,
+  `client/src/pages/SearchPage.jsx`, `client/src/pages/SupervisorDashboardPage.jsx`,
+  `client/src/services/learnerAnalytics.js`, `lambda/analytics/index.js`,
+  `lambda/learners/eventRepository.js`, `lambda/learners/index.js`, `lambda/learners/repository.js`,
+  `lambda/router.js`, and tests. Full Lambda suite: 165/165 pass. GI production build passed with the
+  existing bundle-size warning. The final dashboard uses an animated grouped vertical concept graph;
+  the cramped Table mode was removed. Learning signals separates status, decayed score, qualifying count, signal
+  types, and individual evidence timestamps/weights. Fixed the Events effect self-cancelling its
+  successful response, added an action-count summary, newest-first 10-row paging, and a spacious
+  responsive graph with reduced-motion-safe staggered animation. Removed the unintended 3-point hard
+  score cap and changed decay to apply per logarithmic rank, so stale retained events cannot suppress
+  newer evidence. Thresholds are now visible in Learning signals. Deployed dev Lambda SHA
+  `07MyViCb7NCCTed3O0JXXdPcZR2RdwWmxAPQnL7L2j4=` and GI bundle `assets/index-CjftY7ww.js`;
+  invalidation `I19PYX6HN731WSDOKR0IOAQJBM` completed. Direct S3-reader
+  verification returned the allowlisted user's 93 events in 289ms, untruncated. Signed-in visual
+  interaction remains to be browser-verified. Staging unchanged.
+
 ## 2026-08-10
 
 - Stopped rewriting an unchanged lesson summary on every analytics batch. `recordBatch`

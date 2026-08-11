@@ -18,7 +18,7 @@ export function ChatHistory({ onNewChat }) {
 
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         <p className="px-1 text-xs text-ink-muted">
-          This session only — conversations are not saved.
+          This chat view resets with the session. Questions are retained for 90 days for learning review.
         </p>
       </div>
     </div>

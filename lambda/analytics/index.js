@@ -19,6 +19,7 @@ const EVENT_NAMES = new Set([
   'video_seek',
   'video_ended',
   'transcript_scrolled',
+  'question_asked',
   'repeated_question',
 ]);
 
@@ -35,6 +36,8 @@ const PROPERTY_KEYS = new Set([
   'timeSincePreviousSeconds',
   'semanticConceptId',
   'semanticConfidence',
+  'questionText',
+  'isRepeated',
 ]);
 
 function safeString(value, maxLength) {
@@ -47,18 +50,19 @@ function safeNumber(value, { min = -28800, max = 28800 } = {}) {
     : null;
 }
 
-function sanitizeProperties(properties) {
+function sanitizeProperties(properties, eventName) {
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return {};
   const result = {};
   for (const [key, value] of Object.entries(properties)) {
     if (!PROPERTY_KEYS.has(key)) continue;
+    if (key === 'questionText' && eventName !== 'question_asked') continue;
     if (typeof value === 'number') {
       const number = safeNumber(value);
       if (number !== null) result[key] = number;
     } else if (typeof value === 'boolean') {
       result[key] = value;
     } else if (typeof value === 'string') {
-      result[key] = safeString(value, 40);
+      result[key] = safeString(value, key === 'questionText' ? 500 : 40);
     }
   }
   return result;
@@ -91,13 +95,19 @@ export function sanitizeAnalyticsEvent(value, receivedAt = new Date()) {
     eventName,
     lessonSlug,
     ...(videoTime === null ? {} : { videoTime }),
-    properties: sanitizeProperties(value.properties),
+    properties: sanitizeProperties(value.properties, eventName),
   };
 }
 
 export function buildAnalyticsObjectKey(receivedAt, batchId) {
   const iso = receivedAt.toISOString();
   return `analytics/events/date=${iso.slice(0, 10)}/hour=${iso.slice(11, 13)}/${batchId}.json.gz`;
+}
+
+export function buildUserAnalyticsObjectKey(oid, receivedAt, batchId) {
+  const safeOid = String(oid || '').replace(/[^A-Za-z0-9-]/gu, '');
+  const iso = receivedAt.toISOString();
+  return `analytics/users/${safeOid}/date=${iso.slice(0, 10)}/hour=${iso.slice(11, 13)}/${batchId}.json.gz`;
 }
 
 export async function handleAnalytics(event, {
@@ -140,9 +150,10 @@ export async function handleAnalytics(event, {
     subject: { type: identity.synthetic ? 'synthetic' : 'entra', oid: identity.oid },
     events,
   };
+  const compressed = gzipSync(Buffer.from(JSON.stringify(record) + '\n', 'utf8'));
   await upload(
-    buildAnalyticsObjectKey(receivedAt, batchId),
-    gzipSync(Buffer.from(JSON.stringify(record) + '\n', 'utf8')),
+    buildUserAnalyticsObjectKey(identity.oid, receivedAt, batchId),
+    compressed,
     'application/x-ndjson',
   );
   const learnerResult = learnerStore

@@ -42,6 +42,12 @@ export function createLearnerRepository({
         evidenceScore: state.evidenceScore,
         evidenceCount: state.evidenceCount,
         signals: [...state.signals],
+        evidenceEvents: (state.evidenceEvents || []).map((event) => ({
+          eventId: event.eventId,
+          signal: event.signal,
+          weight: event.weight,
+          occurredAt: event.occurredAt,
+        })),
       })),
       updatedAt: at.toISOString(),
     };
@@ -96,6 +102,15 @@ export function createLearnerRepository({
     }
     return {
       profile: items.find((item) => item.SK === 'PROFILE') || null,
+      questions: items
+        .filter((item) => /^SESSION#[^#]+#TURN#\d+$/u.test(item.SK || '') && item.role === 'user' && item.text)
+        .map((item) => ({
+          id: item.SK,
+          questionText: String(item.text).slice(0, 500),
+          occurredAt: item.ts || '',
+          source: 'conversation_transcript',
+        }))
+        .sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()),
       lessons: [...conceptsByLesson.entries()]
         .map(([lessonSlug, states]) => summaryFromStates(oid, lessonSlug, states, at)),
     };
@@ -123,6 +138,7 @@ export function createLearnerRepository({
       strongSupportLearners: 0,
       supportRecommendedLearners: 0,
       possibleSupportLearners: 0,
+      noSupportInferenceLearners: 0,
     }]));
     for (const item of items) {
       const aggregate = byConcept.get(item.conceptId);
@@ -131,6 +147,7 @@ export function createLearnerRepository({
       if (state.evidenceScore >= STRONG_SUPPORT_SCORE) aggregate.strongSupportLearners += 1;
       if (state.status === 'support_recommended') aggregate.supportRecommendedLearners += 1;
       if (state.status === 'possible_support') aggregate.possibleSupportLearners += 1;
+      if (state.status === 'no_support_inference') aggregate.noSupportInferenceLearners += 1;
     }
     const totalLearners = users.length;
     const rankedConcepts = [...byConcept.values()]
@@ -138,6 +155,12 @@ export function createLearnerRepository({
         ...concept,
         strongSupportPercent: totalLearners > 0
           ? Math.round((concept.strongSupportLearners / totalLearners) * 1000) / 10
+          : 0,
+        supportRecommendedPercent: totalLearners > 0
+          ? Math.round((concept.supportRecommendedLearners / totalLearners) * 1000) / 10
+          : 0,
+        possibleSupportPercent: totalLearners > 0
+          ? Math.round((concept.possibleSupportLearners / totalLearners) * 1000) / 10
           : 0,
       }))
       .sort((left, right) => (

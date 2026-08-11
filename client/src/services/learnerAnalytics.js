@@ -52,6 +52,10 @@ export function getSupervisorUser(oid) {
   return authorizedGet(`/api/supervisor/users/${encodeURIComponent(oid)}`);
 }
 
+export function getSupervisorUserEvents(oid) {
+  return authorizedGet(`/api/supervisor/users/${encodeURIComponent(oid)}/events`);
+}
+
 export function resetSupervisorConcept(oid, lessonSlug, conceptId) {
   return authorizedDelete(`/api/supervisor/users/${encodeURIComponent(oid)}/lessons/${encodeURIComponent(lessonSlug)}/concepts/${encodeURIComponent(conceptId)}`);
 }

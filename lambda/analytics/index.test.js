@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { gunzipSync } from 'node:zlib';
 import test from 'node:test';
 
-import { buildAnalyticsObjectKey, handleAnalytics, sanitizeAnalyticsEvent } from './index.js';
+import { buildAnalyticsObjectKey, buildUserAnalyticsObjectKey, handleAnalytics, sanitizeAnalyticsEvent } from './index.js';
 
 const NOW = new Date('2026-08-03T04:05:06.000Z');
 
@@ -57,19 +57,44 @@ test('buildAnalyticsObjectKey partitions batches by UTC date and hour', () => {
   );
 });
 
-test('handleAnalytics stores one compressed batch under the verified subject', async () => {
-  let uploaded;
+test('question analytics retains bounded text only for the authenticated per-user record', () => {
+  const sanitized = sanitizeAnalyticsEvent(event({
+    eventName: 'question_asked',
+    videoTime: 390,
+    properties: {
+      questionText: `Why is endoscopy needed?${'x'.repeat(600)}`,
+      semanticConceptId: 'endoscopy',
+      semanticConfidence: 1,
+      isRepeated: true,
+    },
+  }), NOW);
+  assert.equal(sanitized.properties.questionText.length, 500);
+  assert.equal(sanitized.properties.semanticConceptId, 'endoscopy');
+  assert.equal(sanitized.properties.isRepeated, true);
+});
+
+test('buildUserAnalyticsObjectKey creates a server-verified per-user index', () => {
+  assert.equal(
+    buildUserAnalyticsObjectKey('verified-oid', NOW, 'batch-1'),
+    'analytics/users/verified-oid/date=2026-08-03/hour=04/batch-1.json.gz',
+  );
+});
+
+test('handleAnalytics stores one per-user compressed batch under the verified subject', async () => {
+  const uploads = [];
   const response = await handleAnalytics({
     body: JSON.stringify({ schemaVersion: 1, events: [event()] }),
   }, {
     identity: { oid: 'verified-oid', synthetic: false },
     now: () => NOW,
     createBatchId: () => 'batch-1',
-    upload: async (key, body, contentType) => { uploaded = { key, body, contentType }; },
+    upload: async (key, body, contentType) => { uploads.push({ key, body, contentType }); },
   });
   assert.equal(response.statusCode, 200);
-  assert.equal(uploaded.key, 'analytics/events/date=2026-08-03/hour=04/batch-1.json.gz');
-  const stored = JSON.parse(gunzipSync(uploaded.body).toString('utf8'));
+  assert.deepEqual(uploads.map((item) => item.key), [
+    'analytics/users/verified-oid/date=2026-08-03/hour=04/batch-1.json.gz',
+  ]);
+  const stored = JSON.parse(gunzipSync(uploads[0].body).toString('utf8'));
   assert.deepEqual(stored.subject, { type: 'entra', oid: 'verified-oid' });
   assert.equal(stored.events.length, 1);
 });

@@ -12,6 +12,9 @@ const repository = {
   getConceptCohort: async (lessonSlug) => ({ lessonSlug, totalLearners: 1, concepts: [] }),
   resetConcept: async (oid, lessonSlug, conceptId) => ({ reset: true, oid, lessonSlug, conceptId }),
 };
+const eventRepository = {
+  getUserEvents: async (oid) => ({ events: [{ eventId: 'event-1', oid }], truncated: false }),
+};
 
 function event(path, queryStringParameters = null, method = 'GET') {
   return {
@@ -94,4 +97,19 @@ test('only a supervisor can reset one learner concept', async () => {
     lessonSlug: 'gi-bleeding',
     conceptId: 'endoscopy',
   });
+});
+
+test('only a supervisor can read one learner event history', async () => {
+  const path = '/api/supervisor/users/user-1/events';
+  const denied = await handleLearners(event(path), { guard, repository, eventRepository });
+  assert.equal(denied.statusCode, 403);
+
+  const supervisorGuard = { authorize: async () => ({ ...identity, roles: ['Supervisor'] }) };
+  const response = await handleLearners(event(path), {
+    guard: supervisorGuard,
+    repository,
+    eventRepository,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).events[0].oid, 'user-1');
 });

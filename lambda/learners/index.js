@@ -1,6 +1,7 @@
 import { err, ok } from '../shared/cors.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { createLearnerRepository } from './repository.js';
+import { createAnalyticsEventRepository } from './eventRepository.js';
 
 function pathOf(event) {
   return event?.rawPath || event?.requestContext?.http?.path || event?.path || '';
@@ -15,6 +16,7 @@ function supervisorAllowed(identity, env = process.env) {
 export async function handleLearners(event, {
   guard = createLiveAuthGuard(),
   repository = createLearnerRepository(),
+  eventRepository = createAnalyticsEventRepository(),
   env = process.env,
 } = {}) {
   if (!guard || !repository) return err(503, 'Learner analytics is not configured.', event);
@@ -45,6 +47,11 @@ export async function handleLearners(event, {
   if (pathname === '/api/supervisor/concepts') {
     const lessonSlug = String(event?.queryStringParameters?.lesson || 'gi-bleeding').slice(0, 80);
     return ok(await repository.getConceptCohort(lessonSlug), {}, event);
+  }
+
+  const eventsMatch = /^\/api\/supervisor\/users\/([^/]+)\/events$/u.exec(pathname);
+  if (eventsMatch) {
+    return ok(await eventRepository.getUserEvents(decodeURIComponent(eventsMatch[1])), {}, event);
   }
 
   const match = /^\/api\/supervisor\/users\/([^/]+)$/u.exec(pathname);
