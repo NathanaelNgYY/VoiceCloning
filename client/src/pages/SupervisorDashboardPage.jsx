@@ -145,7 +145,10 @@ function ConceptRanking({ cohort }) {
         {concepts.length > 0 ? (
           <>
             <div role="img" aria-label="Grouped vertical bar chart of learner support states by concept">
-              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-6">
+              {/* The horizontal scroll here also clips vertically, so the hover
+                  card has to fit inside the box: pt-28 reserves its height
+                  above the plot instead of letting it overflow and vanish. */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/70 p-4 pt-28 sm:p-6 sm:pt-28">
                 <div className="grid min-w-[680px] grid-cols-[2rem_1fr] gap-3">
                   <div className="flex h-52 flex-col justify-between pb-7 text-right font-mono text-[10px] text-slate-400">
                     <span>{maxCount}</span>
@@ -155,12 +158,23 @@ function ConceptRanking({ cohort }) {
                   <div>
                     <div className="relative h-44 border-b border-slate-300 bg-[linear-gradient(to_bottom,transparent_49.5%,rgb(226_232_240)_50%,transparent_50.5%)]">
                       <div className="absolute inset-0 flex items-end justify-around gap-3 px-2">
-                        {concepts.map((concept, index) => (
-                          <div key={concept.conceptId} className="group relative flex h-full min-w-12 flex-1 items-end justify-center gap-0.5">
+                        {concepts.map((concept, index) => {
+                          // The card is wider than a bar slot, so the outermost
+                          // columns anchor to their own edge; centring them
+                          // would push the card past the plot and clip it.
+                          const anchor = index === 0
+                            ? 'left-0'
+                            : index === concepts.length - 1
+                              ? 'right-0'
+                              : 'left-1/2 -translate-x-1/2';
+                          return (
+                          // hover:z-30 lifts the hovered column above the
+                          // columns after it, which otherwise paint over the card.
+                          <div key={concept.conceptId} className="group relative flex h-full min-w-12 flex-1 items-end justify-center gap-0.5 hover:z-30">
                             {/* Hover layer: the axis is numbered, so the concept
                                 name and its two counts have to be reachable
                                 without hunting down the list below. */}
-                            <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 w-48 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-3 text-left opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                            <div className={`pointer-events-none absolute bottom-full ${anchor} z-10 mb-2 w-48 rounded-xl border border-slate-200 bg-white p-3 text-left opacity-0 shadow-lg ring-1 ring-slate-900/5 transition-opacity group-hover:opacity-100`}>
                               <p className="text-xs font-semibold leading-4 text-slate-900">{concept.conceptLabel}</p>
                               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-600">
                                 <i className="size-2 rounded-full bg-chart-recommended" />
@@ -186,7 +200,8 @@ function ConceptRanking({ cohort }) {
                               </div>
                             ))}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="flex justify-around gap-3 pt-2">
