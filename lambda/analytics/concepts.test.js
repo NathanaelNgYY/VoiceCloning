@@ -31,21 +31,32 @@ test('derives evidence from recorded behavior rather than inventing it', () => {
   });
 });
 
-test('weights a repeated question only when both timestamps belong to the same concept', () => {
+test('weights a repeated question from its text, never from where the video sat', () => {
   const event = {
     lessonSlug: 'gi-bleeding',
     eventName: 'repeated_question',
     videoTime: 390,
-    properties: { previousVideoTime: 380, similarity: 0.8 },
+    properties: {
+      previousVideoTime: 380,
+      similarity: 0.8,
+      semanticConceptId: 'endoscopy',
+      semanticConfidence: 1,
+    },
   };
   assert.equal(evidenceFromEvent(event)?.weight, 1);
+  // The playhead used to decide this on its own; now an unclassified repeat is
+  // no evidence, and a classified one is unaffected by where the video sat.
   assert.equal(evidenceFromEvent({
     ...event,
-    properties: { previousVideoTime: 520, similarity: 0.8 },
+    properties: { previousVideoTime: 380, similarity: 0.8 },
   }), null);
   assert.equal(evidenceFromEvent({
     ...event,
-    properties: { previousVideoTime: 380, similarity: 0.5 },
+    properties: { ...event.properties, previousVideoTime: 520 },
+  })?.concept.id, 'endoscopy');
+  assert.equal(evidenceFromEvent({
+    ...event,
+    properties: { ...event.properties, similarity: 0.5 },
   }), null);
 });
 
@@ -76,14 +87,13 @@ test('a concept question is weak evidence without requiring repetition', () => {
   assert.equal(semantic?.signal, 'concept_question');
   assert.equal(semantic?.weight, 0.5);
 
-  const timestamp = evidenceFromEvent({
+  // An unclassifiable question is not attributed to whatever was on screen.
+  assert.equal(evidenceFromEvent({
     lessonSlug: 'gi-bleeding',
     eventName: 'question_asked',
     videoTime: 520,
     properties: {},
-  });
-  assert.equal(timestamp?.concept.id, 'lower-gi-bleeding');
-  assert.equal(timestamp?.weight, 0.5);
+  }), null);
   assert.equal(evidenceFromEvent({
     lessonSlug: 'gi-bleeding',
     eventName: 'question_asked',
