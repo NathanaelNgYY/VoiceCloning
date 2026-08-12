@@ -38,11 +38,14 @@ const EVENT_LABELS = Object.freeze({
 
 // One place for the shared control shapes, so a button in the header, the
 // evidence list and the timeline cannot quietly drift apart.
-const CARD = 'rounded-3xl border border-slate-200 bg-white shadow-sm';
+// Shapes taken from the GI design file's palette tile: white cards on the
+// #EFEFEF ground, a hairline rather than a drawn border, and pill controls that
+// carry the brand colour in their text and outline instead of a grey chrome.
+const CARD = 'rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgb(0_0_0/0.04)]';
 const FOCUS = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2';
 const BTN_BASE = `inline-flex cursor-pointer items-center justify-center gap-2 rounded-full text-sm font-semibold transition ${FOCUS}`;
-const BTN_OUTLINE = `${BTN_BASE} border border-slate-200 bg-white px-4 py-2 text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98]`;
-const BTN_OUTLINE_SM = `${BTN_BASE} border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98]`;
+const BTN_OUTLINE = `${BTN_BASE} border border-primary/20 bg-white px-4 py-2 text-primary hover:bg-primary-soft active:scale-[0.98]`;
+const BTN_OUTLINE_SM = `${BTN_BASE} border border-primary/20 bg-white px-3 py-1.5 text-xs text-primary hover:bg-primary-soft active:scale-[0.98]`;
 const BTN_GHOST_SM = `${BTN_BASE} px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-800 active:scale-[0.98]`;
 const BTN_DANGER_SM = `${BTN_BASE} border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-700 shadow-sm hover:border-rose-300 hover:bg-rose-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60`;
 const SECTION_LABEL = 'text-[11px] font-semibold uppercase tracking-[0.18em] text-primary';
@@ -56,12 +59,12 @@ function AdminSkeleton() {
   return (
     <div className="space-y-6 animate-pulse" aria-label="Loading admin analytics">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[1, 2, 3, 4].map((key) => <div key={key} className="h-28 rounded-3xl bg-slate-200/70" />)}
+        {[1, 2, 3, 4].map((key) => <div key={key} className="h-28 rounded-2xl bg-black/[0.06]" />)}
       </div>
-      <div className="h-96 rounded-3xl bg-slate-200/70" />
+      <div className="h-96 rounded-2xl bg-black/[0.06]" />
       <div className="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]">
-        <div className="h-72 rounded-3xl bg-slate-200/70" />
-        <div className="h-72 rounded-3xl bg-slate-200/70" />
+        <div className="h-72 rounded-2xl bg-black/[0.06]" />
+        <div className="h-72 rounded-2xl bg-black/[0.06]" />
       </div>
     </div>
   );
@@ -112,17 +115,17 @@ function ConceptRanking({ cohort }) {
 
   return (
     <section className={`${CARD} overflow-hidden`} aria-labelledby="cohort-heading">
-      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 px-6 py-5 sm:px-8">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-black/5 px-6 py-5 sm:px-8">
         <div>
           <p className={SECTION_LABEL}>Cohort overview</p>
-          <h2 id="cohort-heading" className="mt-1.5 text-xl font-semibold tracking-tight text-slate-900">
+          <h2 id="cohort-heading" className="mt-1.5 text-xl font-bold tracking-tight text-slate-900">
             Where learners may benefit from support
           </h2>
           <p className="mt-1.5 max-w-xl text-sm leading-6 text-slate-500">
             Behavioural signals are prompts for review, not grades or proof that a learner is struggling.
           </p>
         </div>
-        <div className="flex rounded-full bg-slate-100 p-1" aria-label="Filter concept ranking">
+        <div className="flex rounded-full bg-black/[0.05] p-1" aria-label="Filter concept ranking">
           {[
             ['all', 'All'],
             ['recommended', 'Recommended'],
@@ -133,7 +136,7 @@ function ConceptRanking({ cohort }) {
               type="button"
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
-              className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${FOCUS} ${filter === value ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${FOCUS} ${filter === value ? 'bg-primary text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               {label}
             </button>
@@ -148,7 +151,7 @@ function ConceptRanking({ cohort }) {
               {/* The horizontal scroll here also clips vertically, so the hover
                   card has to fit inside the box: pt-28 reserves its height
                   above the plot instead of letting it overflow and vanish. */}
-              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/70 p-4 pt-28 sm:p-6 sm:pt-28">
+              <div className="overflow-x-auto rounded-2xl border border-black/5 bg-canvas p-4 pt-28 sm:p-6 sm:pt-28">
                 <div className="grid min-w-[680px] grid-cols-[2rem_1fr] gap-3">
                   <div className="flex h-52 flex-col justify-between pb-7 text-right font-mono text-[10px] text-slate-400">
                     <span>{maxCount}</span>
@@ -174,7 +177,7 @@ function ConceptRanking({ cohort }) {
                             {/* Hover layer: the axis is numbered, so the concept
                                 name and its two counts have to be reachable
                                 without hunting down the list below. */}
-                            <div className={`pointer-events-none absolute bottom-full ${anchor} z-10 mb-2 w-48 rounded-xl border border-slate-200 bg-white p-3 text-left opacity-0 shadow-lg ring-1 ring-slate-900/5 transition-opacity group-hover:opacity-100`}>
+                            <div className={`pointer-events-none absolute bottom-full ${anchor} z-10 mb-2 w-48 rounded-xl border border-black/5 bg-white p-3 text-left opacity-0 shadow-lg ring-1 ring-slate-900/5 transition-opacity group-hover:opacity-100`}>
                               <p className="text-xs font-semibold leading-4 text-slate-900">{concept.conceptLabel}</p>
                               <p className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-600">
                                 <i className="size-2 rounded-full bg-chart-recommended" />
@@ -218,7 +221,7 @@ function ConceptRanking({ cohort }) {
               </div>
             </div>
 
-            <div className="mt-7 border-t border-slate-200 pt-5">
+            <div className="mt-7 border-t border-black/5 pt-5">
               <h3 className="text-sm font-semibold text-slate-900">Concept ranking</h3>
               <p className="mt-1 text-xs text-slate-500">Sorted by support recommended, then possible support.</p>
               <ol className="mt-3 grid gap-x-8 sm:grid-cols-2">
@@ -236,7 +239,7 @@ function ConceptRanking({ cohort }) {
             </div>
           </>
         ) : (
-          <p className="rounded-2xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">No concepts match this filter yet.</p>
+          <p className="rounded-2xl border border-dashed border-black/10 px-4 py-10 text-center text-sm text-slate-500">No concepts match this filter yet.</p>
         )}
       </div>
     </section>
@@ -261,7 +264,7 @@ function EvidenceList({ events, resetKey }) {
   useEffect(() => setVisibleCount(5), [resetKey]);
   return (
     <>
-      <ol className="mt-2 divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4">
+      <ol className="mt-2 divide-y divide-slate-100 rounded-2xl border border-black/5 bg-white px-4">
         {events.slice(0, visibleCount).map((evidence, eventIndex) => (
           <li key={evidence.eventId || `${evidence.signal}-${eventIndex}`} className="grid gap-1 py-3 sm:grid-cols-[1fr_auto] sm:items-center">
             <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
@@ -295,7 +298,7 @@ function QuestionsPanel({ loading, error, oid, questions = [] }) {
   if (error) return <p className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>;
   if (questions.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-10 text-center">
+      <div className="rounded-2xl border border-dashed border-black/10 px-5 py-10 text-center">
         <MessageSquareText className="mx-auto size-6 text-slate-300" aria-hidden="true" />
         <p className="mt-3 text-sm font-semibold text-slate-700">No stored questions yet</p>
         <p className="mt-1 text-xs leading-5 text-slate-500">No learner questions were found in the retained conversation history.</p>
@@ -311,7 +314,7 @@ function QuestionsPanel({ loading, error, oid, questions = [] }) {
         </div>
         <span className="font-mono text-xs text-slate-500">{questions.length} total</span>
       </div>
-      <ol className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4">
+      <ol className="divide-y divide-slate-100 rounded-2xl border border-black/5 bg-white px-4">
         {questions.slice(0, visibleCount).map((question) => (
           <li key={question.id} className="py-4">
             <p className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{question.questionText}</p>
@@ -360,14 +363,14 @@ function EventTimeline({ state }) {
   }
   if (state.error) return <p className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{state.error}</p>;
   if (state.events.length === 0) {
-    return <p className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">No stored lesson actions were found for this learner.</p>;
+    return <p className="rounded-2xl border border-dashed border-black/10 p-6 text-sm text-slate-500">No stored lesson actions were found for this learner.</p>;
   }
   return (
     <div className="space-y-6">
       {state.truncated && (
         <p className="rounded-2xl bg-amber-50 p-3 text-xs text-amber-900">Showing the newest 500 actions. Older stored events were not returned.</p>
       )}
-      <section aria-labelledby="event-summary-heading" className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
+      <section aria-labelledby="event-summary-heading" className="rounded-2xl border border-black/5 bg-canvas p-5">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h4 id="event-summary-heading" className="text-sm font-semibold text-slate-900">Action summary</h4>
@@ -377,7 +380,7 @@ function EventTimeline({ state }) {
         </div>
         <dl className="mt-4 flex flex-wrap gap-2">
           {actionCounts.map((action) => (
-            <div key={action.key} className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
+            <div key={action.key} className="flex items-center gap-2 rounded-full border border-black/5 bg-white px-3 py-1.5 shadow-sm">
               <dt className="text-xs text-slate-600">{action.label}</dt>
               <dd className="font-mono text-xs font-semibold text-slate-900">{action.count}</dd>
             </div>
@@ -389,7 +392,7 @@ function EventTimeline({ state }) {
           <h4 className="text-sm font-semibold text-slate-900">Latest actions</h4>
           <span className="text-xs text-slate-500">Showing {Math.min(visibleCount, events.length)} of {events.length}</span>
         </div>
-        <ol className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4">
+        <ol className="divide-y divide-slate-100 rounded-2xl border border-black/5 bg-white px-4">
           {events.slice(0, visibleCount).map((event) => (
             <li key={`${event.batchId}:${event.eventId}`} className="grid gap-1 py-3 sm:grid-cols-[10rem_1fr_auto] sm:items-center">
               <time className="font-mono text-[11px] text-slate-500">{formatDate(event.occurredAt)}</time>
@@ -440,7 +443,7 @@ function ConceptCard({ concept, showEvidence, onReset, resetting, resetKey }) {
           [concept.evidenceCount, 'Qualifying events'],
           [concept.signals.length, 'Signal types'],
         ].map(([value, label]) => (
-          <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div key={label} className="rounded-2xl border border-black/5 bg-white p-4">
             <span className="block font-mono text-xl font-semibold leading-none text-slate-900">{value}</span>
             <span className="mt-2 block text-[11px] leading-4 text-slate-500">{label}</span>
           </div>
@@ -535,22 +538,17 @@ export function SupervisorDashboardPage() {
   }
 
   return (
-    <div className="relative min-h-[100dvh] bg-slate-50 text-slate-900">
-      {/* Same ambient dot field the lesson search uses, so the admin area reads
-          as part of the product rather than a separate internal tool. */}
-      <div
-        className="pointer-events-none absolute inset-0 z-0 opacity-[0.03]"
-        style={{ backgroundImage: 'radial-gradient(hsl(var(--primary)) 1px, transparent 1px)', backgroundSize: '24px 24px' }}
-      />
-
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/85 backdrop-blur">
+    <div className="relative min-h-[100dvh] bg-canvas text-slate-900">
+      {/* The design file puts white cards on a flat #EFEFEF ground with no
+          texture behind them, so there is no ambient pattern here. */}
+      <header className="sticky top-0 z-20 border-b border-black/5 bg-white">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-4 px-4 py-3.5 sm:px-8">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary-soft text-primary" aria-hidden="true">
             <BookOpenText className="size-5" />
           </span>
           <div className="min-w-0 flex-1">
             <p className={SECTION_LABEL}>Admin analytics</p>
-            <h1 className="text-base font-semibold tracking-tight text-slate-900">Learner support signals</h1>
+            <h1 className="text-base font-bold tracking-tight text-slate-900">Learner support signals</h1>
           </div>
           <button type="button" onClick={() => navigate('/')} className={BTN_OUTLINE}>
             <ArrowLeft className="size-4" aria-hidden="true" />
@@ -579,7 +577,7 @@ export function SupervisorDashboardPage() {
 
             <section className="grid gap-6 xl:grid-cols-[22rem_minmax(0,1fr)]" aria-label="Student analytics">
               <aside className={`${CARD} h-fit overflow-hidden`}>
-                <div className="border-b border-slate-200 px-5 py-4">
+                <div className="border-b border-black/5 px-5 py-4">
                   <h2 className="text-sm font-semibold text-slate-900">Students</h2>
                   <p className="mt-1 text-xs text-slate-500">{users.length} identified learner{users.length === 1 ? '' : 's'}</p>
                 </div>
@@ -615,9 +613,9 @@ export function SupervisorDashboardPage() {
                   </div>
                 ) : (
                   <>
-                    <h2 className="text-xl font-semibold tracking-tight text-slate-900">{selected.profile?.displayName || 'Learner'}</h2>
+                    <h2 className="text-xl font-bold tracking-tight text-slate-900">{selected.profile?.displayName || 'Learner'}</h2>
                     <p className="mt-1 text-sm text-slate-500">{selected.profile?.email}</p>
-                    <div className="mt-5 flex gap-1 overflow-x-auto border-b border-slate-200" role="tablist" aria-label="Learner detail">
+                    <div className="mt-5 flex gap-1 overflow-x-auto border-b border-black/5" role="tablist" aria-label="Learner detail">
                       {[
                         ['summary', 'Summary'],
                         ['signals', 'Learning signals'],
@@ -640,12 +638,12 @@ export function SupervisorDashboardPage() {
                     <div className="mt-6">
                       {activeTab === 'events' ? <EventTimeline state={eventState} /> : activeTab === 'questions' ? <QuestionsPanel oid={selected.oid} questions={selected.questions || []} /> : (
                         <div className="space-y-5">
-                          {(selected.lessons || []).length === 0 && <p className="rounded-2xl border border-dashed border-slate-300 p-6 text-sm text-slate-500">No lesson evidence has been recorded for this learner yet.</p>}
+                          {(selected.lessons || []).length === 0 && <p className="rounded-2xl border border-dashed border-black/10 p-6 text-sm text-slate-500">No lesson evidence has been recorded for this learner yet.</p>}
                           {(selected.lessons || []).map((lesson) => {
                             const analytics = lessonAnalytics(lesson);
                             const concepts = activeTab === 'signals' ? analytics.concepts : analytics.visibleConcepts;
                             return (
-                              <div key={lesson.SK || lesson.lessonSlug} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
+                              <div key={lesson.SK || lesson.lessonSlug} className="rounded-2xl border border-black/5 bg-canvas p-5">
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <div>
                                     <h3 className="text-sm font-semibold text-slate-900">{lesson.lessonSlug}</h3>

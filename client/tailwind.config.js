@@ -45,6 +45,7 @@ export default {
           recommended: "hsl(var(--chart-recommended, 308 59% 40%))",
           possible: "hsl(var(--chart-possible, 32 95% 44%))",
         },
+        canvas: "hsl(var(--gi-canvas, 0 0% 94%))",
         surface: "hsl(var(--gi-surface, 210 40% 98%))",
         ink: "hsl(var(--gi-ink, 215 25% 27%))",
         "ink-muted": "hsl(var(--gi-ink-muted, 215 16% 47%))",
