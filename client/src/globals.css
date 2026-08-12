@@ -159,12 +159,6 @@ audio {
   --primary-soft: 266 33% 96%; /* #f4f1f8 */
   --ring: 308 62% 30%;
 
-  /* Page ground behind the white cards, from the design file's palette tile
-     (#EFEFEF). Deliberately a new token rather than a redefinition of
-     --gi-surface: that one is already relied on by the lesson and chat
-     surfaces at its default, and this value is the design's page ground. */
-  --gi-canvas: 0 0% 94%; /* #efefef */
-
   /* Chart marks for the admin analytics. The recommended slot is a lighter step
      of the same 308 brand hue: #7c1d6f itself sits below the readable lightness
      band for a fill. The pair was validated for colour-vision deficiency
