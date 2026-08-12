@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-12
+
+- Redesigned the admin analytics dashboard onto the GI design tokens. `/admin` previously used raw
+  sky/rose accents belonging to no palette; brand maroon (`--primary`) now carries the eyebrow, tabs,
+  selected student, active filter and evidence badges. Added `--chart-recommended` (#a32a92, a lighter
+  step of the same 308 brand hue, because #7c1d6f is too dark to read as a fill) and `--chart-possible`
+  (#d97706) as chart tokens in `globals.css` plus `chart.*` in the Tailwind theme; the pair passes
+  lightness-band, chroma, CVD-separation and contrast checks against a white card. Layout: sticky brand
+  header carrying the back button, cohort totals promoted to a four-tile row, per-concept hover card on
+  the chart, ranking key moved below the plot, and the repeated show-more/button markup collapsed into
+  shared `BTN_*` constants and a `ShowMoreControls` component. Behaviour, scoring and API calls are
+  unchanged. Client analytics tests 4/4 and GI build passed; not visually verified in a browser.
+  Deployed dev client `assets/index-BTK_EMbh.js`; invalidation `I31F6NQVYBBV94IRQ5CB8KKDR` created.
+
 ## 2026-08-11
 
 - Simplified the Admin Questions tab to use DynamoDB retained conversation turns as its sole source;
