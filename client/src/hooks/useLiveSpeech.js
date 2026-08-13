@@ -1634,6 +1634,10 @@ export function useLiveSpeech({
       // the phase never leaves 'connecting', and the panel's Deploy/Reset stay
       // disabled behind a conversation that can never end.
       case 'session.auth.failed': {
+        // Clear the notice too: it still reads "Connected. Preparing live chat..."
+        // from onOpen, and leaving that beside the error tells the user the session
+        // is still coming up when it has already been refused.
+        setNotice('');
         setError(event.message || 'Live chat sign-in was refused.');
         endConversationFromSocket();
         break;
