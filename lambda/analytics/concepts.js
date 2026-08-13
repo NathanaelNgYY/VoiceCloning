@@ -14,6 +14,10 @@ const LESSON_CONCEPTS = new Map([
   ['gi-bleeding', GI_BLEEDING_CONCEPTS],
 ]);
 const REPEATED_QUESTION_SIMILARITY = 0.65;
+// Mirrors QUESTION_CONFIDENCE in client/src/lib/lessonAnalytics.js, which is
+// where the score this gates is produced. The client is not trusted to enforce
+// its own threshold, so the check is repeated here.
+const QUESTION_CONFIDENCE = 0.75;
 
 export function conceptAt(lessonSlug, seconds) {
   const time = Number(seconds);
@@ -31,33 +35,34 @@ export function conceptsForLesson(lessonSlug) {
   return [...(LESSON_CONCEPTS.get(lessonSlug) || [])];
 }
 
+// A question is attributed from its own text, never from where the video
+// happened to be paused. Learners ask about a point from three minutes ago and
+// read ahead of the playhead, so the position is evidence of what was on screen,
+// not of what the question was about, and a question this cannot place produces
+// no evidence at all. Position still attributes the rewatch signal below, where
+// it is not a proxy: seeking backwards over a span *is* an act on that span.
 export function evidenceFromEvent(event) {
-  const concept = conceptAt(event?.lessonSlug, event?.videoTime);
-
   if (event?.eventName === 'question_asked') {
     if (event.properties?.isRepeated === true) return null;
     const semanticConcept = conceptById(event.lessonSlug, event.properties?.semanticConceptId);
     const semanticConfidence = Number(event.properties?.semanticConfidence);
-    if (semanticConcept && semanticConfidence >= 0.75) {
+    if (semanticConcept && semanticConfidence >= QUESTION_CONFIDENCE) {
       return { concept: semanticConcept, signal: 'concept_question', weight: 0.5 };
     }
-    return concept ? { concept, signal: 'concept_question', weight: 0.5 } : null;
+    return null;
   }
 
   if (event?.eventName === 'repeated_question') {
     const semanticConcept = conceptById(event.lessonSlug, event.properties?.semanticConceptId);
     const semanticConfidence = Number(event.properties?.semanticConfidence);
     const similarity = Number(event.properties?.similarity);
-    if (semanticConcept && semanticConfidence >= 0.75 && similarity >= REPEATED_QUESTION_SIMILARITY) {
+    if (semanticConcept && semanticConfidence >= QUESTION_CONFIDENCE && similarity >= REPEATED_QUESTION_SIMILARITY) {
       return { concept: semanticConcept, signal: 'repeated_question', weight: 1 };
-    }
-    const previousConcept = conceptAt(event.lessonSlug, event.properties?.previousVideoTime);
-    if (concept && previousConcept?.id === concept.id && similarity >= REPEATED_QUESTION_SIMILARITY) {
-      return { concept, signal: 'repeated_question', weight: 1 };
     }
     return null;
   }
 
+  const concept = conceptAt(event?.lessonSlug, event?.videoTime);
   if (!concept) return null;
 
   if (

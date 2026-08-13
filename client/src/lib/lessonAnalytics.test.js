@@ -132,6 +132,29 @@ test('classifies clear lesson terms and leaves ambiguous questions unclassified'
   assert.equal(classifyQuestionConcept('Compare endoscopy and colonoscopy'), null);
 });
 
+test('classification reads the question, not the word it happens to sit inside', () => {
+  // The old substring scorer matched "ppi" inside "happiness".
+  assert.equal(classifyQuestionConcept('Is happiness relevant to this patient?'), null);
+  assert.equal(classifyQuestionConcept('How do PPIs work?')?.conceptId, 'upper-gi-management');
+});
+
+test('plural and inflected forms reach the same concept as their singular', () => {
+  for (const [question, conceptId] of [
+    ['What are the endoscopies for?', 'endoscopy'],
+    ['Tell me about peptic ulcers', 'upper-gi-causes-presentation'],
+    ['What are the key messages?', 'key-messages'],
+    ['How do we treat bleeding varices?', 'upper-gi-causes-presentation'],
+  ]) {
+    assert.equal(classifyQuestionConcept(question)?.conceptId, conceptId, question);
+  }
+});
+
+test('a question needs specific vocabulary, not merely some overlap', () => {
+  // Generic phrasing carries no concept, however confidently it is worded.
+  assert.equal(classifyQuestionConcept('What is going on in this lesson?'), null);
+  assert.equal(classifyQuestionConcept('What is the treatment?'), null);
+});
+
 test('ignores accidental rapid duplicates and caps one question cluster at two signals', () => {
   let timestamp = 0;
   const tracker = createRepeatedQuestionTracker({ now: () => timestamp });
