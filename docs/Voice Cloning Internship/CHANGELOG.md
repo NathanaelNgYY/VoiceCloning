@@ -2,6 +2,26 @@
 
 ## 2026-08-13
 
+- Fixed the text-chat kiosk (`d3k2rz0hqm8nxi`) hanging on "Preparing live chat...". The gateway
+  requires a `session.auth` frame and that build ships no sign-in, so its socket was closed 4401
+  before OpenAI was dialled — true since `LIVE_AUTH_ENABLED=true` was set on 2026-08-06. One
+  gateway process serves both distributions, so auth is now exempted per origin via
+  `LIVE_AUTH_EXEMPT_ORIGINS` (set to the d3 origin; `.env` backed up). d3 runs as a synthetic
+  identity; `d25sg72wp8oj5g` still requires a token. Origin is browser-supplied, so this is a soft
+  gate only — scripted clients can spoof it, and the gateway should be treated as publicly
+  reachable.
+- The client never handled `session.auth.failed`, so a refused handshake left the phase stuck in
+  `connecting`, which also kept the panel's Deploy and Reset disabled ("locked while a chat is
+  active"). Both now recover and show the reason.
+- The GI app ignored every deploy: `useGiChatEngine` resolved the prompt synchronously at mount and
+  never fetched the deployed copy. Added `useDeployedChatbotPrompt`, used by both the GI engine and
+  LivePage; the GI skin ignores any stale local copy since it has no editor. `Reset to default`
+  restores the bundled prompt again instead of the deployed text it is meant to undo.
+- Verification: gateway 170/170 (2 new exemption integration tests), client 329/329, `build:gi` +
+  `build:chatbot`; live handshake confirms d3 reaches `session.ready` and d25 still gets 4401.
+  Gateway on the fixed instance fast-forwarded to `29d234f7` and restarted (a stray local
+  `package-lock.json` edit blocked the first merge and was backed up to /tmp before discarding).
+
 - Staging only: the chatbot assistant instructions are now deployable from the UI instead
   of being a constant in the client bundle. Added Lambda route
   `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
