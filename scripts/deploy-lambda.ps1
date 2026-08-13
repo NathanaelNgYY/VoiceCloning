@@ -1,5 +1,6 @@
 param(
   [Parameter(Mandatory)][ValidateSet('dev','staging')] [string]$Env,
+  [string]$SupervisorOid,
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -31,6 +32,20 @@ if (Test-Path $deploymentEnv) {
       throw "Invalid deployment environment line in $deploymentEnv"
     }
     $variables[$Matches[1]] = $Matches[2]
+  }
+  if ($SupervisorOid) {
+    if ($SupervisorOid -notmatch '^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+      throw 'SupervisorOid must be a raw Entra object ID UUID.'
+    }
+    $supervisorOids = @(
+      [string]$variables['SUPERVISOR_OIDS'] -split ',' |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ }
+    )
+    if ($supervisorOids -notcontains $SupervisorOid) {
+      $supervisorOids += $SupervisorOid
+    }
+    $variables['SUPERVISOR_OIDS'] = $supervisorOids -join ','
   }
 
   $environmentPath = Join-Path $env:TEMP "voice-cloning-lambda-$Env-environment.json"

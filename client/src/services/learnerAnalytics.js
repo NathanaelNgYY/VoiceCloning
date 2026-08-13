@@ -39,6 +39,11 @@ export async function getMyLearnerSummary(lessonSlug = 'gi-bleeding') {
   return result.summary || null;
 }
 
+export async function getMyLearnerAccess() {
+  const result = await authorizedGet('/api/learner/me');
+  return { isSupervisor: result.isSupervisor === true };
+}
+
 export async function listSupervisorUsers() {
   const result = await authorizedGet('/api/supervisor/users');
   return result.users || [];

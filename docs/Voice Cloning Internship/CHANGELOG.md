@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-08-13
+
+- Staging only (`codex/staging-multi-user-scaling`): the chatbot assistant instructions are
+  now deployable from the UI instead of being a constant in the client bundle. Added Lambda
+  route `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
+  `chatbot-config/system-prompt.json`), a Deploy button in the instructions panel, and a
+  startup fetch so both staging kiosk distributions load the deployed text. The bundled
+  prompt remains the fallback when nothing is deployed. Writes are never anonymous: PUT
+  requires an Entra token or the shared key in `CHATBOT_PROMPT_DEPLOY_KEY` (currently
+  unset, so deploys must come from the signed-in GI app at `d25sg72wp8oj5g`); anonymous PUT
+  verified as 401. Added `chatbot-prompt` to the Lambda packaging allowlist. Tests: Lambda
+  8/8 new plus router suite, client `chatbotSystemPrompt` and `giPublicAccess` suites,
+  `build:gi`, live GET 200 on both staging distributions. Dev does not have this feature —
+  see DECISIONS.md "Branch Divergence: Dev vs Staging".
+
+- Changed the GI home page so `Admin analytics` is shown only when the authenticated
+  account passes the Lambda's existing supervisor check (Entra `Supervisor` app role or
+  `SUPERVISOR_OIDS` allowlist). `/api/learner/me` now returns that authoritative boolean;
+  the learner table's profile role is not used for authorization. Tests: learner Lambda
+  8/8, focused GI client 30/30, GI production build. Added Entra OID
+  `31e46d84-542c-4414-bcc0-1c7c24023198` to the preserved dev `SUPERVISOR_OIDS` allowlist
+  (two entries verified). Deployed dev Lambda code hash
+  `h3qR9im7D8yIWnI0UU65b+Kyl8jhqAWvmTnC3jsKhWY=` and GI bundle
+  `assets/index-BC69UgKb.js`; CloudFront invalidation
+  `IDJ90F9DQIQH9163ASVMTV76J` completed. Signed-in browser role visibility remains to verify.
+
 ## 2026-08-11
 
 - Simplified the Admin Questions tab to use DynamoDB retained conversation turns as its sole source;

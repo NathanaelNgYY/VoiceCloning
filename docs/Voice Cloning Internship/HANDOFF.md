@@ -3,6 +3,15 @@
 Last updated: 2026-08-11
 ## Needs Action
 
+- Dev and staging branches have diverged on purpose. Staging carries the deployable
+  chatbot instructions (`/api/chatbot/system-prompt` + the panel's Deploy button); dev
+  carries learner analytics. See DECISIONS.md "Branch Divergence: Dev vs Staging"
+  before merging either way.
+
+- Hard-refresh dev and verify the allowlisted supervisor sees `Admin analytics`, while an
+  ordinary student does not. The authorization change, requested OID, Lambda, client bundle,
+  and completed CloudFront invalidation were independently read back on 2026-08-13.
+
 - Hard-refresh dev and verify Questions includes retained pre-analytics transcript turns, one new
   ordinary question adds `concept_question` evidence, and a repeated question adds only its independent bonus.
 - The lesson-summary redundant-write skip in `lambda/analytics/learnerStore.js` is deployed to

@@ -31,7 +31,19 @@ test('a student can load only their own learner summary', async () => {
     repository,
   });
   assert.equal(response.statusCode, 200);
-  assert.equal(JSON.parse(response.body).summary.oid, 'user-1');
+  const body = JSON.parse(response.body);
+  assert.equal(body.summary.oid, 'user-1');
+  assert.equal(body.isSupervisor, false);
+});
+
+test('learner access reports the same supervisor decision used by protected routes', async () => {
+  const response = await handleLearners(event('/api/learner/me'), {
+    guard,
+    repository,
+    env: { SUPERVISOR_OIDS: 'user-1' },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).isSupervisor, true);
 });
 
 test('an ordinary student cannot list other users', async () => {

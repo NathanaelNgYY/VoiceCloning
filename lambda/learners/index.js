@@ -33,7 +33,7 @@ export async function handleLearners(event, {
   if (pathname === '/api/learner/me') {
     const lessonSlug = String(event?.queryStringParameters?.lesson || 'gi-bleeding').slice(0, 80);
     const summary = await repository.getSummary(identity.oid, lessonSlug);
-    return ok({ summary }, {}, event);
+    return ok({ summary, isSupervisor: supervisorAllowed(identity, env) }, {}, event);
   }
 
   if (!supervisorAllowed(identity, env)) {
