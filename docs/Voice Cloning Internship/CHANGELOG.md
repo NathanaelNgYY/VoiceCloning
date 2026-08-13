@@ -3,8 +3,9 @@
 ## 2026-08-13
 
 - Aligned the staging inference ASG with the fixed GPU's new 24-hour availability.
-  Live min/desired is 1/1 and the retained 07:00 and 19:00 Singapore actions both set
-  1/1; both occupancy alarm actions are enabled. The fixed GPU was independently read
+  Live min/desired is currently 1/1; the retained 07:00 and 19:00 Singapore actions
+  set min 1/max 192 with desired unset, so they do not reset autoscaled capacity.
+  Both occupancy alarm actions are enabled. The fixed GPU was independently read
   as running with its Lambda schedule enabled from hour 0 through 24.
   `offHoursMinCapacity` is now 1 and
   the schedule script reads that setting instead of hardcoding a scale-to-zero action.

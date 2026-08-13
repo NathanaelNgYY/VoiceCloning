@@ -3,7 +3,8 @@
 Last updated: 2026-08-13
 
 - Staging inference ASG now matches the fixed GPU's 24-hour availability: live
-  min/desired is 1/1 and the retained 07:00 and 19:00 Singapore actions both set 1/1.
+  min/desired is currently 1/1. The retained 07:00 and 19:00 Singapore actions set
+  min 1/max 192 with desired unset, so neither resets a busy autoscaled fleet.
   Direct Lambda-to-ASG coupling remains unavailable because the Lambda role lacks
   Auto Scaling permission; matching scheduled actions preserve the continuous floor.
   Live readback found the fixed GPU running and its Lambda schedule enabled, 0-24.
@@ -70,8 +71,8 @@ Last updated: 2026-08-13
 - Verified one-time actions set min/desired 50 at 13:30 SGT and return to 1 at
   16:00 SGT on 2026-08-04. Do not admit users until strict readiness passes;
   observed launch-to-readiness can take about 8 minutes.
-- The fixed GPU now has 24-hour availability. Matching ASG actions both preserve
-  min/desired 1 at 07:00 and 19:00 Singapore. Exact manual-state coupling is deployed
+- The fixed GPU now has 24-hour availability. Matching ASG actions preserve min 1
+  without setting desired at 07:00 or 19:00 Singapore. Exact manual-state coupling is deployed
   but disabled pending Lambda-role Auto Scaling permissions.
 - Live read at 2026-08-03 11:36 SGT found min 50 / desired 56 from today's event;
   legacy action `vcs-staging-scale-down` restores min/desired 1 at 17:00 today.

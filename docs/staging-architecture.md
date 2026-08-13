@@ -34,9 +34,10 @@ Browser
 
 The fixed GPU is running and its live Lambda schedule was verified as enabled with
 start 0, end 24, timezone Singapore. The inference ASG matches
-that availability with a continuous min/desired floor of 1: its retained recurring
-07:00 and 19:00 Singapore actions both set min/desired 1. The 19:00 action keeps its
-historical `daily-stop` name but no longer scales the ASG to zero.
+that availability with a continuous minimum floor of 1. Its retained recurring 07:00
+and 19:00 Singapore actions set min 1 and max 192 but leave desired capacity unset,
+so neither action resets a busy autoscaled fleet. The 19:00 action keeps its historical
+`daily-stop` name but no longer scales the ASG to zero or one.
 
 ## 2. CloudFront distributions
 
@@ -537,7 +538,8 @@ The implemented staging design keeps the public hostnames and separates roles:
    `VoiClo_GPU`, and the staging GPU security group.
    ASG `vcs-staging-gpu-inference` has a continuous min/desired floor of 1;
    `AWSServiceRoleForAutoScaling` also exists. Retained recurring 07:00 and 19:00
-   actions both set min/desired 1, matching the fixed GPU's 24-hour availability.
+   actions both set min 1 and max 192 while leaving desired capacity unset, matching
+   the fixed GPU's 24-hour availability without resetting autoscaled capacity.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
@@ -756,8 +758,9 @@ healthy in `vcs-staging-tg-3002`; it never stops the instance or creates a sched
 The fixed GPU was changed to 24-hour availability on 2026-08-13; live readback found
 it running with the Lambda schedule enabled from hour 0 through 24. The inference ASG
 was aligned live the same day: verified recurring `vcs-staging-daily-start` (07:00)
-and the historically named `vcs-staging-daily-stop` (19:00) both set min/desired 1
-in `Asia/Singapore`. The latter therefore no longer stops baseline inference capacity.
+and the historically named `vcs-staging-daily-stop` (19:00) both set min 1 and max 192
+with desired capacity unset in `Asia/Singapore`. Neither action resets autoscaled
+capacity; the latter therefore no longer stops baseline inference capacity.
 The deployed Lambda code can couple manual stop/termination to the ASG, but activation
 was rolled back because its execution role lacks `autoscaling:DescribeAutoScalingGroups`
 and `autoscaling:UpdateAutoScalingGroup`.
