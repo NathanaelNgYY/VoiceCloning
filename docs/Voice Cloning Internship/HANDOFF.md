@@ -2,6 +2,17 @@
 
 Last updated: 2026-08-13
 
+- Staging inference ASG now matches the fixed GPU's 24-hour availability: live
+  min/desired is 1/1 and the retained 07:00 and 19:00 Singapore actions both set 1/1.
+  Direct Lambda-to-ASG coupling remains unavailable because the Lambda role lacks
+  Auto Scaling permission; matching scheduled actions preserve the continuous floor.
+  Live readback found the fixed GPU running and its Lambda schedule enabled, 0-24.
+- Fresh LT v26 instance `i-040b58dedddec65de` completed the full active-profile warm
+  in 627 seconds with 10 real two-slot RIFF rounds. Whisper medium became active, the
+  CUDA phoneme model loaded and produced real decisions, both automated public primes
+  returned HTTP 200 RIFF first try, both services are active, worker restarts are zero,
+  and the optimized target is healthy. Hot rounds after cold loading took 2-4 seconds.
+
 ## Staging Whisper incident (2026-08-13)
 
 - Work is on local branch `codex/staging-whisper-fix` at `c4256dc`, based on
@@ -16,13 +27,9 @@ Last updated: 2026-08-13
   no worker restart; Whisper-medium and the phoneme model were active, both services
   were running, and the optimized target was healthy. Cloud-init finished without
   errors and both public-prime requests returned HTTP 200 RIFF on their first attempt.
-- Post-validation cleanup is complete: ASG min/desired is 0/0, both occupancy alarm
-  actions are enabled, the v26 validator is terminating, and both temporary S3 deploy
-  archives were deleted. Standalone canary `i-0e4ef8844a120d069` is stopping after a
+- Current live baseline is ASG min/desired 1/1 on LT v26; both occupancy alarm actions
+  are enabled. Standalone canary `i-0e4ef8844a120d069` was previously stopped after a
   verified instance-initiated shutdown; an administrator must terminate it permanently.
-- The fixed scheduled host is stopped. Its live-gateway load-test secret could not be
-  synchronized during the short off-hours boot window; normal signed-in traffic does
-  not use this bypass, but synchronize it before relying on gateway load-test auth.
 
 ## Start Here
 
@@ -56,16 +63,16 @@ Last updated: 2026-08-13
 
 - Region/account/role: Seoul / `329599637774` /
   `Liu_Teng_Yu_Intern2026`; verify the assumed identity before every mutation.
-- ASG `vcs-staging-gpu-inference`: daytime min/desired 1, off-hours 0, max 192; launch-template
-  `lt-07728350a25e691a4` defaults to v20; two synthesis slots per `g6.xlarge`.
+- ASG `vcs-staging-gpu-inference`: continuous min/desired 1, max 192; launch-template
+  `lt-07728350a25e691a4` defaults to v26; two synthesis slots per `g6.xlarge`.
 - Optimized target group is `vcs-stg-opt-3103`. The separate live gateway is running
   and healthy in `vcs-staging-tg-3002`; do not stop it during event preparation.
 - Verified one-time actions set min/desired 50 at 13:30 SGT and return to 1 at
   16:00 SGT on 2026-08-04. Do not admit users until strict readiness passes;
   observed launch-to-readiness can take about 8 minutes.
-- `GPU_SCHEDULE_ENABLED=true` with a live 07:00-19:00 Singapore fixed-GPU window.
-  Matching verified ASG actions set 1 at 07:00 and 0 at 19:00. Exact manual-state
-  coupling is deployed but disabled pending Lambda-role Auto Scaling permissions.
+- The fixed GPU now has 24-hour availability. Matching ASG actions both preserve
+  min/desired 1 at 07:00 and 19:00 Singapore. Exact manual-state coupling is deployed
+  but disabled pending Lambda-role Auto Scaling permissions.
 - Live read at 2026-08-03 11:36 SGT found min 50 / desired 56 from today's event;
   legacy action `vcs-staging-scale-down` restores min/desired 1 at 17:00 today.
   Tomorrow's 13:30/16:00 actions are separate and remain scheduled as documented.

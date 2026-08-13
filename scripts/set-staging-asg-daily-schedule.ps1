@@ -13,8 +13,10 @@ $actions = @(
   @{
     Name = 'vcs-staging-daily-stop'
     Recurrence = [string]$cfg.dailyStopCron
-    Min = 0
-    Desired = 0
+    # Retain the historical action name, but read the off-hours floor from config.
+    # A value of 1 keeps one fully warmed inference GPU available around the clock.
+    Min = [int]$cfg.offHoursMinCapacity
+    Desired = [int]$cfg.offHoursMinCapacity
   }
 )
 
@@ -37,5 +39,5 @@ foreach ($action in $actions) {
 }
 
 if ($Apply) {
-  Write-Host "Applied staging inference daily start/stop schedule."
+  Write-Host "Applied staging inference daily baseline schedule."
 }

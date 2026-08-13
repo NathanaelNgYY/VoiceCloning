@@ -27,6 +27,7 @@
   "dailyStartCron": "0 7 * * *",
   "dailyStopCron": "0 19 * * *",
   "dailyScheduleTimeZone": "Asia/Singapore",
+  "offHoursMinCapacity": 1,
   "healthCheckGracePeriodSeconds": 600,
   "scaleOutRejectsPerMinute": 1,
   "scaleOutAddCapacity": 10,

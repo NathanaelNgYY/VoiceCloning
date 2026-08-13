@@ -32,11 +32,11 @@ Browser
         └─ S3 via gateway endpoint vpce-0386d983dfdff41dc
 ```
 
-On-demand lifecycle: the Lambda **starts** the fixed GPU when a user needs it.
-CloudWatch shows an automatic Lambda invocation every five minutes; the invoker
-resource is not visible to this role. Live `GPU_SCHEDULE_ENABLED=true` applies the
-07:00-19:00 Singapore fixed-GPU window. The inference ASG has matching recurring
-07:00 min/desired 1 and 19:00 min/desired 0 actions, so its off-hours baseline is zero.
+The fixed GPU is running and its live Lambda schedule was verified as enabled with
+start 0, end 24, timezone Singapore. The inference ASG matches
+that availability with a continuous min/desired floor of 1: its retained recurring
+07:00 and 19:00 Singapore actions both set min/desired 1. The 19:00 action keeps its
+historical `daily-stop` name but no longer scales the ASG to zero.
 
 ## 2. CloudFront distributions
 
@@ -531,15 +531,13 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The current image is `ami-021aeb72894b8c79b` (snapshot
-   `snap-09cf487a09a2c82f3`), built from commit `330d329`. Launch template
+   port 3004. The current image is `ami-0538dcd9374f9ecdb`. Launch template
    `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 15) uses this AMI, `g6.xlarge`,
+   (`lt-07728350a25e691a4`, default version 26) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
-   ASG `vcs-staging-gpu-inference` runs at desired capacity 1 during 07:00-19:00 with baseline
-   `i-0b8ce19b5fe17d751`;
-   `AWSServiceRoleForAutoScaling` also exists. Minimum
-   capacity 1; recurring scheduled actions set min/desired 0 outside that window.
+   ASG `vcs-staging-gpu-inference` has a continuous min/desired floor of 1;
+   `AWSServiceRoleForAutoScaling` also exists. Retained recurring 07:00 and 19:00
+   actions both set min/desired 1, matching the fixed GPU's 24-hour availability.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
@@ -755,14 +753,11 @@ healthy in `vcs-staging-tg-3002`; it never stops the instance or creates a sched
 .\scripts\ensure-staging-live-gateway.ps1 -Apply
 ```
 
-The live Lambda contains 07:00-19:00 Singapore schedule values and
-`GPU_SCHEDULE_ENABLED=true` was applied on 2026-07-31. A direct in-window invocation
-returned `in-window-running`. CloudWatch later showed exactly one Lambda invocation
-every five minutes, including quiet hours, so an automatic invoker exists. This role
-cannot list the scheduler resource and the Lambda policy does not identify a classic
-EventBridge rule; the exact fixed-GPU invoker remains unverified. On 2026-08-01 the
-inference ASG received verified recurring `vcs-staging-daily-start` (07:00, min/desired
-1) and `vcs-staging-daily-stop` (19:00, min/desired 0) actions in `Asia/Singapore`.
+The fixed GPU was changed to 24-hour availability on 2026-08-13; live readback found
+it running with the Lambda schedule enabled from hour 0 through 24. The inference ASG
+was aligned live the same day: verified recurring `vcs-staging-daily-start` (07:00)
+and the historically named `vcs-staging-daily-stop` (19:00) both set min/desired 1
+in `Asia/Singapore`. The latter therefore no longer stops baseline inference capacity.
 The deployed Lambda code can couple manual stop/termination to the ASG, but activation
 was rolled back because its execution role lacks `autoscaling:DescribeAutoScalingGroups`
 and `autoscaling:UpdateAutoScalingGroup`.

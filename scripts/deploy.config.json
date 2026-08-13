@@ -28,7 +28,7 @@
       "dailyStartCron": "0 7 * * *",
       "dailyStopCron": "0 19 * * *",
       "dailyScheduleTimeZone": "Asia/Singapore",
-      "offHoursMinCapacity": 0,
+      "offHoursMinCapacity": 1,
       "fixedInstanceStateCouplingEnabled": false,
       "currentInstanceId": "i-0a6d8bb37cee0fbd1",
       "listenerCutover": true

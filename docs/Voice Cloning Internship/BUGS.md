@@ -6,7 +6,7 @@
   deadline; measured steady-state load was 215.77 seconds. The host image also lacked
   `phonemizer`, espeak-ng, and the full phoneme model. Code/AMI/LT v26 correct these.
   Fresh-v26 status showed Whisper and speaker verification active and the phoneme model
-  loaded. One cold phoneme load still made a warm round take 168 seconds despite the
+  loaded. One cold phoneme load still made a warm round take 180 seconds despite the
   baked cache, and verifier-driven reseeds remained observable; cold ASG admission is
   therefore still about ten minutes, not equivalent to event-mode prewarming.
 

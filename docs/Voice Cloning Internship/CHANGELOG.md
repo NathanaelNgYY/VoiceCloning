@@ -2,6 +2,18 @@
 
 ## 2026-08-13
 
+- Aligned the staging inference ASG with the fixed GPU's new 24-hour availability.
+  Live min/desired is 1/1 and the retained 07:00 and 19:00 Singapore actions both set
+  1/1; both occupancy alarm actions are enabled. The fixed GPU was independently read
+  as running with its Lambda schedule enabled from hour 0 through 24.
+  `offHoursMinCapacity` is now 1 and
+  the schedule script reads that setting instead of hardcoding a scale-to-zero action.
+  Fresh LT v26 instance `i-040b58dedddec65de` completed its full active-profile warm
+  in 627 seconds: Whisper medium active, CUDA phoneme model loaded with real decisions,
+  10 two-slot RIFF rounds, zero worker restarts, both services active, healthy target,
+  and two first-attempt HTTP 200 RIFF public primes. Hot rounds took 2-4 seconds after
+  cold model loading; the one-time phoneme-load round took 180 seconds.
+
 - Fixed staging verifier boot on autoscaled GPUs. Whisper-medium startup now has a
   configurable 360-second default instead of the failing 120-second cutoff; boot warm
   resolves the active S3 voice profile, runs once, and prewarms a strict phoneme phrase.
