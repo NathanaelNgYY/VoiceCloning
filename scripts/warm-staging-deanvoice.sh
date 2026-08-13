@@ -122,6 +122,9 @@ route_warm_texts=(
   "Gastrointestinal bleeding means bleeding somewhere inside the digestive tract."
   "It may appear as vomiting blood, black stools, or fresh blood from the rectum."
   "Doctors assess the severity, identify the source, and treat the underlying cause."
+  # Exercises an opt-in strict dictionary entry so the lazy phoneme CTC model is
+  # loaded before Target Optimizer advertises this instance to users.
+  "Catalase catalyzes a reaction."
 )
 route_warm_paths=()
 cleanup_route_warm() {
