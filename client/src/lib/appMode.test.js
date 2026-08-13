@@ -112,3 +112,16 @@ test('getAppModeConfig keeps chatbot mode unchanged after adding gi', () => {
   assert.equal(config.showLiveFast, true);
   assert.equal(config.subtitle, 'Live Fast Chatbot');
 });
+
+test('getAppModeConfig exposes the instructions editor only on the text-chat kiosk', () => {
+  // The editor deploys the shared prompt with no sign-in, so it must never reach
+  // the GI build that students log into.
+  assert.equal(getAppModeConfig('chatbot').showInstructionsEditor, true);
+  for (const mode of ['gi', 'combined', 'training', 'live-fast']) {
+    assert.equal(
+      getAppModeConfig(mode).showInstructionsEditor,
+      false,
+      `${mode} must not expose the instructions editor`,
+    );
+  }
+});

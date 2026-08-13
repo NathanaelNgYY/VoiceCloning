@@ -41,6 +41,10 @@ export function getAppModeConfig(value) {
     showLiveFast,
     showTextToSpeech,
     showGiChat: gi,
+    // Only the text-chat kiosk build edits and deploys the assistant instructions.
+    // The GI build reads whatever was deployed but shows no editor, so students
+    // signing in there cannot see or rewrite the prompt.
+    showInstructionsEditor: kiosk && !gi,
     navItems,
     defaultPath: '/',
     subtitle: gi

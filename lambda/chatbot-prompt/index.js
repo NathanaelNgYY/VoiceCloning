@@ -8,7 +8,6 @@
 // one editor's change reaches the staging apps without a rebuild.
 import { uploadBuffer, getObject } from '../shared/s3.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
-import { createLiveAuthGuard } from '../shared/liveAuth.js';
 
 export const SYSTEM_PROMPT_KEY = 'chatbot-config/system-prompt.json';
 
@@ -21,19 +20,9 @@ function isMissingObject(error) {
   return name === 'NoSuchKey' || name === 'NotFound' || error?.$metadata?.httpStatusCode === 404;
 }
 
-export const DEPLOY_KEY_HEADER = 'x-vcs-deploy-key';
-
-export function readDeployKey(event) {
-  const headers = event?.headers || {};
-  const name = Object.keys(headers).find((key) => key.toLowerCase() === DEPLOY_KEY_HEADER);
-  return name ? String(headers[name] || '').trim() : '';
-}
-
 export function createHandler({
   readObject = getObject,
   writeObject = uploadBuffer,
-  authGuard = createLiveAuthGuard(),
-  deployKey = (process.env.CHATBOT_PROMPT_DEPLOY_KEY || '').trim(),
   now = () => new Date().toISOString(),
 } = {}) {
   return async function handler(event) {
@@ -65,24 +54,10 @@ export function createHandler({
       return err(405, 'Method not allowed', event);
     }
 
-    // A write changes what every student sees, so it is never anonymous when
-    // authentication is configured.
-    //
-    // Two ways in, because the two kiosk distributions differ: the GI build signs
-    // users in with Entra, while the text-chat build ships no sign-in at all and
-    // can only present the shared deploy key.
-    let updatedBy = '';
-    if (deployKey && readDeployKey(event) === deployKey) {
-      updatedBy = 'deploy-key';
-    } else if (authGuard) {
-      try {
-        const claims = await authGuard.authorize(event);
-        updatedBy = claims?.email || claims?.oid || '';
-      } catch {
-        return err(401, 'Sign in or enter the deploy key to publish assistant instructions.', event);
-      }
-    }
-
+    // Deliberately unauthenticated. The editor lives only on the text-chat kiosk
+    // build, which ships no sign-in, and the operator's decision is that anyone who
+    // can reach that page may change the instructions. This is a staging-only
+    // surface; do not copy this route to a production distribution as-is.
     let body;
     try {
       body = parseJsonBody(event);
@@ -98,7 +73,7 @@ export function createHandler({
       return err(413, `prompt must be ${MAX_PROMPT_CHARS} characters or fewer`, event);
     }
 
-    const record = { schemaVersion: 1, prompt, updatedAt: now(), updatedBy };
+    const record = { schemaVersion: 1, prompt, updatedAt: now() };
     try {
       await writeObject(
         SYSTEM_PROMPT_KEY,
@@ -110,7 +85,7 @@ export function createHandler({
       return err(500, 'Could not deploy the instructions.', event);
     }
 
-    return ok({ updatedAt: record.updatedAt, updatedBy: record.updatedBy }, {}, event);
+    return ok({ updatedAt: record.updatedAt }, {}, event);
   };
 }
 

@@ -5,16 +5,24 @@
 - Staging only: the chatbot assistant instructions are now deployable from the UI instead
   of being a constant in the client bundle. Added Lambda route
   `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
-  `chatbot-config/system-prompt.json`), a Deploy button in the instructions panel, and a
-  startup fetch so both staging kiosk distributions load the deployed text. The bundled
-  prompt remains the fallback when nothing is deployed.
-- Writes are never anonymous: PUT requires an Entra token, or the shared key in
-  `CHATBOT_PROMPT_DEPLOY_KEY` (currently unset, so deploys must come from the signed-in
-  GI app at `d25sg72wp8oj5g`). Anonymous PUT verified as 401 in staging.
-- Added `chatbot-prompt` to the Lambda packaging allowlist; the first deploy 500'd
-  without it.
-- Verification: Lambda 8/8 new tests plus router suite, client `chatbotSystemPrompt` and
-  `giPublicAccess` suites, `build:gi`, and live GET 200 on both staging distributions.
+  `<prefix>/chatbot-config/system-prompt.json`), a Deploy button in the instructions
+  panel, and a startup fetch so both staging kiosk distributions load the deployed text.
+  The bundled prompt remains the fallback when nothing is deployed, and a local edit in
+  the browser still wins so an editor mid-draft is not overwritten.
+- The editor ships only on the text-chat kiosk build (`chatbot` mode, `d3k2rz0hqm8nxi`),
+  gated by the new `showInstructionsEditor` app-mode flag. The GI build
+  (`d25sg72wp8oj5g`) reads the deployed prompt but shows no panel and no Deploy button.
+- The write is deliberately unauthenticated, by operator decision: the editing surface has
+  no sign-in, so anyone who can open that page can change the instructions for both
+  distributions. Staging only — do not carry this route to production as-is. An earlier
+  Entra/deploy-key gate was implemented and then removed on that instruction.
+- Added `chatbot-prompt` to the Lambda packaging allowlist; the first deploy 500'd without
+  it (`ERR_MODULE_NOT_FOUND`).
+- Verification: Lambda 13/13 (`chatbot-prompt` + router), client `appMode` /
+  `chatbotSystemPrompt` / `giPublicAccess` 31/31, `build:gi` and `build:chatbot`, live
+  anonymous PUT 200 with the value read back from both distributions, and the probe object
+  deleted afterwards so both apps fall back to the bundled default. The GI app's hidden
+  panel is verified by build mode plus unit test, not visually — it sits behind SSO.
 - See DECISIONS.md "Branch Divergence: Dev vs Staging" — dev does not have this feature.
 
 ## 2026-08-07

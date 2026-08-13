@@ -185,7 +185,12 @@
   onto the other without reviewing both lists below.
 - Staging only (not on dev): the deployable assistant instructions — Lambda route
   `GET/PUT /api/chatbot/system-prompt`, `lambda/chatbot-prompt/`, the Deploy button in
-  the instructions panel, and `client/src/services/chatbotPrompt.js`.
+  the instructions panel, `client/src/services/chatbotPrompt.js`, and the
+  `showInstructionsEditor` app-mode flag.
+- The instructions editor is confined to the text-chat kiosk build and its write is
+  unauthenticated on purpose: that distribution has no sign-in, and the operator accepted
+  that anyone reaching the page may change the prompt for both staging apps. This is a
+  staging-only posture and must not be copied to a production distribution.
 - Dev only (not on staging): the learner-analytics work — `lambda/learners/`, the
   supervisor/learner routes, and the admin analytics client surfaces.
 - Consequence: `lambda/router.js`, `lambda/scripts/package-function-url.ps1`, and

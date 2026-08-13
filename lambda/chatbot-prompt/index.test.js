@@ -19,7 +19,6 @@ function missingKeyError() {
 test('GET returns an empty prompt when nothing is deployed yet', async () => {
   const handler = createHandler({
     readObject: async () => { throw missingKeyError(); },
-    authGuard: null,
   });
 
   const response = await handler(event('GET'));
@@ -38,7 +37,6 @@ test('GET returns the deployed prompt', async () => {
         updatedBy: 'editor@example.com',
       }));
     },
-    authGuard: null,
   });
 
   const response = await handler(event('GET'));
@@ -50,11 +48,10 @@ test('GET returns the deployed prompt', async () => {
   });
 });
 
-test('PUT stores the prompt with who deployed it', async () => {
+test('PUT stores the prompt without requiring a signed-in caller', async () => {
   const writes = [];
   const handler = createHandler({
     writeObject: async (key, buffer, contentType) => { writes.push({ key, buffer, contentType }); },
-    authGuard: { authorize: async () => ({ oid: 'abc', email: 'editor@example.com' }) },
     now: () => '2026-08-13T01:00:00.000Z',
   });
 
@@ -68,57 +65,12 @@ test('PUT stores the prompt with who deployed it', async () => {
     schemaVersion: 1,
     prompt: 'New instructions',
     updatedAt: '2026-08-13T01:00:00.000Z',
-    updatedBy: 'editor@example.com',
   });
-});
-
-test('PUT accepts the shared deploy key when the build has no sign-in', async () => {
-  let wrote = null;
-  const handler = createHandler({
-    writeObject: async (_key, buffer) => { wrote = JSON.parse(buffer.toString('utf-8')); },
-    authGuard: { authorize: async () => { throw new Error('no token'); } },
-    deployKey: 's3cret',
-  });
-
-  const request = event('PUT', { prompt: 'Keyed instructions' });
-  request.headers = { 'X-VCS-Deploy-Key': 's3cret' };
-  const response = await handler(request);
-
-  assert.equal(response.statusCode, 200);
-  assert.equal(wrote.prompt, 'Keyed instructions');
-  assert.equal(wrote.updatedBy, 'deploy-key');
-});
-
-test('PUT refuses a wrong deploy key', async () => {
-  const handler = createHandler({
-    writeObject: async () => { throw new Error('should not write'); },
-    authGuard: { authorize: async () => { throw new Error('no token'); } },
-    deployKey: 's3cret',
-  });
-
-  const request = event('PUT', { prompt: 'Keyed instructions' });
-  request.headers = { 'X-VCS-Deploy-Key': 'wrong' };
-
-  assert.equal((await handler(request)).statusCode, 401);
-});
-
-test('PUT refuses an unauthenticated caller when auth is configured', async () => {
-  let wrote = false;
-  const handler = createHandler({
-    writeObject: async () => { wrote = true; },
-    authGuard: { authorize: async () => { throw new Error('no token'); } },
-  });
-
-  const response = await handler(event('PUT', { prompt: 'New instructions' }));
-
-  assert.equal(response.statusCode, 401);
-  assert.equal(wrote, false);
 });
 
 test('PUT rejects an empty or oversized prompt', async () => {
   const handler = createHandler({
     writeObject: async () => { throw new Error('should not write'); },
-    authGuard: null,
   });
 
   assert.equal((await handler(event('PUT', { prompt: '   ' }))).statusCode, 400);
@@ -130,6 +82,6 @@ test('PUT rejects an empty or oversized prompt', async () => {
 });
 
 test('unsupported methods are rejected', async () => {
-  const handler = createHandler({ authGuard: null });
+  const handler = createHandler({});
   assert.equal((await handler(event('DELETE'))).statusCode, 405);
 });

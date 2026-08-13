@@ -111,7 +111,6 @@ import {
 import {
   fetchDeployedChatbotSystemPrompt,
   deployChatbotSystemPrompt,
-  storeDeployKey,
 } from '@/services/chatbotPrompt';
 import {
   MAX_DOCUMENTS_CHARS,
@@ -265,6 +264,7 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const kiosk = APP_MODE_CONFIG.kiosk;
+  const canEditInstructions = APP_MODE_CONFIG.showInstructionsEditor;
   const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
   const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
   const [chatbotDocError, setChatbotDocError] = useState('');
@@ -3681,18 +3681,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   async function handleDeployChatbotSystemPrompt() {
     setChatbotDeployState({ status: 'deploying', message: 'Deploying…' });
     try {
-      let result;
-      try {
-        result = await deployChatbotSystemPrompt(chatbotSystemPrompt);
-      } catch (error) {
-        // This build may ship no sign-in, so a rejection means we need the shared
-        // deploy key. Ask once, remember it, and retry.
-        if (error?.status !== 401) throw error;
-        const key = window.prompt('Deploy key for publishing assistant instructions:', '');
-        if (!key) throw error;
-        result = await deployChatbotSystemPrompt(chatbotSystemPrompt, { deployKey: key });
-        storeDeployKey(key);
-      }
+      const result = await deployChatbotSystemPrompt(chatbotSystemPrompt);
       // The panel's text is now the shared default, so a "Reset to default" here
       // returns to what was just deployed rather than the bundled constant.
       setDeployedChatbotSystemPrompt(chatbotSystemPrompt);
@@ -3790,6 +3779,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           <div className="flex flex-1 flex-wrap items-center gap-3">
             {engineToggle}
             {/* Mobile: open the Assistant-instructions drawer (in-flow sidebar at lg+). */}
+            {canEditInstructions && (
             <button
               type="button"
               onClick={() => setShowInstructions(true)}
@@ -3798,6 +3788,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <Pencil size={13} />
               Instructions
             </button>
+            )}
           </div>
         )}
 
@@ -4757,7 +4748,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
         </div>
       </div>
-      {kiosk && (
+      {canEditInstructions && (
         <>
         {/* Mobile-only backdrop for the instructions drawer. */}
         {showInstructions && (

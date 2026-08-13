@@ -4,45 +4,13 @@
 // backend, which is what every chatbot frontend loads at startup — so the text
 // the panel shows and the text the deployed apps run stay the same without a
 // client rebuild.
-import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
+//
+// The deploy is unauthenticated by design: the editor ships only on the text-chat
+// kiosk build, which has no sign-in, and anyone who can open that page may change
+// the instructions. Staging only.
 import { resolveApiPath } from '@/lib/runtimeConfig';
 
 const PROMPT_PATH = '/api/chatbot/system-prompt';
-
-// The text-chat distribution ships no sign-in, so a deploy from there proves
-// itself with the shared key instead. Remembered per browser so it is asked for
-// once, not on every deploy.
-export const DEPLOY_KEY_STORAGE_KEY = 'chatbot.deployKey';
-
-export function getStoredDeployKey() {
-  try {
-    return globalThis.localStorage.getItem(DEPLOY_KEY_STORAGE_KEY) || '';
-  } catch {
-    return '';
-  }
-}
-
-export function storeDeployKey(value) {
-  try {
-    globalThis.localStorage.setItem(DEPLOY_KEY_STORAGE_KEY, String(value ?? ''));
-  } catch {
-    // Best-effort; the key is then asked for again next time.
-  }
-}
-
-async function authHeaders(deployKey = '') {
-  const headers = {};
-  const key = deployKey || getStoredDeployKey();
-  if (key) headers['X-VCS-Deploy-Key'] = key;
-  if (!shouldAttachApiToken()) return headers;
-  try {
-    const token = await acquireApiToken();
-    if (token) headers['X-VCS-Entra-Token'] = token;
-  } catch {
-    // Let the request go out with whatever credential we do have; the backend decides.
-  }
-  return headers;
-}
 
 /**
  * The deployed prompt, or '' when nothing has been deployed yet (the caller then
@@ -51,20 +19,19 @@ async function authHeaders(deployKey = '') {
 export async function fetchDeployedChatbotSystemPrompt(fetchImpl = fetch) {
   try {
     const response = await fetchImpl(resolveApiPath(PROMPT_PATH), { cache: 'no-store' });
-    if (!response.ok) return { prompt: '', updatedAt: '', updatedBy: '' };
+    if (!response.ok) return { prompt: '', updatedAt: '' };
     const data = await response.json();
     return {
       prompt: typeof data?.prompt === 'string' ? data.prompt : '',
       updatedAt: data?.updatedAt || '',
-      updatedBy: data?.updatedBy || '',
     };
   } catch {
-    return { prompt: '', updatedAt: '', updatedBy: '' };
+    return { prompt: '', updatedAt: '' };
   }
 }
 
 /** Publishes `prompt` as the instructions every chatbot frontend loads. Throws on failure. */
-export async function deployChatbotSystemPrompt(prompt, { fetchImpl = fetch, deployKey = '' } = {}) {
+export async function deployChatbotSystemPrompt(prompt, fetchImpl = fetch) {
   const body = String(prompt ?? '');
   if (!body.trim()) {
     throw new Error('Instructions cannot be empty.');
@@ -72,7 +39,7 @@ export async function deployChatbotSystemPrompt(prompt, { fetchImpl = fetch, dep
 
   const response = await fetchImpl(resolveApiPath(PROMPT_PATH), {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...(await authHeaders(deployKey)) },
+    headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     body: JSON.stringify({ prompt: body }),
   });
