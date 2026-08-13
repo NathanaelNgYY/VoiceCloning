@@ -1,5 +1,22 @@
 # Active TODO
 
+- [ ] Settle the staging transcription verifier. `/inference/status` reports
+  `verification: {enabled: true, running: false, unavailable: true}` fleet-wide;
+  `unavailable` is only set on a failed sidecar start. Either fix the Whisper sidecar
+  or, if verification is meant to be off for latency, set
+  `LIVE_TRANSCRIPTION_VERIFY_ENABLED=false` so the intent is explicit and it stops
+  attempting a doomed startup. SSM hung three times on the GPU hosts; retry elsewhere.
+- [ ] Reset the deployed chatbot prompt in staging S3 to the bundled default. It
+  currently holds a throwaway test prompt, so the GI safety scope is the only thing
+  keeping the assistant on-topic.
+- [ ] Bake the profile-aware GPU boot warm into a new staging AMI when the next image
+  is built. Not urgent while the active voice is unchanged, because the existing
+  service drop-in already warms that voice at boot.
+- [ ] Decide whether the open kiosk should keep unauthenticated access. It is a
+  deliberate staging-only choice; the origin check is browser-supplied and therefore
+  a soft gate, so treat the gateway and synthesis route as publicly reachable and
+  watch spend.
+
 - [ ] Before SSO analytics rollout, validate the access token server-side and enrich
   stored batches with an immutable subject identifier; never accept a browser-claimed
   user ID. Add a Glue/Athena table and supervisor dashboard only after event volume

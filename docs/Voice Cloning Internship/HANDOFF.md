@@ -110,6 +110,54 @@ Last updated: 2026-08-13
 6. Test the real flow with `node scripts/load-test-staging-chatbot.mjs 100`; use
    `scripts/load-test-staging-tts.mjs` only for controlled fixed-text capacity tests.
 
+## Staging Handover (2026-08-13, handing to Codex)
+
+Staging branch `codex/staging-multi-user-scaling` is clean and pushed at `264bc8f`.
+Deployed and verified live: Lambda, both kiosk clients, and the live gateway.
+
+What changed and is live:
+
+- Deployable assistant instructions: `GET/PUT /api/chatbot/system-prompt`, a Deploy
+  button in the panel, and a startup fetch on both kiosk builds. Editor is confined to
+  the text-chat build via `showInstructionsEditor`; the GI build reads but cannot edit.
+- Auth exemption by origin (`LIVE_AUTH_EXEMPT_ORIGINS`) on both the gateway and the
+  Lambda synthesis route, covering the open kiosk's CloudFront host *and* its custom
+  domain. The SSO app still requires a token — verified on all four origins.
+- `session.auth.failed` now ends the session client-side instead of hanging in
+  `connecting` with the panel's Deploy/Reset locked.
+- Idle scale-in works again: the no-traffic alarm now treats missing data as breaching.
+  Step stays at -1 per firing by operator choice; the fleet drains gradually.
+
+Open items, highest value first:
+
+1. Transcription verifier is unresolved. `/inference/status` reported
+   `verification: {enabled: true, running: false, unavailable: true}` on four
+   instances. `unavailable` is only set when the sidecar fails to start, never by
+   config, so this is either a broken Whisper sidecar or an intent that should be
+   expressed as `LIVE_TRANSCRIPTION_VERIFY_ENABLED=false` instead. Three SSM commands
+   hung on the GPU hosts before this could be settled; retry on a fresh instance.
+   The operator believes verification was disabled for latency and that the retries
+   they observe are real — note the speaker gate (`resemblyzer`) reports
+   `running: true` and re-seeds rejected takes, which looks identical in the logs.
+2. AMI re-bake is pending for the profile-aware boot warm. Not urgent: the existing
+   service drop-in already warms the current voice at boot, so this only matters when
+   the active profile stops being that voice. Bake it with the next image.
+3. The deployed prompt in S3 currently holds a throwaway test prompt. Reset it to the
+   bundled default before any student uses the app; "Reset to default" restores the
+   bundled text, then Deploy.
+4. One fleet instance runs newer worker source than its siblings (a surgical
+   `git checkout` of `gpu-inference-worker/src/`). Harmless and tested; it disappears
+   when that instance is replaced, or becomes the image if it is the bake source.
+
+Corrections worth carrying forward, so they are not re-derived:
+
+- GPU instances **are** warmed at boot by
+  `gpu-inference-worker.service.d/staging-warm.conf`, and they stay warm for hours
+  with the voice model loaded. Earlier notes claiming "never warmed" or "warm decays"
+  were wrong; both came from indirect signals. Ask `/inference/status` instead.
+- The stuck "Preparing live chat" was never OpenAI. It was the gateway refusing a
+  handshake the open kiosk could not perform.
+
 ## Next Session Priorities and Blockers
 
 - Keep alias/provisioned concurrency as a future option only. The next latency targets
