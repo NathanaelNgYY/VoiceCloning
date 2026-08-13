@@ -25,6 +25,7 @@ try {
     'package-lock.json',
     'config',
     'analytics',
+    'chatbot-prompt',
     'inference',
     'instance',
     'live',

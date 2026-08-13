@@ -994,9 +994,33 @@ export function buildGiBleedingScopedSystemPrompt(prompt) {
   return `${GI_BLEEDING_SCOPE_GATE}\n\n${body}\n\n${GI_BLEEDING_FINAL_SCOPE_CHECK}`;
 }
 
+// The prompt deployed from the instructions panel, once the app has loaded it.
+// It outranks the constant above so a deploy reaches every browser without a
+// client rebuild; the constant stays as the offline/first-run fallback.
+let deployedPrompt = '';
+
+export function setDeployedChatbotSystemPrompt(value) {
+  deployedPrompt = typeof value === 'string' ? value : '';
+}
+
+export function getDeployedChatbotSystemPrompt() {
+  return deployedPrompt;
+}
+
 export function getDefaultChatbotSystemPrompt() {
+  if (deployedPrompt.trim()) return deployedPrompt;
   const envValue = (import.meta.env?.VITE_CHATBOT_SYSTEM_PROMPT || '').trim();
   return envValue || DEFAULT_CHATBOT_SYSTEM_PROMPT;
+}
+
+/** True when this browser has a local edit that differs from the deployed text. */
+export function hasStoredChatbotSystemPrompt() {
+  try {
+    const stored = globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    return typeof stored === 'string' && stored.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export function resolveChatbotSystemPrompt() {

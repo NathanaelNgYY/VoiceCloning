@@ -1,11 +1,15 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-03
+Last updated: 2026-08-13
 
 ## Start Here
 
 - Current scope includes dev parity plus a separately confirmed staging event action.
 - Repo/branch: `VoiceCloning` / `separate-containers-new`.
+- Dev and staging branches have diverged on purpose. Staging carries the deployable
+  chatbot instructions (`/api/chatbot/system-prompt` + the panel's Deploy button); dev
+  carries learner analytics. See DECISIONS.md "Branch Divergence: Dev vs Staging"
+  before merging either way.
 - Dev-host checkout and GitHub `separate-containers-new` are synchronized at `ce75eab`;
   the gateway restarted and passed 56/56 tests. A recovery backup and two unrelated
   archives remain untracked on the host; do not remove them as deployment cleanup.

@@ -177,3 +177,17 @@
 - The GPU training pipeline now targets GPT-SoVITS `v2ProPlus`, including the speaker-verification embedding extraction step it requires.
 - `Skip denoise` is kept as an operator-controlled training option for already-clean recordings because denoise can introduce artifacts that hurt timbre similarity.
 - Reference selection should prefer cleaner clips in the ~3-9 second range; the frontend now follows that rule and `gpu-worker/scripts/score_clips.py` exists to validate or inspect candidate clips offline.
+
+## Branch Divergence: Dev vs Staging
+
+- `separate-containers-new` (dev) and `codex/staging-multi-user-scaling` (staging) are
+  deliberately not the same tree. Neither is a superset of the other; do not "sync" one
+  onto the other without reviewing both lists below.
+- Staging only (not on dev): the deployable assistant instructions — Lambda route
+  `GET/PUT /api/chatbot/system-prompt`, `lambda/chatbot-prompt/`, the Deploy button in
+  the instructions panel, and `client/src/services/chatbotPrompt.js`.
+- Dev only (not on staging): the learner-analytics work — `lambda/learners/`, the
+  supervisor/learner routes, and the admin analytics client surfaces.
+- Consequence: `lambda/router.js`, `lambda/scripts/package-function-url.ps1`, and
+  `client/src/pages/LivePage.jsx` differ between the branches on purpose. A merge must
+  keep both route sets and both packaging entries.

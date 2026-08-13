@@ -105,7 +105,14 @@ import {
   getDefaultChatbotSystemPrompt,
   persistChatbotSystemPrompt,
   clearChatbotSystemPrompt,
+  setDeployedChatbotSystemPrompt,
+  hasStoredChatbotSystemPrompt,
 } from '@/lib/chatbotSystemPrompt';
+import {
+  fetchDeployedChatbotSystemPrompt,
+  deployChatbotSystemPrompt,
+  storeDeployKey,
+} from '@/services/chatbotPrompt';
 import {
   MAX_DOCUMENTS_CHARS,
   resolveChatbotDocuments,
@@ -261,6 +268,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
   const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
   const [chatbotDocError, setChatbotDocError] = useState('');
+  const [chatbotDeployState, setChatbotDeployState] = useState({ status: 'idle', message: '' });
   const chatbotCombinedSystemPrompt = useMemo(
     () => combineSystemPromptWithDocuments(
       chatbotSystemPrompt,
@@ -629,6 +637,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   useEffect(() => {
     voiceConfigsRef.current = voiceConfigs;
   }, [voiceConfigs]);
+
+  // Load the deployed instructions once at startup. A local edit in this browser
+  // still wins, so an editor mid-draft is not overwritten by the shared copy.
+  useEffect(() => {
+    if (!kiosk) return undefined;
+    let cancelled = false;
+    (async () => {
+      const { prompt } = await fetchDeployedChatbotSystemPrompt();
+      if (cancelled || !prompt.trim()) return;
+      setDeployedChatbotSystemPrompt(prompt);
+      if (!hasStoredChatbotSystemPrompt()) {
+        setChatbotSystemPrompt(prompt);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kiosk]);
 
   async function fetchModels(attempt = 0) {
     if (attempt === 0) setModelsFetched(false);
@@ -3651,6 +3675,37 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const next = getDefaultChatbotSystemPrompt();
     clearChatbotSystemPrompt();
     setChatbotSystemPrompt(next);
+    setChatbotDeployState({ status: 'idle', message: '' });
+  }
+
+  async function handleDeployChatbotSystemPrompt() {
+    setChatbotDeployState({ status: 'deploying', message: 'Deploying…' });
+    try {
+      let result;
+      try {
+        result = await deployChatbotSystemPrompt(chatbotSystemPrompt);
+      } catch (error) {
+        // This build may ship no sign-in, so a rejection means we need the shared
+        // deploy key. Ask once, remember it, and retry.
+        if (error?.status !== 401) throw error;
+        const key = window.prompt('Deploy key for publishing assistant instructions:', '');
+        if (!key) throw error;
+        result = await deployChatbotSystemPrompt(chatbotSystemPrompt, { deployKey: key });
+        storeDeployKey(key);
+      }
+      // The panel's text is now the shared default, so a "Reset to default" here
+      // returns to what was just deployed rather than the bundled constant.
+      setDeployedChatbotSystemPrompt(chatbotSystemPrompt);
+      clearChatbotSystemPrompt();
+      setChatbotDeployState({
+        status: 'deployed',
+        message: result?.updatedAt
+          ? `Deployed ${new Date(result.updatedAt).toLocaleTimeString()}`
+          : 'Deployed',
+      });
+    } catch (error) {
+      setChatbotDeployState({ status: 'error', message: error?.message || 'Deploy failed.' });
+    }
   }
 
   async function handleAddChatbotDocuments(fileList) {
@@ -4730,6 +4785,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                onClick={handleDeployChatbotSystemPrompt}
+                disabled={isConversationActive
+                  || chatbotDeployState.status === 'deploying'
+                  || !chatbotSystemPrompt.trim()}
+                title="Publish these instructions to the backend for every chatbot frontend"
+                className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-40"
+              >
+                {chatbotDeployState.status === 'deploying' ? 'Deploying…' : 'Deploy'}
+              </button>
+              <button
+                type="button"
                 onClick={handleResetChatbotSystemPrompt}
                 disabled={isConversationActive}
                 className="text-xs font-medium text-slate-400 transition-colors hover:text-slate-700 disabled:opacity-40"
@@ -4746,6 +4812,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </button>
             </div>
           </div>
+          {chatbotDeployState.message && (
+            <p
+              className={cn(
+                'border-b border-slate-100 px-4 py-2 text-[11px]',
+                chatbotDeployState.status === 'error' ? 'text-red-500' : 'text-slate-400',
+              )}
+              role="status"
+            >
+              {chatbotDeployState.message}
+            </p>
+          )}
           <Textarea
             value={chatbotSystemPrompt}
             onChange={(e) => handleChatbotSystemPromptChange(e.target.value)}

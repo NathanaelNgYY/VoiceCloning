@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-13
+
+- Staging only: the chatbot assistant instructions are now deployable from the UI instead
+  of being a constant in the client bundle. Added Lambda route
+  `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
+  `chatbot-config/system-prompt.json`), a Deploy button in the instructions panel, and a
+  startup fetch so both staging kiosk distributions load the deployed text. The bundled
+  prompt remains the fallback when nothing is deployed.
+- Writes are never anonymous: PUT requires an Entra token, or the shared key in
+  `CHATBOT_PROMPT_DEPLOY_KEY` (currently unset, so deploys must come from the signed-in
+  GI app at `d25sg72wp8oj5g`). Anonymous PUT verified as 401 in staging.
+- Added `chatbot-prompt` to the Lambda packaging allowlist; the first deploy 500'd
+  without it.
+- Verification: Lambda 8/8 new tests plus router suite, client `chatbotSystemPrompt` and
+  `giPublicAccess` suites, `build:gi`, and live GET 200 on both staging distributions.
+- See DECISIONS.md "Branch Divergence: Dev vs Staging" — dev does not have this feature.
+
 ## 2026-08-07
 
 - Removed the startup profile GET that could race token availability and falsely report a signed-in
