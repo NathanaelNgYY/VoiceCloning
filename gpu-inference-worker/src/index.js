@@ -15,8 +15,10 @@ import {
   clearStartupRefAudioCache,
   clearStartupWorkerTemp,
 } from './services/startupCleanup.js';
-import { warmOnBoot } from './services/bootWarm.js';
+import { warmOnBoot, readActiveProfileWarmPayload } from './services/bootWarm.js';
 import { warmReferenceAudioPaths } from './services/refAudioCache.js';
+import { getObject } from './services/s3Storage.js';
+import { ensureRequestVoiceModel } from './services/requestVoiceModel.js';
 
 clearStartupRefAudioCache({ log: console.log });
 clearStartupModelCache({ log: console.log });
@@ -78,8 +80,10 @@ const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
   // model reload) is hot. OFF unless WARM_ON_BOOT is set — it force-starts python.
   if (WARM_ON_BOOT) {
     warmOnBoot({
+      readActivePayload: () => readActiveProfileWarmPayload({ getObject, log: console.log }),
       startServer: () => inferenceServer.start(),
       warmReferences: (payload) => warmReferenceAudioPaths(payload),
+      loadVoiceModel: (payload) => ensureRequestVoiceModel(payload),
       runSynth: handleLiveTtsRequest,
       log: console.log,
     }).catch((err) => console.warn(`[boot-warm] unexpected: ${err.message}`));

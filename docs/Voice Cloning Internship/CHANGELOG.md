@@ -2,6 +2,18 @@
 
 ## 2026-08-13
 
+- Made GPU boot-warm work for autoscaling instead of only for a manually pre-warmed event
+  fleet. `scripts/warm-staging-deanvoice.sh` is a hand-run, DeanVoice-hardcoded script, and
+  `WARM_ON_BOOT` was off with no `last_warm.json` in the AMI, so every scaled-out instance
+  served its first requests cold (verified live: flag unset, payload missing, no boot-warm
+  log, GPU at 2.4 of 23 GB, inference server not even loaded). `warmOnBoot` now falls back to
+  the activated voice profile read straight from S3 (`voice-profiles/active.json`) and loads
+  that profile's weight pair before the throwaway synth, so a scale-out warms whichever voice
+  is actually on demand rather than a hard-coded one. `WARM_ON_BOOT` now defaults on.
+  Takes effect only once the AMI is re-baked — the ASG launches from the image, not from git.
+- Verification: worker 247/247 minus one pre-existing chemical-formula failure that also fails
+  without these changes (243/1 before, 247/1 after); 4 new boot-warm tests.
+
 - Fixed the text-chat kiosk (`d3k2rz0hqm8nxi`) hanging on "Preparing live chat...". The gateway
   requires a `session.auth` frame and that build ships no sign-in, so its socket was closed 4401
   before OpenAI was dialled — true since `LIVE_AUTH_ENABLED=true` was set on 2026-08-06. One
