@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseCorsOrigins, readinessProblems } from './config.js';
+import { isAuthExemptOrigin, parseCorsOrigins, readinessProblems } from './config.js';
 
 const READY = {
   OPENAI_API_KEY: 'sk-test',
@@ -88,4 +88,17 @@ test('an unset or wildcard value stays a wildcard', () => {
   for (const value of ['*', '', '   ', undefined, null, ',,']) {
     assert.equal(parseCorsOrigins(value), '*', `expected wildcard for ${JSON.stringify(value)}`);
   }
+});
+
+test('isAuthExemptOrigin only exempts listed origins', () => {
+  const exempt = ['https://d3k2rz0hqm8nxi.cloudfront.net'];
+  assert.equal(isAuthExemptOrigin('https://d3k2rz0hqm8nxi.cloudfront.net', exempt), true);
+  // Trailing slash is the same origin.
+  assert.equal(isAuthExemptOrigin('https://d3k2rz0hqm8nxi.cloudfront.net/', exempt), true);
+  // The SSO-backed distribution must keep needing a token.
+  assert.equal(isAuthExemptOrigin('https://d25sg72wp8oj5g.cloudfront.net', exempt), false);
+  // A non-browser client sending no Origin is never exempt.
+  assert.equal(isAuthExemptOrigin('', exempt), false);
+  // Empty allowlist means the exemption is off entirely.
+  assert.equal(isAuthExemptOrigin('https://d3k2rz0hqm8nxi.cloudfront.net', []), false);
 });

@@ -1629,6 +1629,16 @@ export function useLiveSpeech({
         break;
       }
 
+      // The gateway refused the handshake (no token on a build with no sign-in,
+      // or an expired one). Without this the socket just closes mid-handshake,
+      // the phase never leaves 'connecting', and the panel's Deploy/Reset stay
+      // disabled behind a conversation that can never end.
+      case 'session.auth.failed': {
+        setError(event.message || 'Live chat sign-in was refused.');
+        endConversationFromSocket();
+        break;
+      }
+
       case 'session.closed':
         if (phaseRef.current !== 'idle') {
           endConversationFromSocket();

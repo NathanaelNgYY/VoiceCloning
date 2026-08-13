@@ -103,6 +103,7 @@ import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
 import {
   resolveChatbotSystemPrompt,
   getDefaultChatbotSystemPrompt,
+  getBundledChatbotSystemPrompt,
   persistChatbotSystemPrompt,
   clearChatbotSystemPrompt,
   setDeployedChatbotSystemPrompt,
@@ -3672,7 +3673,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   function handleResetChatbotSystemPrompt() {
-    const next = getDefaultChatbotSystemPrompt();
+    // The bundled original, not the deployed text — see getBundledChatbotSystemPrompt.
+    const next = getBundledChatbotSystemPrompt();
     clearChatbotSystemPrompt();
     setChatbotSystemPrompt(next);
     setChatbotDeployState({ status: 'idle', message: '' });

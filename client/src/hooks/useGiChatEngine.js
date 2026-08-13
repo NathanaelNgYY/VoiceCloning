@@ -22,6 +22,7 @@ import {
 } from '@/lib/giVoicePin';
 import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
+import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
@@ -61,8 +62,11 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   // non-editable GI scope gate. useLiveSpeech snapshots this when the socket
   // opens, so a lesson that arrives after the student has already started
   // talking only takes effect on the next conversation.
+  const deployedPromptLoaded = useDeployedChatbotPrompt();
   const systemPrompt = useMemo(() => {
-    const prompt = resolveChatbotSystemPrompt();
+    // No editor on this skin, so a local copy could only be stale — the deployed
+    // prompt (or the bundled default) is the source of truth here.
+    const prompt = resolveChatbotSystemPrompt({ allowLocalOverride: false });
     const documents = resolveChatbotDocuments();
     const withDocuments = combineSystemPromptWithDocuments(
       prompt,
@@ -71,7 +75,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     const lesson = String(lessonContext || '').trim();
     const withLesson = lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
     return buildGiBleedingScopedSystemPrompt(withLesson);
-  }, [lessonContext]);
+  }, [lessonContext, deployedPromptLoaded]);
 
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;

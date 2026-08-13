@@ -6,6 +6,7 @@ import {
   ENTRA_TENANT_ID,
   LIVE_AUTH_ENABLED,
   LIVE_AUTH_LOADTEST_SECRET,
+  isAuthExemptOrigin,
   TRANSCRIPT_STORE_ASSISTANT,
   TRANSCRIPT_STORE_SYNTHETIC,
   TRANSCRIPT_TABLE_NAME,
@@ -244,6 +245,7 @@ export function attachLiveChatSocket(server, options = {}) {
     // keeps the unauthenticated-socket test fast.
     createBridge = (bridgeOptions) => new OpenAiRealtimeBridge(bridgeOptions),
     authTimeoutMs = AUTH_TIMEOUT_MS,
+    authExempt = isAuthExemptOrigin,
   } = options;
   const wss = new WebSocketServer({ noServer: true });
   const activeClients = new Map();
@@ -343,8 +345,21 @@ export function attachLiveChatSocket(server, options = {}) {
       handleBrowserMessage(bridge, data);
     };
 
+    // An exempt origin (an open kiosk distribution with no sign-in) skips the
+    // handshake and runs as a synthetic identity, exactly as the load tests do.
+    // Every other origin still has to present a token.
+    const exemptOrigin = Boolean(authenticator) && authExempt(req.headers?.origin || '');
+    if (exemptOrigin) {
+      bridge.identity = { oid: 'ANON#kiosk', email: '', name: '', synthetic: true };
+      try {
+        transcriptSession = transcriptStore?.openSession(bridge.identity) || null;
+      } catch (error) {
+        console.error('[transcript] could not open session', error?.message);
+      }
+    }
+
     // With no authenticator configured the socket behaves exactly as before.
-    let authenticated = !authenticator;
+    let authenticated = !authenticator || exemptOrigin;
     let authInFlight = false;
     const pendingMessages = [];
 

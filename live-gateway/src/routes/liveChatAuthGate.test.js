@@ -47,6 +47,7 @@ async function startGateway({
   authenticator = null,
   authTimeoutMs = 150,
   transcriptStore = null,
+  authExempt = () => false,
 } = {}) {
   const bridges = [];
   const server = createServer();
@@ -54,6 +55,7 @@ async function startGateway({
     authenticator,
     transcriptStore,
     authTimeoutMs,
+    authExempt,
     createBridge: () => {
       const bridge = new StubBridge();
       bridges.push(bridge);
@@ -74,8 +76,8 @@ async function startGateway({
   };
 }
 
-function connect(url) {
-  const client = new WebSocket(url);
+function connect(url, { origin = '' } = {}) {
+  const client = new WebSocket(url, origin ? { headers: { Origin: origin } } : undefined);
   const messages = [];
   const closes = [];
 
@@ -353,4 +355,49 @@ test('a store that throws on open leaves the conversation working', async (t) =>
 
   assert.deepEqual(session.messages[0], { type: 'session.authenticated', synthetic: false });
   assert.equal(gateway.bridges[0].connectCount, 1, 'storage trouble must not block the chat');
+});
+
+
+// The open kiosk distribution has no sign-in at all. Without an exemption its
+// socket is closed 4401 before OpenAI is ever dialled, which is what left the
+// text-chat app stuck on "Preparing live chat..." forever.
+test('an exempt origin opens a session without session.auth', async () => {
+  const gateway = await startGateway({
+    authenticator: authenticatorAccepting('good-token'),
+    authExempt: (origin) => origin === 'https://kiosk.example',
+  });
+
+  try {
+    const conn = connect(gateway.url, { origin: 'https://kiosk.example' });
+    await conn.opened;
+    conn.send({ type: 'session.init', systemPrompt: 'be brief' });
+    await settle(120);
+
+    assert.equal(conn.closes.length, 0, 'exempt socket must stay open');
+    assert.equal(gateway.bridges.length, 1);
+    assert.equal(gateway.bridges[0].connectCount, 1, 'bridge must dial upstream');
+    assert.equal(gateway.bridges[0].systemPrompt, 'be brief');
+    conn.client.close();
+  } finally {
+    await gateway.stop();
+  }
+});
+
+test('a non-exempt origin still has to authenticate', async () => {
+  const gateway = await startGateway({
+    authenticator: authenticatorAccepting('good-token'),
+    authExempt: (origin) => origin === 'https://kiosk.example',
+  });
+
+  try {
+    const conn = connect(gateway.url, { origin: 'https://locked.example' });
+    await conn.opened;
+    conn.send({ type: 'session.init', systemPrompt: 'be brief' });
+    await conn.closed;
+
+    assert.equal(conn.closes[0], 4401);
+    assert.equal(gateway.bridges[0]?.connectCount ?? 0, 0, 'must not reach OpenAI');
+  } finally {
+    await gateway.stop();
+  }
 });
