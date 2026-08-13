@@ -215,11 +215,58 @@
 - `separate-containers-new` (dev) and `codex/staging-multi-user-scaling` (staging) are
   deliberately not the same tree. Neither is a superset of the other; do not "sync" one
   onto the other without reviewing both lists below.
-- Staging only (not on dev): the deployable assistant instructions — Lambda route
-  `GET/PUT /api/chatbot/system-prompt`, `lambda/chatbot-prompt/`, the Deploy button in
-  the instructions panel, and `client/src/services/chatbotPrompt.js`.
-- Dev only (not on staging): the learner-analytics work — `lambda/learners/`, the
-  supervisor/learner routes, and the admin analytics client surfaces.
-- Consequence: `lambda/router.js`, `lambda/scripts/package-function-url.ps1`, and
-  `client/src/pages/LivePage.jsx` differ between the branches on purpose. A merge must
-  keep both route sets and both packaging entries.
+Verified from `git diff separate-containers-new codex/staging-multi-user-scaling`
+on 2026-08-13; re-derive rather than trust this list if it looks stale.
+
+### Staging only — files that do not exist on dev
+
+- `lambda/chatbot-prompt/{index,index.test}.js` — `GET/PUT /api/chatbot/system-prompt`,
+  the deployed assistant instructions, stored at `<prefix>/chatbot-config/system-prompt.json`.
+- `client/src/services/chatbotPrompt.js`, `client/src/hooks/useDeployedChatbotPrompt.js` —
+  fetch/publish the deployed prompt; the hook is used by both LivePage and the GI engine.
+- `gpu-inference-worker/src/services/bootWarm.test.js` — covers warming from the active profile.
+- `live-gateway/scripts/read-transcripts.{mjs,test.js}` — transcript reader.
+
+### Staging only — behaviour inside shared files
+
+- Instructions editor + Deploy button, gated to the text-chat kiosk build by the
+  `showInstructionsEditor` app-mode flag. The write is unauthenticated on purpose: that
+  distribution has no sign-in and the operator accepted that anyone reaching the page may
+  change the prompt for both staging apps. Staging-only posture; never copy to production.
+- Per-origin auth exemption (`LIVE_AUTH_EXEMPT_ORIGINS`) in `live-gateway/src/config.js` +
+  `routes/liveChat.js` and `lambda/shared/liveAuth.js` + `lambda/live/index.js`, so the open
+  kiosk can chat and synthesise without sign-in while the SSO app still requires a token.
+  Origin is browser-supplied, so it is a soft gate only.
+- `session.auth.failed` handling in `client/src/hooks/useLiveSpeech.js`, so a refused
+  handshake surfaces instead of pinning the UI in `connecting` with the panel locked.
+- Profile-aware GPU boot warm in `gpu-inference-worker/src/services/bootWarm.js`, plus
+  `WARM_ON_BOOT` defaulting on in its `config.js`.
+
+### Dev only — files that do not exist on staging
+
+- Learner analytics: `lambda/learners/*`, `lambda/analytics/{concepts,learnerStore}.js`,
+  `client/src/lib/{learnerGuidance,supervisorAnalytics}.js`,
+  `client/src/pages/SupervisorDashboardPage.jsx`, `client/src/services/learnerAnalytics.js`,
+  `scripts/backfill-{analytics-user-index,learner-evidence}.mjs`.
+- `client/env/dev/gi.env`, `client/src/hooks/useLiveSpeech.test.js`.
+
+### Shared files that differ on purpose
+
+`lambda/router.js`, `lambda/live/index.js`, `lambda/shared/liveAuth.js`,
+`lambda/scripts/package-function-url.ps1`, `client/src/pages/LivePage.jsx`,
+`client/src/hooks/useLiveSpeech.js`, `live-gateway/src/config.js`,
+`live-gateway/src/routes/liveChat.js`, `scripts/deploy-*.ps1`, `scripts/deploy.config.json`.
+A merge must keep **both** route sets and **both** packaging allowlist entries.
+
+### Divergence that is not in git
+
+These live in runtime configuration and will not appear in any branch diff:
+
+- Staging live-gateway `.env` and staging Lambda env carry `LIVE_AUTH_EXEMPT_ORIGINS`
+  (`https://d3k2rz0hqm8nxi.cloudfront.net,https://faculty.lkcmedicine.org`). Dev has neither.
+- Staging CloudWatch alarm `vcs-staging-inference-no-traffic-15m` uses
+  `treatMissingData: breaching`; with `missing` a fully idle fleet never scaled in.
+- Staging S3 holds the deployed chatbot prompt; dev has no such object.
+- Staging ASG instances run `warm-staging-deanvoice.sh` from a systemd drop-in
+  (`gpu-inference-worker.service.d/staging-warm.conf`) and keep several deploy scripts
+  truncated to zero bytes on the fleet image. Neither applies to dev.

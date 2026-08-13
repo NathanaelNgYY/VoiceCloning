@@ -2,18 +2,31 @@
 
 ## 2026-08-13
 
+- Made GPU boot-warm work for autoscaling instead of only for a manually pre-warmed event
+  fleet. `scripts/warm-staging-deanvoice.sh` is a hand-run, DeanVoice-hardcoded script, and
+  `WARM_ON_BOOT` was off with no `last_warm.json` in the AMI, so every scaled-out instance
+  served its first requests cold (verified live: flag unset, payload missing, no boot-warm
+  log, GPU at 2.4 of 23 GB, inference server not even loaded). `warmOnBoot` now falls back to
+  the activated voice profile read straight from S3 (`voice-profiles/active.json`) and loads
+  that profile's weight pair before the throwaway synth, so a scale-out warms whichever voice
+  is actually on demand rather than a hard-coded one. `WARM_ON_BOOT` now defaults on.
+  Takes effect only once the AMI is re-baked — the ASG launches from the image, not from git.
+- Verification: worker 247/247 minus one pre-existing chemical-formula failure that also fails
+  without these changes (243/1 before, 247/1 after); 4 new boot-warm tests.
+
 - Staging only (`codex/staging-multi-user-scaling`): the chatbot assistant instructions are
   now deployable from the UI instead of being a constant in the client bundle. Added Lambda
   route `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
-  `chatbot-config/system-prompt.json`), a Deploy button in the instructions panel, and a
-  startup fetch so both staging kiosk distributions load the deployed text. The bundled
-  prompt remains the fallback when nothing is deployed. Writes are never anonymous: PUT
-  requires an Entra token or the shared key in `CHATBOT_PROMPT_DEPLOY_KEY` (currently
-  unset, so deploys must come from the signed-in GI app at `d25sg72wp8oj5g`); anonymous PUT
-  verified as 401. Added `chatbot-prompt` to the Lambda packaging allowlist. Tests: Lambda
-  8/8 new plus router suite, client `chatbotSystemPrompt` and `giPublicAccess` suites,
-  `build:gi`, live GET 200 on both staging distributions. Dev does not have this feature —
-  see DECISIONS.md "Branch Divergence: Dev vs Staging".
+  `<prefix>/chatbot-config/system-prompt.json`), a Deploy button, and a startup fetch so
+  both staging kiosk distributions load the deployed text; the bundled prompt stays as the
+  fallback. The editor ships only on the text-chat build (`d3k2rz0hqm8nxi`) via the new
+  `showInstructionsEditor` flag — the GI build (`d25sg72wp8oj5g`) reads the deployed prompt
+  but shows no panel. The write is unauthenticated by operator decision, so anyone who can
+  open the text-chat page can change the prompt for both apps; staging only, not for
+  production. Added `chatbot-prompt` to the Lambda packaging allowlist. Tests: Lambda
+  13/13, client 31/31, `build:gi` + `build:chatbot`, live anonymous PUT round-trip verified
+  and the probe deleted afterwards. Dev does not have this feature — see DECISIONS.md
+  "Branch Divergence: Dev vs Staging".
 
 - Changed the GI home page so `Admin analytics` is shown only when the authenticated
   account passes the Lambda's existing supervisor check (Entra `Supervisor` app role or
