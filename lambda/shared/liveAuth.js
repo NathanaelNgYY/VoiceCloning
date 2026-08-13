@@ -22,6 +22,29 @@ function readEnv(env) {
   };
 }
 
+/**
+ * Origins allowed to synthesise without signing in.
+ *
+ * Mirrors the live gateway's LIVE_AUTH_EXEMPT_ORIGINS so one open kiosk build
+ * gets both halves of a conversation — the gateway's reply and this route's
+ * voice — while every other distribution still needs a token. Same caveat as
+ * the gateway: Origin is browser-supplied, so this is a soft gate. Synthesis
+ * costs GPU time, so treat an exempt origin as a public, metered surface.
+ */
+export function isAuthExemptOrigin(event, env = process.env) {
+  const exempt = (env.LIVE_AUTH_EXEMPT_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/u, ''))
+    .filter(Boolean);
+  if (exempt.length === 0) return false;
+
+  const headers = event?.headers || {};
+  const key = Object.keys(headers).find((name) => name.toLowerCase() === 'origin');
+  const origin = key ? String(headers[key] || '').trim().replace(/\/+$/u, '') : '';
+  if (!origin) return false; // No Origin at all is never exempt.
+  return exempt.includes(origin);
+}
+
 export function readBearerToken(event) {
   const headers = event?.headers || {};
   const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization');

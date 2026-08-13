@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createLiveAuthGuard, readBearerToken, resetLiveAuthCache } from './liveAuth.js';
+import { createLiveAuthGuard, isAuthExemptOrigin, readBearerToken, resetLiveAuthCache } from './liveAuth.js';
 
 const IDENTITY = {
   oid: 'e3f1c0aa-1111-2222-3333-444455556666',
@@ -103,4 +103,18 @@ test('the verifier is reused across invocations so warm containers keep the JWKS
   assert.notEqual(first, null);
   assert.notEqual(second, null);
   resetLiveAuthCache();
+});
+
+test('isAuthExemptOrigin only exempts the listed open kiosk origin', () => {
+  const env = { LIVE_AUTH_EXEMPT_ORIGINS: 'https://d3k2rz0hqm8nxi.cloudfront.net' };
+  const withOrigin = (origin) => ({ headers: { Origin: origin } });
+
+  assert.equal(isAuthExemptOrigin(withOrigin('https://d3k2rz0hqm8nxi.cloudfront.net'), env), true);
+  assert.equal(isAuthExemptOrigin(withOrigin('https://d3k2rz0hqm8nxi.cloudfront.net/'), env), true);
+  // The SSO app must keep paying for its own GPU time with a token.
+  assert.equal(isAuthExemptOrigin(withOrigin('https://d25sg72wp8oj5g.cloudfront.net'), env), false);
+  // A direct caller with no Origin header is never exempt.
+  assert.equal(isAuthExemptOrigin({ headers: {} }, env), false);
+  // Unset env keeps the previous behaviour exactly.
+  assert.equal(isAuthExemptOrigin(withOrigin('https://d3k2rz0hqm8nxi.cloudfront.net'), {}), false);
 });
