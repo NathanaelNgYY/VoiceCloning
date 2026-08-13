@@ -1,17 +1,17 @@
 # Active TODO
 
-- [ ] Settle the staging transcription verifier. `/inference/status` reports
-  `verification: {enabled: true, running: false, unavailable: true}` fleet-wide;
-  `unavailable` is only set on a failed sidecar start. Either fix the Whisper sidecar
-  or, if verification is meant to be off for latency, set
-  `LIVE_TRANSCRIPTION_VERIFY_ENABLED=false` so the intent is explicit and it stops
-  attempting a doomed startup. SSM hung three times on the GPU hosts; retry elsewhere.
+- [ ] Urgent staging cleanup after the 2026-08-13 verifier proof: read cloud-init on
+  v26 instance `i-049271d608c44b5e3`; then set ASG min/desired 0 and re-enable both
+  occupancy scale-out alarm actions. They were left at 1/1 and disabled when the AWS
+  session expired. Ask an administrator to stop/terminate standalone canary
+  `i-0e4ef8844a120d069`; this role is denied both operations.
+- [ ] Synchronize the rotated `LIVE_AUTH_LOADTEST_SECRET` to the fixed live gateway
+  during its next running window. Lambda and LT v26 match and a direct public prime
+  returned HTTP 200 RIFF; the fixed gateway stopped before its `.env` could be updated.
+
 - [ ] Reset the deployed chatbot prompt in staging S3 to the bundled default. It
   currently holds a throwaway test prompt, so the GI safety scope is the only thing
   keeping the assistant on-topic.
-- [ ] Bake the profile-aware GPU boot warm into a new staging AMI when the next image
-  is built. Not urgent while the active voice is unchanged, because the existing
-  service drop-in already warms that voice at boot.
 - [ ] Decide whether the open kiosk should keep unauthenticated access. It is a
   deliberate staging-only choice; the origin check is browser-supplied and therefore
   a soft gate, so treat the gateway and synthesis route as publicly reachable and
@@ -24,9 +24,6 @@
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.
-- [ ] Bake `resemblyzer` into a canary staging inference AMI, verify the speaker gate
-  becomes active, benchmark its latency/quality cost, then promote through a reviewed
-  launch-template version. Do not hand-patch ephemeral ASG instances.
 - [ ] Repair the worker test suites: the compact-formula inference test leaves a
   nested subtest unfinished, and the email mock fails without configured mail env.
 

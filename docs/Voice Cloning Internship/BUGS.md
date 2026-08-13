@@ -2,6 +2,14 @@
 
 ## Active
 
+- 2026-08-13: LT v24 killed Whisper-medium at its hardcoded 120-second startup
+  deadline; measured steady-state load was 215.77 seconds. The host image also lacked
+  `phonemizer`, espeak-ng, and the full phoneme model. Code/AMI/LT v26 correct these.
+  Fresh-v26 status showed Whisper and speaker verification active and the phoneme model
+  loaded. One cold phoneme load still made a warm round take 168 seconds despite the
+  baked cache, and verifier-driven reseeds remained observable; cold ASG admission is
+  therefore still about ten minutes, not equivalent to event-mode prewarming.
+
 - 2026-08-03: staging fixed inference and ASG AMI `ami-021aeb72894b8c79b`
   lack `resemblyzer`, so speaker-identity scoring degrades to ASR/audio-quality checks.
   History shows the gate was added intentionally; no evidence supports removal as a

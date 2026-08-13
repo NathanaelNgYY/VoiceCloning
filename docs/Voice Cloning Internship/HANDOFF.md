@@ -2,6 +2,28 @@
 
 Last updated: 2026-08-13
 
+## Staging Whisper incident (2026-08-13)
+
+- Work is on local branch `codex/staging-whisper-fix` at `c4256dc`, based on
+  `origin/codex/staging-multi-user-scaling`, not the deliberately divergent dev branch.
+  GitHub push is blocked because this workstation has no GitHub credential.
+- Whisper was broken on LT v24: the medium model needed 215.77 seconds to load but
+  startup was killed at 120 seconds. The default is now 360 seconds. The staging AMI
+  also lacked the phoneme runtime/full model; both are provisioned and cached.
+- AMI `ami-0538dcd9374f9ecdb` is available. LT v26 is default and includes that AMI,
+  active-profile warming, a single boot warm, and repaired public-prime auth.
+- Fresh v26 instance `i-049271d608c44b5e3` completed one 616-second deep warm with
+  no worker restart; Whisper-medium and the phoneme model were active, both services
+  were running, and the optimized target was healthy. The AWS session expired before
+  the subsequent public-prime/cloud-init result could be read back.
+- Urgent cleanup: ASG min/desired remained 1 and both occupancy scale-out alarm actions
+  remained disabled at credential expiry. Read cloud-init, then return min/desired to
+  0 and re-enable both alarms. Standalone canary `i-0e4ef8844a120d069` remains running
+  because this role is denied stop/terminate; an administrator must stop/terminate it.
+- The fixed scheduled host is stopped. Its live-gateway load-test secret could not be
+  synchronized during the short off-hours boot window; normal signed-in traffic does
+  not use this bypass, but synchronize it before relying on gateway load-test auth.
+
 ## Start Here
 
 - Current scope includes dev parity plus a separately confirmed staging event action.
@@ -130,22 +152,10 @@ What changed and is live:
 
 Open items, highest value first:
 
-1. Transcription verifier is unresolved. `/inference/status` reported
-   `verification: {enabled: true, running: false, unavailable: true}` on four
-   instances. `unavailable` is only set when the sidecar fails to start, never by
-   config, so this is either a broken Whisper sidecar or an intent that should be
-   expressed as `LIVE_TRANSCRIPTION_VERIFY_ENABLED=false` instead. Three SSM commands
-   hung on the GPU hosts before this could be settled; retry on a fresh instance.
-   The operator believes verification was disabled for latency and that the retries
-   they observe are real — note the speaker gate (`resemblyzer`) reports
-   `running: true` and re-seeds rejected takes, which looks identical in the logs.
-2. AMI re-bake is pending for the profile-aware boot warm. Not urgent: the existing
-   service drop-in already warms the current voice at boot, so this only matters when
-   the active profile stops being that voice. Bake it with the next image.
-3. The deployed prompt in S3 currently holds a throwaway test prompt. Reset it to the
+1. The deployed prompt in S3 currently holds a throwaway test prompt. Reset it to the
    bundled default before any student uses the app; "Reset to default" restores the
    bundled text, then Deploy.
-4. One fleet instance runs newer worker source than its siblings (a surgical
+2. One fleet instance runs newer worker source than its siblings (a surgical
    `git checkout` of `gpu-inference-worker/src/`). Harmless and tested; it disappears
    when that instance is replaced, or becomes the image if it is the bake source.
 

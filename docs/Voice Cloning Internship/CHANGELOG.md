@@ -2,6 +2,17 @@
 
 ## 2026-08-13
 
+- Fixed staging verifier boot on autoscaled GPUs. Whisper-medium startup now has a
+  configurable 360-second default instead of the failing 120-second cutoff; boot warm
+  resolves the active S3 voice profile, runs once, and prewarms a strict phoneme phrase.
+  Added host phoneme/espeak provisioning and cached the full model in AMI
+  `ami-0538dcd9374f9ecdb`; LT v26 is default. Targeted Node tests passed 39/39 locally
+  and on the canary; shell syntax, PowerShell parse, and `git diff --check` passed.
+  Fresh-v26 proof observed one 616-second warm, no restart, Whisper/speaker active,
+  phoneme model loaded, both services active, and healthy target. A separate direct
+  authenticated public request returned HTTP 200 RIFF in 14.29 seconds. Final
+  cloud-init readback and scale-to-zero cleanup remain pending after credential expiry.
+
 - Made GPU boot-warm work for autoscaling instead of only for a manually pre-warmed event
   fleet. `scripts/warm-staging-deanvoice.sh` is a hand-run, DeanVoice-hardcoded script, and
   `WARM_ON_BOOT` was off with no `last_warm.json` in the AMI, so every scaled-out instance
