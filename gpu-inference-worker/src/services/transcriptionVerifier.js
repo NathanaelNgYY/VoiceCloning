@@ -23,7 +23,17 @@ import {
   isTruncatedDictWord,
 } from './wordCoverage.js';
 
-const STARTUP_TIMEOUT_MS = 120_000;
+export function resolveTranscriptionStartupTimeoutMs(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed >= 120_000 ? parsed : 360_000;
+}
+
+// A staging g6.xlarge with the model already present in the AMI took 215.77s to
+// initialize faster-whisper medium. The old 120s deadline killed a healthy sidecar
+// on every cold autoscaling boot while GPT-SoVITS was loading in parallel.
+const STARTUP_TIMEOUT_MS = resolveTranscriptionStartupTimeoutMs(
+  process.env.TRANSCRIPTION_STARTUP_TIMEOUT_MS,
+);
 const REQUEST_TIMEOUT_MS = 60_000;
 
 // A missing word at least this long is a substantial content word (medical /

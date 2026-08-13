@@ -156,7 +156,8 @@ function Invoke-AwsJson {
 }
 
 $publicPrimeBody = @{
-  voiceProfileId = 'deanvoice-v1'
+  # Omit voiceProfileId deliberately: the public prime must exercise whichever
+  # profile is active when this instance scales out, not a baked Dean constant.
   text = [string]$cfg.publicPrimeText
 } | ConvertTo-Json -Compress
 $publicPrimeBodyB64 = [Convert]::ToBase64String(
@@ -240,6 +241,7 @@ write_files:
       echo 'public_prime completed with verified public RIFF responses'
 bootcmd:
   - [systemctl, disable, gpu-worker.service]
+  - [systemctl, disable, --now, gpu-inference-worker.service]
   - [systemctl, disable, target-optimizer-inference.service]
   - [systemctl, mask, --now, apt-daily.service, apt-daily-upgrade.service, apt-daily.timer, apt-daily-upgrade.timer, unattended-upgrades.service, packagekit.service]
 runcmd:

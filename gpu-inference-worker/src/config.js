@@ -113,11 +113,10 @@ export const SPEAKER_MIN_SIMILARITY = Math.min(1, Math.max(0, parseFloatEnv(read
 // last successful /ref-audio/warm payload at boot (persisted OUTSIDE the wiped caches)
 // so that first request is hot. OFF by default — opt in after validating on the box,
 // since it force-starts the python server at boot (allocates GPU immediately).
-// Defaults ON. Every autoscaled instance launches from an AMI with no warm history,
-// so leaving this off meant every scale-out served its first requests cold — which is
-// exactly when demand is highest. Set WARM_ON_BOOT=false on a dev box where you do not
-// want the worker force-starting python at boot.
-export const WARM_ON_BOOT = parseBooleanEnv(readEnv('WARM_ON_BOOT'), true);
+// Keep this opt-in. Staging gates Target Optimizer startup with a systemd ExecStartPost
+// warm, so also enabling the in-process warm would race two model/profile loads. Hosts
+// without that external gate may explicitly set WARM_ON_BOOT=true.
+export const WARM_ON_BOOT = parseBooleanEnv(readEnv('WARM_ON_BOOT'), false);
 
 // All synthesis enters one bounded FIFO scheduler. GPT-SoVITS and the selected
 // weights are process-global, so physical concurrency stays at one until a real-GPU

@@ -1,6 +1,16 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { transcriptionVerifier } from './transcriptionVerifier.js';
+import {
+  transcriptionVerifier,
+  resolveTranscriptionStartupTimeoutMs,
+} from './transcriptionVerifier.js';
+
+test('transcription startup timeout covers measured cold model initialization', () => {
+  assert.equal(resolveTranscriptionStartupTimeoutMs(undefined), 360_000);
+  assert.equal(resolveTranscriptionStartupTimeoutMs('420000'), 420_000);
+  assert.equal(resolveTranscriptionStartupTimeoutMs('119999'), 360_000);
+  assert.equal(resolveTranscriptionStartupTimeoutMs('invalid'), 360_000);
+});
 
 // Whisper-style word entry.
 function w(word, durationSec, p = 0.95) {
