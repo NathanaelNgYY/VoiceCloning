@@ -13,6 +13,9 @@
 - The deployed frontend is expected to use same-origin CloudFront paths rather than calling raw backend origins directly.
 - `/api/*` goes through Lambda Function URL.
 - Browser SSE and the live WebSocket go through the GPU ALB.
+- Entra tokens for authenticated Lambda REST calls use `X-VCS-Entra-Token`, not `Authorization`:
+  Lambda-origin OAC always signs with SigV4 and owns the standard header. Gateway/WebSocket auth
+  keeps its bearer/frame transport because those paths do not traverse Lambda OAC.
 
 ## Storage Model
 
@@ -26,9 +29,38 @@
   volume requires buffering; Glue/Athena and a dashboard are separate query-layer work.
 - Current batches are session-anonymous and exclude mock-auth identity. Future SSO
   identity must be derived from a backend-validated token, not a browser field.
+- The dev-first identified design is implemented locally: Lambda validates the token,
+  writes only verified `oid` as the analytics subject, maps video times through an authored
+  lesson concept map, and aggregates cautious evidence in a dev-only DynamoDB table.
+- Learner summaries use conservative support-signal thresholds and may use a structured OpenAI response;
+  API failure or missing credentials falls back to deterministic wording. The chatbot gets
+  only the compact summary, never another user's history or an unsupported formal grade.
+- Derived support signals are per learner, lesson, and concept in a rolling 30-day window.
+  Rewinds contribute `0.5` at most twice and clarification requests contribute `1` at most
+  twice; the internal support score caps at `3` and retained qualifying count caps at four.
+  Long pauses and transcript scrolling remain only in the immutable event log and contribute
+  nothing to the support state. Event IDs are idempotent and reads recalculate recency.
+  Positive mastery remains unimplemented until a trustworthy correctness signal exists.
+- Supervisor reads require an Entra `Supervisor` app role (with an explicit OID allowlist
+  only as a temporary provisioning bridge), and query a user index rather than scanning.
+  Supervisors may reset one learner concept; the backend rebuilds the affected summary.
 - Rewinds, skips, and long transcript pauses are ambiguous signals. They may calibrate
   a relevant chatbot answer or prompt a check for understanding, but cannot establish
   that a learner is confused, clear, attentive, or has mastered the material.
+- Explanation style is separate from concept support. A detailed current-turn request such as
+  “explain like I am nine while preserving medical terms” must be followed as written; a
+  generic simplification request supports only generic simplification. Persistent style
+  preferences require a separate learner-controlled model and are future work, alongside
+  learner confirmation prompts and concept knowledge checks.
+- Concept ranking is supervisor presentation only. The chatbot ignores `focusConcepts`, receives
+  every concept with a current support state, first resolves the concept in the current question,
+  and applies only the matching entry; an
+  unrelated higher-ranked concept must never redirect the answer.
+- Supervisor cohort ranking counts distinct identified learners per concept. Primary rank is the
+  number reaching the current maximum support-signal score (`3`); support-recommended and possible-
+  support learner counts break ties. Event volume and uncapped score sums never determine rank.
+  Report the learner denominator and percentage, and describe this as support signals rather than
+  proven uncertainty or objective concept difficulty.
 
 ## Pronunciation Dictionary
 
@@ -183,16 +215,58 @@
 - `separate-containers-new` (dev) and `codex/staging-multi-user-scaling` (staging) are
   deliberately not the same tree. Neither is a superset of the other; do not "sync" one
   onto the other without reviewing both lists below.
-- Staging only (not on dev): the deployable assistant instructions — Lambda route
-  `GET/PUT /api/chatbot/system-prompt`, `lambda/chatbot-prompt/`, the Deploy button in
-  the instructions panel, `client/src/services/chatbotPrompt.js`, and the
-  `showInstructionsEditor` app-mode flag.
-- The instructions editor is confined to the text-chat kiosk build and its write is
-  unauthenticated on purpose: that distribution has no sign-in, and the operator accepted
-  that anyone reaching the page may change the prompt for both staging apps. This is a
-  staging-only posture and must not be copied to a production distribution.
-- Dev only (not on staging): the learner-analytics work — `lambda/learners/`, the
-  supervisor/learner routes, and the admin analytics client surfaces.
-- Consequence: `lambda/router.js`, `lambda/scripts/package-function-url.ps1`, and
-  `client/src/pages/LivePage.jsx` differ between the branches on purpose. A merge must
-  keep both route sets and both packaging entries.
+Verified from `git diff separate-containers-new codex/staging-multi-user-scaling`
+on 2026-08-13; re-derive rather than trust this list if it looks stale.
+
+### Staging only — files that do not exist on dev
+
+- `lambda/chatbot-prompt/{index,index.test}.js` — `GET/PUT /api/chatbot/system-prompt`,
+  the deployed assistant instructions, stored at `<prefix>/chatbot-config/system-prompt.json`.
+- `client/src/services/chatbotPrompt.js`, `client/src/hooks/useDeployedChatbotPrompt.js` —
+  fetch/publish the deployed prompt; the hook is used by both LivePage and the GI engine.
+- `gpu-inference-worker/src/services/bootWarm.test.js` — covers warming from the active profile.
+- `live-gateway/scripts/read-transcripts.{mjs,test.js}` — transcript reader.
+
+### Staging only — behaviour inside shared files
+
+- Instructions editor + Deploy button, gated to the text-chat kiosk build by the
+  `showInstructionsEditor` app-mode flag. The write is unauthenticated on purpose: that
+  distribution has no sign-in and the operator accepted that anyone reaching the page may
+  change the prompt for both staging apps. Staging-only posture; never copy to production.
+- Per-origin auth exemption (`LIVE_AUTH_EXEMPT_ORIGINS`) in `live-gateway/src/config.js` +
+  `routes/liveChat.js` and `lambda/shared/liveAuth.js` + `lambda/live/index.js`, so the open
+  kiosk can chat and synthesise without sign-in while the SSO app still requires a token.
+  Origin is browser-supplied, so it is a soft gate only.
+- `session.auth.failed` handling in `client/src/hooks/useLiveSpeech.js`, so a refused
+  handshake surfaces instead of pinning the UI in `connecting` with the panel locked.
+- Profile-aware GPU boot warm in `gpu-inference-worker/src/services/bootWarm.js`, plus
+  `WARM_ON_BOOT` defaulting on in its `config.js`.
+
+### Dev only — files that do not exist on staging
+
+- Learner analytics: `lambda/learners/*`, `lambda/analytics/{concepts,learnerStore}.js`,
+  `client/src/lib/{learnerGuidance,supervisorAnalytics}.js`,
+  `client/src/pages/SupervisorDashboardPage.jsx`, `client/src/services/learnerAnalytics.js`,
+  `scripts/backfill-{analytics-user-index,learner-evidence}.mjs`.
+- `client/env/dev/gi.env`, `client/src/hooks/useLiveSpeech.test.js`.
+
+### Shared files that differ on purpose
+
+`lambda/router.js`, `lambda/live/index.js`, `lambda/shared/liveAuth.js`,
+`lambda/scripts/package-function-url.ps1`, `client/src/pages/LivePage.jsx`,
+`client/src/hooks/useLiveSpeech.js`, `live-gateway/src/config.js`,
+`live-gateway/src/routes/liveChat.js`, `scripts/deploy-*.ps1`, `scripts/deploy.config.json`.
+A merge must keep **both** route sets and **both** packaging allowlist entries.
+
+### Divergence that is not in git
+
+These live in runtime configuration and will not appear in any branch diff:
+
+- Staging live-gateway `.env` and staging Lambda env carry `LIVE_AUTH_EXEMPT_ORIGINS`
+  (`https://d3k2rz0hqm8nxi.cloudfront.net,https://faculty.lkcmedicine.org`). Dev has neither.
+- Staging CloudWatch alarm `vcs-staging-inference-no-traffic-15m` uses
+  `treatMissingData: breaching`; with `missing` a fully idle fleet never scaled in.
+- Staging S3 holds the deployed chatbot prompt; dev has no such object.
+- Staging ASG instances run `warm-staging-deanvoice.sh` from a systemd drop-in
+  (`gpu-inference-worker.service.d/staging-warm.conf`) and keep several deploy scripts
+  truncated to zero bytes on the fleet image. Neither applies to dev.
