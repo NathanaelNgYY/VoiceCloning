@@ -6,7 +6,11 @@ Last updated: 2026-08-11
 - Dev and staging branches have diverged on purpose. Staging carries the deployable
   chatbot instructions (`/api/chatbot/system-prompt` + the panel's Deploy button); dev
   carries learner analytics. See DECISIONS.md "Branch Divergence: Dev vs Staging"
-  before merging either way.
+  before merging either way — it also lists divergence that lives only in runtime
+  configuration and so never appears in a branch diff.
+- Staging work as of 2026-08-13 was handed over separately. Its state, open items, and
+  two corrected assumptions about GPU warming are in the **staging branch's**
+  `HANDOFF.md` under "Staging Handover"; this file stays dev-focused.
 
 - Hard-refresh dev and verify the allowlisted supervisor sees `Admin analytics`, while an
   ordinary student does not. The authorization change, requested OID, Lambda, client bundle,
