@@ -1,10 +1,7 @@
 # Active TODO
 
-- [ ] Urgent staging cleanup after the 2026-08-13 verifier proof: read cloud-init on
-  v26 instance `i-049271d608c44b5e3`; then set ASG min/desired 0 and re-enable both
-  occupancy scale-out alarm actions. They were left at 1/1 and disabled when the AWS
-  session expired. Ask an administrator to stop/terminate standalone canary
-  `i-0e4ef8844a120d069`; this role is denied both operations.
+- [ ] Ask an administrator to terminate stopped standalone verifier canary
+  `i-0e4ef8844a120d069`; the internship role is denied termination.
 - [ ] Synchronize the rotated `LIVE_AUTH_LOADTEST_SECRET` to the fixed live gateway
   during its next running window. Lambda and LT v26 match and a direct public prime
   returned HTTP 200 RIFF; the fixed gateway stopped before its `.env` could be updated.

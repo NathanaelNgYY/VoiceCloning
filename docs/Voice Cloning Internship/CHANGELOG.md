@@ -10,8 +10,9 @@
   and on the canary; shell syntax, PowerShell parse, and `git diff --check` passed.
   Fresh-v26 proof observed one 616-second warm, no restart, Whisper/speaker active,
   phoneme model loaded, both services active, and healthy target. A separate direct
-  authenticated public request returned HTTP 200 RIFF in 14.29 seconds. Final
-  cloud-init readback and scale-to-zero cleanup remain pending after credential expiry.
+  authenticated public request returned HTTP 200 RIFF in 14.29 seconds. Fresh-v26
+  cloud-init then completed without errors and both automated public primes returned
+  HTTP 200 RIFF first try. ASG 0/0 and both alarm actions were restored afterward.
 
 - Made GPU boot-warm work for autoscaling instead of only for a manually pre-warmed event
   fleet. `scripts/warm-staging-deanvoice.sh` is a hand-run, DeanVoice-hardcoded script, and

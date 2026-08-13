@@ -14,12 +14,12 @@ Last updated: 2026-08-13
   active-profile warming, a single boot warm, and repaired public-prime auth.
 - Fresh v26 instance `i-049271d608c44b5e3` completed one 616-second deep warm with
   no worker restart; Whisper-medium and the phoneme model were active, both services
-  were running, and the optimized target was healthy. The AWS session expired before
-  the subsequent public-prime/cloud-init result could be read back.
-- Urgent cleanup: ASG min/desired remained 1 and both occupancy scale-out alarm actions
-  remained disabled at credential expiry. Read cloud-init, then return min/desired to
-  0 and re-enable both alarms. Standalone canary `i-0e4ef8844a120d069` remains running
-  because this role is denied stop/terminate; an administrator must stop/terminate it.
+  were running, and the optimized target was healthy. Cloud-init finished without
+  errors and both public-prime requests returned HTTP 200 RIFF on their first attempt.
+- Post-validation cleanup is complete: ASG min/desired is 0/0, both occupancy alarm
+  actions are enabled, the v26 validator is terminating, and both temporary S3 deploy
+  archives were deleted. Standalone canary `i-0e4ef8844a120d069` is stopping after a
+  verified instance-initiated shutdown; an administrator must terminate it permanently.
 - The fixed scheduled host is stopped. Its live-gateway load-test secret could not be
   synchronized during the short off-hours boot window; normal signed-in traffic does
   not use this bypass, but synchronize it before relying on gateway load-test auth.
