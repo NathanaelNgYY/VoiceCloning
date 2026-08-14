@@ -103,7 +103,6 @@ import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
 import {
   resolveChatbotSystemPrompt,
   getDefaultChatbotSystemPrompt,
-  getBundledChatbotSystemPrompt,
   persistChatbotSystemPrompt,
   clearChatbotSystemPrompt,
   setDeployedChatbotSystemPrompt,
@@ -3672,9 +3671,23 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     persistChatbotSystemPrompt(value);
   }
 
-  function handleResetChatbotSystemPrompt() {
-    // The bundled original, not the deployed text — see getBundledChatbotSystemPrompt.
-    const next = getBundledChatbotSystemPrompt();
+  async function handleResetChatbotSystemPrompt() {
+    // The GI bleeding lesson prompt — a known-good, fully worked example for a
+    // lecturer to read and edit down, not a subject the platform imposes.
+    //
+    // Deliberately NOT getBundledChatbotSystemPrompt(): that constant is the
+    // fallback the lecture site runs when the deployed-prompt fetch comes back
+    // empty, so it has to stay subject-free. A neurology lecture that lost its
+    // fetch must not start teaching gastroenterology. Reset is a human action on
+    // the authoring site, so it can hand back a specimen prompt safely.
+    //
+    // Loaded on click rather than imported at the top because main.jsx imports
+    // App.jsx statically, so this page is bundled into the lecture build too; a
+    // static import would put ~30KB of GI text in a bundle that can never reach
+    // this handler (the editor is hidden there — see appMode showInstructionsEditor).
+    const envOverride = (import.meta.env?.VITE_CHATBOT_SYSTEM_PROMPT || '').trim();
+    const { GI_BLEEDING_PROMPT_TEMPLATE } = await import('@/lib/giBleedingPromptTemplate');
+    const next = envOverride || GI_BLEEDING_PROMPT_TEMPLATE;
     clearChatbotSystemPrompt();
     setChatbotSystemPrompt(next);
     setChatbotDeployState({ status: 'idle', message: '' });

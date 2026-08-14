@@ -3,10 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getFullActiveVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
-import {
-  buildGiBleedingScopedSystemPrompt,
-  resolveChatbotSystemPrompt,
-} from '@/lib/chatbotSystemPrompt';
+import { resolveChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
 import {
   buildDocumentsContext,
   combineSystemPromptWithDocuments,
@@ -56,12 +53,19 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     [voicePinOptions]
   );
 
-  // System prompt + uploaded documents are read once at mount; the gi skin has
-  // no editor for them (the Dean kiosk owns that UI). The lesson context is the
-  // final reference section, then the complete prompt is enclosed by the
-  // non-editable GI scope gate. useLiveSpeech snapshots this when the socket
+  // System prompt + uploaded documents are read once at mount; the lecture skin
+  // has no editor for them (the faculty site owns that UI). The lesson context is
+  // the final reference section. useLiveSpeech snapshots this when the socket
   // opens, so a lesson that arrives after the student has already started
   // talking only takes effect on the next conversation.
+  //
+  // Nothing is appended around the deployed prompt here. This assembly must stay
+  // byte-for-byte identical to the faculty site's (pages/LivePage.jsx), because a
+  // lecturer authors and tests there and deploys to here — anything added on one
+  // side only is a prompt the lecturer never saw. This is exactly how a hardcoded
+  // GI bleeding scope gate used to survive every prompt anyone deployed, so a
+  // custom assistant would answer normally on faculty and then refuse on lectures
+  // with "I can only help with GI bleeding education and this lesson video."
   const deployedPromptLoaded = useDeployedChatbotPrompt();
   const systemPrompt = useMemo(() => {
     // No editor on this skin, so a local copy could only be stale — the deployed
@@ -73,8 +77,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
       buildDocumentsContext(documents).text
     );
     const lesson = String(lessonContext || '').trim();
-    const withLesson = lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
-    return buildGiBleedingScopedSystemPrompt(withLesson);
+    return lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
   }, [lessonContext, deployedPromptLoaded]);
 
   const loadActiveProfile = useCallback(async () => {
