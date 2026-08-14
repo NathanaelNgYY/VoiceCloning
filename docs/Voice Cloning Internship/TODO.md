@@ -2,22 +2,23 @@
 
 - [ ] Ask an administrator to terminate stopped standalone verifier canary
   `i-0e4ef8844a120d069`; the internship role is denied termination.
+- [ ] Ask an administrator to terminate stopped staging AMI builder
+  `i-0f6c399842bd8cc38`; the internship role is denied termination.
 - [ ] Synchronize the rotated `LIVE_AUTH_LOADTEST_SECRET` to the fixed live gateway
   during its next running window. Lambda and LT v26 match and a direct public prime
   returned HTTP 200 RIFF; the fixed gateway stopped before its `.env` could be updated.
 
-- [ ] Reset the deployed chatbot prompt in staging S3 to the bundled default. It
-  currently holds a throwaway test prompt, so the GI safety scope is the only thing
-  keeping the assistant on-topic.
-- [ ] Decide whether the open kiosk should keep unauthenticated access. It is a
-  deliberate staging-only choice; the origin check is browser-supplied and therefore
-  a soft gate, so treat the gateway and synthesis route as publicly reachable and
-  watch spend.
+- [ ] Browser-verify deployed dev `/admin` with an allowlisted Microsoft account: home button,
+  graph sort/filter, cohort counts, detailed evidence, prefetched S3 Events, and mobile layout.
 
-- [ ] Before SSO analytics rollout, validate the access token server-side and enrich
-  stored batches with an immutable subject identifier; never accept a browser-claimed
-  user ID. Add a Glue/Athena table and supervisor dashboard only after event volume
-  and reporting questions justify them; define retention and learner disclosure first.
+- [ ] Verify the live conservative support model: a pause/transcript scroll must not affect a
+  concept, two rewinds must produce only `possible_support`, and two delayed “even simpler”
+  requests must produce `support_recommended` and further evidence must rise with diminishing returns. Verify supervisor Reset. Future:
+  add learner confirmation, knowledge checks, and a separate learner-controlled persistent
+  explanation-style preference. Do not deploy analytics to staging.
+- [ ] Verify the supervisor cohort ranking with at least two identified test learners: only one
+  row per learner/concept may count, maximum-score learners drive primary rank, percentages use
+  the displayed identified-learner denominator, and the ranking never affects chatbot replies.
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.
@@ -107,7 +108,7 @@
 - [ ] Verify `training/runs/<expName>/metadata.json` is uploaded to S3 after a real training run.
 - [ ] Compare `Skip denoise` enabled vs disabled on clean recordings and record when it actually improves cloned timbre.
 - [ ] Validate strict frontend reference filtering and visible scores against `gpu-worker/scripts/score_clips.py` on real clips.
-- [ ] Browser-test Live Fast saved config list/load/update/delete/sample generation on a real trained model; confirm the sentence limit defaults to 1, Max chunk words defaults to Auto/280 characters, saved 10–100-word values override the character heuristic and restore, sub-eight-word chunks absorb at most one neighbour within the hard limit, and all three phoneme-rejected takes re-seed before best-effort output.
+- [ ] Browser-test Live Fast saved config list/load/update/delete/sample generation on a real trained model; confirm the sentence limit defaults to 1, Max chunk words defaults to Auto/280 characters, saved 10–100-word values override the character heuristic and restore, sub-eight-word chunks absorb at most one neighbour within the hard limit, and both normal phoneme-rejected takes re-seed before best-effort output; catastrophic babble may add at most two more takes.
 - [ ] Browser-test Live Full metadata-only defaulting, save/load/update/delete/sample, and Full Inference generation using Live Fast rank #1 refs on a real trained model.
 - [ ] Browser-test Live Full/Queue on a real GPU: verify 3→5 retries and per-sentence best-effort never abort on an audio-usable take, timing+waveform-forgiven technical words are actually audible, revised text persists in the wider editor, normalized previews/full WAV refresh, dropdown/model-ready state does not flap, warm GPU return bypasses the slow overlay, two concurrent browsers receive 409, and an abandoned session does not leave a false another-user banner.
 - [ ] Deploy the scoped three-outcome phoneme verifier plus the Live Fast integration, then on the real GPU listen-test Whisper-mismatched and explicitly strict ARPAbet terms in both Fast and Full. Calibrate pass thresholds (`PHONEME_MIN_CTC_LOG_PROB`, `PHONEME_MIN_SIMILARITY`), conservative reject thresholds, and crop paddings from structured `[phoneme]` logs; also verify completed/regenerated WAVs no longer hit the metadata-readiness retry limit. Model download/token validation and a CUDA forward-pass smoke test are complete (1263.3 MiB peak on L4).

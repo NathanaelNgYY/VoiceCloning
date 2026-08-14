@@ -16,7 +16,7 @@ function AnimatedBackground() {
 }
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { APP_MODE_CONFIG } from '@/lib/appMode';
+import { APP_MODE_CONFIG, shouldApplyLiveDemoLockout } from '@/lib/appMode';
 import { GpuStatusProvider, useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { fetchLiveDemoLockout } from '@/lib/runtimeConfig';
 
@@ -170,7 +170,7 @@ function useLiveDemoLockout() {
     let active = true;
     async function check() {
       const value = await fetchLiveDemoLockout();
-      if (active) setLocked(value);
+      if (active) setLocked(shouldApplyLiveDemoLockout(value, window.location.hostname));
     }
     check();
     const id = window.setInterval(check, 15000);

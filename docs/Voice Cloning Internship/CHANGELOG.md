@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-14
+
+- Staging-only Live Fast now makes two normal takes (`LIVE_FAST_RETRY_COUNT=1`)
+  and, only after catastrophic babble remains, up to two additional reseeded takes
+  (`MAX_BABBLE_ESCAPE_RESEEDS=2`), for a hard maximum of four. ASR
+  `duplicatedWords` now reaches candidate scoring and costs six points per duplicate,
+  so best-effort selection no longer ignores that signal. Targeted local tests passed
+  19/19; focused tests on the staging canary passed 5/5. The broader worker selection
+  still has one known pre-existing compact-formula failure.
+- Baked worker AMI `ami-0b05ebda8d96a924f`, made LT v27 the default, and rolled only
+  `vcs-staging-gpu-inference`. Two fresh v27 instances passed source-hash, service,
+  restart-count, warm-event, and target-health gates. A public faculty-host synthesis
+  returned HTTP 200 RIFF. The temporary builder `i-0f6c399842bd8cc38` was shut down;
+  the internship role cannot terminate it.
+- Staging chatbot-text now exempts only `d3k2rz0hqm8nxi.cloudfront.net` and
+  `faculty.lkcmedicine.org` from `LIVE_DEMO_LOCKOUT`; other hosts remain locked when
+  the Lambda flag is true. Built and deployed `assets/index-BJPFG8hT.js` to CloudFront
+  distribution `E38A3666CJ7FVJ`; both public hostnames returned the bundle. Unit/build
+  verification passed, but the live flag was not temporarily enabled and duplicate-word
+  ranking has not yet had a controlled listening comparison.
+
 ## 2026-08-13
 
 - Aligned the staging inference ASG with the fixed GPU's new 24-hour availability.
@@ -39,58 +60,299 @@
 - Verification: worker 247/247 minus one pre-existing chemical-formula failure that also fails
   without these changes (243/1 before, 247/1 after); 4 new boot-warm tests.
 
-- Fixed the text-chat kiosk (`d3k2rz0hqm8nxi`) hanging on "Preparing live chat...". The gateway
-  requires a `session.auth` frame and that build ships no sign-in, so its socket was closed 4401
-  before OpenAI was dialled — true since `LIVE_AUTH_ENABLED=true` was set on 2026-08-06. One
-  gateway process serves both distributions, so auth is now exempted per origin via
-  `LIVE_AUTH_EXEMPT_ORIGINS` (set to the d3 origin; `.env` backed up). d3 runs as a synthetic
-  identity; `d25sg72wp8oj5g` still requires a token. Origin is browser-supplied, so this is a soft
-  gate only — scripted clients can spoof it, and the gateway should be treated as publicly
-  reachable.
-- The client never handled `session.auth.failed`, so a refused handshake left the phase stuck in
-  `connecting`, which also kept the panel's Deploy and Reset disabled ("locked while a chat is
-  active"). Both now recover and show the reason.
-- The GI app ignored every deploy: `useGiChatEngine` resolved the prompt synchronously at mount and
-  never fetched the deployed copy. Added `useDeployedChatbotPrompt`, used by both the GI engine and
-  LivePage; the GI skin ignores any stale local copy since it has no editor. `Reset to default`
-  restores the bundled prompt again instead of the deployed text it is meant to undo.
-- Verification: gateway 170/170 (2 new exemption integration tests), client 329/329, `build:gi` +
-  `build:chatbot`; live handshake confirms d3 reaches `session.ready` and d25 still gets 4401.
-  Gateway on the fixed instance fast-forwarded to `29d234f7` and restarted (a stray local
-  `package-lock.json` edit blocked the first merge and was backed up to /tmp before discarding).
+- Staging only (`codex/staging-multi-user-scaling`): the chatbot assistant instructions are
+  now deployable from the UI instead of being a constant in the client bundle. Added Lambda
+  route `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
+  `<prefix>/chatbot-config/system-prompt.json`), a Deploy button, and a startup fetch so
+  both staging kiosk distributions load the deployed text; the bundled prompt stays as the
+  fallback. The editor ships only on the text-chat build (`d3k2rz0hqm8nxi`) via the new
+  `showInstructionsEditor` flag — the GI build (`d25sg72wp8oj5g`) reads the deployed prompt
+  but shows no panel. The write is unauthenticated by operator decision, so anyone who can
+  open the text-chat page can change the prompt for both apps; staging only, not for
+  production. Added `chatbot-prompt` to the Lambda packaging allowlist. Tests: Lambda
+  13/13, client 31/31, `build:gi` + `build:chatbot`, live anonymous PUT round-trip verified
+  and the probe deleted afterwards. Dev does not have this feature — see DECISIONS.md
+  "Branch Divergence: Dev vs Staging".
 
-- Staging only: the chatbot assistant instructions are now deployable from the UI instead
-  of being a constant in the client bundle. Added Lambda route
-  `GET/PUT /api/chatbot/system-prompt` (`lambda/chatbot-prompt/`, S3 key
-  `<prefix>/chatbot-config/system-prompt.json`), a Deploy button in the instructions
-  panel, and a startup fetch so both staging kiosk distributions load the deployed text.
-  The bundled prompt remains the fallback when nothing is deployed, and a local edit in
-  the browser still wins so an editor mid-draft is not overwritten.
-- The editor ships only on the text-chat kiosk build (`chatbot` mode, `d3k2rz0hqm8nxi`),
-  gated by the new `showInstructionsEditor` app-mode flag. The GI build
-  (`d25sg72wp8oj5g`) reads the deployed prompt but shows no panel and no Deploy button.
-- The write is deliberately unauthenticated, by operator decision: the editing surface has
-  no sign-in, so anyone who can open that page can change the instructions for both
-  distributions. Staging only — do not carry this route to production as-is. An earlier
-  Entra/deploy-key gate was implemented and then removed on that instruction.
-- Added `chatbot-prompt` to the Lambda packaging allowlist; the first deploy 500'd without
-  it (`ERR_MODULE_NOT_FOUND`).
-- Verification: Lambda 13/13 (`chatbot-prompt` + router), client `appMode` /
-  `chatbotSystemPrompt` / `giPublicAccess` 31/31, `build:gi` and `build:chatbot`, live
-  anonymous PUT 200 with the value read back from both distributions, and the probe object
-  deleted afterwards so both apps fall back to the bundled default. The GI app's hidden
-  panel is verified by build mode plus unit test, not visually — it sits behind SSO.
-- See DECISIONS.md "Branch Divergence: Dev vs Staging" — dev does not have this feature.
+- Changed the GI home page so `Admin analytics` is shown only when the authenticated
+  account passes the Lambda's existing supervisor check (Entra `Supervisor` app role or
+  `SUPERVISOR_OIDS` allowlist). `/api/learner/me` now returns that authoritative boolean;
+  the learner table's profile role is not used for authorization. Tests: learner Lambda
+  8/8, focused GI client 30/30, GI production build. Added Entra OID
+  `31e46d84-542c-4414-bcc0-1c7c24023198` to the preserved dev `SUPERVISOR_OIDS` allowlist
+  (two entries verified). Deployed dev Lambda code hash
+  `h3qR9im7D8yIWnI0UU65b+Kyl8jhqAWvmTnC3jsKhWY=` and GI bundle
+  `assets/index-BC69UgKb.js`; CloudFront invalidation
+  `IDJ90F9DQIQH9163ASVMTV76J` completed. Signed-in browser role visibility remains to verify.
+
+## 2026-08-12
+
+- Attributed learner questions from the question text alone and stopped using the video position for
+  them. `evidenceFromEvent` previously fell back to `conceptAt(lessonSlug, videoTime)` whenever
+  semantic classification failed, so in practice the playhead decided most question evidence; an
+  unclassifiable question now produces no evidence at all. The rewatch signal still uses position,
+  which is correct there — seeking backwards over a span is an act on that span. The repeat tracker no
+  longer drops a repeat when the video position is unreadable.
+  Rebuilt `classifyQuestionConcept` to make that viable: stemmed whole-token and phrase matching
+  instead of raw substring (`ppi` used to match inside `happiness`), IDF weighting over the term table
+  so a term may legitimately belong to several concepts, a multi-word phrase bonus, and two separate
+  gates — an absolute evidence floor (`MIN_CONCEPT_SCORE`) plus the existing 0.75 top-vs-runner-up
+  separation. The old scorer had only the separation gate, so a lone generic keyword scored confidence
+  1.0. Fixed the stemmer to be idempotent (`messages`/`message` both -> `message`; previously `messag`
+  vs `message` silently broke phrase matches) and to handle `ies` plurals and 4-letter abbreviations
+  (`PPIs` -> `ppi`). Term lists expanded across all nine concepts; generic action words
+  (`treatment`, `management`) removed because they competed with real vocabulary.
+  Deliberately not done, per product decision: no quiz/answer items, no concept-duration
+  normalisation, no fitted weights, no cross-signal dedup, no per-learner baselines.
+  Tests: Lambda 169/169, client lib 42/42 (added 3 classifier tests), GI build. Deployed dev Lambda SHA
+  `0zUIY4gsU92MOlYpjLJcHVDq2RAjgLmp7tpYD11x8go=` and client `assets/index-DTuudZ7l.js`;
+  invalidation `I75I5VD69VLLWFGMSYLOZD556F` created.
+
+- Redesigned the admin analytics dashboard onto the GI design tokens. `/admin` previously used raw
+  sky/rose accents belonging to no palette; brand maroon (`--primary`) now carries the eyebrow, tabs,
+  selected student, active filter and evidence badges. Added `--chart-recommended` (#a32a92, a lighter
+  step of the same 308 brand hue, because #7c1d6f is too dark to read as a fill) and `--chart-possible`
+  (#d97706) as chart tokens in `globals.css` plus `chart.*` in the Tailwind theme; the pair passes
+  lightness-band, chroma, CVD-separation and contrast checks against a white card. Layout: sticky brand
+  header carrying the back button, cohort totals promoted to a four-tile row, per-concept hover card on
+  the chart, ranking key moved below the plot, and the repeated show-more/button markup collapsed into
+  shared `BTN_*` constants and a `ShowMoreControls` component. Behaviour, scoring and API calls are
+  unchanged. Client analytics tests 4/4 and GI build passed; not visually verified in a browser.
+  Deployed dev client `assets/index-BTK_EMbh.js`; invalidation `I31F6NQVYBBV94IRQ5CB8KKDR` created.
+
+## 2026-08-11
+
+- Simplified the Admin Questions tab to use DynamoDB retained conversation turns as its sole source;
+  S3 remains the Events audit/analytics lake and is no longer merged into the question list. Client
+  analytics tests 4/4 and GI build passed. Deployed client `assets/index-CIZWx4bL.js`; CloudFront
+  invalidation `I7PIECXNT3I9XX7U60WL3DNSOQ` created.
+
+- Synced the Admin Questions tab with retained DynamoDB conversation turns, so questions from before
+  `question_asked` analytics was introduced now appear alongside newer S3 analytics questions. The UI
+  deduplicates matching text within 30 seconds and labels transcript-only history; this is a read-only
+  history merge and does not synthesize analytics evidence or change old scores. Also corrected repeated
+  questions so their stored `question_asked` record is scoring-neutral: a repeat receives only its
+  independent weight-1.0 signal, while an ordinary question receives weight 0.5. Lambda 169/169 and GI
+  build passed. Deployed Lambda SHA `3pOuxtlfBowhU7xwgtk1fxDqyFnjGeylhx8KAbJ5Vks=` and client
+  `assets/index-weH0TlqD.js`; invalidation `I9RZEH6YNJ7BZDUJT7YRO5JCAM` created.
+
+- Added authenticated `question_asked` events that retain question text up to 500
+  characters in the verified-subject per-user lake, add `concept_question` evidence at weight
+  0.5 without requiring repetition, and preserve the separate stronger repeated-question bonus at 1.0.
+  Admin gains
+  a newest-first Questions tab with five-row paging; the contradictory session-only history copy now
+  matches the existing 90-day login notice. Tests: Lambda 168/168, focused client 16/16, GI build.
+  Deployed dev Lambda SHA `LmaIRq5TGi84/O6k89POtqur7frl04yrrNbAv4bGDk0=` and client
+  `assets/index-BAHnDogJ.js`; invalidation `IAHLVFW2NU88X128KFDBF7F7FH` completed.
+
+- Reduced Learning signals density: each concept now starts with its five newest evidence events,
+  expands five at a time, and can collapse to five. Reworked the cohort graph to suppress zero-value
+  labels, use a clean axis/plot, and move long concept names into a numbered two-column ranking key.
+  Client analytics tests 4/4 and GI build passed. Deployed bundle `assets/index-D4DYkxRa.js`;
+  CloudFront invalidation `IB23YLOP89ML11KEWH6GKRU58M` completed.
+
+- Changed each Learning signals evidence row from a misleading base `weight` label to its current
+  effective score contribution after 14-day decay and logarithmic rank discount, while keeping the
+  base weight secondary. Added a deterministic helper/test mirroring the backend formula (4/4 client
+  analytics tests pass). Deployed GI bundle `assets/index-CpjVgO1x.js`; CloudFront invalidation
+  `IORVV4ED6Q0AX0CU95RT6JQC0` completed.
+
+- Replayed the per-user raw S3 lake through the current learner scorer after verifying that the
+  earlier two-per-signal model left DynamoDB with only four Endoscopy events while S3 contained
+  16 qualifying Endoscopy events. Added `scripts/backfill-learner-evidence.mjs` with dry-run default
+  and explicit `--apply`. Dry run found two learners, 96 raw events, and 17 qualifying events; apply
+  updated two concepts for the affected learner. DynamoDB read-back verified Endoscopy at 16 retained
+  events, score 3.27, `support_recommended`, and Presentation/epidemiology at one event/0.42.
+
+- Replaced the hidden `/supervisor` UI with a visible `/admin` analytics experience on dev;
+  `/supervisor` redirects for compatibility. The home page links to Admin analytics. The dashboard
+  shows every authored concept, ranks by support-recommended then possible-support learner counts,
+  offers interactive filters, cohort totals, individual summaries/signals, and an Events tab.
+  Events remain supervisor-authorized server-side. A slow request-time global-lake fallback was
+  removed: new batches now write once to a verified-subject per-user S3 lake, and 32 valid identified
+  batches from the retained 44-object global archive were backfilled (12 non-user/invalid records
+  skipped; nothing deleted). Events prefetch on learner selection and read newest batches 25-way in
+  parallel until the 500-event cap. The browser never receives S3 credentials. Files: `client/src/GiApp.jsx`,
+  `client/src/pages/SearchPage.jsx`, `client/src/pages/SupervisorDashboardPage.jsx`,
+  `client/src/services/learnerAnalytics.js`, `lambda/analytics/index.js`,
+  `lambda/learners/eventRepository.js`, `lambda/learners/index.js`, `lambda/learners/repository.js`,
+  `lambda/router.js`, and tests. Full Lambda suite: 165/165 pass. GI production build passed with the
+  existing bundle-size warning. The final dashboard uses an animated grouped vertical concept graph;
+  the cramped Table mode was removed. Learning signals separates status, decayed score, qualifying count, signal
+  types, and individual evidence timestamps/weights. Fixed the Events effect self-cancelling its
+  successful response, added an action-count summary, newest-first 10-row paging, and a spacious
+  responsive graph with reduced-motion-safe staggered animation. Removed the unintended 3-point hard
+  score cap and changed decay to apply per logarithmic rank, so stale retained events cannot suppress
+  newer evidence. Thresholds are now visible in Learning signals. Deployed dev Lambda SHA
+  `07MyViCb7NCCTed3O0JXXdPcZR2RdwWmxAPQnL7L2j4=` and GI bundle `assets/index-CjftY7ww.js`;
+  invalidation `I19PYX6HN731WSDOKR0IOAQJBM` completed. Direct S3-reader
+  verification returned the allowlisted user's 93 events in 289ms, untruncated. Signed-in visual
+  interaction remains to be browser-verified. Staging unchanged.
+
+## 2026-08-10
+
+- Stopped rewriting an unchanged lesson summary on every analytics batch. `recordBatch`
+  rebuilt and `Put` the `#SUMMARY` item for each touched lesson unconditionally, with no
+  dirty check. The per-lesson `Query` prefix widened from `LESSON#<slug>#CONCEPT#` to
+  `LESSON#<slug>#` so the stored summary returns in the same request (no extra read), and
+  the `Put` is skipped when the rebuilt summary is content-identical ignoring `updatedAt`
+  and `ttl`. The TTL is still refreshed once the stored value falls more than half a TTL
+  period behind the new one, so a summary cannot expire while its concepts live on. Files:
+  `lambda/analytics/learnerStore.js`, `lambda/analytics/learnerStore.test.js`.
+  Tests run: `node --test lambda/analytics/learnerStore.test.js` — 12 pass, including three
+  new cases (unchanged summary not rewritten, changed summary still written, TTL run-down
+  forces a rewrite). Deployed to dev only via `scripts/deploy-lambda.ps1 -Env dev`
+  (`Liu_Teng_Yu_Intern2026-Voice_Cloning_Project`, code SHA `+BwpRwlJh62KoVSeS3NCjPt5DYFWziOt2PABXvc4fQU=`).
+  Staging unchanged. Not yet exercised against a live signed-in learner batch.
+
+- Reworked the learner support scoring model and deployed it to dev (`c6b59b4`, `c571480`).
+  Evidence now decays on a 14-day half-life instead of holding full weight until the 30-day
+  cliff, and the per-signal caps of two became a 20-event retention limit with logarithmic
+  growth per signal, so frequency keeps counting instead of saturating. Thresholds were
+  recalibrated to preserve the states the linear scale produced (`POSSIBLE_SUPPORT_SCORE`
+  0.75, `SUPPORT_RECOMMENDED_SCORE` 1.55, `STRONG_SUPPORT_SCORE` 2.3, split from the score
+  cap). Chatbot guidance now sends concept and support state only, with a test asserting no
+  signal name, score, or count can leak into the prompt. Files: `lambda/analytics/concepts.js`,
+  `lambda/analytics/learnerStore.js`, `lambda/learners/repository.js`,
+  `client/src/lib/learnerGuidance.js` and their tests. 459 lambda + client tests pass;
+  calibration is locked by tests. Retention applies only to evidence collected from here on.
+- **Incident:** while removing the dead `LEARNER_SUMMARY_MODEL` variable, a PowerShell 5.1
+  command using `Join-String` (PowerShell 7 only) interpolated to `Variables={}` and wiped
+  every dev Lambda environment variable. Restored 21 keys from `lambda/.env.deployment` plus
+  `GPU_SCHEDULE_ENABLED=false`; verified `/api/learner/me` and `/api/supervisor/users` return
+  401 rather than failing. `SUPERVISOR_OIDS` had not been set, so no value was lost and
+  supervisor access continues through the `SUPERVISOR_APP_ROLE` app role. No published Lambda
+  versions existed to roll back to, so recovery depended entirely on the repo file.
+
+- Fixed the analytics write path summarising learner concepts from raw stored DynamoDB
+  attributes, which reported expired evidence as active support for concepts not touched by
+  the current batch. Both paths now share `currentConceptState`. Removed the OpenAI learner
+  summary generator, whose output was stored but never served because reads always rebuild the
+  rule summary; rules are the single source of truth and may be revisited later. Files:
+  `lambda/analytics/learnerStore.js`, `lambda/learners/repository.js`, `lambda/.env.deployment`,
+  deleted `lambda/analytics/summaryGenerator.js(.test.js)`. Added a regression test covering
+  stale untouched concepts and confirmed it fails against the previous behaviour; full lambda
+  suite passes (153 tests).
+
+- Granted the two current developers dev-only `/supervisor` access through the Lambda's
+  verified Entra object-ID allowlist. No staff email or DynamoDB role is required, no IDs
+  were committed, and staging was unchanged. Updated the deployment map and corrected the
+  recorded repeated-question weight to the deployed value of `1`.
+
+- Added a supervisor-only cross-learner concept ranking. It ranks by the number of distinct
+  identified learners at the maximum bounded support-signal score (`3`), then uses broader
+  support-state learner counts only to break ties. The dashboard shows count, denominator, and
+  percentage; chatbot personalization never receives the cohort rank.
+
+- Reframed dev learner analytics as conservative support guidance rather than uncertainty
+  prediction. Rewinds now contribute `0.5` at most twice, clarification requests contribute
+  `1` at most twice, and the internal score caps at `3`. Long pauses and transcript scrolling
+  remain in raw analytics but no longer affect concept state. Statuses are now
+  `no_support_inference`, `possible_support`, and `support_recommended`; the supervisor UI no
+  longer displays a pseudo-assessment score. Detailed current-turn explanation requests are
+  explicitly preserved, while persistent style preferences, learner confirmation, and
+  knowledge checks remain future work.
+- Chatbot personalization now receives structured concept-specific guidance and must match the
+  current question's concept before applying it. It ignores supervisor `focusConcepts` and
+  receives every qualifying concept. Concept ranking remains dashboard-only, and
+  low-signal concepts cannot be promoted by the optional summary LLM.
 
 ## 2026-08-07
 
-- Removed the startup profile GET that could race token availability and falsely report a signed-in
-  user as unsigned. GI now becomes ready from fixed `deanvoice-v1` and sends that ID on synthesis;
-  staging bundle `assets/index-Cklj8mCD.js` is live. Client 328/328 and GI build passed.
-- Initially added an authenticated read-only `deanvoice-v1` startup endpoint; the later fix above
-  removed that client startup dependency. Staging GI bundle
-  `assets/index-C3Y7_cZC.js` is live; client 327/327, Lambda 125/125, GI build, live bundle inspection,
-  and unsigned endpoint 401 passed. No staging ASG, gateway, TTS, or training resource changed.
+- Replaced unlimited dev learner accumulation with a 30-day rolling model: score cap 5,
+  two retained events per signal, count cap 8, event-id deduplication, concurrent-update retries,
+  and read-time expiry. Short clarifications such as “even simpler” inherit the prior question's
+  topic. Supervisors can reset one concept and automatically rebuild its summary. Lambda 151/151,
+  client 350/350, GI build, live bundle/Lambda/auth/GPU checks passed. Existing dev concepts were
+  conditionally migrated to scores 5 and 1.5; staging was untouched.
+
+- Fixed inflated dev GI learner evidence after a real NTU test. One scrubber drag emitted
+  several native `seeked` events and repeated transcript scrolling emitted duplicate review
+  signals, producing score 8 instead of 2.75. The client now coalesces one seek gesture and
+  records one transcript review per visit. Client tests pass 348/348; dev bundle
+  `assets/index-DBQt8Fr-.js` is live. A cold check also proved GI starts the dev GPU.
+
+- Fixed the dev GI text-working/Dean-audio-401 split. CloudFront OAC signs the Lambda Function URL
+  with SigV4 `Authorization`, so the browser's bearer header could not survive to Lambda. Authenticated
+  Lambda REST calls now use forwarded `X-VCS-Entra-Token`; Lambda prefers it and retains bearer fallback
+  for direct callers. Client 346/346 and Lambda 143/143 passed, as did GI build/package. Dev Lambda and
+  bundle `assets/index-6qG3aJlL.js` are live after completed invalidation; staging was untouched.
+
+- Added dev-only GI live-chat handshake visibility after a signed-in session was reported stuck on
+  `Connected. Preparing live chat...`. The client now handles gateway auth rejection explicitly and
+  ends setup after 15 seconds without `session.ready`. Client tests passed 346/346, the GI build
+  passed, and live dev serves `assets/index-CXMDfndS.js` with both messages and `deanvoice-v1`.
+  Dev gateway/ALB and direct OpenAI Realtime setup were healthy; a signed-in browser retry remains
+  necessary to identify the actual auth/init failure. Staging was not changed.
+
+- Removed GI's unnecessary startup profile request, which could race token availability and falsely
+  show `Sign in to load the lesson voice` plus `No cloned voice is set up`. Both GI clients now become
+  ready from configured ID `deanvoice-v1` and include it in every synthesis request; the backend
+  resolves the saved model/reference profile during synthesis. Dev `d2o` bundle
+  `assets/index-CplLB5_6.js` and staging bundle `assets/index-Cklj8mCD.js` are live. Full client tests
+  passed 344/344 dev and 328/328 staging; both builds and live no-old-route inspections passed.
+
+- Fixed GI startup voice selection in dev and staging. Both GI builds now fetch the saved
+  `deanvoice-v1` profile through an authenticated read-only endpoint and pin that exact model/reference
+  snapshot for the conversation. They neither depend on nor mutate shared `active.json`, so TTS or
+  training users can change the globally active voice without blocking GI. Dev bundle
+  `assets/index-B0E_z1t1.js` and staging bundle `assets/index-C3Y7_cZC.js` are live after completed
+  invalidations. Client dev 343/343, client staging 327/327, Lambda dev 142/142, Lambda staging
+  125/125, both GI builds, live bundle inspection, and unsigned endpoint 401 checks passed.
+
+- Fixed dev GI cloned voice returning `Sign in to use the voice assistant` after a valid
+  Microsoft sign-in. The shared Axios voice client omitted the bearer token even though the
+  WebSocket and learner APIs sent it. Dev bundle `assets/index-BPBBhsIk.js` now attaches the
+  configured token. Lambda voice auth is scoped to GI requests using its deployment-controlled
+  `X-Demo-Request` CloudFront origin header; normal dev TTS, Training, and Dean tools remain
+  public, while analytics/supervisor routes remain authenticated. Client 343/343, Lambda
+  140/140, GI build/package, live GI unsigned 401, and public-dev unsigned 400 validation pass.
+
+- Added and deployed a secondary supervisor analytics view to dev only. Each learner keeps
+  Summary as the default tab; Learning signals is optional, lessons are collapsible, and
+  qualifying concepts show ranked score bars, cautious status, total evidence-event count,
+  contributing signal types, and update time. The UI does not invent unavailable per-signal
+  counts. After rebasing onto the latest remote dev-parity changes, client 342/342, Lambda
+  139/139, and GI build passed; bundle `assets/index-DYklguXz.js`, completed invalidation,
+  and anonymous supervisor 401 were verified.
+
+- Improved and redeployed dev-only repeated-question evidence: deterministic concept matches
+  at confidence 0.75 or higher may cross video timestamps; ambiguous, tied, or unknown
+  questions still require the same timestamp-authored concept. Accepted matches score 1.25
+  with an 8-second floor, 10-minute window, 0.65 similarity threshold, and two-signal cap.
+  Analytics/S3 excludes question text; DynamoDB transcripts retain it. Lambda 139/139,
+  client 331/331, GI build, dev Lambda update, live bundle `assets/index-BXcd6-Hm.js`,
+  completed invalidation, config check, and anonymous learner 401 all passed.
+
+- Enabled PITR and deployed authenticated per-user learner analytics to dev only: the
+  non-staging Lambda, fixed dev gateway, dev chatbot CloudFront/S3 target, and
+  `vcs-dev-transcripts`. Added the dev `/api/live/session/*` gateway behavior.
+- Proved gateway `PutItem` through the actual instance profile with an expiring probe;
+  verified gateway readiness, public login/retention notice, completed CloudFront rollout,
+  and anonymous 401 responses for learner, supervisor, and sign-in routes.
+- Fixed dev deployment env selection, scoped host Git safe-directory handling, and failed
+  SSM status reporting in the local commit; push remains blocked by missing GitHub auth.
+- Tests: Lambda 135/135, gateway 154/154, client 327/327, GI production build. Still
+  unverified: real NTU sign-in, resulting rows, personalization, and supervisor acceptance.
+
+## 2026-08-06
+
+- Implemented a dev-first identified learner analytics MVP: verified-token event ingestion,
+  authored GI concept mapping, DynamoDB evidence aggregation, deterministic/optional
+  structured-LLM summaries, chatbot personalization retrieval, and supervisor-protected
+  API/UI paths.
+- Created the dev DynamoDB table with its user index, TTL, deletion protection, and tags.
+  Stopped before deployment when PITR and runtime-policy operations were denied; the live
+  dev application remains unchanged.
+- Tests run: Lambda 135/135, gateway 154/154, client 327/327, and dev GI production build.
+- Untested: real NTU sign-in, live Lambda/gateway writes, OpenAI summary call, CloudFront
+  supervisor/session routing, browser dashboard, and end-to-end personalization.
+
+- Restored the Live Fast TTS advanced-settings collapsible by enabling the existing
+  shared frontend feature flag, then deployed only the dev and staging `live-fast`
+  clients. Training and chatbot/GI distributions were not changed.
+- Verification: `npm.cmd run build:live-fast` passed; both CloudFront invalidations
+  completed; both public TTS bundles contain the restored advanced-settings UI.
 
 ## 2026-08-05
 

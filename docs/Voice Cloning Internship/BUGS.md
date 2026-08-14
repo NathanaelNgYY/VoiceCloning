@@ -1,6 +1,18 @@
 # Bugs
 
+- Fixed: passive long pauses and transcript scrolling previously increased the same numeric
+  score used for concept personalization, allowing ambiguous behaviour to imply uncertainty.
+  They are now retained only as raw analytics; only bounded rewatches and clarification
+  requests derive a cautious support state.
+
 ## Active
+
+- 2026-08-14 fixed: Live Fast defaulted to three normal takes and could add four
+  catastrophic-babble reseeds; it now uses two normal takes plus at most two escape
+  takes. Fallback ranking also received repeated phrases but not ASR `duplicatedWords`,
+  so a visibly duplicated-word take could avoid the intended penalty. The field is now
+  propagated and costs six score points per occurrence. Deployed to staging LT v27;
+  controlled duplicate-word listening comparison remains outstanding.
 
 - 2026-08-13: LT v24 killed Whisper-medium at its hardcoded 120-second startup
   deadline; measured steady-state load was 215.77 seconds. The host image also lacked
@@ -10,6 +22,20 @@
   baked cache, and verifier-driven reseeds remained observable; cold ASG admission is
   therefore still about ten minutes, not equivalent to event-mode prewarming.
 
+- 2026-08-07 fixed: learner evidence accumulated without bound and short clarification repeats
+  lost their medical topic. Dev now uses a capped 30-day event window and inherits the preceding
+  topic for phrases such as “even simpler.” Supervisor concept reset supports controlled QA.
+
+- 2026-08-07 fixed: one GI scrub gesture could emit several `seeked` events, and scroll
+  bursts in one transcript visit each counted as review. A real run therefore stored score 8.
+  Dev now coalesces the gesture and limits transcript review to once per visit; verify the
+  next run by a `+2.75` before/after score delta.
+
+- 2026-08-07: dev GI text chat recovered, but Dean audio returned an unsigned 401. Root cause:
+  CloudFront OAC signs the Lambda origin with SigV4 `Authorization`, replacing the viewer bearer
+  header. Dev now sends Entra REST auth as `X-VCS-Entra-Token`; Lambda accepts it before falling
+  back to ordinary bearer auth. Bundle `assets/index-6qG3aJlL.js` and Lambda are live. Unit/build,
+  policy, bundle, and deployment checks pass; signed-in Dean audio still needs browser verification.
 - 2026-08-03: staging fixed inference and ASG AMI `ami-021aeb72894b8c79b`
   lack `resemblyzer`, so speaker-identity scoring degrades to ASR/audio-quality checks.
   History shows the gate was added intentionally; no evidence supports removal as a
@@ -55,6 +81,20 @@
   decide whether to remove the public 30-second timeout exposure.
 
 ## Recently Fixed
+
+- 2026-08-07: GI's replacement authenticated startup profile GET could race client token availability,
+  falsely claiming a signed-in user was unsigned and leaving voice readiness empty. GI now makes no
+  startup profile request: it sends fixed `deanvoice-v1` with synthesis and lets the backend resolve it.
+- 2026-08-07: GI previously compared its configured Dean voice against shared `active.json`, so a
+  TTS/training user activating another profile blocked GI. Dev and staging now load saved
+  `deanvoice-v1` directly through an authenticated read-only route and pin its snapshot without
+  changing global active state. Live unsigned route checks return 401; signed-in audio remains a
+  manual browser/listening check.
+- 2026-08-07: dev GI Microsoft sign-in created learner profiles and authenticated the
+  WebSocket, but cloned-voice REST calls omitted the bearer token and returned 401. The shared
+  API client now attaches the configured token. Voice auth is required only for GI-tagged
+  CloudFront requests, preserving public dev TTS/Training/Dean access; analytics and supervisor
+  routes remain independently authenticated.
 
 - 2026-07-31: fixed the 4.618-second first Live lazy import by eagerly loading Live at
   512 MB. GI now sends the pinned GPT/SoVITS snapshot, reducing its synthesis-time
