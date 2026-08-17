@@ -4,11 +4,8 @@ import { getFullActiveVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
 import { resolveChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
-import {
-  buildDocumentsContext,
-  combineSystemPromptWithDocuments,
-  resolveChatbotDocuments,
-} from '@/lib/chatbotDocuments';
+import { resolveChatbotDocuments } from '@/lib/chatbotDocuments';
+import { assembleSystemPrompt } from '@/lib/assembleSystemPrompt';
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
@@ -59,25 +56,20 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   // opens, so a lesson that arrives after the student has already started
   // talking only takes effect on the next conversation.
   //
-  // Nothing is appended around the deployed prompt here. This assembly must stay
-  // byte-for-byte identical to the faculty site's (pages/LivePage.jsx), because a
-  // lecturer authors and tests there and deploys to here — anything added on one
-  // side only is a prompt the lecturer never saw. This is exactly how a hardcoded
-  // GI bleeding scope gate used to survive every prompt anyone deployed, so a
-  // custom assistant would answer normally on faculty and then refuse on lectures
-  // with "I can only help with GI bleeding education and this lesson video."
+  // Assembly goes through assembleSystemPrompt and nothing is appended around it,
+  // because a lecturer authors and tests on the faculty site and deploys to here
+  // — anything added on one side only is a prompt the lecturer never saw. That
+  // drift is how a hardcoded GI bleeding scope gate survived every prompt anyone
+  // deployed, so a custom assistant answered normally on faculty and then refused
+  // on lectures with "I can only help with GI bleeding education and this lesson
+  // video." Both sites now call the same function; keep it that way.
   const deployedPromptLoaded = useDeployedChatbotPrompt();
   const systemPrompt = useMemo(() => {
     // No editor on this skin, so a local copy could only be stale — the deployed
-    // prompt (or the bundled default) is the source of truth here.
+    // prompt and documents (or the bundled default) are the source of truth here.
     const prompt = resolveChatbotSystemPrompt({ allowLocalOverride: false });
-    const documents = resolveChatbotDocuments();
-    const withDocuments = combineSystemPromptWithDocuments(
-      prompt,
-      buildDocumentsContext(documents).text
-    );
-    const lesson = String(lessonContext || '').trim();
-    return lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
+    const documents = resolveChatbotDocuments({ allowLocalOverride: false });
+    return assembleSystemPrompt({ prompt, documents, lessonContext });
   }, [lessonContext, deployedPromptLoaded]);
 
   const loadActiveProfile = useCallback(async () => {

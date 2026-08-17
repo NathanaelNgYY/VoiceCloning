@@ -11,9 +11,32 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 
 export const SYSTEM_PROMPT_KEY = 'chatbot-config/system-prompt.json';
 
-// Generous, but bounded: the shipped default is ~30k characters and reference
-// material gets appended client-side, so this only rejects clearly broken input.
+// Generous, but bounded: the shipped default is ~30k characters, so this only
+// rejects clearly broken input.
 export const MAX_PROMPT_CHARS = 200_000;
+
+// The lecturer's uploaded reference documents travel with the prompt. They used
+// to live in the authoring browser's localStorage, which meant a deploy silently
+// dropped them: the author's own test conversation had the PDFs and every
+// student's did not. Storing them here is what makes "deploy" mean the whole
+// assistant, not just the textarea.
+//
+// The cap is the client's own MAX_DOCUMENTS_CHARS budget with headroom — the
+// client truncates to 180k before the model ever sees it, so anything past this
+// is a broken caller rather than an ambitious reading list.
+export const MAX_DOCUMENTS_CHARS = 200_000;
+export const MAX_DOCUMENTS = 50;
+
+function normalizeDocuments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((doc) => doc && typeof doc.name === 'string' && typeof doc.text === 'string')
+    .map((doc) => ({ name: doc.name, text: doc.text }));
+}
+
+function totalDocumentChars(docs) {
+  return docs.reduce((sum, doc) => sum + doc.name.length + doc.text.length, 0);
+}
 
 function isMissingObject(error) {
   const name = error?.name || error?.Code || '';
@@ -37,13 +60,16 @@ export function createHandler({
         const stored = JSON.parse(body.toString('utf-8'));
         return ok({
           prompt: typeof stored.prompt === 'string' ? stored.prompt : '',
+          // schemaVersion 1 records predate uploaded documents and have no such
+          // field; they read back as a prompt with no reference material.
+          documents: normalizeDocuments(stored.documents),
           updatedAt: stored.updatedAt || '',
           updatedBy: stored.updatedBy || '',
         }, {}, event);
       } catch (error) {
         if (isMissingObject(error)) {
           // Nothing deployed yet — the frontend falls back to its built-in default.
-          return ok({ prompt: '', updatedAt: '', updatedBy: '' }, {}, event);
+          return ok({ prompt: '', documents: [], updatedAt: '', updatedBy: '' }, {}, event);
         }
         console.error('[chatbot-prompt] read failed', error);
         return err(500, 'Could not read the deployed instructions.', event);
@@ -73,7 +99,20 @@ export function createHandler({
       return err(413, `prompt must be ${MAX_PROMPT_CHARS} characters or fewer`, event);
     }
 
-    const record = { schemaVersion: 1, prompt, updatedAt: now() };
+    // Absent `documents` means "no reference material", not "leave what is already
+    // deployed". A deploy publishes the editor's whole state, so a lecturer who
+    // removes every PDF and deploys must actually see them gone on the lecture
+    // site — silently preserving them would be the same class of bug as silently
+    // dropping them.
+    const documents = normalizeDocuments(body?.documents);
+    if (documents.length > MAX_DOCUMENTS) {
+      return err(413, `documents must number ${MAX_DOCUMENTS} or fewer`, event);
+    }
+    if (totalDocumentChars(documents) > MAX_DOCUMENTS_CHARS) {
+      return err(413, `documents must total ${MAX_DOCUMENTS_CHARS} characters or fewer`, event);
+    }
+
+    const record = { schemaVersion: 2, prompt, documents, updatedAt: now() };
     try {
       await writeObject(
         SYSTEM_PROMPT_KEY,

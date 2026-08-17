@@ -1,29 +1,82 @@
 export const CHATBOT_DOCUMENTS_STORAGE_KEY = 'chatbot.documents';
 export const MAX_DOCUMENTS_CHARS = 180000;
 
-export function resolveChatbotDocuments() {
+/**
+ * One reference document in its canonical shape.
+ *
+ * `chars` is always derived from `text` rather than trusted from the caller: it
+ * is displayed as the size budget in the editor, and a stored count that has
+ * drifted from the text would quietly misreport how close a deploy is to the
+ * truncation limit.
+ */
+export function normalizeChatbotDocument(doc) {
+  if (!doc || typeof doc.name !== 'string' || typeof doc.text !== 'string') return null;
+  return { name: doc.name, text: doc.text, chars: doc.text.length };
+}
+
+export function normalizeChatbotDocuments(docs) {
+  if (!Array.isArray(docs)) return [];
+  return docs.map(normalizeChatbotDocument).filter(Boolean);
+}
+
+// The documents deployed from the instructions panel, once the app has loaded
+// them. Mirrors the deployed-prompt store in chatbotSystemPrompt.js: the panel
+// edits a local copy, deploying publishes it, and every frontend reads the
+// published copy at startup.
+let deployedDocuments = [];
+
+export function setDeployedChatbotDocuments(docs) {
+  deployedDocuments = normalizeChatbotDocuments(docs);
+}
+
+export function getDeployedChatbotDocuments() {
+  return deployedDocuments;
+}
+
+/**
+ * True when this browser holds a local edit of the document set.
+ *
+ * Presence of the key is the signal, not whether it parses to a non-empty list:
+ * a lecturer who removes every document has locally chosen "no documents", and
+ * that choice has to outrank the deployed set or the deleted files would come
+ * back on the next render.
+ */
+export function hasStoredChatbotDocuments() {
   try {
     const raw = globalThis.localStorage.getItem(CHATBOT_DOCUMENTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((d) => d && typeof d.name === 'string' && typeof d.text === 'string')
-      .map((d) => ({
-        name: d.name,
-        text: d.text,
-        chars: typeof d.chars === 'number' ? d.chars : d.text.length,
-      }));
+    return typeof raw === 'string' && raw.length > 0;
   } catch {
-    return [];
+    return false;
   }
+}
+
+/**
+ * The documents this browser should use.
+ *
+ * `allowLocalOverride` must be false on any build without an instructions editor
+ * — same rule as resolveChatbotSystemPrompt. There the local copy can only be a
+ * stale leftover from before documents were published server-side, and letting
+ * it win would pin that browser to documents no lecturer can see or replace.
+ */
+export function resolveChatbotDocuments({ allowLocalOverride = true } = {}) {
+  if (allowLocalOverride) {
+    try {
+      const raw = globalThis.localStorage.getItem(CHATBOT_DOCUMENTS_STORAGE_KEY);
+      if (typeof raw === 'string' && raw.length > 0) {
+        return normalizeChatbotDocuments(JSON.parse(raw));
+      }
+    } catch {
+      // Unreadable or unparseable — fall through to the deployed set.
+    }
+  }
+  return getDeployedChatbotDocuments();
 }
 
 export function persistChatbotDocuments(docs) {
   try {
     globalThis.localStorage.setItem(
       CHATBOT_DOCUMENTS_STORAGE_KEY,
-      JSON.stringify(Array.isArray(docs) ? docs : []),
+      JSON.stringify(normalizeChatbotDocuments(docs)),
     );
     return { ok: true };
   } catch {
@@ -41,8 +94,10 @@ export function clearChatbotDocuments() {
 
 export function addChatbotDocument(docs, doc) {
   const list = Array.isArray(docs) ? docs : [];
-  const without = list.filter((d) => d.name !== doc.name);
-  return [...without, { name: doc.name, text: doc.text, chars: doc.chars }];
+  const normalized = normalizeChatbotDocument(doc);
+  if (!normalized) return list;
+  const without = list.filter((d) => d.name !== normalized.name);
+  return [...without, normalized];
 }
 
 export function removeChatbotDocument(docs, name) {
@@ -61,11 +116,4 @@ export function buildDocumentsContext(docs, { maxChars = MAX_DOCUMENTS_CHARS } =
   const totalChars = full.length;
   if (totalChars <= maxChars) return { text: full, truncated: false, totalChars };
   return { text: full.slice(0, maxChars), truncated: true, totalChars };
-}
-
-export function combineSystemPromptWithDocuments(prompt, docsContext) {
-  const base = typeof prompt === 'string' ? prompt : '';
-  const ctx = typeof docsContext === 'string' ? docsContext : '';
-  if (!ctx) return base;
-  return `${base}\n\n${ctx}`;
 }

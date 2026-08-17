@@ -116,11 +116,14 @@ import {
   MAX_DOCUMENTS_CHARS,
   resolveChatbotDocuments,
   persistChatbotDocuments,
+  clearChatbotDocuments,
+  hasStoredChatbotDocuments,
+  setDeployedChatbotDocuments,
   addChatbotDocument,
   removeChatbotDocument,
   buildDocumentsContext,
-  combineSystemPromptWithDocuments,
 } from '@/lib/chatbotDocuments';
+import { assembleSystemPrompt } from '@/lib/assembleSystemPrompt';
 import { extractPdfText } from '@/lib/chatbotPdf';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
@@ -269,11 +272,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
   const [chatbotDocError, setChatbotDocError] = useState('');
   const [chatbotDeployState, setChatbotDeployState] = useState({ status: 'idle', message: '' });
+  // Same assembly the lecture site runs (see lib/assembleSystemPrompt.js). What a
+  // lecturer tests here is what students get, which is only true while both sides
+  // go through that one function.
   const chatbotCombinedSystemPrompt = useMemo(
-    () => combineSystemPromptWithDocuments(
-      chatbotSystemPrompt,
-      buildDocumentsContext(chatbotDocuments).text,
-    ),
+    () => assembleSystemPrompt({
+      prompt: chatbotSystemPrompt,
+      documents: chatbotDocuments,
+    }),
     [chatbotSystemPrompt, chatbotDocuments],
   );
   const [gptModels, setGptModels] = useState([]);
@@ -638,17 +644,23 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     voiceConfigsRef.current = voiceConfigs;
   }, [voiceConfigs]);
 
-  // Load the deployed instructions once at startup. A local edit in this browser
-  // still wins, so an editor mid-draft is not overwritten by the shared copy.
+  // Load the deployed instructions and documents once at startup. A local edit in
+  // this browser still wins, so an editor mid-draft is not overwritten by the
+  // shared copy — the two halves are tracked separately because a lecturer may
+  // well be redrafting the text while leaving last deploy's PDFs alone.
   useEffect(() => {
     if (!kiosk) return undefined;
     let cancelled = false;
     (async () => {
-      const { prompt } = await fetchDeployedChatbotSystemPrompt();
-      if (cancelled || !prompt.trim()) return;
+      const { prompt, documents } = await fetchDeployedChatbotSystemPrompt();
+      if (cancelled || (!prompt.trim() && documents.length === 0)) return;
       setDeployedChatbotSystemPrompt(prompt);
-      if (!hasStoredChatbotSystemPrompt()) {
+      setDeployedChatbotDocuments(documents);
+      if (prompt.trim() && !hasStoredChatbotSystemPrompt()) {
         setChatbotSystemPrompt(prompt);
+      }
+      if (!hasStoredChatbotDocuments()) {
+        setChatbotDocuments(documents);
       }
     })();
     return () => { cancelled = true; };
@@ -3696,11 +3708,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   async function handleDeployChatbotSystemPrompt() {
     setChatbotDeployState({ status: 'deploying', message: 'Deploying…' });
     try {
-      const result = await deployChatbotSystemPrompt(chatbotSystemPrompt);
-      // The panel's text is now the shared default, so a "Reset to default" here
-      // returns to what was just deployed rather than the bundled constant.
+      // Both halves of the panel ship together: the typed instructions and the
+      // uploaded PDFs they refer to. Deploying the text alone is what used to
+      // leave students with a prompt citing papers the model never received.
+      const result = await deployChatbotSystemPrompt({
+        prompt: chatbotSystemPrompt,
+        documents: chatbotDocuments,
+      });
+      // The panel's contents are now the shared default, so a "Reset to default"
+      // here returns to what was just deployed rather than the bundled constant.
       setDeployedChatbotSystemPrompt(chatbotSystemPrompt);
+      setDeployedChatbotDocuments(chatbotDocuments);
       clearChatbotSystemPrompt();
+      clearChatbotDocuments();
       setChatbotDeployState({
         status: 'deployed',
         message: result?.updatedAt

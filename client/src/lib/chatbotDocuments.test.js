@@ -5,10 +5,13 @@ import {
   MAX_DOCUMENTS_CHARS,
   resolveChatbotDocuments,
   persistChatbotDocuments,
+  clearChatbotDocuments,
+  hasStoredChatbotDocuments,
+  setDeployedChatbotDocuments,
   addChatbotDocument,
   removeChatbotDocument,
   buildDocumentsContext,
-  combineSystemPromptWithDocuments,
+  normalizeChatbotDocuments,
 } from './chatbotDocuments.js';
 
 function withMemoryStorage(fn) {
@@ -46,9 +49,14 @@ test('buildDocumentsContext truncates to maxChars', () => {
   assert.ok(r.totalChars > 100);
 });
 
-test('combineSystemPromptWithDocuments appends only when context present', () => {
-  assert.equal(combineSystemPromptWithDocuments('PROMPT', ''), 'PROMPT');
-  assert.equal(combineSystemPromptWithDocuments('PROMPT', 'CTX'), 'PROMPT\n\nCTX');
+test('normalizeChatbotDocuments derives chars and drops malformed entries', () => {
+  const r = normalizeChatbotDocuments([
+    { name: 'a.pdf', text: 'hello', chars: 999 },
+    { name: 'b.pdf' },
+    null,
+    'nope',
+  ]);
+  assert.deepEqual(r, [{ name: 'a.pdf', text: 'hello', chars: 5 }]);
 });
 
 test('addChatbotDocument replaces an entry with the same name', () => {
@@ -74,9 +82,64 @@ test('persist + resolve round-trips through storage', () => {
 
 test('resolveChatbotDocuments returns [] when storage is empty or invalid', () => {
   withMemoryStorage(() => {
+    setDeployedChatbotDocuments([]);
     assert.deepEqual(resolveChatbotDocuments(), []);
     globalThis.localStorage.setItem('chatbot.documents', 'not json');
     assert.deepEqual(resolveChatbotDocuments(), []);
+  });
+});
+
+test('resolveChatbotDocuments falls back to the deployed set with no local copy', () => {
+  withMemoryStorage(() => {
+    const deployed = [{ name: 'paper.pdf', text: 'deployed', chars: 8 }];
+    setDeployedChatbotDocuments(deployed);
+    assert.deepEqual(resolveChatbotDocuments(), deployed);
+    setDeployedChatbotDocuments([]);
+  });
+});
+
+test('a local copy outranks the deployed set, including a deliberately empty one', () => {
+  withMemoryStorage(() => {
+    setDeployedChatbotDocuments([{ name: 'paper.pdf', text: 'deployed', chars: 8 }]);
+
+    const local = [{ name: 'local.pdf', text: 'local', chars: 5 }];
+    persistChatbotDocuments(local);
+    assert.deepEqual(resolveChatbotDocuments(), local);
+
+    // A lecturer who removes every document has chosen "no documents"; the
+    // deployed set must not resurrect them.
+    persistChatbotDocuments([]);
+    assert.equal(hasStoredChatbotDocuments(), true);
+    assert.deepEqual(resolveChatbotDocuments(), []);
+
+    setDeployedChatbotDocuments([]);
+  });
+});
+
+test('the lecture site ignores a local copy entirely', () => {
+  withMemoryStorage(() => {
+    const deployed = [{ name: 'paper.pdf', text: 'deployed', chars: 8 }];
+    setDeployedChatbotDocuments(deployed);
+    persistChatbotDocuments([{ name: 'stale.pdf', text: 'stale', chars: 5 }]);
+
+    assert.deepEqual(resolveChatbotDocuments({ allowLocalOverride: false }), deployed);
+
+    setDeployedChatbotDocuments([]);
+  });
+});
+
+test('clearChatbotDocuments drops the local copy back to the deployed set', () => {
+  withMemoryStorage(() => {
+    const deployed = [{ name: 'paper.pdf', text: 'deployed', chars: 8 }];
+    setDeployedChatbotDocuments(deployed);
+    persistChatbotDocuments([{ name: 'local.pdf', text: 'local', chars: 5 }]);
+
+    clearChatbotDocuments();
+
+    assert.equal(hasStoredChatbotDocuments(), false);
+    assert.deepEqual(resolveChatbotDocuments(), deployed);
+
+    setDeployedChatbotDocuments([]);
   });
 });
 
