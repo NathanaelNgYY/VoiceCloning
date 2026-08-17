@@ -17,8 +17,7 @@
 - [ ] Bake `resemblyzer` into a canary staging inference AMI, verify the speaker gate
   becomes active, benchmark its latency/quality cost, then promote through a reviewed
   launch-template version. Do not hand-patch ephemeral ASG instances.
-- [ ] Repair the worker test suites: the compact-formula inference test leaves a
-  nested subtest unfinished, and the email mock fails without configured mail env.
+- [ ] Repair the email mock that fails without configured mail environment values.
 
 - [ ] Future: evaluate a versioned alias plus scheduled provisioned concurrency only
   if eager 512 MB initialization is still insufficient. Current reruns passed 100/100
@@ -91,6 +90,9 @@
 - [ ] Browser-test the deployed Live Full chunk generation library: regenerate one chunk at least three times, listen to every archived take, restore the oldest, and confirm the displaced current take returns to the library while textarea/chunk preview/final playback/download use the restored version without synthesis. Verify histories remain independent across chunks and insert/delete clear them.
 
 - [ ] In the deployed pronunciation UI, save and load `stereochemistry` with synthesis spelling `stereo chemistry`, then compare no-alias vs alias audio in Fast and Full at sentence start/middle/end. Confirm spacing improves clarity without an unnatural pause and inspect ASR/full-span phoneme logs; delete or revise the alias if listening is worse.
+- [ ] If alias tokens must synthesize from custom phonemes rather than GPT-SoVITS defaults,
+  design an explicit per-alias-token ARPAbet schema. Do not guess boundaries in one flat
+  ARPAbet sequence or globally override common alias words.
 
 - [ ] Browser-test the deployed Live Fast TTS and Fast Queue saved-output gain at -6/0/+3/+6 dB, including saved-config restore and multi-clip queued playback; confirm clipping stays below the -1 dBFS ceiling.
 

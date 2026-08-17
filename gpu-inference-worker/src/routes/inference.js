@@ -27,7 +27,7 @@ import {
 import { inferenceState } from '../services/inferenceState.js';
 import { sseManager } from '../services/sseManager.js';
 import { resolveRefAudioParams } from '../services/refAudioCache.js';
-import { prepareTextForSynthesis } from '../services/textPronunciation.js';
+import { prepareTextForFullSynthesis } from '../services/textPronunciation.js';
 import { scanOovWords } from '../services/oovScan.js';
 import { applyEmphasisAndSpelling } from '../services/emphasisAndSpelling.js';
 import { expandSsml, splitOnBreaks, partitionBreaks } from '../services/ssml.js';
@@ -38,7 +38,7 @@ import {
   SPEAKER_VERIFY_ENABLED,
 } from '../config.js';
 import {
-  prepareTextWithRuntimeDictionary,
+  applySynthesisAliases,
   syncHotDictionaryOverrides,
   loadRuntimePronunciationEntries,
   collectArpabetWords,
@@ -124,15 +124,17 @@ async function chunkingDictionaryWords() {
   }
 }
 
-// Uppercased set of words that have an ARPAbet override, so expandSsml can let the
-// dictionary win over an SSML <sub>/<say-as> for the same word. Degrades to an empty
-// set (SSML tags simply apply as written) if the dictionary can't be loaded.
-async function arpabetProtectedWords() {
-  try {
-    return collectArpabetWords(await loadRuntimePronunciationEntries());
-  } catch {
-    return new Set();
-  }
+// Shared route order: SSML first, then admin aliases, then capital/emphasis
+// classification. Alias replacement therefore wins; when no alias is present, an
+// admin ARPAbet word stays intact so GPT-SoVITS can match its hot-dictionary key.
+export async function prepareTextBeforeNormalization(text, {
+  loadEntries = loadRuntimePronunciationEntries,
+} = {}) {
+  const entries = await loadEntries();
+  const protectedWords = collectArpabetWords(entries);
+  const expandedText = expandSsml(text, { protectedWords });
+  const dictionaryText = applySynthesisAliases(expandedText, entries);
+  return applyEmphasisAndSpelling(dictionaryText, { protectedWords });
 }
 
 // Per-chunk acceptance check for the chunked full-quality path. A take is accepted
@@ -371,13 +373,11 @@ export async function handleLiveTtsRequest(body, {
   // client asks to skip its verification. Never forwarded to the engine.
   const skipVerify = Boolean(resolvedParams.skip_verify);
   delete resolvedParams.skip_verify;
-  const expandedText = expandSsml(
-    resolvedParams.text,
-    { protectedWords: await arpabetProtectedWords() },
-  );
-  const dictionaryText = await prepareTextWithRuntimeDictionary(expandedText);
-  const emphasizedText = applyEmphasisAndSpelling(dictionaryText);
-  const normalizedText = prepareTextForSynthesis(emphasizedText);
+  const emphasizedText = await prepareTextBeforeNormalization(resolvedParams.text);
+  // Formula expansion is a deterministic in-process text rewrite, not a quality
+  // pass. Reuse it on Live Fast so scientific notation is spoken consistently
+  // without adding a model call, verifier pass, or synthesis retry.
+  const normalizedText = prepareTextForFullSynthesis(emphasizedText);
   const normalizedParams = {
     ...resolvedParams,
     text: normalizedText,
@@ -648,9 +648,7 @@ router.post('/inference', async (req, res) => {
 
     activityState.mark();
     const resolvedParams = await resolveRefAudioParams(params);
-    resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
-      expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
-    ));
+    resolvedParams.text = await prepareTextBeforeNormalization(resolvedParams.text);
     const qualityParams = {
       ...applyFullInferenceQualityPreset(resolvedParams),
       ...(req.body?.voice_model ? { voice_model: { ...req.body.voice_model } } : {}),
@@ -694,9 +692,7 @@ router.post('/inference/generate', async (req, res) => {
       return res.status(503).json({ error: status.error || 'Inference server is not ready. Load models first.' });
     }
     const resolvedParams = await resolveRefAudioParams(params);
-    resolvedParams.text = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
-      expandSsml(resolvedParams.text, { protectedWords: await arpabetProtectedWords() }),
-    ));
+    resolvedParams.text = await prepareTextBeforeNormalization(resolvedParams.text);
     const qualityParams = {
       ...applyFullInferenceQualityPreset(resolvedParams),
       ...(req.body?.voice_model ? { voice_model: { ...req.body.voice_model } } : {}),
@@ -749,9 +745,7 @@ router.post('/inference/regenerate-chunk', async (req, res) => {
     const { session } = acquired;
     let preparedReplacement = '';
     if (replacementText) {
-      preparedReplacement = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
-        expandSsml(replacementText, { protectedWords: await arpabetProtectedWords() }),
-      ));
+      preparedReplacement = await prepareTextBeforeNormalization(replacementText);
     }
     const result = await regenerateLongTextChunk(sessionId, index, fullInferenceQualityOptions({
       ...(session.options || {}),
@@ -846,9 +840,7 @@ router.post('/inference/insert-chunk', async (req, res) => {
     const acquired = await acquireSessionLease(req, res, sessionId);
     lease = acquired.lease;
     const { session } = acquired;
-    const preparedText = applyEmphasisAndSpelling(await prepareTextWithRuntimeDictionary(
-      expandSsml(displayText, { protectedWords: await arpabetProtectedWords() }),
-    ));
+    const preparedText = await prepareTextBeforeNormalization(displayText);
     const result = await insertLongTextChunk(sessionId, index, fullInferenceQualityOptions({
       ...(session.options || {}),
       ...verificationOptions(session.params || {}, { finalWordTailCheck: true }),

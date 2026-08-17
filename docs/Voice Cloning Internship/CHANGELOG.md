@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-17
+
+- Corrected pronunciation precedence across Live Fast, Live Full, regeneration, and
+  inserted Full chunks: synthesis aliases still apply first; otherwise an admin
+  ARPAbet word now bypasses automatic ALL-CAPS acronym/emphasis rewriting and remains
+  one token for GPT-SoVITS hot-dictionary lookup. Without an admin entry, existing
+  acronym behavior is unchanged. Centralized the route preprocessing order and added
+  regressions for alias-first `STEREOCHEMISTRY`, ARPAbet-only `WHO`, and ordinary
+  `WHO`. Full inference-worker suite: 245/245. Not tested: real GPT-SoVITS dictionary
+  reload, GPU audio, browser flow, or deployment. Multiword aliases continue to use
+  their alias tokens for synthesis and the original full ARPAbet sequence for optional
+  full-span verification; automatic per-alias-token phoneme splitting is unsupported.
+- Live Fast now applies the existing conservative chemical-formula rewrite before
+  synthesis, matching Live Full for inputs such as `C6H12O6`, `(CH2O)n`, `NaCl`,
+  and `COOH` without adding a network, model, verification, or retry step. Also
+  closed the compact-formula route test correctly so the following test is no longer
+  nested. Code: `gpu-inference-worker/src/routes/inference.js`,
+  `gpu-inference-worker/src/services/textPronunciation.js`, and their tests. Tests:
+  focused worker tests 85/85 and full inference-worker suite 243/243. A local
+  100,000-call benchmark measured about 125 microseconds of incremental preprocessing
+  per roughly 240-character input. Not tested: real GPU audio, browser flow, deployment,
+  and production multi-user latency.
+
 ## 2026-08-13
 
 - Made GPU boot-warm work for autoscaling instead of only for a manually pre-warmed event

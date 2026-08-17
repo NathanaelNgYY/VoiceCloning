@@ -1,6 +1,13 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-11
+Last updated: 2026-08-17
+
+- Local source now gives Live Fast the same conservative chemical-formula expansion
+  as Live Full with negligible measured preprocessing cost. Worker tests pass 243/243;
+  real GPU listening, deployment, and production multi-user latency remain unverified.
+- Local source now preserves ARPAbet-only ALL-CAPS words for GPT-SoVITS after applying
+  aliases first; worker tests pass 245/245. Alias phonemes are verified across the full
+  phrase, but automatic phoneme splitting into alias tokens remains unsupported.
 ## Needs Action
 
 - Dev and staging branches have diverged on purpose. Staging carries the deployable
