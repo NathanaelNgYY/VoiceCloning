@@ -2,6 +2,13 @@
 
 ## 2026-08-17
 
+- Restored live staging GPU availability to 07:00-19:00 Singapore without deploying
+  dev or rebuilding code/images. The staging Lambda now reads `enabled=true`, start
+  `7`, end `19`, timezone `Asia/Singapore`; ASG recurring actions now set min/desired
+  `1/1` at 07:00 and `0/0` at 19:00, max 192. Readback succeeded in account
+  `329599637774`; current in-window ASG capacity remained min 1/desired 2/2 instances.
+  `GPU_INFERENCE_ASG_NAME` remains unset on Lambda, so the fixed GPU and ASG schedules
+  remain independent. No dev AWS resource was changed.
 - Corrected pronunciation precedence across Live Fast, Live Full, regeneration, and
   inserted Full chunks: synthesis aliases still apply first; otherwise an admin
   ARPAbet word now bypasses automatic ALL-CAPS acronym/emphasis rewriting and remains

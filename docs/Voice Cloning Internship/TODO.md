@@ -1,5 +1,8 @@
 # Active TODO
 
+- [ ] At the next staging-to-dev code synchronization, preserve the repository's
+  staging 07:00-19:00 ASG schedule source of truth and its deployment notes. Do not
+  enable or deploy an ASG/GPU schedule in dev; dev remains on-demand with no ASG.
 - [ ] Browser-verify deployed dev `/admin` with an allowlisted Microsoft account: home button,
   graph sort/filter, cohort counts, detailed evidence, prefetched S3 Events, and mobile layout.
 

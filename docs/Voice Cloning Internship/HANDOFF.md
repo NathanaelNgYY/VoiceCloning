@@ -8,6 +8,11 @@ Last updated: 2026-08-17
 - Local source now preserves ARPAbet-only ALL-CAPS words for GPT-SoVITS after applying
   aliases first; worker tests pass 245/245. Alias phonemes are verified across the full
   phrase, but automatic phoneme splitting into alias tokens remains unsupported.
+- Staging GPU availability was restored to 07:00-19:00 Singapore on 2026-08-17.
+  Lambda readback is enabled/start 7/end 19/`Asia/Singapore`; recurring ASG actions
+  set min/desired 1/1 at 07:00 and 0/0 at 19:00, max 192. In-window ASG state remained
+  min 1/desired 2 with two instances after the schedule update. Lambda-to-ASG coupling
+  remains unset, so the fixed GPU and ASG schedules operate independently.
 ## Needs Action
 
 - Dev and staging branches have diverged on purpose. Staging carries the deployable
