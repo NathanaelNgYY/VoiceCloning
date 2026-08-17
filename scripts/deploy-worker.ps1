@@ -11,7 +11,7 @@ $relaySetup = if ($Env -eq 'staging') {
   'sudo rm -f /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload;'
 }
 $gatewayEnvSetup = if ($Env -eq 'staging') {
-  'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET TRANSCRIPT_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT;'
+  'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET LIVE_AUTH_EXEMPT_ORIGINS TRANSCRIPT_TABLE_NAME LECTURER_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT;'
 } else { '' }
 $remote = "set -e; cd /home/ubuntu/VoiceCloning; git fetch origin; git checkout $($cfg.branch); git pull --ff-only; npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $gatewayEnvSetup $relaySetup sudo systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 8; curl -sf localhost:3001/healthz; curl -sf localhost:3003/healthz; curl -sf localhost:3002/readyz"
 

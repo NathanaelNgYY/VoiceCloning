@@ -19,6 +19,10 @@ function readEnv(env) {
       .map((domain) => domain.trim())
       .filter(Boolean),
     loadTestSecret: env.LIVE_AUTH_LOADTEST_SECRET || '',
+    facultyDomains: (env.FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS || '')
+      .split(',')
+      .map((domain) => domain.trim().toLowerCase())
+      .filter(Boolean),
   };
 }
 
@@ -50,6 +54,21 @@ export function readBearerToken(event) {
   const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization');
   const raw = key ? String(headers[key] || '').trim() : '';
   return /^Bearer\s+/iu.test(raw) ? raw.replace(/^Bearer\s+/iu, '').trim() : '';
+}
+
+export function isFacultyRequest(event) {
+  const headers = event?.headers || {};
+  const key = Object.keys(headers).find((name) => name.toLowerCase() === 'x-vcs-site');
+  return key ? String(headers[key] || '').trim().toLowerCase() === 'faculty' : false;
+}
+
+export function enforceFacultyIdentity(identity, event, allowedDomains) {
+  if (!isFacultyRequest(event) || identity?.synthetic) return identity;
+  const email = String(identity?.email || '').trim().toLowerCase();
+  if (!allowedDomains.some((domain) => email.endsWith(`@${domain}`))) {
+    throw new TokenError('domain_not_allowed', 'This Microsoft account cannot use the faculty app.');
+  }
+  return identity;
 }
 
 /**
@@ -101,8 +120,8 @@ export function createLiveAuthGuard({ env = process.env, verifier = null } = {})
         return { oid: 'LOADTEST#lambda', email: '', synthetic: true };
       }
 
-      const identity = await activeVerifier.verify(token);
-      return { ...identity, synthetic: false };
+      const identity = { ...await activeVerifier.verify(token), synthetic: false };
+      return enforceFacultyIdentity(identity, event, config.facultyDomains);
     },
   };
 }

@@ -1,5 +1,11 @@
 # Active TODO
 
+- [ ] Ask an administrator to create `vcs-staging-lecturers` in ap-northeast-2
+  with the main transcript table's PK/SK and `signins-by-day` schema, on-demand
+  billing, and `ttl` enabled, or grant scoped creation permission. Also add
+  `https://faculty.lkcmedicine.org` as an SPA redirect URI on the existing Entra
+  app. Then resume the prepared faculty SSO deployment and verify a real staff login,
+  student rejection, lecturer-table writes, and unchanged lectures login/table writes.
 - [ ] Ask an administrator to terminate stopped standalone verifier canary
   `i-0e4ef8844a120d069`; the internship role is denied termination.
 - [ ] Ask an administrator to terminate stopped staging AMI builder

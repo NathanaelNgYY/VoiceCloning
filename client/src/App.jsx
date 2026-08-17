@@ -27,6 +27,14 @@ import TrainingPage from './pages/TrainingPage.jsx';
 import LivePage from './pages/LivePage.jsx';
 import GiChatPage from './pages/GiChatPage.jsx';
 import GiApp from './GiApp.jsx';
+import { LoginPage } from './pages/LoginPage.jsx';
+import {
+  PostLoginRedirectHandler,
+  ProtectedRoute,
+  SignInRecorder,
+} from '@/auth/AppAuthGate';
+import { useAuth } from '@/auth/useAuth';
+import { config } from '@/config';
 
 function LiveFastEntry() {
   const location = useLocation();
@@ -207,15 +215,27 @@ export default function App() {
   // browsing lessons and the transcript must not wait on the voice engine.
   // The Dean-demo lockout lives inside AppShell, so gi deliberately bypasses it
   // too: a lesson page must stay readable while the shared GPU is busy.
+  if (config.authEnabled) return <AuthenticatedApp />;
+
+  return <AppWithGpu autoStart={GPU_AUTO_START} />;
+}
+
+function AppWithGpu({ autoStart }) {
   return (
-    <GpuStatusProvider autoStart={GPU_AUTO_START}>
+    <GpuStatusProvider autoStart={autoStart}>
       {APP_MODE_CONFIG.gi ? <GiApp /> : <AppShell />}
     </GpuStatusProvider>
   );
 }
 
+function AuthenticatedApp() {
+  const auth = useAuth();
+  return <AppWithGpu autoStart={GPU_AUTO_START && auth.isAuthenticated} />;
+}
+
 function AppShell() {
   const appConfig = APP_MODE_CONFIG;
+  const location = useLocation();
   const locked = useLiveDemoLockout();
 
   if (locked) {
@@ -232,8 +252,10 @@ function AppShell() {
   return (
     <TooltipProvider>
       <div className="flex min-h-screen flex-col">
+        <PostLoginRedirectHandler />
+        <SignInRecorder />
         <AnimatedBackground />
-        {GPU_AUTO_START && <GpuStartingOverlay />}
+        {GPU_AUTO_START && location.pathname !== '/login' && <GpuStartingOverlay />}
         {/* Minimal header */}
         {!appConfig.showGiChat && (
         <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md">
@@ -271,22 +293,37 @@ function AppShell() {
         )}>
           <Routes>
             <Route
+              path="/login"
+              element={
+                config.authEnabled
+                  ? (
+                    <LoginPage
+                      description="Welcome to the LKCMedicine Faculty Voice Assistant"
+                      privacyNotice="Your use of the voice assistant is saved against your NTU staff account in the lecturers database and kept for 90 days."
+                    />
+                  )
+                  : <Navigate to="/" replace />
+              }
+            />
+            <Route
               path="/"
               element={
-                appConfig.showGiChat
-                  ? <GiChatPage />
-                  : appConfig.showTraining
-                    ? <TrainingPage />
-                    : appConfig.showLiveFast
-                      ? <LiveFastEntry />
-                      : <Navigate to={appConfig.defaultPath} replace />
+                <ProtectedRoute>
+                  {appConfig.showGiChat
+                    ? <GiChatPage />
+                    : appConfig.showTraining
+                      ? <TrainingPage />
+                      : appConfig.showLiveFast
+                        ? <LiveFastEntry />
+                        : <Navigate to={appConfig.defaultPath} replace />}
+                </ProtectedRoute>
               }
             />
             <Route
               path="/live-fast"
               element={
                 appConfig.showLiveFast
-                  ? <LivePage replyMode="phrases" />
+                  ? <ProtectedRoute><LivePage replyMode="phrases" /></ProtectedRoute>
                   : <Navigate to={appConfig.defaultPath} replace />
               }
             />
@@ -294,7 +331,7 @@ function AppShell() {
               path="/text-to-speech"
               element={
                 appConfig.showTextToSpeech
-                  ? <LivePage replyMode="phrases" mode="tts" />
+                  ? <ProtectedRoute><LivePage replyMode="phrases" mode="tts" /></ProtectedRoute>
                   : <Navigate to={appConfig.defaultPath} replace />
               }
             />

@@ -1,6 +1,12 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-14
+Last updated: 2026-08-17
+
+- Faculty-only staging SSO is implemented locally but not deployed. The prepared
+  chatbot build allows only staff/associate domains and routes through a CloudFront
+  site marker to `vcs-staging-lecturers`; the internship role is denied table creation.
+  The table and faculty SPA redirect URI must be created/confirmed before deployment;
+  `docs/staging-architecture.md` now has the complete admin and rollout handoff.
 
 - Staging Live Fast is deployed with two normal takes and at most two additional
   catastrophic-babble reseeds. Duplicate words now reduce fallback candidate scores.

@@ -102,7 +102,7 @@ function getAccountUsername(account) {
 }
 
 export function isMsalAuthEnabled() {
-  return config.giAuthEnabled && config.authMode === "msal";
+  return config.authEnabled && config.authMode === "msal";
 }
 
 export function getAllowedEmailDomains() {

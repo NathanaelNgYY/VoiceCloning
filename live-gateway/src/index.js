@@ -1,12 +1,20 @@
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
-import { CORS_ORIGINS, PORT, readinessProblems } from './config.js';
+import {
+  CORS_ORIGINS,
+  LECTURER_TABLE_NAME,
+  PORT,
+  TRANSCRIPT_TABLE_NAME,
+  readinessProblems,
+} from './config.js';
 import {
   attachLiveChatSocket,
   buildConfiguredAuthenticator,
-  buildConfiguredTranscriptStore,
+  buildConfiguredTranscriptStoreForRequest,
+  enforceConfiguredIdentityPolicy,
 } from './routes/liveChat.js';
+import { isFacultyRequest } from './services/facultyAccess.js';
 import { SIGN_IN_PATH, createSignInHandler } from './routes/signIn.js';
 
 const app = express();
@@ -17,7 +25,10 @@ app.use(express.json());
 // Built once and shared with the socket below. Two verifiers would mean two
 // JWKS caches fetching the same keys from Microsoft on separate schedules.
 const authenticator = buildConfiguredAuthenticator();
-const transcriptStore = buildConfiguredTranscriptStore();
+const transcriptStoreForRequest = buildConfiguredTranscriptStoreForRequest();
+const storageConfiguredForRequest = (req) => (
+  isFacultyRequest(req) ? Boolean(LECTURER_TABLE_NAME) : Boolean(TRANSCRIPT_TABLE_NAME)
+);
 
 app.get('/healthz', (_req, res) => {
   res.json({
@@ -41,10 +52,19 @@ app.get('/readyz', (_req, res) => {
 });
 
 // Records who reached the lesson, independently of whether they ever speak.
-app.post(SIGN_IN_PATH, createSignInHandler({ authenticator, transcriptStore }));
+app.post(SIGN_IN_PATH, createSignInHandler({
+  authenticator,
+  transcriptStoreForRequest,
+  identityPolicy: enforceConfiguredIdentityPolicy,
+  storageConfiguredForRequest,
+}));
 
 const server = createServer(app);
-const liveChatSocket = attachLiveChatSocket(server, { authenticator, transcriptStore });
+const liveChatSocket = attachLiveChatSocket(server, {
+  authenticator,
+  transcriptStoreForRequest,
+  identityPolicy: enforceConfiguredIdentityPolicy,
+});
 
 server.timeout = 0;
 server.keepAliveTimeout = 0;

@@ -74,6 +74,12 @@ export const ENTRA_ALLOWED_EMAIL_DOMAINS = (process.env.ENTRA_ALLOWED_EMAIL_DOMA
   .split(',')
   .map((domain) => domain.trim())
   .filter(Boolean);
+export const FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS = (
+  process.env.FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS || ''
+)
+  .split(',')
+  .map((domain) => domain.trim())
+  .filter(Boolean);
 // Separate credential for the load tests, which have no interactive sign-in.
 // Empty disables the bypass; it is never implied by LIVE_AUTH_ENABLED.
 export const LIVE_AUTH_LOADTEST_SECRET = process.env.LIVE_AUTH_LOADTEST_SECRET || '';
@@ -103,6 +109,7 @@ export function isAuthExemptOrigin(origin, exempt = LIVE_AUTH_EXEMPT_ORIGINS) {
 // Transcript storage. Empty table name disables it entirely — the gateway runs
 // exactly as before, which is what every local dev run needs.
 export const TRANSCRIPT_TABLE_NAME = process.env.TRANSCRIPT_TABLE_NAME || '';
+export const LECTURER_TABLE_NAME = process.env.LECTURER_TABLE_NAME || '';
 export const TRANSCRIPT_TABLE_REGION = process.env.TRANSCRIPT_TABLE_REGION || 'ap-northeast-2';
 // Identifiable rows expire after 90 days; long-term research use is served by a
 // de-identified export instead (scripts/export-transcripts-deidentified.mjs),
@@ -153,6 +160,12 @@ export function readinessProblems(env = process.env) {
   if ((env.TRANSCRIPT_TABLE_NAME || '') && (env.LIVE_AUTH_ENABLED || 'false') !== 'true') {
     problems.push(
       'TRANSCRIPT_TABLE_NAME is set but LIVE_AUTH_ENABLED is off; no transcript would be stored.',
+    );
+  }
+
+  if ((env.LECTURER_TABLE_NAME || '') && !(env.FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS || '')) {
+    problems.push(
+      'LECTURER_TABLE_NAME is set but FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS is empty.',
     );
   }
 

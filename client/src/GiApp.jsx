@@ -1,112 +1,16 @@
-import { useEffect, useRef } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { LessonPage } from '@/pages/LessonPage.jsx';
 import { LoginPage } from '@/pages/LoginPage.jsx';
 import { SearchPage } from '@/pages/SearchPage.jsx';
 import GiChatPage from '@/pages/GiChatPage.jsx';
-import { consumeStoredPostLoginPath } from '@/auth/msalClient';
-import { useAuth } from '@/auth/useAuth';
-import { reportSignIn } from '@/services/signInReporter';
+import {
+  PostLoginRedirectHandler,
+  ProtectedRoute,
+  SignInRecorder,
+} from '@/auth/AppAuthGate';
 import { config } from '@/config';
-
-function ProtectedRoute({ children }) {
-  const auth = useAuth();
-  const location = useLocation();
-
-  if (!config.giAuthEnabled) {
-    return children;
-  }
-
-  if (auth.isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-sm text-slate-500">
-        Checking sign-in...
-      </div>
-    );
-  }
-
-  return auth.isAuthenticated ? (
-    children
-  ) : (
-    <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />
-  );
-}
-
-/**
- * Reports the sign-in to the gateway so the student is recorded on arrival,
- * rather than only if they later start a voice conversation.
- *
- * Deliberately not folded into PostLoginRedirectHandler: that one runs only on
- * the hop back from the identity provider, and a student returning to an already
- * signed-in session would never trigger it.
- */
-function SignInRecorder() {
-  const auth = useAuth();
-  const recordedRef = useRef(false);
-
-  useEffect(() => {
-    if (!config.giAuthEnabled) {
-      return;
-    }
-
-    // Reset on sign-out so the next sign-in is recorded too.
-    if (!auth.isAuthenticated) {
-      recordedRef.current = false;
-      return;
-    }
-
-    if (auth.isLoading || recordedRef.current) {
-      return;
-    }
-
-    recordedRef.current = true;
-    // Never awaited and never able to reject; a storage failure must not touch
-    // the lesson the student came for.
-    void reportSignIn();
-  }, [auth.isAuthenticated, auth.isLoading]);
-
-  return null;
-}
-
-function PostLoginRedirectHandler() {
-  const auth = useAuth();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const handledRef = useRef(false);
-
-  useEffect(() => {
-    if (!config.giAuthEnabled) {
-      handledRef.current = false;
-      return;
-    }
-
-    if (!auth.isAuthenticated) {
-      handledRef.current = false;
-      return;
-    }
-
-    if (auth.isLoading || handledRef.current) {
-      return;
-    }
-
-    handledRef.current = true;
-
-    const currentPath = `${location.pathname}${location.search}`;
-    const storedPath = consumeStoredPostLoginPath();
-
-    if (storedPath && storedPath !== currentPath) {
-      navigate(storedPath, { replace: true });
-      return;
-    }
-
-    if (location.pathname === '/login') {
-      navigate('/', { replace: true });
-    }
-  }, [auth.isAuthenticated, auth.isLoading, location.pathname, location.search, navigate]);
-
-  return null;
-}
 
 /**
  * The gi build's route tree: course search, the lesson player, and the
@@ -131,7 +35,7 @@ export default function GiApp() {
         <Route
           path="/login"
           element={
-            config.giAuthEnabled ? <LoginPage /> : <Navigate to="/" replace />
+            config.authEnabled ? <LoginPage /> : <Navigate to="/" replace />
           }
         />
         <Route

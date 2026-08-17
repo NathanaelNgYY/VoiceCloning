@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createLiveAuthGuard, isAuthExemptOrigin, readBearerToken, resetLiveAuthCache } from './liveAuth.js';
+import {
+  createLiveAuthGuard,
+  isAuthExemptOrigin,
+  isFacultyRequest,
+  readBearerToken,
+  resetLiveAuthCache,
+} from './liveAuth.js';
 
 const IDENTITY = {
   oid: 'e3f1c0aa-1111-2222-3333-444455556666',
@@ -15,6 +21,7 @@ const ENABLED_ENV = {
   ENTRA_TENANT_ID: IDENTITY.tenantId,
   ENTRA_AUDIENCE: 'api://9b5c52c0-5f02-4dbf-83ac-c68d246abc68',
   ENTRA_ALLOWED_EMAIL_DOMAINS: 'assoc.main.ntu.edu.sg',
+  FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS: 'staff.main.ntu.edu.sg,assoc.main.ntu.edu.sg',
 };
 
 function stubVerifier(accepts = 'good-token') {
@@ -57,6 +64,25 @@ test('a valid token authorizes the caller', async () => {
 
   assert.equal(identity.oid, IDENTITY.oid);
   assert.equal(identity.synthetic, false);
+});
+
+test('faculty requests require the narrower staff-domain allowlist', async () => {
+  assert.equal(isFacultyRequest({ headers: { 'X-VCS-Site': 'faculty' } }), true);
+  const studentVerifier = {
+    verify: async () => ({ ...IDENTITY, email: 'student@student.main.ntu.edu.sg' }),
+  };
+  const guard = createLiveAuthGuard({ env: ENABLED_ENV, verifier: studentVerifier });
+
+  await assert.rejects(
+    () => guard.authorize({
+      headers: { Authorization: 'Bearer good-token', 'X-VCS-Site': 'faculty' },
+    }),
+    (error) => error.code === 'domain_not_allowed',
+  );
+
+  await assert.doesNotReject(() => guard.authorize({
+    headers: { Authorization: 'Bearer good-token', 'X-VCS-Site': 'lectures' },
+  }));
 });
 
 test('a forged or missing token is refused', async () => {

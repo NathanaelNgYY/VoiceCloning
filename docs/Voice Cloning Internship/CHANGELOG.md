@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-17
+
+- Implemented, but did not deploy, faculty-only Microsoft SSO for the staging
+  `chatbot-text` build. Faculty uses staff/associate email domains, CloudFront site
+  scoping, and a dedicated `vcs-staging-lecturers` table; lectures keeps its existing
+  student-inclusive policy and main table. Gateway tests passed 180/180, client auth
+  tests 26/26, and Lambda auth tests 11/11. Deployment is blocked because the assumed
+  internship role is denied `dynamodb:CreateTable`; the table and Entra faculty SPA
+  redirect URI remain unverified and no AWS runtime resource was changed.
+
 ## 2026-08-14
 
 - Staging-only Live Fast now makes two normal takes (`LIVE_FAST_RETRY_COUNT=1`)

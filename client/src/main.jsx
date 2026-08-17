@@ -9,13 +9,13 @@ import { AppProviders } from '@/AppProviders.jsx';
 import { initializeMsal, isMsalAuthEnabled } from '@/auth/msalClient';
 import { config } from '@/config';
 
-// Only the gi build carries the lesson/auth surface. Every other mode renders
-// exactly as before — no auth context, no MSAL bootstrap, no async gate.
+// Any build can opt into the shared Microsoft gate. Public builds still render
+// without an auth context, MSAL bootstrap, or asynchronous startup delay.
 async function bootstrap() {
   let msalInstance = null;
   let bootstrapError = null;
 
-  if (APP_MODE_CONFIG.gi && config.giAuthEnabled && isMsalAuthEnabled()) {
+  if (config.authEnabled && isMsalAuthEnabled()) {
     try {
       msalInstance = await initializeMsal();
     } catch (error) {
@@ -28,7 +28,7 @@ async function bootstrap() {
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
       <BrowserRouter basename={APP_BASENAME}>
-        {APP_MODE_CONFIG.gi ? (
+        {config.authEnabled ? (
           <AppProviders bootstrapError={bootstrapError} msalInstance={msalInstance}>
             {app}
           </AppProviders>

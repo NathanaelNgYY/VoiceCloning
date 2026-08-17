@@ -17,14 +17,24 @@ function readAllowedEmailDomains() {
     .filter(Boolean);
 }
 
+const authEnabled = (
+  import.meta.env.VITE_AUTH_ENABLED
+  ?? import.meta.env.VITE_GI_AUTH_ENABLED
+  // Preserve the original GI default without accidentally gating training,
+  // live-fast, or other chatbot builds that never opted into authentication.
+  ?? (String(import.meta.env.VITE_APP_MODE || '').toLowerCase() === 'gi' ? "true" : "false")
+) !== "false";
+
 export const config = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? "",
   apiAuthMode: import.meta.env.VITE_API_AUTH_MODE ?? "none",
   demoMode: (import.meta.env.VITE_DEMO_MODE ?? "true") !== "false",
   enableAvatar: (import.meta.env.VITE_ENABLE_AVATAR ?? "false") === "true",
-  // Authentication remains available by default. Individual deployments can
-  // expose the GI lesson surface publicly without removing the SSO code.
-  giAuthEnabled: (import.meta.env.VITE_GI_AUTH_ENABLED ?? "true") !== "false",
+  // VITE_GI_AUTH_ENABLED is retained for the original lectures build. The
+  // generic name also lets the separate faculty chatbot use the same gate.
+  authEnabled,
+  // Compatibility for the lesson header while auth is shared with faculty.
+  giAuthEnabled: authEnabled,
   authMode: import.meta.env.VITE_AUTH_MODE ?? "mock",
   entraClientId: import.meta.env.VITE_ENTRA_CLIENT_ID ?? "",
   entraTenantAuthority:
