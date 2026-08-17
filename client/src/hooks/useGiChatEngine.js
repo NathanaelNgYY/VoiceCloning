@@ -50,11 +50,12 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     [voicePinOptions]
   );
 
-  // System prompt + uploaded documents are read once at mount; the lecture skin
-  // has no editor for them (the faculty site owns that UI). The lesson context is
-  // the final reference section. useLiveSpeech snapshots this when the socket
-  // opens, so a lesson that arrives after the student has already started
-  // talking only takes effect on the next conversation.
+  // System prompt + uploaded documents come from the deployed config, refreshed
+  // at mount and again whenever a conversation ends; the lecture skin has no
+  // editor for them (the faculty site owns that UI). The lesson context is the
+  // final reference section. useLiveSpeech snapshots this when the socket opens,
+  // so a lesson that arrives after the student has already started talking only
+  // takes effect on the next conversation.
   //
   // Assembly goes through assembleSystemPrompt and nothing is appended around it,
   // because a lecturer authors and tests on the faculty site and deploys to here
@@ -63,14 +64,17 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   // deployed, so a custom assistant answered normally on faculty and then refused
   // on lectures with "I can only help with GI bleeding education and this lesson
   // video." Both sites now call the same function; keep it that way.
-  const deployedPromptLoaded = useDeployedChatbotPrompt();
+  const {
+    version: deployedPromptVersion,
+    refresh: refreshDeployedPrompt,
+  } = useDeployedChatbotPrompt();
   const systemPrompt = useMemo(() => {
     // No editor on this skin, so a local copy could only be stale — the deployed
     // prompt and documents (or the bundled default) are the source of truth here.
     const prompt = resolveChatbotSystemPrompt({ allowLocalOverride: false });
     const documents = resolveChatbotDocuments({ allowLocalOverride: false });
     return assembleSystemPrompt({ prompt, documents, lessonContext });
-  }, [lessonContext, deployedPromptLoaded]);
+  }, [lessonContext, deployedPromptVersion]);
 
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;
@@ -156,6 +160,21 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     fastMaxSentencesPerChunk: fastSettings.maxSentencesPerChunk,
     getVideoPosition,
   });
+
+  // Pick up a deploy the moment a conversation ends, so the next one runs the
+  // current config. A kiosk here stays open all day: fetching only at mount meant
+  // a lecturer could remove a PDF, deploy, and still be answered from it in every
+  // later chat, because starting a new conversation re-reads the prompt but never
+  // re-fetches it. Refreshing on the way into idle keeps the round trip off the
+  // start path, where it would delay first audio.
+  const previousPhaseRef = useRef(liveSpeech.phase);
+  useEffect(() => {
+    const previous = previousPhaseRef.current;
+    previousPhaseRef.current = liveSpeech.phase;
+    if (liveSpeech.phase === 'idle' && previous !== 'idle') {
+      refreshDeployedPrompt();
+    }
+  }, [liveSpeech.phase, refreshDeployedPrompt]);
 
   // "New chat" clears the visible transcript without touching engine state
   // (design decision D3 — no persistence, no conversation list).

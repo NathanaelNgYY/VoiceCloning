@@ -1,34 +1,71 @@
-import { useEffect, useState } from 'react';
-import { setDeployedChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
-import { setDeployedChatbotDocuments } from '@/lib/chatbotDocuments';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  setDeployedChatbotSystemPrompt,
+  getDeployedChatbotSystemPrompt,
+} from '@/lib/chatbotSystemPrompt';
+import {
+  setDeployedChatbotDocuments,
+  getDeployedChatbotDocuments,
+} from '@/lib/chatbotDocuments';
 import { fetchDeployedChatbotSystemPrompt } from '@/services/chatbotPrompt';
 
+/** Cheap identity for a deployed config, so an unchanged poll causes no re-render. */
+function fingerprint(prompt, documents) {
+  return `${prompt.length}:${documents.map((d) => `${d.name}@${d.text.length}`).join('|')}`;
+}
+
 /**
- * Loads the deployed assistant instructions and reference documents once per mount.
+ * Loads the deployed assistant instructions and reference documents.
  *
- * Returns a counter that increments when a deployed configuration arrives. Callers
- * that resolve the prompt inside a useMemo must list it as a dependency: the fetch
- * lands after first render, and without it the memo keeps the bundled default
- * forever — which is exactly how the GI build ignored every deploy.
+ * Returns `{ version, refresh }`. `version` increments whenever the deployed
+ * config actually changes; callers that resolve the prompt inside a useMemo must
+ * list it as a dependency, or the memo keeps the bundled default forever — which
+ * is exactly how the GI build ignored every deploy.
+ *
+ * `refresh` exists because a lecture kiosk can stay open for hours across several
+ * deploys. Fetching only at mount meant a lecturer who removed a PDF and deployed
+ * still saw the old documents answered from in every later conversation, since
+ * starting a new chat re-reads the prompt but never re-fetches it. Only a page
+ * reload picked up a deploy, which is not something a student would ever do.
  */
 export function useDeployedChatbotPrompt() {
-  const [loadedCount, setLoadedCount] = useState(0);
+  const [version, setVersion] = useState(0);
+  const inFlightRef = useRef(false);
+  const fingerprintRef = useRef(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  const refresh = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    try {
       const { prompt, documents } = await fetchDeployedChatbotSystemPrompt();
-      if (cancelled) return;
-      // Documents count as a deployed configuration on their own. Gating the
-      // whole update on a non-empty prompt would strand them whenever the
-      // deployed prompt is empty and the bundled default is in play.
+      // The service reports a failed fetch as empty values. Treating that as a
+      // real config would drop a working assistant back to the bundled default
+      // mid-lecture, so an empty result leaves whatever is already loaded alone.
       if (!prompt.trim() && documents.length === 0) return;
+
+      const next = fingerprint(prompt, documents);
+      if (next === fingerprintRef.current) return;
+      fingerprintRef.current = next;
+
       setDeployedChatbotSystemPrompt(prompt);
       setDeployedChatbotDocuments(documents);
-      setLoadedCount((count) => count + 1);
-    })();
-    return () => { cancelled = true; };
+      setVersion((count) => count + 1);
+    } finally {
+      inFlightRef.current = false;
+    }
   }, []);
 
-  return loadedCount;
+  useEffect(() => {
+    // Seed the fingerprint from whatever a sibling hook already loaded, so the
+    // first fetch of an unchanged config does not force a needless re-render.
+    if (fingerprintRef.current === null) {
+      fingerprintRef.current = fingerprint(
+        getDeployedChatbotSystemPrompt(),
+        getDeployedChatbotDocuments(),
+      );
+    }
+    refresh();
+  }, [refresh]);
+
+  return { version, refresh };
 }
