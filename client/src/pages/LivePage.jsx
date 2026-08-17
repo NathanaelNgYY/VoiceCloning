@@ -4812,10 +4812,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <button
                 type="button"
                 onClick={handleDeployChatbotSystemPrompt}
+                // Either half is publishable on its own — documents with no typed
+                // instructions is a valid assistant, and the frontends supply
+                // their neutral built-in instructions when the prompt is empty.
                 disabled={isConversationActive
                   || chatbotDeployState.status === 'deploying'
-                  || !chatbotSystemPrompt.trim()}
-                title="Publish these instructions to the backend for every chatbot frontend"
+                  || (!chatbotSystemPrompt.trim() && chatbotDocuments.length === 0)}
+                title="Publish these instructions and reference documents to every chatbot frontend"
                 className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-40"
               >
                 {chatbotDeployState.status === 'deploying' ? 'Deploying…' : 'Deploy'}

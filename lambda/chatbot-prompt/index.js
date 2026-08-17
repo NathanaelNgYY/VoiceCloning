@@ -91,10 +91,7 @@ export function createHandler({
       return err(400, 'Invalid JSON body', event);
     }
 
-    const prompt = typeof body?.prompt === 'string' ? body.prompt : null;
-    if (prompt === null || !prompt.trim()) {
-      return err(400, 'prompt is required', event);
-    }
+    const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
     if (prompt.length > MAX_PROMPT_CHARS) {
       return err(413, `prompt must be ${MAX_PROMPT_CHARS} characters or fewer`, event);
     }
@@ -110,6 +107,15 @@ export function createHandler({
     }
     if (totalDocumentChars(documents) > MAX_DOCUMENTS_CHARS) {
       return err(413, `documents must total ${MAX_DOCUMENTS_CHARS} characters or fewer`, event);
+    }
+
+    // Either half is a publishable assistant on its own: papers with no typed
+    // instructions are a valid configuration (the frontends supply their neutral
+    // built-in instructions when the prompt is empty). Only a deploy that carries
+    // neither is meaningless, and rejecting it stops an accidental empty publish
+    // from wiping a working assistant.
+    if (!prompt.trim() && documents.length === 0) {
+      return err(400, 'prompt or documents is required', event);
     }
 
     const record = { schemaVersion: 2, prompt, documents, updatedAt: now() };

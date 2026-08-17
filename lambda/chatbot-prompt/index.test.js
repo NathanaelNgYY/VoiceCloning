@@ -193,6 +193,41 @@ test('PUT rejects an empty or oversized prompt', async () => {
   );
 });
 
+test('PUT accepts documents with no typed instructions', async () => {
+  // A lecturer who only wants the papers answered from should not have to invent
+  // instructions first; the frontends supply their neutral built-in prompt.
+  const writes = [];
+  const handler = createHandler({
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+    now: () => '2026-08-17T02:00:00.000Z',
+  });
+
+  const response = await handler(event('PUT', {
+    prompt: '',
+    documents: [{ name: 'paper.pdf', text: 'Written by A. Author and B. Author.' }],
+  }));
+
+  assert.equal(response.statusCode, 200);
+  const record = JSON.parse(writes[0].buffer.toString('utf-8'));
+  assert.equal(record.prompt, '');
+  assert.deepEqual(record.documents, [
+    { name: 'paper.pdf', text: 'Written by A. Author and B. Author.' },
+  ]);
+});
+
+test('PUT rejects a deploy carrying neither half', async () => {
+  const handler = createHandler({
+    writeObject: async () => { throw new Error('should not write'); },
+  });
+
+  assert.equal((await handler(event('PUT', { prompt: '', documents: [] }))).statusCode, 400);
+  // Malformed entries are dropped, so this is an empty deploy too.
+  assert.equal(
+    (await handler(event('PUT', { prompt: '  ', documents: [{ name: 'x.pdf' }] }))).statusCode,
+    400,
+  );
+});
+
 test('unsupported methods are rejected', async () => {
   const handler = createHandler({});
   assert.equal((await handler(event('DELETE'))).statusCode, 405);

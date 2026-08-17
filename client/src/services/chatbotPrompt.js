@@ -47,15 +47,20 @@ export async function fetchDeployedChatbotSystemPrompt(fetchImpl = fetch) {
  */
 export async function deployChatbotSystemPrompt({ prompt, documents = [] } = {}, fetchImpl = fetch) {
   const body = String(prompt ?? '');
-  if (!body.trim()) {
-    throw new Error('Instructions cannot be empty.');
+  const docs = normalizeChatbotDocuments(documents);
+  // Documents alone are a publishable assistant: a lecturer who just wants the
+  // papers answered from should not have to invent instructions first. The
+  // frontends fall back to their neutral built-in instructions when the deployed
+  // prompt is empty, so a documents-only deploy still runs a sane assistant.
+  if (!body.trim() && docs.length === 0) {
+    throw new Error('Add instructions or at least one reference document.');
   }
 
   const response = await fetchImpl(resolveApiPath(PROMPT_PATH), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ prompt: body, documents: normalizeChatbotDocuments(documents) }),
+    body: JSON.stringify({ prompt: body, documents: docs }),
   });
 
   if (!response.ok) {
