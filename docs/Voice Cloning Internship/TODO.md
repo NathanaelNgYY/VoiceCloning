@@ -1,11 +1,14 @@
 # Active TODO
 
-- [ ] Ask an administrator to create `vcs-staging-lecturers` in ap-northeast-2
-  with the main transcript table's PK/SK and `signins-by-day` schema, on-demand
-  billing, and `ttl` enabled, or grant scoped creation permission. Also add
-  `https://faculty.lkcmedicine.org` as an SPA redirect URI on the existing Entra
-  app. Then resume the prepared faculty SSO deployment and verify a real staff login,
-  student rejection, lecturer-table writes, and unchanged lectures login/table writes.
+- [ ] Browser-verify the deployed faculty SSO on `https://faculty.lkcmedicine.org`: a real
+  staff/associate account signs in and can use text and cloned voice; a student-domain account
+  is rejected; faculty `PROFILE`/`SIGNIN`/session/turn rows appear only in
+  `vcs-staging-lecturers`; and a lectures login still writes only to `vcs-staging-transcripts`.
+  Everything else shipped on 2026-08-18 (table, its resource-based write grant, the CloudFront
+  site header and the missing `/api/live/session/*` behavior, gateway, Lambda, client) — see
+  `docs/staging-architecture.md`. Check the table, not the HTTP response: a failed sign-in
+  write still returns `recorded: true`.
+
 - [ ] Ask an administrator to terminate stopped standalone verifier canary
   `i-0e4ef8844a120d069`; the internship role is denied termination.
 - [ ] Ask an administrator to terminate stopped staging AMI builder

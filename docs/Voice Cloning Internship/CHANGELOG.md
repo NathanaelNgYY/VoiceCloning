@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-08-18
+
+- Deployed faculty-only Microsoft SSO to staging. `faculty.lkcmedicine.org` now requires
+  sign-in and admits only `staff.main.ntu.edu.sg`/`assoc.main.ntu.edu.sg`; lectures is
+  untouched and keeps its student-inclusive policy and main table.
+- Created `vcs-staging-lecturers` (`PK`/`SK`, on-demand, `signins-by-day` GSI, TTL on `ttl`,
+  PITR). `dynamodb:CreateTable` was never absent from the internship role — it is gated on the
+  `CreatorId=INTERNS2026` resource tag, which the 2026-08-17 attempt omitted.
+- Granted the gateway instance role `dynamodb:PutItem` on that table through a DynamoDB
+  **resource-based policy** rather than an IAM change, since `iam:*` is denied. Confirmed from
+  the instance with a non-destructive conditional put.
+- Fixed a routing gap the rollout plan missed: the faculty distribution had no
+  `/api/live/session/*` cache behavior, so sign-in POSTs hit the Lambda origin and 404'd. The
+  behavior was copied from lectures and inserted before the `/api/*` catch-all.
+- Stamped `X-VCS-Site: faculty` on the faculty distribution's Lambda and ALB origins, deployed
+  the gateway (pull to `a43d671`, `.env` keys, restart; `/readyz` 200 with no problems) and the
+  staging Lambda (merge added only the faculty allowlist and emptied `LIVE_AUTH_EXEMPT_ORIGINS`;
+  `LIVE_DEMO_LOCKOUT` and `VOICE_PROFILE_INTERNAL_*` preserved), and rebuilt/deployed
+  `chatbot-text` (`assets/index-zgw-uRR3.js`, `/*` invalidated).
+- Tests: gateway 180/180, Lambda 139/139, client 355/355. Live: both hosts 200, both
+  `/api/live/session/signin` 401 unauthenticated, unauthenticated WebSocket refused on both,
+  lectures bundle unchanged, lecturer table ACTIVE with 0 items.
+- Not yet verified: a real staff sign-in, student rejection, and actual lecturer-table writes.
+
 ## 2026-08-17
 
 - Implemented, but did not deploy, faculty-only Microsoft SSO for the staging

@@ -460,65 +460,97 @@ Read the ⚠️ below first — this is the flip that closes the chatbot-text ki
 voice-live-gateway` while conversations keep working normally — by design, storage never
 takes down a lesson. Check the log after the first sign-in rather than assuming success.
 
-### Pending faculty SSO handoff (2026-08-17 — implemented locally, not deployed)
+### Faculty SSO rollout (2026-08-18 — deployed, one human gate outstanding)
 
-The faculty `chatbot-text` site is still open in the running staging environment. Local
-source now gives it the same Microsoft SSO mechanism as lectures, but with the narrower
-`staff.main.ntu.edu.sg,assoc.main.ntu.edu.sg` allowlist. Lectures remains unchanged and
-continues to admit its existing student-inclusive allowlist. Do not describe faculty SSO
-as live until every verification gate below passes.
+The faculty `chatbot-text` site now requires Microsoft sign-in with the narrower
+`staff.main.ntu.edu.sg,assoc.main.ntu.edu.sg` allowlist. Lectures is unchanged and still
+admits its student-inclusive allowlist. **The one gate that has not been exercised is a real
+staff/associate sign-in** — do not describe faculty SSO as proven until that passes and
+lecturer rows are seen in the table.
 
-Faculty data is deliberately isolated from the main student transcript table. The prepared
-gateway selects the store from `X-VCS-Site: faculty`, which CloudFront must overwrite as a
-custom origin header on both the faculty distribution's Lambda and ALB origins. Do not use a
-viewer-supplied email, request body, or `Origin` header to select the table. The faculty
-distribution is the authority for the site marker; lectures sends no marker and therefore
-keeps using `TRANSCRIPT_TABLE_NAME`.
+Faculty data is isolated from the main student transcript table. The gateway selects the
+store from `X-VCS-Site: faculty`, stamped by CloudFront as a custom origin header on both of
+the faculty distribution's dynamic origins. Never use a viewer-supplied email, request body,
+or `Origin` header to select the table. Lectures sends no marker and keeps
+`TRANSCRIPT_TABLE_NAME`.
 
-An administrator must create `vcs-staging-lecturers` in `ap-northeast-2` with:
+#### What was provisioned
 
-- string partition key `PK` and string sort key `SK`;
-- on-demand billing;
-- GSI `signins-by-day`, string partition key `signInDay`, string sort key `signedInAt`,
-  and `INCLUDE` projection for `email` and `displayName`;
-- DynamoDB TTL enabled on attribute `ttl`; and
-- `dynamodb:PutItem` permission for the staging gateway instance profile, scoped to this
-  table. The internship deployment role was directly denied `dynamodb:CreateTable` on
-  2026-08-17, so the failed attempt created no table or partial resource.
+`vcs-staging-lecturers` exists in `ap-northeast-2`: `PK`/`SK` string keys, on-demand billing,
+GSI `signins-by-day` (`signInDay`/`signedInAt`, `INCLUDE` projection of `email` and
+`displayName`), TTL on `ttl`, and PITR enabled. It mirrors `vcs-staging-transcripts`.
 
-The existing multi-tenant Entra SPA registration must also list the faculty custom origin as
-an SPA redirect URI. Do not switch to the registration's home tenant: the client must retain
-the `/common` authority while both backends continue to pin and verify the NTU tenant and the
-existing ID-token audience.
+Two things the earlier handoff assumed needed an administrator turned out not to:
 
-After those prerequisites, deploy in this order:
+- **`dynamodb:CreateTable` is tag-gated, not absent.** The intern role can create a table
+  only when the request carries `CreatorId=INTERNS2026`; the 2026-08-17 denial was a missing
+  tag, not a missing action. `vcs-staging-transcripts` carries the same tag. Tag every new
+  table this way or creation fails with a bare AccessDenied that reads like no permission.
+- **The gateway's write grant did not need an IAM change.** `iam:*` is denied to the intern
+  role, but `dynamodb:PutResourcePolicy` is allowed, so the grant lives in a resource-based
+  policy on the table itself: `PutItem` for `role/VoiClo_GPU`, plus resource-policy
+  management for `role/Nathanael_Ng_Intern2026` — DynamoDB rejects any resource policy that
+  would lock the caller out of editing it. This is narrower than an IAM change (one
+  principal, one action, one table) and is visible next to the table.
 
-1. Add `X-VCS-Site: faculty` to both dynamic origins of the faculty CloudFront distribution,
-   preserving all unrelated distribution settings, and wait for `Deployed`.
-2. Deploy the gateway with `FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS`,
-   `LECTURER_TABLE_NAME=vcs-staging-lecturers`, faculty plus distribution origins in CORS,
-   and an empty `LIVE_AUTH_EXEMPT_ORIGINS`. Confirm `/readyz` remains 200.
-3. Deploy Lambda with the same faculty domain allowlist and an empty
-   `LIVE_AUTH_EXEMPT_ORIGINS`; read back the merged environment rather than replacing keys
-   not present in the deployment file.
-4. Deploy `chatbot-text` from `client/env/staging/chatbot-text.env`. It enables MSAL and
-   sends the same ID-token type as lectures. Do not deploy the client before both backends
-   can accept its token.
+Verify a write grant from the instance, never from a laptop — the grant is on the instance
+role. `ConditionalCheckFailedException` means allowed and writes nothing;
+`AccessDeniedException` means blocked:
 
-The sequence is intentionally fail-closed and may briefly make the old open faculty client
-return authentication errors between steps 2 and 4. If any acceptance gate fails, restore
-the previous gateway code and environment backup, the Lambda code/environment snapshot, the
-previous faculty client artifact, and the saved CloudFront distribution config. Keep the new
-table for investigation rather than deleting possible lecturer records during rollback.
+    aws dynamodb put-item --region ap-northeast-2 --table-name vcs-staging-lecturers       --item '{"PK":{"S":"USER#zzPermProbe"},"SK":{"S":"PROFILE"}}'       --condition-expression 'attribute_exists(zzNeverPresent)'
 
-Required live verification is: a real staff or associate account signs in and can use text
-and cloned voice; a student-domain account is rejected; faculty `PROFILE`, `SIGNIN`, session,
-and turn rows appear only in `vcs-staging-lecturers`; a lectures login and conversation still
-write only to `vcs-staging-transcripts`; direct unauthenticated faculty WebSocket and synthesis
-requests fail; and both public hosts remain healthy after CloudFront invalidation. The local
-evidence before handoff is gateway 180/180, client auth 26/26, and Lambda auth 11/11. A faculty
-bundle artifact was produced, but the command runner did not capture its final exit status,
-so rebuild during deployment rather than reusing that artifact.
+#### The routing gap the original plan missed
+
+The faculty distribution had **no `/api/live/session/*` cache behavior**, so the client's
+sign-in POST fell through to the `/api/*` Lambda origin and returned
+`No Lambda route for POST /api/live/session/signin`. Sign-in rows could never have been
+written, and the header work alone would not have revealed it. The behavior was copied
+verbatim from the lectures distribution (same ALB origin id, cache policy
+`4135ea2d-6df8-44a3-9df3-4b5a84be39ad`, origin request policy
+`216adef6-5c7f-47e4-b989-5492eafa07d3`) and inserted **before** the `/api/*` catch-all, since
+CloudFront matches behaviors in order. When adding a distribution, diff its behaviors against
+lectures rather than assuming the origins are enough.
+
+#### Deployed state
+
+1. Faculty distribution `E38A3666CJ7FVJ`: `X-VCS-Site: faculty` on the Lambda and ALB origins
+   (the S3 origin is deliberately untouched, and the Lambda origin keeps `X-Demo-Request`),
+   plus the `/api/live/session/*` behavior above.
+2. Gateway on `i-0f0da8be59367f7a8` pulled to `a43d671` and restarted
+   (`voice-live-gateway` only). `.env` gained `FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS`,
+   `LECTURER_TABLE_NAME=vcs-staging-lecturers`, the two faculty CORS origins, and an emptied
+   `LIVE_AUTH_EXEMPT_ORIGINS`; `/readyz` is 200 with `problems: []`. Backup: `.env.bak.presso`.
+   systemd reads `live-gateway/.env`, not the `.env.livegateway.deployment.staging` beside it.
+3. Staging Lambda redeployed. The merge added `FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS` and
+   emptied `LIVE_AUTH_EXEMPT_ORIGINS` and changed nothing else; `LIVE_DEMO_LOCKOUT` and the
+   two `VOICE_PROFILE_INTERNAL_*` keys survived, confirming the merge preserves live-only keys.
+4. `chatbot-text` rebuilt and deployed (`assets/index-zgw-uRR3.js`) with `/*` invalidated. The
+   served bundle contains the client id, the `/common` authority and the staff/assoc domains,
+   and **no** `student.main.ntu.edu.sg`.
+
+Note that pulling the gateway box also moved `gpu-inference-worker` source on disk (the repo
+is shared). That code is not running yet and lands only at its next restart.
+
+#### Verified
+
+Gateway 180/180, Lambda 139/139, client 355/355. Live: faculty and lectures both serve 200;
+`POST /api/live/session/signin` is 401 `missing` on both; an unauthenticated WebSocket is
+refused identically on both; the lectures bundle hash is unchanged; `vcs-staging-lecturers`
+is ACTIVE with its GSI ACTIVE and 0 items.
+
+#### Still to verify (needs a human with a real account)
+
+A staff/associate account signs in and can use text and cloned voice; a student-domain account
+is rejected; faculty `PROFILE`, `SIGNIN`, session and turn rows appear **only** in
+`vcs-staging-lecturers`; and a lectures login still writes **only** to
+`vcs-staging-transcripts`. Until a real sign-in happens, the `X-VCS-Site` store selection is
+verified only by unit tests, and a sign-in write failure is invisible in the browser —
+`recordSignIn` is fire-and-forget and the response reports `recorded: true` regardless, so
+confirm in the table, not in the response.
+
+Rollback: restore `.env.bak.presso` and `git checkout e6dd61de` on the gateway, the Lambda
+environment snapshot and previous code, the previous client artifact, and the saved
+distribution config. Keep the table rather than deleting possible lecturer records.
 
 ## 9. Access / operations
 

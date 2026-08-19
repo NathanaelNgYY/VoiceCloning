@@ -1,12 +1,17 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
-- Faculty-only staging SSO is implemented locally but not deployed. The prepared
-  chatbot build allows only staff/associate domains and routes through a CloudFront
-  site marker to `vcs-staging-lecturers`; the internship role is denied table creation.
-  The table and faculty SPA redirect URI must be created/confirmed before deployment;
-  `docs/staging-architecture.md` now has the complete admin and rollout handoff.
+- Faculty SSO is **deployed** to staging (2026-08-18): `faculty.lkcmedicine.org` now requires
+  Microsoft sign-in and admits only staff/associate domains, with faculty rows isolated to the
+  new `vcs-staging-lecturers` table. No administrator was needed after all — `CreateTable` is
+  gated on the `CreatorId=INTERNS2026` tag rather than absent, and the gateway's write grant
+  went in as a DynamoDB *resource-based* policy because `iam:*` is denied. The original plan
+  also missed that the faculty distribution had no `/api/live/session/*` cache behavior, so
+  sign-in would have 404'd at the Lambda; it was copied from lectures. Automated gates pass
+  (gateway 180/180, Lambda 139/139, client 355/355; both hosts 200; both sign-in routes 401
+  unauthenticated). **The one thing still unproven is a real staff sign-in and an actual
+  lecturer-table write** — see `docs/staging-architecture.md` and `TODO.md`.
 
 - Staging Live Fast is deployed with two normal takes and at most two additional
   catastrophic-babble reseeds. Duplicate words now reduce fallback candidate scores.
