@@ -85,6 +85,10 @@ export default {
           "0%": { transform: "scale(1)", opacity: "0.5" },
           "100%": { transform: "scale(1.7)", opacity: "0" },
         },
+        "rise-in": {
+          from: { opacity: "0", transform: "translateY(9px)" },
+          to: { opacity: "1", transform: "none" },
+        },
       },
       animation: {
         "fade-in": "fade-in 0.4s ease",
@@ -97,6 +101,7 @@ export default {
         "orb-float-3": "orb-float 16s ease-in-out infinite 7s",
         "pulse-ring": "pulse-ring 1.6s ease-out infinite",
         "pulse-ring-fast": "pulse-ring 0.8s ease-out infinite",
+        "rise-in": "rise-in 0.52s cubic-bezier(0.16, 1, 0.3, 1) both",
       },
     },
   },

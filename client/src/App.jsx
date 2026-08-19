@@ -237,6 +237,7 @@ function AppShell() {
   const appConfig = APP_MODE_CONFIG;
   const location = useLocation();
   const locked = useLiveDemoLockout();
+  const isLoginRoute = location.pathname === '/login';
 
   if (locked) {
     return (
@@ -255,9 +256,9 @@ function AppShell() {
         <PostLoginRedirectHandler />
         <SignInRecorder />
         <AnimatedBackground />
-        {GPU_AUTO_START && location.pathname !== '/login' && <GpuStartingOverlay />}
-        {/* Minimal header */}
-        {!appConfig.showGiChat && (
+        {GPU_AUTO_START && !isLoginRoute && <GpuStartingOverlay />}
+        {/* Minimal header — the sign-in screen is full-bleed, so it has no chrome */}
+        {!appConfig.showGiChat && !isLoginRoute && (
         <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md">
           <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-8">
             <nav className="flex items-center gap-1">
@@ -298,7 +299,9 @@ function AppShell() {
                 config.authEnabled
                   ? (
                     <LoginPage
-                      description="Welcome to the LKCMedicine Faculty Voice Assistant"
+                      title="Faculty Voice Assistant"
+                      description="Speak with the assistant your students hear, then write and deploy the instructions it answers them with."
+                      accountHint="Use your NTU staff account to continue."
                       privacyNotice="Your use of the voice assistant is saved against your NTU staff account in the lecturers database and kept for 90 days."
                     />
                   )
