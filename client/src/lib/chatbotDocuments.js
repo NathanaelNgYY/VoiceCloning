@@ -1,4 +1,15 @@
+import { chatbotCategoryStorageSuffix } from './chatbotCategory.js';
+
 export const CHATBOT_DOCUMENTS_STORAGE_KEY = 'chatbot.documents';
+
+/**
+ * Where this browser's document draft for one category lives. Same reasoning as
+ * chatbotSystemPromptStorageKey: an unscoped key would carry one lecture's PDFs
+ * into another lecture's deploy.
+ */
+export function chatbotDocumentsStorageKey(category) {
+  return `${CHATBOT_DOCUMENTS_STORAGE_KEY}${chatbotCategoryStorageSuffix(category)}`;
+}
 export const MAX_DOCUMENTS_CHARS = 180000;
 
 /**
@@ -41,9 +52,9 @@ export function getDeployedChatbotDocuments() {
  * that choice has to outrank the deployed set or the deleted files would come
  * back on the next render.
  */
-export function hasStoredChatbotDocuments() {
+export function hasStoredChatbotDocuments({ category } = {}) {
   try {
-    const raw = globalThis.localStorage.getItem(CHATBOT_DOCUMENTS_STORAGE_KEY);
+    const raw = globalThis.localStorage.getItem(chatbotDocumentsStorageKey(category));
     return typeof raw === 'string' && raw.length > 0;
   } catch {
     return false;
@@ -58,10 +69,10 @@ export function hasStoredChatbotDocuments() {
  * stale leftover from before documents were published server-side, and letting
  * it win would pin that browser to documents no lecturer can see or replace.
  */
-export function resolveChatbotDocuments({ allowLocalOverride = true } = {}) {
+export function resolveChatbotDocuments({ allowLocalOverride = true, category } = {}) {
   if (allowLocalOverride) {
     try {
-      const raw = globalThis.localStorage.getItem(CHATBOT_DOCUMENTS_STORAGE_KEY);
+      const raw = globalThis.localStorage.getItem(chatbotDocumentsStorageKey(category));
       if (typeof raw === 'string' && raw.length > 0) {
         return normalizeChatbotDocuments(JSON.parse(raw));
       }
@@ -72,10 +83,10 @@ export function resolveChatbotDocuments({ allowLocalOverride = true } = {}) {
   return getDeployedChatbotDocuments();
 }
 
-export function persistChatbotDocuments(docs) {
+export function persistChatbotDocuments(docs, { category } = {}) {
   try {
     globalThis.localStorage.setItem(
-      CHATBOT_DOCUMENTS_STORAGE_KEY,
+      chatbotDocumentsStorageKey(category),
       JSON.stringify(normalizeChatbotDocuments(docs)),
     );
     return { ok: true };
@@ -84,9 +95,9 @@ export function persistChatbotDocuments(docs) {
   }
 }
 
-export function clearChatbotDocuments() {
+export function clearChatbotDocuments({ category } = {}) {
   try {
-    globalThis.localStorage.removeItem(CHATBOT_DOCUMENTS_STORAGE_KEY);
+    globalThis.localStorage.removeItem(chatbotDocumentsStorageKey(category));
   } catch {
     // best-effort
   }

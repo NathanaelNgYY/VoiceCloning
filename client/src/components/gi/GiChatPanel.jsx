@@ -24,9 +24,10 @@ const EMPTY_HINT = 'Start a conversation — click the mic, or type your questio
 export function GiChatPanel({
   emptyHint = EMPTY_HINT,
   lessonContext = '',
+  category,
   getVideoPosition = null,
 }) {
-  const chat = useGiChatEngine({ lessonContext, getVideoPosition });
+  const chat = useGiChatEngine({ lessonContext, getVideoPosition, category });
   const audioProps = useGiReplyAudio(chat);
 
   // The panel is short inside the lesson page, so a reply that streams in while

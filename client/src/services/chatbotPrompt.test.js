@@ -45,3 +45,43 @@ test('a failed fetch never overwrites a loaded config', () => {
   // An unchanged poll must not churn the memo on every conversation end.
   assert.match(source, /if \(next === fingerprintRef\.current\) return;/);
 });
+
+test('every prompt request names a category', () => {
+  const source = readFileSync(join(SRC_DIR, 'services', 'chatbotPrompt.js'), 'utf-8');
+
+  // Each category is a separate stored assistant. A request with no category
+  // would read or, worse, overwrite the wrong lecture.
+  assert.match(source, /\?category=\$\{encodeURIComponent\(normalized\)\}/);
+  assert.match(source, /fetchImpl\(promptUrl\(category\), \{ cache: 'no-store' \}\)/);
+  assert.match(source, /fetchImpl\(promptUrl\(category\), \{[\s\S]{0,20}method: 'PUT'/);
+});
+
+test('a lesson runs the assistant deployed for its own slug', () => {
+  const source = readFileSync(join(SRC_DIR, 'pages', 'LessonPage.jsx'), 'utf-8');
+
+  // Without this the lecture site reads the default category and every lesson
+  // answers with the same instructions — the single shared prompt categories
+  // exist to replace.
+  assert.match(source, /category=\{slug\}/);
+});
+
+test('the editor scopes its browser-local draft to the lecture being edited', () => {
+  const source = readFileSync(join(SRC_DIR, 'pages', 'LivePage.jsx'), 'utf-8');
+
+  // A draft is allowed to outrank the deployed text, so an unscoped draft would
+  // carry one lecture's instructions into another lecture's deploy.
+  for (const call of [
+    /persistChatbotSystemPrompt\(value, \{ category: chatbotCategory \}\)/,
+    /clearChatbotSystemPrompt\(\{ category: chatbotCategory \}\)/,
+    /persistChatbotDocuments\(next, \{ category: chatbotCategory \}\)/,
+    /clearChatbotDocuments\(\{ category: chatbotCategory \}\)/,
+    /hasStoredChatbotSystemPrompt\(\{ category: chatbotCategory \}\)/,
+    /hasStoredChatbotDocuments\(\{ category: chatbotCategory \}\)/,
+  ]) {
+    assert.match(source, call);
+  }
+
+  // And the deploy publishes to the selected lecture, not to whatever was last
+  // loaded.
+  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,200}category: chatbotCategory,/);
+});

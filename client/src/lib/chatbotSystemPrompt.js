@@ -1,4 +1,18 @@
+import { chatbotCategoryStorageSuffix } from './chatbotCategory.js';
+
 export const CHATBOT_SYSTEM_PROMPT_STORAGE_KEY = 'chatbot.systemPrompt';
+
+/**
+ * Where this browser's draft for one category lives.
+ *
+ * Drafts are scoped per category because otherwise a lecturer who edits GI,
+ * switches to Cardiology and deploys publishes the GI draft under Cardiology's
+ * name. The default category keeps the original unsuffixed key, so a draft typed
+ * before categories existed survives the upgrade.
+ */
+export function chatbotSystemPromptStorageKey(category) {
+  return `${CHATBOT_SYSTEM_PROMPT_STORAGE_KEY}${chatbotCategoryStorageSuffix(category)}`;
+}
 
 // Starter instructions, used only when no prompt has been deployed yet (or the
 // deployed-prompt fetch came back empty). Deliberately subject-free.
@@ -48,9 +62,9 @@ export function getDefaultChatbotSystemPrompt() {
 }
 
 /** True when this browser has a local edit that differs from the deployed text. */
-export function hasStoredChatbotSystemPrompt() {
+export function hasStoredChatbotSystemPrompt({ category } = {}) {
   try {
-    const stored = globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    const stored = globalThis.localStorage.getItem(chatbotSystemPromptStorageKey(category));
     return typeof stored === 'string' && stored.length > 0;
   } catch {
     return false;
@@ -64,10 +78,10 @@ export function hasStoredChatbotSystemPrompt() {
  * there the local copy can only be a stale leftover, and letting it win would
  * silently pin that browser to an old prompt while every deploy passes it by.
  */
-export function resolveChatbotSystemPrompt({ allowLocalOverride = true } = {}) {
+export function resolveChatbotSystemPrompt({ allowLocalOverride = true, category } = {}) {
   if (allowLocalOverride) {
     try {
-      const stored = globalThis.localStorage.getItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+      const stored = globalThis.localStorage.getItem(chatbotSystemPromptStorageKey(category));
       if (typeof stored === 'string' && stored.length > 0) {
         return stored;
       }
@@ -78,17 +92,17 @@ export function resolveChatbotSystemPrompt({ allowLocalOverride = true } = {}) {
   return getDefaultChatbotSystemPrompt();
 }
 
-export function persistChatbotSystemPrompt(value) {
+export function persistChatbotSystemPrompt(value, { category } = {}) {
   try {
-    globalThis.localStorage.setItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, String(value ?? ''));
+    globalThis.localStorage.setItem(chatbotSystemPromptStorageKey(category), String(value ?? ''));
   } catch {
     // Best-effort; ignore persistence failures.
   }
 }
 
-export function clearChatbotSystemPrompt() {
+export function clearChatbotSystemPrompt({ category } = {}) {
   try {
-    globalThis.localStorage.removeItem(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+    globalThis.localStorage.removeItem(chatbotSystemPromptStorageKey(category));
   } catch {
     // Best-effort; ignore removal failures.
   }

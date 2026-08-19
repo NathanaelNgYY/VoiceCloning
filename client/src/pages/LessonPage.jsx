@@ -651,6 +651,10 @@ export function LessonPage() {
                   <GiChatPanel
                     emptyHint="Ask about this lesson — click the mic to start"
                     lessonContext={lessonContext}
+                    // This lesson's slug is its assistant's category, so the
+                    // instructions its own lecturer deployed are the ones that
+                    // run here.
+                    category={slug}
                     getVideoPosition={videoPositionEnabled ? getVideoPosition : null}
                   />
                 </div>

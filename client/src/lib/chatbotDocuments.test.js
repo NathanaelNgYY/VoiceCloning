@@ -146,3 +146,16 @@ test('clearChatbotDocuments drops the local copy back to the deployed set', () =
 test('MAX_DOCUMENTS_CHARS is 180000', () => {
   assert.equal(MAX_DOCUMENTS_CHARS, 180000);
 });
+
+test('uploaded documents belong to the lecture they were added to', () => {
+  withMemoryStorage(() => {
+  const giDocs = [{ name: 'gi.pdf', text: 'GI paper', chars: 8 }];
+  persistChatbotDocuments(giDocs, { category: 'gi-bleeding' });
+
+  assert.deepEqual(resolveChatbotDocuments({ category: 'gi-bleeding' }), giDocs);
+  assert.equal(hasStoredChatbotDocuments({ category: 'cardiology' }), false);
+
+  clearChatbotDocuments({ category: 'gi-bleeding' });
+  assert.equal(hasStoredChatbotDocuments({ category: 'gi-bleeding' }), false);
+  });
+});

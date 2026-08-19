@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CHATBOT_SYSTEM_PROMPT_STORAGE_KEY,
+  chatbotSystemPromptStorageKey,
+  hasStoredChatbotSystemPrompt,
   DEFAULT_CHATBOT_SYSTEM_PROMPT,
   clearChatbotSystemPrompt,
   getDefaultChatbotSystemPrompt,
@@ -84,4 +86,28 @@ test('a deployed prompt reaches the lecture site byte-for-byte', () => {
   // allowLocalOverride: false is what the lecture site passes — no editor there.
   assert.equal(resolveChatbotSystemPrompt({ allowLocalOverride: false }), deployed);
   setDeployedChatbotSystemPrompt('');
+});
+
+test('a draft belongs to the lecture it was typed for', () => {
+  // With one shared key, editing GI, switching to Cardiology and deploying
+  // publishes the GI draft under Cardiology's name.
+  installMemoryStorage();
+  persistChatbotSystemPrompt('GI draft', { category: 'gi-bleeding' });
+  persistChatbotSystemPrompt('Cardiology draft', { category: 'cardiology' });
+
+  assert.equal(resolveChatbotSystemPrompt({ category: 'gi-bleeding' }), 'GI draft');
+  assert.equal(resolveChatbotSystemPrompt({ category: 'cardiology' }), 'Cardiology draft');
+  assert.equal(hasStoredChatbotSystemPrompt({ category: 'neurology' }), false);
+
+  clearChatbotSystemPrompt({ category: 'gi-bleeding' });
+  assert.equal(hasStoredChatbotSystemPrompt({ category: 'gi-bleeding' }), false);
+  assert.equal(resolveChatbotSystemPrompt({ category: 'cardiology' }), 'Cardiology draft');
+});
+
+test('a draft from before categories existed survives the upgrade', () => {
+  const store = installMemoryStorage();
+  store.set(CHATBOT_SYSTEM_PROMPT_STORAGE_KEY, 'Draft typed last week');
+
+  assert.equal(chatbotSystemPromptStorageKey('default'), CHATBOT_SYSTEM_PROMPT_STORAGE_KEY);
+  assert.equal(resolveChatbotSystemPrompt(), 'Draft typed last week');
 });

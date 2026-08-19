@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getInferenceStatus,
   getModels,
@@ -110,8 +110,13 @@ import {
 } from '@/lib/chatbotSystemPrompt';
 import {
   fetchDeployedChatbotSystemPrompt,
+  fetchChatbotPromptCategories,
   deployChatbotSystemPrompt,
 } from '@/services/chatbotPrompt';
+import {
+  DEFAULT_CHATBOT_CATEGORY,
+  normalizeChatbotCategory,
+} from '@/lib/chatbotCategory';
 import {
   MAX_DOCUMENTS_CHARS,
   resolveChatbotDocuments,
@@ -268,6 +273,12 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const kiosk = APP_MODE_CONFIG.kiosk;
   const canEditInstructions = APP_MODE_CONFIG.showInstructionsEditor;
+  // Which assistant this panel is editing. Each category is stored separately,
+  // so switching here swaps the whole panel — instructions, documents and the
+  // browser-local draft of both.
+  const [chatbotCategory, setChatbotCategory] = useState(DEFAULT_CHATBOT_CATEGORY);
+  const [chatbotCategories, setChatbotCategories] = useState([]);
+  const [newChatbotCategory, setNewChatbotCategory] = useState('');
   const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
   const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
   const [chatbotDocError, setChatbotDocError] = useState('');
@@ -282,6 +293,21 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }),
     [chatbotSystemPrompt, chatbotDocuments],
   );
+  // Everything selectable: the default, whatever has been deployed, and the
+  // lecture being edited right now — a brand-new one has nothing deployed yet
+  // and would otherwise vanish from its own picker.
+  const chatbotCategoryOptions = useMemo(() => {
+    const ids = new Set([
+      DEFAULT_CHATBOT_CATEGORY,
+      chatbotCategory,
+      ...chatbotCategories.map((entry) => entry.category),
+    ]);
+    return Array.from(ids).sort((a, b) => {
+      if (a === DEFAULT_CHATBOT_CATEGORY) return -1;
+      if (b === DEFAULT_CHATBOT_CATEGORY) return 1;
+      return a.localeCompare(b);
+    });
+  }, [chatbotCategories, chatbotCategory]);
   const [gptModels, setGptModels] = useState([]);
   const [sovitsModels, setSovitsModels] = useState([]);
   const [modelsFetched, setModelsFetched] = useState(false);
@@ -644,27 +670,40 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     voiceConfigsRef.current = voiceConfigs;
   }, [voiceConfigs]);
 
-  // Load the deployed instructions and documents once at startup. A local edit in
-  // this browser still wins, so an editor mid-draft is not overwritten by the
-  // shared copy — the two halves are tracked separately because a lecturer may
-  // well be redrafting the text while leaving last deploy's PDFs alone.
+  // Load the deployed instructions and documents for the selected category, at
+  // startup and again on every switch. A local edit in this browser still wins,
+  // so an editor mid-draft is not overwritten by the shared copy — the two halves
+  // are tracked separately because a lecturer may well be redrafting the text
+  // while leaving last deploy's PDFs alone. Drafts are per category too, so the
+  // "mid-draft wins" rule cannot carry one lecture's text into another's deploy.
   useEffect(() => {
     if (!kiosk) return undefined;
     let cancelled = false;
     (async () => {
-      const { prompt, documents } = await fetchDeployedChatbotSystemPrompt();
+      const { prompt, documents } = await fetchDeployedChatbotSystemPrompt({
+        category: chatbotCategory,
+      });
       if (cancelled || (!prompt.trim() && documents.length === 0)) return;
       setDeployedChatbotSystemPrompt(prompt);
       setDeployedChatbotDocuments(documents);
-      if (prompt.trim() && !hasStoredChatbotSystemPrompt()) {
+      if (prompt.trim() && !hasStoredChatbotSystemPrompt({ category: chatbotCategory })) {
         setChatbotSystemPrompt(prompt);
       }
-      if (!hasStoredChatbotDocuments()) {
+      if (!hasStoredChatbotDocuments({ category: chatbotCategory })) {
         setChatbotDocuments(documents);
       }
     })();
     return () => { cancelled = true; };
-  }, [kiosk]);
+  }, [kiosk, chatbotCategory]);
+
+  // The lectures that already have something deployed, for the picker. Refreshed
+  // after a deploy so a newly named lecture appears without a reload.
+  const refreshChatbotCategories = useCallback(async () => {
+    if (!canEditInstructions) return;
+    setChatbotCategories(await fetchChatbotPromptCategories());
+  }, [canEditInstructions]);
+
+  useEffect(() => { refreshChatbotCategories(); }, [refreshChatbotCategories]);
 
   async function fetchModels(attempt = 0) {
     if (attempt === 0) setModelsFetched(false);
@@ -3680,7 +3719,40 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   function handleChatbotSystemPromptChange(value) {
     setChatbotSystemPrompt(value);
-    persistChatbotSystemPrompt(value);
+    persistChatbotSystemPrompt(value, { category: chatbotCategory });
+  }
+
+  /**
+   * Switch the panel to another lecture's assistant.
+   *
+   * The panel's contents are replaced from that category's own browser-local
+   * draft, or left empty for the load effect to fill from what is deployed.
+   * Nothing carries over: text left on screen from the previous lecture would be
+   * deployed under this one's name on the next click of Deploy.
+   */
+  function handleSelectChatbotCategory(value) {
+    const next = normalizeChatbotCategory(value);
+    if (!next) {
+      setChatbotDeployState({
+        status: 'error',
+        message: 'Use lowercase letters, numbers and hyphens for the lecture id.',
+      });
+      return;
+    }
+    setChatbotCategory(next);
+    setNewChatbotCategory('');
+    setChatbotDeployState({ status: 'idle', message: '' });
+    setChatbotDocError('');
+    setChatbotSystemPrompt(
+      hasStoredChatbotSystemPrompt({ category: next })
+        ? resolveChatbotSystemPrompt({ category: next })
+        : '',
+    );
+    setChatbotDocuments(
+      hasStoredChatbotDocuments({ category: next })
+        ? resolveChatbotDocuments({ category: next })
+        : [],
+    );
   }
 
   async function handleResetChatbotSystemPrompt() {
@@ -3700,7 +3772,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const envOverride = (import.meta.env?.VITE_CHATBOT_SYSTEM_PROMPT || '').trim();
     const { GI_BLEEDING_PROMPT_TEMPLATE } = await import('@/lib/giBleedingPromptTemplate');
     const next = envOverride || GI_BLEEDING_PROMPT_TEMPLATE;
-    clearChatbotSystemPrompt();
+    clearChatbotSystemPrompt({ category: chatbotCategory });
     setChatbotSystemPrompt(next);
     setChatbotDeployState({ status: 'idle', message: '' });
   }
@@ -3714,19 +3786,23 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const result = await deployChatbotSystemPrompt({
         prompt: chatbotSystemPrompt,
         documents: chatbotDocuments,
+        category: chatbotCategory,
       });
       // The panel's contents are now the shared default, so a "Reset to default"
       // here returns to what was just deployed rather than the bundled constant.
       setDeployedChatbotSystemPrompt(chatbotSystemPrompt);
       setDeployedChatbotDocuments(chatbotDocuments);
-      clearChatbotSystemPrompt();
-      clearChatbotDocuments();
+      clearChatbotSystemPrompt({ category: chatbotCategory });
+      clearChatbotDocuments({ category: chatbotCategory });
       setChatbotDeployState({
         status: 'deployed',
         message: result?.updatedAt
-          ? `Deployed ${new Date(result.updatedAt).toLocaleTimeString()}`
-          : 'Deployed',
+          ? `Deployed ${chatbotCategory} ${new Date(result.updatedAt).toLocaleTimeString()}`
+          : `Deployed ${chatbotCategory}`,
       });
+      // A first deploy is what creates a lecture, so the picker only learns about
+      // it now.
+      refreshChatbotCategories();
     } catch (error) {
       setChatbotDeployState({ status: 'error', message: error?.message || 'Deploy failed.' });
     }
@@ -3754,14 +3830,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       }
     }
     setChatbotDocuments(next);
-    const { ok } = persistChatbotDocuments(next);
+    const { ok } = persistChatbotDocuments(next, { category: chatbotCategory });
     if (!ok) setChatbotDocError('Documents too large to save; kept for this session only.');
   }
 
   function handleRemoveChatbotDocument(name) {
     const next = removeChatbotDocument(chatbotDocuments, name);
     setChatbotDocuments(next);
-    persistChatbotDocuments(next);
+    persistChatbotDocuments(next, { category: chatbotCategory });
   }
 
   // Live Fast / Live Full engine toggle — shared so it can render in both the
@@ -4840,6 +4916,51 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 <X size={16} />
               </button>
             </div>
+          </div>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                Lecture
+              </span>
+              <Select
+                value={chatbotCategory}
+                onValueChange={handleSelectChatbotCategory}
+                disabled={isConversationActive}
+              >
+                <SelectTrigger className="h-8 flex-1 rounded-lg border-slate-200 bg-white text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {chatbotCategoryOptions.map((category) => (
+                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <form
+              className="mt-2 flex items-center gap-2"
+              onSubmit={(e) => { e.preventDefault(); handleSelectChatbotCategory(newChatbotCategory); }}
+            >
+              <Input
+                value={newChatbotCategory}
+                onChange={(e) => setNewChatbotCategory(e.target.value)}
+                disabled={isConversationActive}
+                placeholder="Add a lecture, e.g. gi-bleeding"
+                className="h-8 flex-1 rounded-lg border-slate-200 text-xs"
+              />
+              <button
+                type="submit"
+                disabled={isConversationActive || !newChatbotCategory.trim()}
+                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-40"
+              >
+                Add
+              </button>
+            </form>
+            <p className="mt-2 text-[11px] leading-4 text-slate-400">
+              {chatbotCategory === DEFAULT_CHATBOT_CATEGORY
+                ? 'The fallback assistant, used wherever no lecture of its own is set up.'
+                : `Students on /lesson/${chatbotCategory} get these instructions and documents.`}
+            </p>
           </div>
           {chatbotDeployState.message && (
             <p

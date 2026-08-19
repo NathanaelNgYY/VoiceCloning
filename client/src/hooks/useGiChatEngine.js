@@ -67,7 +67,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   const {
     version: deployedPromptVersion,
     refresh: refreshDeployedPrompt,
-  } = useDeployedChatbotPrompt();
+  } = useDeployedChatbotPrompt({ category });
   const systemPrompt = useMemo(() => {
     // No editor on this skin, so a local copy could only be stale — the deployed
     // prompt and documents (or the bundled default) are the source of truth here.

@@ -17,21 +17,36 @@
 // the instructions. Staging only.
 import { resolveApiPath } from '@/lib/runtimeConfig';
 import { normalizeChatbotDocuments } from '@/lib/chatbotDocuments';
+import { DEFAULT_CHATBOT_CATEGORY, normalizeChatbotCategory } from '@/lib/chatbotCategory';
 
 const PROMPT_PATH = '/api/chatbot/system-prompt';
+const CATEGORIES_PATH = '/api/chatbot/system-prompt/categories';
+
+// Each category is a separate stored assistant, so every call names one. The
+// server validates the id again — this is for the editor, so a bad id fails
+// before a deploy rather than after it.
+function promptUrl(category) {
+  const normalized = normalizeChatbotCategory(category);
+  if (!normalized) throw new Error('Use lowercase letters, numbers and hyphens for the lecture id.');
+  return `${resolveApiPath(PROMPT_PATH)}?category=${encodeURIComponent(normalized)}`;
+}
 
 /**
- * The deployed prompt and documents, or empty values when nothing has been
- * deployed yet (the caller then keeps its built-in default). Never throws —
- * startup must not depend on this.
+ * The deployed prompt and documents for one category, or empty values when
+ * nothing has been deployed to it yet (the caller then keeps its built-in
+ * default). Never throws — startup must not depend on this.
  */
-export async function fetchDeployedChatbotSystemPrompt(fetchImpl = fetch) {
-  const empty = { prompt: '', documents: [], updatedAt: '' };
+export async function fetchDeployedChatbotSystemPrompt(
+  { category = DEFAULT_CHATBOT_CATEGORY } = {},
+  fetchImpl = fetch,
+) {
+  const empty = { category: normalizeChatbotCategory(category), prompt: '', documents: [], updatedAt: '' };
   try {
-    const response = await fetchImpl(resolveApiPath(PROMPT_PATH), { cache: 'no-store' });
+    const response = await fetchImpl(promptUrl(category), { cache: 'no-store' });
     if (!response.ok) return empty;
     const data = await response.json();
     return {
+      category: data?.category || empty.category,
       prompt: typeof data?.prompt === 'string' ? data.prompt : '',
       documents: normalizeChatbotDocuments(data?.documents),
       updatedAt: data?.updatedAt || '',
@@ -42,10 +57,35 @@ export async function fetchDeployedChatbotSystemPrompt(fetchImpl = fetch) {
 }
 
 /**
+ * The categories that have something deployed to them — what the editor offers
+ * as the lectures already set up. Never throws: an unreachable list must not
+ * stop someone deploying to a category they can type in by hand.
+ */
+export async function fetchChatbotPromptCategories(fetchImpl = fetch) {
+  try {
+    const response = await fetchImpl(resolveApiPath(CATEGORIES_PATH), { cache: 'no-store' });
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (!Array.isArray(data?.categories)) return [];
+    return data.categories
+      .map((entry) => ({
+        category: typeof entry?.category === 'string' ? entry.category : '',
+        updatedAt: entry?.updatedAt || '',
+      }))
+      .filter((entry) => entry.category);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Publishes the instructions and their reference documents as what every chatbot
  * frontend loads. Throws on failure.
  */
-export async function deployChatbotSystemPrompt({ prompt, documents = [] } = {}, fetchImpl = fetch) {
+export async function deployChatbotSystemPrompt(
+  { prompt, documents = [], category = DEFAULT_CHATBOT_CATEGORY } = {},
+  fetchImpl = fetch,
+) {
   const body = String(prompt ?? '');
   const docs = normalizeChatbotDocuments(documents);
   // Documents alone are a publishable assistant: a lecturer who just wants the
@@ -56,7 +96,7 @@ export async function deployChatbotSystemPrompt({ prompt, documents = [] } = {},
     throw new Error('Add instructions or at least one reference document.');
   }
 
-  const response = await fetchImpl(resolveApiPath(PROMPT_PATH), {
+  const response = await fetchImpl(promptUrl(category), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
