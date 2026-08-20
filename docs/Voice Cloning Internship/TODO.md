@@ -1,8 +1,12 @@
 # Active TODO
 
-- [ ] At the next staging-to-dev code synchronization, preserve the repository's
-  staging 07:00-19:00 ASG schedule source of truth and its deployment notes. Do not
-  enable or deploy an ASG/GPU schedule in dev; dev remains on-demand with no ASG.
+- [ ] Run one new dev training job on representative clean/noisy recordings; inspect
+  `clip-scores.json` and `training-quality-report.json`, confirm the gate retains enough
+  speech, then compare old/new reference sets and cloned audio blind. This deployment
+  has structural/test evidence only, not audible-quality evidence.
+- [ ] Collect human-labeled dev phoneme crops with controls and use
+  `python/calibrate_phoneme_thresholds.py` on a training split; validate the selected
+  thresholds on a held-out split before changing the deployed defaults.
 - [ ] Browser-verify the deployed faculty SSO on `https://faculty.lkcmedicine.org`: a real
   staff/associate account signs in and can use text and cloned voice; a student-domain account
   is rejected; faculty `PROFILE`/`SIGNIN`/session/turn rows appear only in
@@ -11,7 +15,6 @@
   site header and the missing `/api/live/session/*` behavior, gateway, Lambda, client) — see
   `docs/staging-architecture.md`. Check the table, not the HTTP response: a failed sign-in
   write still returns `recorded: true`.
-
 - [ ] Ask an administrator to terminate stopped standalone verifier canary
   `i-0e4ef8844a120d069`; the internship role is denied termination.
 - [ ] Ask an administrator to terminate stopped staging AMI builder

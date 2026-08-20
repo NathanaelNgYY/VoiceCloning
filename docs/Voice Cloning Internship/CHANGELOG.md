@@ -1,36 +1,26 @@
 # Changelog
 
-## 2026-08-17
+## 2026-08-20
 
-- Restored live staging GPU availability to 07:00-19:00 Singapore without deploying
-  dev or rebuilding code/images. The staging Lambda now reads `enabled=true`, start
-  `7`, end `19`, timezone `Asia/Singapore`; ASG recurring actions now set min/desired
-  `1/1` at 07:00 and `0/0` at 19:00, max 192. Readback succeeded in account
-  `329599637774`; current in-window ASG capacity remained min 1/desired 2/2 instances.
-  `GPU_INFERENCE_ASG_NAME` remains unset on Lambda, so the fixed GPU and ASG schedules
-  remain independent. No dev AWS resource was changed.
-- Corrected pronunciation precedence across Live Fast, Live Full, regeneration, and
-  inserted Full chunks: synthesis aliases still apply first; otherwise an admin
-  ARPAbet word now bypasses automatic ALL-CAPS acronym/emphasis rewriting and remains
-  one token for GPT-SoVITS hot-dictionary lookup. Without an admin entry, existing
-  acronym behavior is unchanged. Centralized the route preprocessing order and added
-  regressions for alias-first `STEREOCHEMISTRY`, ARPAbet-only `WHO`, and ordinary
-  `WHO`. Full inference-worker suite: 245/245. Not tested: real GPT-SoVITS dictionary
-  reload, GPU audio, browser flow, or deployment. Multiword aliases continue to use
-  their alias tokens for synthesis and the original full ARPAbet sequence for optional
-  full-span verification; automatic per-alias-token phoneme splitting is unsupported.
-- Live Fast now applies the existing conservative chemical-formula rewrite before
-  synthesis, matching Live Full for inputs such as `C6H12O6`, `(CH2O)n`, `NaCl`,
-  and `COOH` without adding a network, model, verification, or retry step. Also
-  closed the compact-formula route test correctly so the following test is no longer
-  nested. Code: `gpu-inference-worker/src/routes/inference.js`,
-  `gpu-inference-worker/src/services/textPronunciation.js`, and their tests. Tests:
-  focused worker tests 85/85 and full inference-worker suite 243/243. A local
-  100,000-call benchmark measured about 125 microseconds of incremental preprocessing
-  per roughly 240-character input. Not tested: real GPU audio, browser flow, deployment,
-  and production multi-user latency.
-
-## 2026-08-13
+- Merged staging application source into dev while preserving learner analytics and
+  explicitly keeping dev schedule/ASG activation off. Commit `5aeb30f` was deployed to
+  the fixed dev GPU by Git bundle because GitHub credentials are unavailable locally;
+  readback proved the exact SHA, no tracked drift, all services active, and all three
+  health endpoints ready. Dev Lambda and training/Live Fast/GI clients were deployed;
+  all CloudFront invalidations completed and each public site plus `/api/config` returned 200.
+- Added pre-feature training quality gates with SNR, clipping, spectrum, silence, level,
+  DC-offset, duration, transcript-density/repetition, duplicate-transcript, and conservative
+  dataset-consistency evidence. The retained manifest and rejection report are uploaded.
+- Passed full acoustic metadata into frontend/backend reference selection. Failed clips are
+  ineligible; the primary remains quality-ranked and auxiliaries now balance quality with
+  transcript/source-region diversity. Existing rank-1 config and profile persistence flow
+  remains unchanged.
+- Added monotonic CTC per-phone alignment evidence, a conservative weakest-phone pass floor,
+  and a labeled-data threshold calibration utility. This is deployed only on dev. No real
+  training or listening/calibration dataset was run, so audible improvement remains unverified.
+- Tests: client 397/397; Lambda 194/194 plus model-selection checks; gateway 180/180;
+  inference 252/252 and Python 7/7; training-quality/pipeline 5/5; Python compilation and GI
+  production build passed. The unrelated existing gpu-worker SMTP-vs-SES email mock still fails.
 
 ## 2026-08-18
 
@@ -65,6 +55,33 @@
   tests 26/26, and Lambda auth tests 11/11. Deployment is blocked because the assumed
   internship role is denied `dynamodb:CreateTable`; the table and Entra faculty SPA
   redirect URI remain unverified and no AWS runtime resource was changed.
+- Restored live staging GPU availability to 07:00-19:00 Singapore without deploying
+  dev or rebuilding code/images. The staging Lambda now reads `enabled=true`, start
+  `7`, end `19`, timezone `Asia/Singapore`; ASG recurring actions now set min/desired
+  `1/1` at 07:00 and `0/0` at 19:00, max 192. Readback succeeded in account
+  `329599637774`; current in-window ASG capacity remained min 1/desired 2/2 instances.
+  `GPU_INFERENCE_ASG_NAME` remains unset on Lambda, so the fixed GPU and ASG schedules
+  remain independent. No dev AWS resource was changed.
+- Corrected pronunciation precedence across Live Fast, Live Full, regeneration, and
+  inserted Full chunks: synthesis aliases still apply first; otherwise an admin
+  ARPAbet word now bypasses automatic ALL-CAPS acronym/emphasis rewriting and remains
+  one token for GPT-SoVITS hot-dictionary lookup. Without an admin entry, existing
+  acronym behavior is unchanged. Centralized the route preprocessing order and added
+  regressions for alias-first `STEREOCHEMISTRY`, ARPAbet-only `WHO`, and ordinary
+  `WHO`. Full inference-worker suite: 245/245. Not tested: real GPT-SoVITS dictionary
+  reload, GPU audio, browser flow, or deployment. Multiword aliases continue to use
+  their alias tokens for synthesis and the original full ARPAbet sequence for optional
+  full-span verification; automatic per-alias-token phoneme splitting is unsupported.
+- Live Fast now applies the existing conservative chemical-formula rewrite before
+  synthesis, matching Live Full for inputs such as `C6H12O6`, `(CH2O)n`, `NaCl`,
+  and `COOH` without adding a network, model, verification, or retry step. Also
+  closed the compact-formula route test correctly so the following test is no longer
+  nested. Code: `gpu-inference-worker/src/routes/inference.js`,
+  `gpu-inference-worker/src/services/textPronunciation.js`, and their tests. Tests:
+  focused worker tests 85/85 and full inference-worker suite 243/243. A local
+  100,000-call benchmark measured about 125 microseconds of incremental preprocessing
+  per roughly 240-character input. Not tested: real GPU audio, browser flow, deployment,
+  and production multi-user latency.
 
 ## 2026-08-14
 

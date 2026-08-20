@@ -1,6 +1,22 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-18
+Last updated: 2026-08-20
+
+- Dev now contains the staging application changes plus dev learner analytics and the
+  dev-only voice-quality work at local commit `5aeb30f`. GitHub push is still blocked
+  by missing workstation credentials; the fixed dev GPU was deployed from a scoped S3
+  Git bundle and verified at that exact SHA with zero tracked drift.
+- Dev remains fixed-instance/on-demand: `GPU_SCHEDULE_ENABLED=false`, no inference ASG
+  variable, and fixed GPU `i-03f258d470a2fa73f` belongs to no ASG. Lambda, the three
+  client distributions, and all three fixed-GPU services were deployed and read back.
+- New training runs score and reject acoustically bad/implausibly transcribed clips before
+  feature extraction. Reference selection consumes the full metrics, rejects failed clips,
+  and greedily chooses clean auxiliary transcript/source-region diversity while preserving
+  the existing rank-1 config/profile persistence lifecycle.
+- The shadow phoneme verifier now exposes a monotonic per-phone CTC alignment and prevents
+  a high aggregate score from hiding one weak phone. A labeled-threshold calibration tool
+  is included. Real training, listening comparison, and held-out real-audio calibration are
+  still required; this deployment is not evidence of an audible quality improvement.
 
 - Faculty SSO is **deployed** to staging (2026-08-18): `faculty.lkcmedicine.org` now requires
   Microsoft sign-in and admits only staff/associate domains, with faculty rows isolated to the
