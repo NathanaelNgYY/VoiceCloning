@@ -4,6 +4,11 @@ set -euo pipefail
 worker_url="${VCS_WORKER_URL:-http://127.0.0.1:3003}"
 route_warm_rounds="${VCS_ROUTE_WARM_ROUNDS:-10}"
 synthesis_concurrency="${SYNTHESIS_MAX_CONCURRENCY:-1}"
+# Historical filename retained because the launch-template drop-in references it.
+# The payload is intentionally resolved at boot from the active S3 voice profile.
+: "${S3_BUCKET:?S3_BUCKET is required for active-profile warm}"
+: "${S3_REGION:?S3_REGION is required for active-profile warm}"
+s3_prefix="${S3_PREFIX:-}"
 if ! [[ "${route_warm_rounds}" =~ ^[0-9]+$ ]] \
   || ((route_warm_rounds < 1 || route_warm_rounds > 20)); then
   echo 'VCS_ROUTE_WARM_ROUNDS must be an integer from 1 to 20.' >&2
@@ -43,11 +48,36 @@ for _ in $(seq 1 60); do
 done
 finish_phase "wait_for_worker"
 
+active_profile="$(
+  aws s3 cp \
+    "s3://${S3_BUCKET}/${s3_prefix}voice-profiles/active.json" - \
+    --region "${S3_REGION}"
+)"
+voice_profile_id="$(jq -er '.voiceProfileId | select(type == "string" and length > 0)' <<<"${active_profile}")"
+gpt_key="$(jq -er '(.gptKey // .gptPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
+sovits_key="$(jq -er '(.sovitsKey // .sovitsPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
+warm_body="$(jq -c '
+  {
+    voiceProfileId,
+    ref_audio_path,
+    aux_ref_audio_paths: (.aux_ref_audio_paths // []),
+    prompt_text: (.prompt_text // ""),
+    prompt_lang: (.prompt_lang // "en"),
+    text_lang: (.text_lang // .prompt_lang // "en"),
+    warm_text: "The staging voice is ready."
+  }
+  | select(.ref_audio_path | type == "string" and length > 0)
+' <<<"${active_profile}")"
+if [[ -z "${warm_body}" ]]; then
+  echo "Active voice profile ${voice_profile_id} has no reference audio." >&2
+  exit 1
+fi
+
 gpt_result="$(post_json /models/download 180 \
-  '{"s3Key":"models/user-models/gpt/DeanVoice-e25.ckpt"}')"
+  "$(jq -nc --arg s3Key "${gpt_key}" '{s3Key: $s3Key}')")"
 finish_phase "gpt_model_cache"
 sovits_result="$(post_json /models/download 180 \
-  '{"s3Key":"models/user-models/sovits/DeanVoice_e20_s2260.pth"}')"
+  "$(jq -nc --arg s3Key "${sovits_key}" '{s3Key: $s3Key}')")"
 finish_phase "sovits_model_cache"
 
 gpt_path="$(printf '%s' "${gpt_result}" | sed -n 's/.*"localPath":"\([^"]*\)".*/\1/p')"
@@ -61,50 +91,25 @@ post_json /inference/weights/pair 420 \
   "{\"gptPath\":\"${gpt_path}\",\"sovitsPath\":\"${sovits_path}\"}"
 finish_phase "load_weight_pair"
 
-post_json /ref-audio/warm 300 '{
-  "voiceProfileId":"deanvoice-v1",
-  "ref_audio_path":"training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0004481280_0004613440.wav",
-  "aux_ref_audio_paths":[
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0000340800_0000464000.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0001180160_0001340800.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0001525440_0001710720.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0002227520_0002364800.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0002661120_0002808000.wav"
-  ],
-  "prompt_text":" experience as well as steady hands and very sharp eyes.",
-  "prompt_lang":"en",
-  "text_lang":"en",
-  "warm_text":"The staging voice is ready."
-}'
+post_json /ref-audio/warm 300 "${warm_body}"
 finish_phase "reference_cache_and_synthesis"
 
 make_route_warm_body() {
   local text="$1"
   local skip_verify="$2"
-  cat <<JSON
-{
-  "voiceProfileId":"deanvoice-v1",
-  "ref_audio_path":"training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0004481280_0004613440.wav",
-  "aux_ref_audio_paths":[
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0000340800_0000464000.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0001180160_0001340800.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0001525440_0001710720.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0002227520_0002364800.wav",
-    "training/datasets/DeanVoice/denoised/Speech_Dean_full_DHPM_lecture.mp3_0002661120_0002808000.wav"
-  ],
-  "prompt_text":" experience as well as steady hands and very sharp eyes.",
-  "prompt_lang":"en",
-  "text_lang":"en",
-  "text":"${text}",
-  "skip_verify":${skip_verify},
-  "text_split_method":"cut0",
-  "batch_size":1,
-  "streaming_mode":false,
-  "split_bucket":true,
-  "parallel_infer":false,
-  "fragment_interval":0.1
-}
-JSON
+  jq -c \
+    --arg text "${text}" \
+    --argjson skip_verify "${skip_verify}" \
+    '. + {
+      text: $text,
+      skip_verify: $skip_verify,
+      text_split_method: "cut0",
+      batch_size: 1,
+      streaming_mode: false,
+      split_bucket: true,
+      parallel_infer: false,
+      fragment_interval: 0.1
+    }' <<<"${warm_body}"
 }
 
 # One short pair proved that both local scheduler slots worked, but the first public
@@ -117,6 +122,9 @@ route_warm_texts=(
   "Gastrointestinal bleeding means bleeding somewhere inside the digestive tract."
   "It may appear as vomiting blood, black stools, or fresh blood from the rectum."
   "Doctors assess the severity, identify the source, and treat the underlying cause."
+  # Exercises an opt-in strict dictionary entry so the lazy phoneme CTC model is
+  # loaded before Target Optimizer advertises this instance to users.
+  "Catalase catalyzes a reaction."
 )
 route_warm_paths=()
 cleanup_route_warm() {
@@ -160,13 +168,13 @@ for ((route_warm_round = 1; route_warm_round <= route_warm_rounds; route_warm_ro
     fi
   done
   if [[ "${route_warm_failed}" -ne 0 ]]; then
-    echo "DeanVoice ${synthesis_concurrency}-slot route warm round ${route_warm_round} failed." >&2
+    echo "Profile ${voice_profile_id} ${synthesis_concurrency}-slot route warm round ${route_warm_round} failed." >&2
     exit 1
   fi
 
   for route_warm_path in "${route_warm_round_paths[@]}"; do
     if [[ "$(head -c 4 "${route_warm_path}")" != "RIFF" ]]; then
-      echo "DeanVoice ${synthesis_concurrency}-slot route warm did not return RIFF for ${route_warm_path}." >&2
+      echo "Profile ${voice_profile_id} ${synthesis_concurrency}-slot route warm did not return RIFF for ${route_warm_path}." >&2
       exit 1
     fi
     rm -f "${route_warm_path}"
@@ -183,4 +191,4 @@ if [[ "${status}" != *'"ready":true'* ]]; then
 fi
 
 echo "warm_timing total_seconds=$((SECONDS - total_started_at))"
-echo 'DeanVoice staging warm completed.'
+echo "Active-profile staging warm completed for ${voice_profile_id}."

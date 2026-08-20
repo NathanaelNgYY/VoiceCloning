@@ -3,15 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getFullActiveVoiceProfile } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
-import {
-  buildGiBleedingScopedSystemPrompt,
-  resolveChatbotSystemPrompt,
-} from '@/lib/chatbotSystemPrompt';
-import {
-  buildDocumentsContext,
-  combineSystemPromptWithDocuments,
-  resolveChatbotDocuments,
-} from '@/lib/chatbotDocuments';
+import { resolveChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
+import { resolveChatbotDocuments } from '@/lib/chatbotDocuments';
+import { assembleSystemPrompt } from '@/lib/assembleSystemPrompt';
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
@@ -24,6 +18,7 @@ import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 import { getMyLearnerSummary } from '@/services/learnerAnalytics';
 import { buildLearnerSupportGuidance } from '@/lib/learnerGuidance';
+import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
@@ -38,6 +33,7 @@ import { buildLearnerSupportGuidance } from '@/lib/learnerGuidance';
 export function useGiChatEngine({
   lessonContext = '',
   lessonSlug = 'gi-bleeding',
+  category,
   getVideoPosition = null,
   onUserQuestion = null,
 } = {}) {
@@ -63,25 +59,33 @@ export function useGiChatEngine({
     [voicePinOptions]
   );
 
-  // System prompt + uploaded documents are read once at mount; the gi skin has
-  // no editor for them (the Dean kiosk owns that UI). The lesson context is the
-  // final reference section, then the complete prompt is enclosed by the
-  // non-editable GI scope gate. useLiveSpeech snapshots this when the socket
-  // opens, so a lesson that arrives after the student has already started
-  // talking only takes effect on the next conversation.
+  // System prompt + uploaded documents come from the deployed config, refreshed
+  // at mount and again whenever a conversation ends; the lecture skin has no
+  // editor for them (the faculty site owns that UI). The lesson context is the
+  // final reference section. useLiveSpeech snapshots this when the socket opens,
+  // so a lesson that arrives after the student has already started talking only
+  // takes effect on the next conversation.
+  //
+  // Assembly goes through assembleSystemPrompt and nothing is appended around it,
+  // because a lecturer authors and tests on the faculty site and deploys to here
+  // — anything added on one side only is a prompt the lecturer never saw. That
+  // drift is how a hardcoded GI bleeding scope gate survived every prompt anyone
+  // deployed, so a custom assistant answered normally on faculty and then refused
+  // on lectures with "I can only help with GI bleeding education and this lesson
+  // video." Both sites now call the same function; keep it that way.
+  const {
+    version: deployedPromptVersion,
+    refresh: refreshDeployedPrompt,
+  } = useDeployedChatbotPrompt({ category });
   const systemPrompt = useMemo(() => {
-    const prompt = resolveChatbotSystemPrompt();
-    const documents = resolveChatbotDocuments();
-    const withDocuments = combineSystemPromptWithDocuments(
-      prompt,
-      buildDocumentsContext(documents).text
-    );
-    const lesson = String(lessonContext || '').trim();
-    const withLesson = lesson ? `${withDocuments}\n\n${lesson}` : withDocuments;
+    // No editor on this skin, so a local copy could only be stale — the deployed
+    // prompt and documents (or the bundled default) are the source of truth here.
+    const prompt = resolveChatbotSystemPrompt({ allowLocalOverride: false });
+    const documents = resolveChatbotDocuments({ allowLocalOverride: false });
+    const assembled = assembleSystemPrompt({ prompt, documents, lessonContext });
     const supportGuidance = buildLearnerSupportGuidance(learnerSummary);
-    const personalized = supportGuidance ? `${withLesson}\n\n${supportGuidance}` : withLesson;
-    return buildGiBleedingScopedSystemPrompt(personalized);
-  }, [learnerSummary, lessonContext]);
+    return supportGuidance ? `${assembled}\n\n${supportGuidance}` : assembled;
+  }, [learnerSummary, lessonContext, deployedPromptVersion]);
 
   useEffect(() => {
     let active = true;
@@ -177,10 +181,22 @@ export function useGiChatEngine({
     onUserQuestion,
   });
 
-  // "New chat" hides the transcript so far (design decision D3 — no
-  // persistence, no conversation list). Once the next session starts,
-  // useLiveSpeech empties `messages` outright and this id no longer matches
-  // anything, which findIndex reports as -1 and the whole fresh list shows.
+  // Pick up a deploy the moment a conversation ends, so the next one runs the
+  // current config. A kiosk here stays open all day: fetching only at mount meant
+  // a lecturer could remove a PDF, deploy, and still be answered from it in every
+  // later chat, because starting a new conversation re-reads the prompt but never
+  // re-fetches it. Refreshing on the way into idle keeps the round trip off the
+  // start path, where it would delay first audio.
+  const previousPhaseRef = useRef(liveSpeech.phase);
+  useEffect(() => {
+    const previous = previousPhaseRef.current;
+    previousPhaseRef.current = liveSpeech.phase;
+    if (liveSpeech.phase === 'idle' && previous !== 'idle') {
+      refreshDeployedPrompt();
+    }
+  }, [liveSpeech.phase, refreshDeployedPrompt]);
+
+  // "New chat" hides the transcript and closes the current realtime session.
   const visibleMessages = useMemo(() => {
     if (!clearedBeforeId) return liveSpeech.messages;
     const cutoff = liveSpeech.messages.findIndex((message) => message.id === clearedBeforeId);

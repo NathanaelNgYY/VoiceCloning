@@ -1,18 +1,51 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
-- Local source now gives Live Fast the same conservative chemical-formula expansion
-  as Live Full with negligible measured preprocessing cost. Worker tests pass 243/243;
-  real GPU listening, deployment, and production multi-user latency remain unverified.
-- Local source now preserves ARPAbet-only ALL-CAPS words for GPT-SoVITS after applying
-  aliases first; worker tests pass 245/245. Alias phonemes are verified across the full
-  phrase, but automatic phoneme splitting into alias tokens remains unsupported.
-- Staging GPU availability was restored to 07:00-19:00 Singapore on 2026-08-17.
-  Lambda readback is enabled/start 7/end 19/`Asia/Singapore`; recurring ASG actions
-  set min/desired 1/1 at 07:00 and 0/0 at 19:00, max 192. In-window ASG state remained
-  min 1/desired 2 with two instances after the schedule update. Lambda-to-ASG coupling
-  remains unset, so the fixed GPU and ASG schedules operate independently.
+- Faculty SSO is **deployed** to staging (2026-08-18): `faculty.lkcmedicine.org` now requires
+  Microsoft sign-in and admits only staff/associate domains, with faculty rows isolated to the
+  new `vcs-staging-lecturers` table. No administrator was needed after all — `CreateTable` is
+  gated on the `CreatorId=INTERNS2026` tag rather than absent, and the gateway's write grant
+  went in as a DynamoDB *resource-based* policy because `iam:*` is denied. The original plan
+  also missed that the faculty distribution had no `/api/live/session/*` cache behavior, so
+  sign-in would have 404'd at the Lambda; it was copied from lectures. Automated gates pass
+  (gateway 180/180, Lambda 139/139, client 355/355; both hosts 200; both sign-in routes 401
+  unauthenticated). **The one thing still unproven is a real staff sign-in and an actual
+  lecturer-table write** — see `docs/staging-architecture.md` and `TODO.md`.
+
+- Staging Live Fast is deployed with two normal takes and at most two additional
+  catastrophic-babble reseeds. Duplicate words now reduce fallback candidate scores.
+  AMI `ami-0b05ebda8d96a924f` is available and staging LT v27 is default; two v27
+  instances passed strict rollout gates and a faculty-host request returned HTTP 200 RIFF.
+- Staging inference ASG matches the fixed GPU's 24-hour availability: live
+  min/desired is currently 1/2. The retained 07:00 and 19:00 Singapore actions set
+  min 1/max 192 with desired unset, so neither resets a busy autoscaled fleet.
+  Direct Lambda-to-ASG coupling remains unavailable because the Lambda role lacks
+  Auto Scaling permission; matching scheduled actions preserve the continuous floor.
+  Live readback found the fixed GPU running and its Lambda schedule enabled, 0-24.
+- The chatbot-text build `assets/index-BJPFG8hT.js` is deployed on CloudFront E38.
+  When Lambda reports `LIVE_DEMO_LOCKOUT=true`, only the distribution's two exact
+  faculty hostnames bypass the lock. The live flag was not enabled during verification.
+- Standalone builder `i-0f6c399842bd8cc38` was shut down after AMI creation; an
+  administrator must terminate it because the internship role is denied that action.
+
+## Staging Whisper incident (2026-08-13)
+
+- Work is on local branch `codex/staging-whisper-fix` at `c4256dc`, based on
+  `origin/codex/staging-multi-user-scaling`, not the deliberately divergent dev branch.
+  GitHub push is blocked because this workstation has no GitHub credential.
+- Whisper was broken on LT v24: the medium model needed 215.77 seconds to load but
+  startup was killed at 120 seconds. The default is now 360 seconds. The staging AMI
+  also lacked the phoneme runtime/full model; both are provisioned and cached.
+- AMI `ami-0538dcd9374f9ecdb` is available. LT v26 is default and includes that AMI,
+  active-profile warming, a single boot warm, and repaired public-prime auth.
+- Fresh v26 instance `i-049271d608c44b5e3` completed one 616-second deep warm with
+  no worker restart; Whisper-medium and the phoneme model were active, both services
+  were running, and the optimized target was healthy. Cloud-init finished without
+  errors and both public-prime requests returned HTTP 200 RIFF on their first attempt.
+- Current live baseline is ASG min/desired 1/1 on LT v26; both occupancy alarm actions
+  are enabled. Standalone canary `i-0e4ef8844a120d069` was previously stopped after a
+  verified instance-initiated shutdown; an administrator must terminate it permanently.
 ## Needs Action
 
 - Dev and staging branches have diverged on purpose. Staging carries the deployable
@@ -86,13 +119,13 @@ Last updated: 2026-08-17
 ## Current AWS Operating State
 - Region/account/role: Seoul / `329599637774` /
   `Liu_Teng_Yu_Intern2026`; verify the assumed identity before every mutation.
-- ASG `vcs-staging-gpu-inference`: daytime min/desired 1, off-hours 0, max 192; launch-template
-  `lt-07728350a25e691a4` defaults to v20; two synthesis slots per `g6.xlarge`.
+- ASG `vcs-staging-gpu-inference`: continuous min/desired 1, max 192; launch-template
+  `lt-07728350a25e691a4` defaults to v26; two synthesis slots per `g6.xlarge`.
 - Optimized target group is `vcs-stg-opt-3103`. The separate live gateway is running
   and healthy in `vcs-staging-tg-3002`; do not stop it during event preparation.
-- `GPU_SCHEDULE_ENABLED=true` with a live 07:00-19:00 Singapore fixed-GPU window.
-  Matching verified ASG actions set 1 at 07:00 and 0 at 19:00. Exact manual-state
-  coupling is deployed but disabled pending Lambda-role Auto Scaling permissions.
+- The fixed GPU now has 24-hour availability. Matching ASG actions preserve min 1
+  without setting desired at 07:00 or 19:00 Singapore. Exact manual-state coupling is deployed
+  but disabled pending Lambda-role Auto Scaling permissions.
 
 ## Autoscaling and Readiness
 

@@ -24,7 +24,7 @@ foreach ($hostInfo in $hosts) {
   if ($InstanceIds -and $hostInfo.Id -notin $InstanceIds) { continue }
   $setup = switch ($hostInfo.Kind) {
     'dev' { 'sudo rm -f /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload' }
-    'relay' { 'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET TRANSCRIPT_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT; sudo install -d -m 0755 /etc/systemd/system/gpu-inference-worker.service.d; sudo install -m 0644 systemd/gpu-inference-worker-relay-health.conf /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload' }
+    'relay' { 'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET LIVE_AUTH_EXEMPT_ORIGINS TRANSCRIPT_TABLE_NAME LECTURER_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT; sudo install -d -m 0755 /etc/systemd/system/gpu-inference-worker.service.d; sudo install -m 0644 systemd/gpu-inference-worker-relay-health.conf /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload' }
     default { 'bash scripts/install-resemblyzer.sh' }
   }
   $deploySteps = if ($SkipInstallRestart) { '' } else {

@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getAppModeConfig, normalizeAppMode } from './appMode.js';
+import {
+  getAppModeConfig,
+  normalizeAppMode,
+  shouldApplyLiveDemoLockout,
+} from './appMode.js';
 
 test('normalizeAppMode keeps the combined app as the default', () => {
   assert.equal(normalizeAppMode(undefined), 'combined');
@@ -111,4 +115,25 @@ test('getAppModeConfig keeps chatbot mode unchanged after adding gi', () => {
   assert.equal(config.kiosk, true);
   assert.equal(config.showLiveFast, true);
   assert.equal(config.subtitle, 'Live Fast Chatbot');
+});
+
+test('getAppModeConfig exposes the instructions editor only on the text-chat kiosk', () => {
+  // The editor deploys the shared prompt with no sign-in, so it must never reach
+  // the GI build that students log into.
+  assert.equal(getAppModeConfig('chatbot').showInstructionsEditor, true);
+  for (const mode of ['gi', 'combined', 'training', 'live-fast']) {
+    assert.equal(
+      getAppModeConfig(mode).showInstructionsEditor,
+      false,
+      `${mode} must not expose the instructions editor`,
+    );
+  }
+});
+
+test('live demo lockout exempts only the staging faculty distribution hosts', () => {
+  assert.equal(shouldApplyLiveDemoLockout(true, 'faculty.lkcmedicine.org'), false);
+  assert.equal(shouldApplyLiveDemoLockout(true, 'D3K2RZ0HQM8NXI.CLOUDFRONT.NET.'), false);
+  assert.equal(shouldApplyLiveDemoLockout(true, 'd25sg72wp8oj5g.cloudfront.net'), true);
+  assert.equal(shouldApplyLiveDemoLockout(true, 'faculty.lkcmedicine.org.evil.example'), true);
+  assert.equal(shouldApplyLiveDemoLockout(false, 'training.example'), false);
 });

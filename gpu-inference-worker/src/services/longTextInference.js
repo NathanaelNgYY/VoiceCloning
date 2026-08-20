@@ -1469,6 +1469,13 @@ export function scoreAudioCandidate(analysis, verification = null) {
   const repeatedCount = verification?.repeatedPhrases?.length || 0;
   const repeatedPhrasePenalty = repeatedCount * 6;
 
+  // The verifier reports single-word echoes separately from phrase-level repeats.
+  // They also preserve 100% coverage, so include them explicitly in fallback
+  // ranking; otherwise a take rejected for "treatment and treatment" can still
+  // beat a clean take when the normal retry budget is exhausted.
+  const duplicatedCount = verification?.duplicatedWords?.length || 0;
+  const duplicatedWordPenalty = duplicatedCount * 6;
+
   // When all Full takes miss the strict bar and best-effort must choose one,
   // prefer a take whose independently measured technical-word phones were closer
   // to the saved dictionary pronunciation. A clear reject gets the full penalty;
@@ -1492,6 +1499,7 @@ export function scoreAudioCandidate(analysis, verification = null) {
     - missingWordPenalty
     - extraWordPenalty
     - repeatedPhrasePenalty
+    - duplicatedWordPenalty
     - phonemePenalty
     - (zeroishRatio * 2)
     - (clippedRatio * 8)

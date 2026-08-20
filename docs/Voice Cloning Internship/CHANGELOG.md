@@ -32,6 +32,88 @@
 
 ## 2026-08-13
 
+## 2026-08-18
+
+- Deployed faculty-only Microsoft SSO to staging. `faculty.lkcmedicine.org` now requires
+  sign-in and admits only `staff.main.ntu.edu.sg`/`assoc.main.ntu.edu.sg`; lectures is
+  untouched and keeps its student-inclusive policy and main table.
+- Created `vcs-staging-lecturers` (`PK`/`SK`, on-demand, `signins-by-day` GSI, TTL on `ttl`,
+  PITR). `dynamodb:CreateTable` was never absent from the internship role — it is gated on the
+  `CreatorId=INTERNS2026` resource tag, which the 2026-08-17 attempt omitted.
+- Granted the gateway instance role `dynamodb:PutItem` on that table through a DynamoDB
+  **resource-based policy** rather than an IAM change, since `iam:*` is denied. Confirmed from
+  the instance with a non-destructive conditional put.
+- Fixed a routing gap the rollout plan missed: the faculty distribution had no
+  `/api/live/session/*` cache behavior, so sign-in POSTs hit the Lambda origin and 404'd. The
+  behavior was copied from lectures and inserted before the `/api/*` catch-all.
+- Stamped `X-VCS-Site: faculty` on the faculty distribution's Lambda and ALB origins, deployed
+  the gateway (pull to `a43d671`, `.env` keys, restart; `/readyz` 200 with no problems) and the
+  staging Lambda (merge added only the faculty allowlist and emptied `LIVE_AUTH_EXEMPT_ORIGINS`;
+  `LIVE_DEMO_LOCKOUT` and `VOICE_PROFILE_INTERNAL_*` preserved), and rebuilt/deployed
+  `chatbot-text` (`assets/index-zgw-uRR3.js`, `/*` invalidated).
+- Tests: gateway 180/180, Lambda 139/139, client 355/355. Live: both hosts 200, both
+  `/api/live/session/signin` 401 unauthenticated, unauthenticated WebSocket refused on both,
+  lectures bundle unchanged, lecturer table ACTIVE with 0 items.
+- Not yet verified: a real staff sign-in, student rejection, and actual lecturer-table writes.
+
+## 2026-08-17
+
+- Implemented, but did not deploy, faculty-only Microsoft SSO for the staging
+  `chatbot-text` build. Faculty uses staff/associate email domains, CloudFront site
+  scoping, and a dedicated `vcs-staging-lecturers` table; lectures keeps its existing
+  student-inclusive policy and main table. Gateway tests passed 180/180, client auth
+  tests 26/26, and Lambda auth tests 11/11. Deployment is blocked because the assumed
+  internship role is denied `dynamodb:CreateTable`; the table and Entra faculty SPA
+  redirect URI remain unverified and no AWS runtime resource was changed.
+
+## 2026-08-14
+
+- Staging-only Live Fast now makes two normal takes (`LIVE_FAST_RETRY_COUNT=1`)
+  and, only after catastrophic babble remains, up to two additional reseeded takes
+  (`MAX_BABBLE_ESCAPE_RESEEDS=2`), for a hard maximum of four. ASR
+  `duplicatedWords` now reaches candidate scoring and costs six points per duplicate,
+  so best-effort selection no longer ignores that signal. Targeted local tests passed
+  19/19; focused tests on the staging canary passed 5/5. The broader worker selection
+  still has one known pre-existing compact-formula failure.
+- Baked worker AMI `ami-0b05ebda8d96a924f`, made LT v27 the default, and rolled only
+  `vcs-staging-gpu-inference`. Two fresh v27 instances passed source-hash, service,
+  restart-count, warm-event, and target-health gates. A public faculty-host synthesis
+  returned HTTP 200 RIFF. The temporary builder `i-0f6c399842bd8cc38` was shut down;
+  the internship role cannot terminate it.
+- Staging chatbot-text now exempts only `d3k2rz0hqm8nxi.cloudfront.net` and
+  `faculty.lkcmedicine.org` from `LIVE_DEMO_LOCKOUT`; other hosts remain locked when
+  the Lambda flag is true. Built and deployed `assets/index-BJPFG8hT.js` to CloudFront
+  distribution `E38A3666CJ7FVJ`; both public hostnames returned the bundle. Unit/build
+  verification passed, but the live flag was not temporarily enabled and duplicate-word
+  ranking has not yet had a controlled listening comparison.
+
+## 2026-08-13
+
+- Aligned the staging inference ASG with the fixed GPU's new 24-hour availability.
+  Live min/desired is currently 1/1; the retained 07:00 and 19:00 Singapore actions
+  set min 1/max 192 with desired unset, so they do not reset autoscaled capacity.
+  Both occupancy alarm actions are enabled. The fixed GPU was independently read
+  as running with its Lambda schedule enabled from hour 0 through 24.
+  `offHoursMinCapacity` is now 1 and
+  the schedule script reads that setting instead of hardcoding a scale-to-zero action.
+  Fresh LT v26 instance `i-040b58dedddec65de` completed its full active-profile warm
+  in 627 seconds: Whisper medium active, CUDA phoneme model loaded with real decisions,
+  10 two-slot RIFF rounds, zero worker restarts, both services active, healthy target,
+  and two first-attempt HTTP 200 RIFF public primes. Hot rounds took 2-4 seconds after
+  cold model loading; the one-time phoneme-load round took 180 seconds.
+
+- Fixed staging verifier boot on autoscaled GPUs. Whisper-medium startup now has a
+  configurable 360-second default instead of the failing 120-second cutoff; boot warm
+  resolves the active S3 voice profile, runs once, and prewarms a strict phoneme phrase.
+  Added host phoneme/espeak provisioning and cached the full model in AMI
+  `ami-0538dcd9374f9ecdb`; LT v26 is default. Targeted Node tests passed 39/39 locally
+  and on the canary; shell syntax, PowerShell parse, and `git diff --check` passed.
+  Fresh-v26 proof observed one 616-second warm, no restart, Whisper/speaker active,
+  phoneme model loaded, both services active, and healthy target. A separate direct
+  authenticated public request returned HTTP 200 RIFF in 14.29 seconds. Fresh-v26
+  cloud-init then completed without errors and both automated public primes returned
+  HTTP 200 RIFF first try. ASG 0/0 and both alarm actions were restored afterward.
+
 - Made GPU boot-warm work for autoscaling instead of only for a manually pre-warmed event
   fleet. `scripts/warm-staging-deanvoice.sh` is a hand-run, DeanVoice-hardcoded script, and
   `WARM_ON_BOOT` was off with no `last_warm.json` in the AMI, so every scaled-out instance

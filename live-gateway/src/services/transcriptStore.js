@@ -23,6 +23,53 @@ export function userPartitionKey(oid) {
 // SESSION# key, which keeps the profile first in that result.
 export const USER_PROFILE_KEY = 'PROFILE';
 
+// One row per sign-in *event*, as opposed to the single overwriting PROFILE row.
+// PROFILE answers "who has ever signed in, and when were they last seen";
+// these answer "how often, and when each time".
+//
+// ISO-8601 is used raw because it sorts lexicographically in the same order it
+// sorts chronologically, so a begins_with('SIGNIN#') query returns a person's
+// visits oldest-first with no extra work. Two sign-ins by the same user in the
+// same millisecond would collide and overwrite — not worth defending against,
+// since it would take one person signing in twice inside 1ms.
+export function signInEventKey(isoTimestamp) {
+  return `SIGNIN#${isoTimestamp}`;
+}
+
+/**
+ * Partition key of the sparse `signins-by-day` index — the ISO date alone,
+ * e.g. "2026-08-06".
+ *
+ * Answering "who signed in today" from the base table means scanning every row
+ * of every user, including transcripts, because sign-ins live under each
+ * person's own partition. This index inverts that. Only SIGNIN# rows carry the
+ * attribute, so the index stays sparse: a cohort's chatter never enters it, and
+ * it costs in proportion to logins rather than to utterances.
+ *
+ * Bucketing by day rather than using one constant value avoids funnelling a
+ * whole cohort's writes into a single partition. A date range is one Query per
+ * day, which is the right shape for the question anyway.
+ */
+export function signInDayKey(isoTimestamp) {
+  return isoTimestamp.slice(0, 10);
+}
+
+/**
+ * Session ids lead with the ISO timestamp of the socket opening, so that
+ * `SESSION#…` sort keys order chronologically.
+ *
+ * They used to be bare UUIDs, which sort by random hex: a student's sessions
+ * came back shuffled, and "sessions between two dates" was not expressible at
+ * all. Same reasoning as signInEventKey above.
+ *
+ * The random suffix is load-bearing rather than decoration — two sockets
+ * opening for one user in the same millisecond (a fast reconnect) would
+ * otherwise share an id and interleave their turns into a single transcript.
+ */
+export function timeOrderedSessionId(nowMs) {
+  return `${new Date(nowMs).toISOString()}#${randomUUID().slice(0, 8)}`;
+}
+
 export function sessionMetaKey(sessionId) {
   return `SESSION#${sessionId}#META`;
 }
@@ -44,7 +91,8 @@ export function createTranscriptStore({
   storeSynthetic = false,
   storeAssistantTurns = false,
   now = () => Date.now(),
-  newSessionId = () => randomUUID(),
+  // Receives the open time so the id can lead with it; see timeOrderedSessionId.
+  newSessionId = timeOrderedSessionId,
   logger = console,
 }) {
   if (typeof putItem !== 'function') {
@@ -84,13 +132,25 @@ export function createTranscriptStore({
    *
    * A repeat visitor overwrites their own row, so firstSeenAt is not kept —
    * reconstructing it would need a read before every write. The earliest
-   * session META serves that purpose for anyone who actually spoke.
+   * SIGNIN# event serves that purpose.
    *
    * @param {{ oid: string, email?: string, name?: string, synthetic?: boolean }} identity
+   * @param {object} [options]
+   * @param {boolean} [options.event]  Also write a per-visit SIGNIN# row.
+   *   Only the sign-in endpoint passes true, and the reason is the whole design:
+   *   openSession calls this too, but a socket may open several times in one
+   *   visit (reconnects, a student pressing the microphone again), so counting
+   *   those would inflate one visit into five logins. The endpoint fires once
+   *   per browser sign-in, which is what a "login" actually means here.
+   *
+   *   The cost of that choice: if the endpoint call fails, the visit leaves no
+   *   event. PROFILE is still written by the socket path, so the person is never
+   *   lost — only the timestamp of that visit is. Undercounting is recoverable;
+   *   inventing logins that did not happen is not.
    * @returns {boolean} whether a write was issued (not whether it succeeded —
    *   writes are fire-and-forget by design).
    */
-  function recordSignIn(identity) {
+  function recordSignIn(identity, { event = false } = {}) {
     if (!identity?.oid) {
       throw new Error('recordSignIn requires an identity with an oid.');
     }
@@ -102,19 +162,44 @@ export function createTranscriptStore({
     }
 
     const seenAtMs = now();
-    write({
-      PK: userPartitionKey(identity.oid),
-      SK: USER_PROFILE_KEY,
-      lastSeenAt: new Date(seenAtMs).toISOString(),
-      GSI1PK: 'USERS',
-      GSI1SK: `${new Date(seenAtMs).toISOString()}#${identity.oid}`,
+    const seenAt = new Date(seenAtMs).toISOString();
+    const who = {
       email: identity.email || '',
       displayName: identity.name || '',
       ...(identity.synthetic ? { synthetic: true } : {}),
+    };
+
+    write({
+      PK: userPartitionKey(identity.oid),
+      SK: USER_PROFILE_KEY,
+      lastSeenAt: seenAt,
+      GSI1PK: 'USERS',
+      GSI1SK: `${seenAt}#${identity.oid}`,
+      ...who,
       // Slides forward on every sign-in, so an active student's row does not
       // expire underneath their still-live transcripts.
       ...expiresAt(seenAtMs),
     });
+
+    if (event) {
+      write({
+        PK: userPartitionKey(identity.oid),
+        SK: signInEventKey(seenAt),
+        // Duplicated from the key so the row is readable without parsing it,
+        // and doubling as the sort key of the signins-by-day index.
+        signedInAt: seenAt,
+        // Present on these rows and no others, which is what keeps that index
+        // sparse. Dropping the index later means deleting it, not rewriting
+        // rows: a stray attribute on a sign-in row costs nothing.
+        signInDay: signInDayKey(seenAt),
+        ...who,
+        // Each event expires on its own clock, unlike PROFILE — so this is a
+        // rolling window of recent visits, not a permanent history. Raise
+        // TRANSCRIPT_TTL_DAYS if the record needs to outlive a semester.
+        ...expiresAt(seenAtMs),
+      });
+    }
+
     return true;
   }
 
@@ -128,7 +213,10 @@ export function createTranscriptStore({
     }
 
     const enabled = storeSynthetic || !identity.synthetic;
-    const sessionId = newSessionId();
+    // Stamped when the socket opens, which is the session's real start. The
+    // META row's `startedAt` is later — it is written on the first turn, so
+    // that a socket which never says anything leaves nothing behind.
+    const sessionId = newSessionId(now());
     let sequence = 0;
     let metaWritten = false;
 
@@ -136,6 +224,9 @@ export function createTranscriptStore({
     // only path guaranteed to have run when a turn is stored, so a client that
     // never called the endpoint — or whose call failed — still produces a row.
     // Same key, so the repeat write overwrites rather than duplicating.
+    //
+    // Deliberately without { event: true }: sockets reopen within a single visit,
+    // and a login count that rises on reconnect would be worse than no count.
     recordSignIn(identity);
 
     const writeMetaOnce = (startedAtMs) => {

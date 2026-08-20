@@ -1,7 +1,8 @@
 # Per-user chat transcript storage — design plan
 
-**Status:** deployed to dev on 2026-08-07; real NTU sign-in verification remains.
-**Related:** `docs/staging-architecture.md` (staging stack), `client/env/staging/gi.env` (SSO config, staged but **not deployed**).
+**Status:** deployed to dev on 2026-08-07 and staging on 2026-08-06. Faculty SSO was
+deployed on staging on 2026-08-18; environment-specific human sign-in verification remains.
+**Related:** `docs/staging-architecture.md` (staging stack), `client/env/staging/gi.env`.
 
 ## Decision log
 
@@ -160,12 +161,19 @@ SK  PROFILE
     lastSeenAt, email, displayName, ttl
 
 PK  USER#<oid>
-SK  SESSION#<sessionId>#META
+SK  SIGNIN#<ISO-8601 timestamp>
+    signedInAt, email, displayName, ttl
+    signInDay = "YYYY-MM-DD"      ← GSI partition key, on these rows only
+
+PK  USER#<oid>
+SK  SESSION#<ISO-8601 timestamp>#<8 hex>#META
     startedAt, email, displayName, lessonSlug, ttl
 
 PK  USER#<oid>
-SK  SESSION#<sessionId>#TURN#<seq, zero-padded>
+SK  SESSION#<ISO-8601 timestamp>#<8 hex>#TURN#<seq, zero-padded>
     role ("user" | "assistant"), text, ts, voiceProfileId, [audioS3Key], ttl
+
+GSI signins-by-day:  PK = signInDay,  SK = signedInAt
 ```
 
 - One user's whole history: `Query` on `PK = USER#<oid>`.
@@ -186,7 +194,28 @@ SK  SESSION#<sessionId>#TURN#<seq, zero-padded>
 - A returning student overwrites their own `PROFILE`, and its `ttl` slides forward on
   each sign-in so an active student's row cannot expire under their live transcripts.
   `firstSeenAt` is deliberately absent: keeping it would need a read before every write,
-  and the earliest session `META` already serves that for anyone who spoke.
+  and the earliest `SIGNIN#` event already serves that.
+- **`SIGNIN#<timestamp>` is the login *history*; `PROFILE` is the login *state*.** Added
+  2026-08-06, because `PROFILE` alone answers "who has ever signed in and when were they
+  last seen" but cannot answer "how many times" or "when each time" — it overwrites.
+  Raw ISO-8601 is the sort key because its lexicographic order *is* chronological order,
+  so `begins_with(SK, "SIGNIN#")` returns a person's visits oldest-first with no GSI.
+
+  Only `POST /api/live/session/signin` emits an event (`recordSignIn(identity,
+  { event: true })`). `openSession` deliberately does not, and this is the load-bearing
+  part of the design: a socket reopens on reconnect and whenever the student presses the
+  microphone again, so counting those would turn one visit into five logins. The endpoint
+  fires once per browser sign-in, which is what "a login" means here.
+
+  The accepted cost: if the endpoint call fails, that visit leaves no event row. `PROFILE`
+  is still written by the socket path, so the person is never lost — only the timestamp of
+  that visit. Undercounting is recoverable from `lastSeenAt`; fabricated logins are not.
+
+  Note `SIGNIN#` sorts *after* `SESSION#` (`"SE" < "SI"`), so a full `Query` on the user
+  returns profile, then sessions, then login history. `PROFILE` still sorts first.
+- **Sign-in events carry their own `ttl`**, unlike `PROFILE`, whose expiry slides forward.
+  So the history is a rolling `TRANSCRIPT_TTL_DAYS` window (currently 90), not a permanent
+  record. Raise it deliberately if the log has to outlive a semester.
 - **A second table for users was considered and rejected.** It buys nothing on lookup —
   both designs are key lookups — and costs a second IAM grant, which is the current
   bottleneck. The one real argument for splitting is the roster query: "list all users"
@@ -194,6 +223,33 @@ SK  SESSION#<sessionId>#TURN#<seq, zero-padded>
   expensive, the fix is a GSI (`GSI1PK="USER"`, `GSI1SK=<oid>`), not another table.
   Split only when user records grow attributes unrelated to conversations — cohort,
   enrolment, grades — which is a different entity with a different lifecycle.
+- **Session ids lead with a timestamp** (`<ISO-8601>#<8 hex>`), added 2026-08-06. They were
+  bare UUIDv4, which sorts by hex — so a user's `SESSION#` rows came back in an order
+  unrelated to when the sessions happened. Observed in staging: a session at 07:27:27 sorted
+  *above* one at 07:26:13. With the timestamp leading, the same lexicographic sort that
+  already orders turns now orders sessions, and a full user `Query` reads top-to-bottom as a
+  timeline for free.
+
+  The random suffix is load-bearing, not decoration: two sockets opening in the same
+  millisecond (a fast reconnect) would otherwise share an id and interleave their turns into
+  one transcript.
+
+  The id is stamped when the **socket opens**, which is the session's real start. META's
+  `startedAt` is later — it is written on the first turn — so the two differ by however long
+  the student took to speak, and the id prefix is the earlier of the two.
+
+  Both formats coexist in the table; nothing was migrated. Anything parsing a session key
+  must parse from the **right** (`#META` / `#TURN#<seq>` are the fixed suffixes), because the
+  new id contains a `#` of its own. `parseSessionKey` in the reader does this.
+- **`signInDay` + the `signins-by-day` GSI** answer "who signed in today" without a `Scan`.
+  The index is **sparse**: only sign-in rows carry `signInDay`, so it holds one entry per
+  login rather than one per utterance, and its cost tracks logins not conversation volume.
+  Bucketing by calendar day rather than one constant partition key avoids funnelling a whole
+  cohort's writes into a single partition. Dropping the index later means deleting the index,
+  not rewriting rows — a stray attribute on a sign-in row costs nothing.
+
+  The day is the **UTC** date, so a sign-in at 07:00 SGT on the 7th lands in `2026-08-06`.
+  Acceptable for counting; be careful before reporting per-day figures to anyone.
 - One session: `Query` with `begins_with(SK, "SESSION#<id>")`; zero-padded `seq` keeps
   turns in order under lexicographic sort.
 - Per-turn items stay far below the 400 KB item cap. A whole session as one item would
@@ -479,6 +535,31 @@ cd client && npm run dev:gi:sso
 `GET /readyz` on 3002 must return `{"ok":true,"problems":[]}`; with auth on but the tenant
 or audience missing it returns 503 with the reason, which is the failure this arrangement is
 designed to make loud.
+
+## Reading the table — `npm run report`
+
+`live-gateway/scripts/read-transcripts.mjs` renders the raw rows as user → visit → session →
+turns, because the console's flat key list is unreadable once one person has several visits.
+It is **read-only** and never writes.
+
+```bash
+cd live-gateway
+npm run report                      # roster: everyone, from the PROFILE rows
+npm run report -- --user <oid|email>   # one person's visits, sessions and turns
+npm run report -- --day 2026-08-06     # who signed in that day, via the GSI
+```
+
+Two things to know before running it:
+
+- **It needs *developer* credentials, not the instance role.** `VoiClo_GPU` holds `PutItem`
+  only — the gateway never reads — so this must run under `Nathanael_Ng_Intern2026` (see
+  *The account the table lives in*). Running it on the box will `AccessDenied`.
+- **It prints names, emails and full conversation text.** Do not paste its output anywhere
+  casual.
+
+Times render in `Asia/Singapore`; everything stored is UTC. Sessions that cannot be attached
+to a sign-in are reported as **orphans** rather than dropped — expected for sessions predating
+the `SIGNIN#` rows (2026-08-06) and for visits where the sign-in endpoint failed.
 
 ## Verified so far
 

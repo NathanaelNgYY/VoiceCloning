@@ -19,7 +19,34 @@ function readEnv(env) {
       .map((domain) => domain.trim())
       .filter(Boolean),
     loadTestSecret: env.LIVE_AUTH_LOADTEST_SECRET || '',
+    facultyDomains: (env.FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS || '')
+      .split(',')
+      .map((domain) => domain.trim().toLowerCase())
+      .filter(Boolean),
   };
+}
+
+/**
+ * Origins allowed to synthesise without signing in.
+ *
+ * Mirrors the live gateway's LIVE_AUTH_EXEMPT_ORIGINS so one open kiosk build
+ * gets both halves of a conversation — the gateway's reply and this route's
+ * voice — while every other distribution still needs a token. Same caveat as
+ * the gateway: Origin is browser-supplied, so this is a soft gate. Synthesis
+ * costs GPU time, so treat an exempt origin as a public, metered surface.
+ */
+export function isAuthExemptOrigin(event, env = process.env) {
+  const exempt = (env.LIVE_AUTH_EXEMPT_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/u, ''))
+    .filter(Boolean);
+  if (exempt.length === 0) return false;
+
+  const headers = event?.headers || {};
+  const key = Object.keys(headers).find((name) => name.toLowerCase() === 'origin');
+  const origin = key ? String(headers[key] || '').trim().replace(/\/+$/u, '') : '';
+  if (!origin) return false; // No Origin at all is never exempt.
+  return exempt.includes(origin);
 }
 
 export function readBearerToken(event) {
@@ -30,6 +57,21 @@ export function readBearerToken(event) {
   const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization');
   const raw = key ? String(headers[key] || '').trim() : '';
   return /^Bearer\s+/iu.test(raw) ? raw.replace(/^Bearer\s+/iu, '').trim() : '';
+}
+
+export function isFacultyRequest(event) {
+  const headers = event?.headers || {};
+  const key = Object.keys(headers).find((name) => name.toLowerCase() === 'x-vcs-site');
+  return key ? String(headers[key] || '').trim().toLowerCase() === 'faculty' : false;
+}
+
+export function enforceFacultyIdentity(identity, event, allowedDomains) {
+  if (!isFacultyRequest(event) || identity?.synthetic) return identity;
+  const email = String(identity?.email || '').trim().toLowerCase();
+  if (!allowedDomains.some((domain) => email.endsWith(`@${domain}`))) {
+    throw new TokenError('domain_not_allowed', 'This Microsoft account cannot use the faculty app.');
+  }
+  return identity;
 }
 
 /**
@@ -81,8 +123,8 @@ export function createLiveAuthGuard({ env = process.env, verifier = null } = {})
         return { oid: 'LOADTEST#lambda', email: '', synthetic: true };
       }
 
-      const identity = await activeVerifier.verify(token);
-      return { ...identity, synthetic: false };
+      const identity = { ...await activeVerifier.verify(token), synthetic: false };
+      return enforceFacultyIdentity(identity, event, config.facultyDomains);
     },
   };
 }

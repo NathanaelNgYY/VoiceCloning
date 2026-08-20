@@ -9,6 +9,56 @@ import { LOCAL_TEMP_ROOT } from '../config.js';
 // cache wipe.
 export const WARM_STATE_PATH = path.join(LOCAL_TEMP_ROOT, 'last_warm.json');
 
+// The activated voice profile, written by the Lambda on /api/voice-profile/activate.
+// S3 is the shared source of truth, so a freshly launched instance can read it
+// without calling the API or holding a token.
+export const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
+
+// Autoscaled instances launch from an AMI with no local warm history, so the
+// persisted payload only ever helps a restart of a machine that has already served
+// traffic. Falling back to the *active* profile is what makes a scale-out warm:
+// whichever voice is currently on demand gets loaded, rather than a hard-coded one.
+// Scale-out is driven by demand for that profile, so it is the right thing to warm.
+export function warmPayloadFromProfile(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  const refAudioPath = String(profile.ref_audio_path || '').trim();
+  if (!refAudioPath) return null;
+
+  const gptRef = String(profile.gptKey || profile.gptPath || '').trim();
+  const sovitsRef = String(profile.sovitsKey || profile.sovitsPath || '').trim();
+
+  return {
+    voiceProfileId: String(profile.voiceProfileId || '').trim(),
+    ref_audio_path: refAudioPath,
+    aux_ref_audio_paths: Array.isArray(profile.aux_ref_audio_paths)
+      ? profile.aux_ref_audio_paths.filter((item) => String(item || '').trim())
+      : [],
+    prompt_text: String(profile.prompt_text || ''),
+    prompt_lang: String(profile.prompt_lang || 'en'),
+    text_lang: String(profile.text_lang || profile.prompt_lang || 'en'),
+    warm_text: 'Ready.',
+    // Shape ensureRequestVoiceModel expects, so the warm loads this profile's
+    // weights instead of leaving whatever the server booted with.
+    ...(gptRef || sovitsRef
+      ? { voice_model: { voiceProfileId: String(profile.voiceProfileId || ''), gptRef, sovitsRef, revision: String(profile.updatedAt || '') } }
+      : {}),
+  };
+}
+
+/** Best-effort read of the active profile from S3; null when absent or unreadable. */
+export async function readActiveProfileWarmPayload({ getObject, log = () => {} } = {}) {
+  if (typeof getObject !== 'function') return null;
+  try {
+    const body = await getObject(ACTIVE_PROFILE_KEY);
+    const payload = warmPayloadFromProfile(JSON.parse(body.toString('utf-8')));
+    if (!payload) log('[boot-warm] active profile has no ref_audio_path — cannot warm from it');
+    return payload;
+  } catch (err) {
+    log(`[boot-warm] no active voice profile to warm from: ${err.message}`);
+    return null;
+  }
+}
+
 // Persist the fields warmOnBoot needs to replay a warm. Best-effort: a write failure
 // must never break the live warm request that triggered it.
 export function recordWarmPayload(payload, { statePath = WARM_STATE_PATH, fsModule = fs } = {}) {
@@ -44,14 +94,21 @@ export function readWarmPayload({ statePath = WARM_STATE_PATH, fsModule = fs } =
 // slower first clip, never a crash. Returns true only when a warm synth actually ran.
 export async function warmOnBoot({
   readPayload = readWarmPayload,
+  readActivePayload = null, // () => Promise<payload|null> — the on-demand profile from S3
   startServer,        // () => Promise<status> — force the python server up (loads default model)
   warmReferences,     // (payload) => Promise<{ ref_audio_path, aux_ref_audio_paths }>
+  loadVoiceModel = null, // (payload) => Promise<...> — load this profile's weight pair
   runSynth,           // (body) => Promise<...> — the tiny throwaway synth (handleLiveTtsRequest)
   log = () => {},
 } = {}) {
-  const payload = readPayload();
+  let payload = readPayload();
+  let source = 'persisted payload';
+  if (!payload && readActivePayload) {
+    payload = await readActivePayload();
+    source = 'active voice profile';
+  }
   if (!payload) {
-    log('[boot-warm] no persisted warm payload — skipping (first load will warm normally)');
+    log('[boot-warm] no persisted payload and no active profile — skipping (first load will warm normally)');
     return false;
   }
 
@@ -60,6 +117,14 @@ export async function warmOnBoot({
     if (!status?.ready) {
       log('[boot-warm] inference server not ready after start — skipping warm');
       return false;
+    }
+
+    // Load the profile's own weights before synthesising. Without this the warm
+    // heats whatever model the server booted with, and the first real request for
+    // this profile still pays the weight-load cost — the exact cost we are here to
+    // remove.
+    if (loadVoiceModel && payload.voice_model) {
+      await loadVoiceModel(payload);
     }
 
     const warmed = await warmReferences(payload);
@@ -74,7 +139,7 @@ export async function warmOnBoot({
       prompt_lang: payload.prompt_lang || 'en',
       prompt_text: payload.prompt_text || '',
     });
-    log('[boot-warm] GPU path pre-warmed from persisted payload');
+    log(`[boot-warm] GPU path pre-warmed from ${source}${payload.voiceProfileId ? ` (${payload.voiceProfileId})` : ''}`);
     return true;
   } catch (err) {
     log(`[boot-warm] failed (non-fatal, first request will be cold): ${err.message}`);

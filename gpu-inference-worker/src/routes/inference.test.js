@@ -179,6 +179,7 @@ test('Live Fast enables phoneme verification without enabling Full tail checks',
       coverage: 1,
       missingWords: [],
       extraWords: [],
+      duplicatedWords: ['complete'],
       suspectWords: [],
       skippedWords: [],
       words: [],
@@ -190,9 +191,10 @@ test('Live Fast enables phoneme verification without enabling Full tail checks',
       {},
       { phonemeVerification: true },
     ).verifyChunk;
-    await verifyChunk(Buffer.from('RIFFdemo'), 'A complete sentence.');
+    const result = await verifyChunk(Buffer.from('RIFFdemo'), 'A complete sentence.');
     assert.equal(receivedOptions.phonemeVerification, true);
     assert.equal(receivedOptions.finalWordTailCheck, false);
+    assert.deepEqual(result.duplicatedWords, ['complete']);
   } finally {
     mock.restoreAll();
   }
@@ -260,12 +262,36 @@ test('handleLiveTtsRequest ships the best-effort take when every retry is reject
     verifyChunk: async () => (synthCalls === 2
       ? { ok: false, coverage: 0.9, missingWords: ['x'], suspectWords: [] }
       : { ok: false, coverage: 0.3, missingWords: ['a', 'b'], suspectWords: [] }),
-    retryCount: 2,
   });
 
-  // 3 takes attempted (initial + 2 retries), none accepted, best-effort returned.
-  assert.equal(synthCalls, 3);
+  // Default Live Fast budget: initial take + one retry, then best-effort.
+  assert.equal(synthCalls, 2);
   assert.equal(result.audioBuffer.toString('utf-8'), 'RIFF-take-2');
+});
+
+test('handleLiveTtsRequest caps persistently catastrophic audio at four total takes', async () => {
+  const module = await loadInferenceRouteModule();
+  const silent = makeToneWav(300);
+  silent.fill(0, 44);
+  let synthCalls = 0;
+
+  const result = await module.handleLiveTtsRequest({
+    text: 'A catastrophic audio fallback test.',
+    ref_audio_path: 'training/datasets/lecturer-a/reference.wav',
+  }, {
+    resolveParams: async (body) => ({ ...body, ref_audio_path: '/tmp/reference.wav' }),
+    synthesize: async () => {
+      synthCalls += 1;
+      return silent;
+    },
+    verifyChunk: async () => {
+      assert.fail('catastrophic audio must be rejected before transcription verification');
+    },
+  });
+
+  // Two normal takes plus two emergency reseeds, then least-bad best-effort.
+  assert.equal(synthCalls, 4);
+  assert.equal(result.audioBuffer.length, silent.length);
 });
 
 test('handleLiveTtsRequest removes pause-heavy periods from dotted initialisms', async () => {

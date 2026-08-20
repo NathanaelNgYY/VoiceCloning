@@ -12,7 +12,11 @@ import { acquireApiToken, shouldAttachApiToken } from '../auth/msalClient.js';
 
 export const LIVE_SESSION_READY_TIMEOUT_MS = 15_000;
 import { connectInferenceSSE } from '../services/sse.js';
-import { sanitizeBackendError } from '../lib/backendErrors.js';
+import {
+  isRetryableSynthesisError,
+  sanitizeBackendError,
+  synthesisRetryDelayMs,
+} from '../lib/backendErrors.js';
 import {
   VIDEO_POSITION_SYNC_INTERVAL_MS,
   shouldSendVideoPosition,
@@ -76,9 +80,7 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function shouldRetrySynthesis(err) {
-  return /already|busy|conflict|409|503/i.test(err?.message || '');
-}
+const SYNTHESIS_ATTEMPTS = 3;
 
 function getRms(samples) {
   if (!samples.length) return 0;
@@ -523,36 +525,37 @@ export function useLiveSpeech({
     pauseOpenAiInput();
   }
 
-  async function synthesizeWithRetry(params) {
+  // One transient 5xx must not kill a whole reply: in phrase mode the failure of
+  // any clip abandons every clip after it, so the student gets a silent answer
+  // from a GPU that was merely still warming up.
+  async function withSynthesisRetry(run) {
     let lastError;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < SYNTHESIS_ATTEMPTS; attempt += 1) {
       try {
-        return await synthesize(params);
+        return await run();
       } catch (err) {
         lastError = err;
-        if (!shouldRetrySynthesis(err) || attempt === 2) {
+        // A stopped conversation has no reply left to salvage — re-issuing the
+        // clip would only spend GPU time on audio nobody will hear.
+        if (
+          isCancelledRef.current
+          || !isRetryableSynthesisError(err)
+          || attempt === SYNTHESIS_ATTEMPTS - 1
+        ) {
           throw err;
         }
-        await wait(650 * (attempt + 1));
+        await wait(synthesisRetryDelayMs(err, attempt));
       }
     }
     throw lastError;
   }
 
-  async function synthesizeSentenceWithRetry(params, options = {}) {
-    let lastError;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        return await synthesizeSentence(params, options);
-      } catch (err) {
-        lastError = err;
-        if (!shouldRetrySynthesis(err) || attempt === 2) {
-          throw err;
-        }
-        await wait(650 * (attempt + 1));
-      }
-    }
-    throw lastError;
+  function synthesizeWithRetry(params) {
+    return withSynthesisRetry(() => synthesize(params));
+  }
+
+  function synthesizeSentenceWithRetry(params, options = {}) {
+    return withSynthesisRetry(() => synthesizeSentence(params, options));
   }
 
   // Stable for the life of a reply: every clip of that reply carries the same
@@ -1654,6 +1657,20 @@ export function useLiveSpeech({
         if (phaseRef.current !== 'speaking') {
           setPhase('listening');
         }
+        break;
+      }
+
+      // The gateway refused the handshake (no token on a build with no sign-in,
+      // or an expired one). Without this the socket just closes mid-handshake,
+      // the phase never leaves 'connecting', and the panel's Deploy/Reset stay
+      // disabled behind a conversation that can never end.
+      case 'session.auth.failed': {
+        // Clear the notice too: it still reads "Connected. Preparing live chat..."
+        // from onOpen, and leaving that beside the error tells the user the session
+        // is still coming up when it has already been refused.
+        setNotice('');
+        setError(event.message || 'Live chat sign-in was refused.');
+        endConversationFromSocket();
         break;
       }
 

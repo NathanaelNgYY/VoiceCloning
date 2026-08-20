@@ -1,5 +1,15 @@
 const APP_MODES = new Set(['combined', 'training', 'live-fast', 'chatbot', 'gi']);
 
+const LIVE_DEMO_LOCKOUT_EXEMPT_HOSTS = new Set([
+  'd3k2rz0hqm8nxi.cloudfront.net',
+  'faculty.lkcmedicine.org',
+]);
+
+export function shouldApplyLiveDemoLockout(enabled, hostname = '') {
+  const normalizedHostname = String(hostname || '').trim().toLowerCase().replace(/\.$/u, '');
+  return enabled === true && !LIVE_DEMO_LOCKOUT_EXEMPT_HOSTS.has(normalizedHostname);
+}
+
 export function normalizeAppMode(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'livefast' || normalized === 'live') return 'live-fast';
@@ -41,6 +51,10 @@ export function getAppModeConfig(value) {
     showLiveFast,
     showTextToSpeech,
     showGiChat: gi,
+    // Only the text-chat kiosk build edits and deploys the assistant instructions.
+    // The GI build reads whatever was deployed but shows no editor, so students
+    // signing in there cannot see or rewrite the prompt.
+    showInstructionsEditor: kiosk && !gi,
     navItems,
     defaultPath: '/',
     subtitle: gi

@@ -198,9 +198,9 @@ export function verificationOptions(params = {}, {
         coverage: asr?.coverage ?? 1,
         missingWords: asr?.missingWords ?? [],
         extraWords: asr?.extraWords ?? [],
+        duplicatedWords: asr?.duplicatedWords ?? [],
         suspectWords: asr?.suspectWords ?? [],
         skippedWords: asr?.skippedWords ?? [],
-        duplicatedWords: asr?.duplicatedWords ?? [],
         words: asr?.words ?? [],
         transcript: asr?.transcript,
         phonemeAssessments: asr?.phonemeAssessments ?? [],
@@ -259,12 +259,12 @@ function readFullChunkingOptions(body = {}) {
   };
 }
 
-// Live Fast retries each chunk up to this many times (total takes = value + 1). Kept
-// lower than Live Full (which does 5 + sentence-split escalation) so Live Fast stays
-// fast: the common case early-accepts on the first clean take, and a stubborn chunk
-// spends at most a few extra seeds before shipping best-effort. Live Fast never splits
-// a chunk below itself — it re-seeds the WHOLE chunk, then keeps the best take.
-const LIVE_FAST_RETRY_COUNT = 2;
+// Live Fast retries each chunk up to this many times (total takes = value + 1).
+// Current policy is two normal takes, plus at most two emergency reseeds only when
+// every retained take is catastrophic (silence, babble, or severe clipping): four
+// total in that exceptional path. Live Fast never splits a chunk below itself — it
+// re-seeds the WHOLE chunk, then keeps the best take.
+const LIVE_FAST_RETRY_COUNT = 1;
 
 // Synthesize ONE Live Fast chunk with the same anti-skip logic Live Full uses per
 // chunk (re-seed retries + ASR/quality verification + best-effort fallback), but
@@ -298,7 +298,7 @@ async function synthesizeLiveFastChunk(baseParams, {
       || (m.clippedRatio ?? 0) > 0.2
     );
   };
-  const MAX_BABBLE_ESCAPE_RESEEDS = 4;
+  const MAX_BABBLE_ESCAPE_RESEEDS = 2;
   let babbleEscapesLeft = MAX_BABBLE_ESCAPE_RESEEDS;
 
   // takeIndex increases on every take (including babble-escape reseeds) so each take gets

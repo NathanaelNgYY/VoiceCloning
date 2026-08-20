@@ -2,7 +2,7 @@ import { corsHeaders, err, ok, preflight, parseJsonBody } from '../shared/cors.j
 import { inferencePost, inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
 import { demoHeaders, isDemoEvent } from '../shared/demoOrigin.js';
-import { createLiveAuthGuard } from '../shared/liveAuth.js';
+import { createLiveAuthGuard, isAuthExemptOrigin } from '../shared/liveAuth.js';
 import { randomUUID } from 'node:crypto';
 
 const REPLY_TOKEN_HEADER = 'X-VCS-Reply-Token';
@@ -34,6 +34,7 @@ export function createHandler({
   invocationState = { cold: true, environmentId: randomUUID() },
   authGuard = createLiveAuthGuard(),
   authRequired = liveAuthRequired,
+  authExempt = isAuthExemptOrigin,
 } = {}) {
   return async function handler(event, context = {}) {
     const coldStart = invocationState.cold;
@@ -46,7 +47,7 @@ export function createHandler({
     // Before any work: synthesis costs GPU time, so an unauthenticated caller
     // must not get past this point. Cancel is checked too — it takes a
     // replyToken belonging to someone else's in-flight reply.
-    if (authGuard && authRequired(event)) {
+    if (authGuard && authRequired(event) && !authExempt(event)) {
       try {
         await authGuard.authorize(event);
       } catch (error) {

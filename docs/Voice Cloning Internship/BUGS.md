@@ -7,6 +7,21 @@
 
 ## Active
 
+- 2026-08-14 fixed: Live Fast defaulted to three normal takes and could add four
+  catastrophic-babble reseeds; it now uses two normal takes plus at most two escape
+  takes. Fallback ranking also received repeated phrases but not ASR `duplicatedWords`,
+  so a visibly duplicated-word take could avoid the intended penalty. The field is now
+  propagated and costs six score points per occurrence. Deployed to staging LT v27;
+  controlled duplicate-word listening comparison remains outstanding.
+
+- 2026-08-13: LT v24 killed Whisper-medium at its hardcoded 120-second startup
+  deadline; measured steady-state load was 215.77 seconds. The host image also lacked
+  `phonemizer`, espeak-ng, and the full phoneme model. Code/AMI/LT v26 correct these.
+  Fresh-v26 status showed Whisper and speaker verification active and the phoneme model
+  loaded. One cold phoneme load still made a warm round take 180 seconds despite the
+  baked cache, and verifier-driven reseeds remained observable; cold ASG admission is
+  therefore still about ten minutes, not equivalent to event-mode prewarming.
+
 - 2026-08-07 fixed: learner evidence accumulated without bound and short clarification repeats
   lost their medical topic. Dev now uses a capped 30-day event window and inherits the preceding
   topic for phrases such as “even simpler.” Supervisor concept reset supports controlled QA.

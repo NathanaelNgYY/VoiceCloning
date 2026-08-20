@@ -4,6 +4,7 @@ import test from "node:test";
 
 const configSource = readFileSync(new URL("./config.js", import.meta.url), "utf8");
 const giAppSource = readFileSync(new URL("./GiApp.jsx", import.meta.url), "utf8");
+const appAuthGateSource = readFileSync(new URL("./auth/AppAuthGate.jsx", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("./main.jsx", import.meta.url), "utf8");
 const deployClientSource = readFileSync(
   new URL("../../scripts/deploy-client.ps1", import.meta.url),
@@ -33,6 +34,10 @@ const stagingGiEnv = readFileSync(
 // be skipped.
 const devGiEnv = readFileSync(
   new URL("../env/dev/gi.env", import.meta.url),
+  "utf8",
+);
+const stagingFacultyEnv = readFileSync(
+  new URL("../env/staging/chatbot-text.env", import.meta.url),
   "utf8",
 );
 // Reaching outside client/ on purpose: the scope the browser requests and the
@@ -262,21 +267,48 @@ test("deploy cleanup keys off overwriting the file, not off having a backup", ()
   );
 });
 
+test("staging GI pins the saved Dean voice profile directly", () => {
+  assert.match(stagingGiEnv, /^VITE_GI_VOICE_PROFILE_ID=deanvoice-v1$/m);
+});
+
+test("the faculty chatbot uses Microsoft SSO with only staff domains", () => {
+  assert.match(stagingFacultyEnv, /^VITE_AUTH_ENABLED=true$/m);
+  assert.match(stagingFacultyEnv, /^VITE_AUTH_MODE=msal$/m);
+  assert.match(stagingFacultyEnv, /^VITE_API_AUTH_MODE=entra-id$/m);
+  assert.match(
+    stagingFacultyEnv,
+    /^VITE_ENTRA_ALLOWED_EMAIL_DOMAINS=staff\.main\.ntu\.edu\.sg,assoc\.main\.ntu\.edu\.sg$/m,
+  );
+  assert.doesNotMatch(stagingFacultyEnv, /student\.main\.ntu\.edu\.sg/);
+});
+
+test("faculty has no backend auth exemption and uses a lecturer table", () => {
+  assert.match(stagingGatewayEnv, /^LIVE_AUTH_EXEMPT_ORIGINS=$/m);
+  assert.match(stagingLambdaEnv, /^LIVE_AUTH_EXEMPT_ORIGINS=$/m);
+  assert.match(stagingGatewayEnv, /^LECTURER_TABLE_NAME=vcs-staging-lecturers$/m);
+  for (const source of [stagingGatewayEnv, stagingLambdaEnv]) {
+    assert.match(
+      source,
+      /^FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS=staff\.main\.ntu\.edu\.sg,assoc\.main\.ntu\.edu\.sg$/m,
+    );
+  }
+});
+
 test("public GI visitors bypass protected routes and cannot render the login page", () => {
   assert.match(
-    giAppSource,
-    /if \(!config\.giAuthEnabled\) \{\s*return children;\s*\}/,
+    appAuthGateSource,
+    /if \(!config\.authEnabled\) return children;/,
   );
   assert.match(
     giAppSource,
-    /path="\/login"[\s\S]*?config\.giAuthEnabled[\s\S]*?<LoginPage \/>[\s\S]*?<Navigate to="\/" replace \/>/,
+    /path="\/login"[\s\S]*?config\.authEnabled[\s\S]*?<LoginPage \/>[\s\S]*?<Navigate to="\/" replace \/>/,
   );
 });
 
-test("the public GI build does not bootstrap Microsoft authentication", () => {
+test("a public build does not bootstrap Microsoft authentication", () => {
   assert.match(
     mainSource,
-    /APP_MODE_CONFIG\.gi && config\.giAuthEnabled && isMsalAuthEnabled\(\)/,
+    /config\.authEnabled && isMsalAuthEnabled\(\)/,
   );
 });
 

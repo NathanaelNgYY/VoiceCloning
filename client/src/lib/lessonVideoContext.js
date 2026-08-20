@@ -105,7 +105,10 @@ function buildRules(endLabel, spokenLength) {
     'Never read the transcript back word for word. Explain what that part of the video means, in your own words, in the teaching style described above.',
     `The video is about ${spokenLength} long and ends at ${endLabel}. If the student names a time past the end, tell them the video ends before that and ask which part they meant.`,
     'You may receive notes during the conversation saying where the student\'s video player has reached. When the student says "this part", "here", or "what she just said" without naming a time, answer about the point in the most recent note. If no note has arrived, ask them which timestamp they mean instead of guessing.',
-    'If the student asks about something the video never covers, say the video does not cover it, then answer from the approved teaching material above if the question is still about GI bleeding.',
+    // No subject named here on purpose: this block is appended to whatever prompt
+    // the lecturer deployed, and the platform serves lectures from every specialty.
+    // Naming one would contradict the lecturer's own instructions.
+    'If the student asks about something the video never covers, say the video does not cover it, then answer from the teaching material above if the question is still within the subject of this lesson.',
     'Do not mention this transcript, the section outline, or that you were given the video text. Speak as though you know the lecture.',
   ]
     .map((rule) => `- ${rule}`)

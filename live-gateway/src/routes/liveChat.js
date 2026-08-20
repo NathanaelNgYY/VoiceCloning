@@ -4,8 +4,11 @@ import {
   ENTRA_ALLOWED_EMAIL_DOMAINS,
   ENTRA_AUDIENCE,
   ENTRA_TENANT_ID,
+  FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS,
+  LECTURER_TABLE_NAME,
   LIVE_AUTH_ENABLED,
   LIVE_AUTH_LOADTEST_SECRET,
+  isAuthExemptOrigin,
   TRANSCRIPT_STORE_ASSISTANT,
   TRANSCRIPT_STORE_SYNTHETIC,
   TRANSCRIPT_TABLE_NAME,
@@ -23,6 +26,7 @@ import {
 import { OpenAiRealtimeBridge } from '../services/openaiRealtimeBridge.js';
 import { normalizeRealtimeLanguage } from '../services/openaiRealtimeEvents.js';
 import { createTranscriptStore } from '../services/transcriptStore.js';
+import { enforceFacultyAccess, isFacultyRequest } from '../services/facultyAccess.js';
 
 export const LIVE_CHAT_PATH = '/api/live/chat/realtime';
 
@@ -61,20 +65,30 @@ export function buildConfiguredAuthenticator() {
   });
 }
 
-export function buildConfiguredTranscriptStore() {
-  if (!TRANSCRIPT_TABLE_NAME) {
+export function buildConfiguredTranscriptStore(tableName = TRANSCRIPT_TABLE_NAME) {
+  if (!tableName) {
     return null;
   }
 
   return createTranscriptStore({
     putItem: createDynamoPutItem({
-      tableName: TRANSCRIPT_TABLE_NAME,
+      tableName,
       region: TRANSCRIPT_TABLE_REGION,
     }),
     ttlDays: TRANSCRIPT_TTL_DAYS,
     storeSynthetic: TRANSCRIPT_STORE_SYNTHETIC,
     storeAssistantTurns: TRANSCRIPT_STORE_ASSISTANT,
   });
+}
+
+export function buildConfiguredTranscriptStoreForRequest() {
+  const mainStore = buildConfiguredTranscriptStore();
+  const lecturerStore = buildConfiguredTranscriptStore(LECTURER_TABLE_NAME);
+  return (req) => (isFacultyRequest(req) ? lecturerStore : mainStore);
+}
+
+export function enforceConfiguredIdentityPolicy(identity, req) {
+  return enforceFacultyAccess(identity, req, FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS);
 }
 
 // Maps the bridge's app-events to transcript turns. Anything not listed here —
@@ -240,10 +254,13 @@ export function attachLiveChatSocket(server, options = {}) {
   const {
     authenticator = buildConfiguredAuthenticator(),
     transcriptStore = buildConfiguredTranscriptStore(),
+    transcriptStoreForRequest = null,
+    identityPolicy = enforceConfiguredIdentityPolicy,
     // Seams for tests: a stub bridge avoids dialling OpenAI, and a short timeout
     // keeps the unauthenticated-socket test fast.
     createBridge = (bridgeOptions) => new OpenAiRealtimeBridge(bridgeOptions),
     authTimeoutMs = AUTH_TIMEOUT_MS,
+    authExempt = isAuthExemptOrigin,
   } = options;
   const wss = new WebSocketServer({ noServer: true });
   const activeClients = new Map();
@@ -278,6 +295,9 @@ export function attachLiveChatSocket(server, options = {}) {
     const url = parseRequestUrl(req);
     const language = getLiveChatLanguage(url);
     const bridge = createBridge({ language });
+    const requestTranscriptStore = transcriptStoreForRequest
+      ? transcriptStoreForRequest(req)
+      : transcriptStore;
     activeClients.set(browserSocket, bridge);
 
     let transcriptSession = null;
@@ -343,8 +363,21 @@ export function attachLiveChatSocket(server, options = {}) {
       handleBrowserMessage(bridge, data);
     };
 
+    // An exempt origin (an open kiosk distribution with no sign-in) skips the
+    // handshake and runs as a synthetic identity, exactly as the load tests do.
+    // Every other origin still has to present a token.
+    const exemptOrigin = Boolean(authenticator) && authExempt(req.headers?.origin || '');
+    if (exemptOrigin) {
+      bridge.identity = { oid: 'ANON#kiosk', email: '', name: '', synthetic: true };
+      try {
+        transcriptSession = requestTranscriptStore?.openSession(bridge.identity) || null;
+      } catch (error) {
+        console.error('[transcript] could not open session', error?.message);
+      }
+    }
+
     // With no authenticator configured the socket behaves exactly as before.
-    let authenticated = !authenticator;
+    let authenticated = !authenticator || exemptOrigin;
     let authInFlight = false;
     const pendingMessages = [];
 
@@ -364,6 +397,7 @@ export function attachLiveChatSocket(server, options = {}) {
       let identity;
       try {
         identity = await authenticator.authenticate(parseAuthFrame(data));
+        identity = identityPolicy(identity, req);
       } catch (error) {
         authInFlight = false;
         failAuth(error);
@@ -381,7 +415,7 @@ export function attachLiveChatSocket(server, options = {}) {
       // Storage must never take down a conversation, so a store that refuses to
       // open leaves the session unrecorded rather than failing the connection.
       try {
-        transcriptSession = transcriptStore?.openSession(identity) || null;
+        transcriptSession = requestTranscriptStore?.openSession(identity) || null;
       } catch (error) {
         console.error('[transcript] could not open session', error?.message);
       }

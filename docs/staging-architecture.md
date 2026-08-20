@@ -1,5 +1,11 @@
 # Staging Environment — Complete Architecture Reference
 
+As of 2026-08-07, staging GI becomes voice-ready from fixed ID `deanvoice-v1` without a startup
+profile GET and sends that ID with every synthesis request. The staging synthesis backend resolves
+its saved model/reference profile without reading or writing shared `active.json`, so other tools may
+change their active voice independently. Live GI bundle: `assets/index-Cklj8mCD.js`. The final rollout
+was client-only; ASG, gateway, TTS, and training resources were not changed.
+
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
 **Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
 **Last control-plane inventory:** 2026-07-29 · **Last public-path check:** 2026-07-29
@@ -26,11 +32,12 @@ Browser
         └─ S3 via gateway endpoint vpce-0386d983dfdff41dc
 ```
 
-On-demand lifecycle: the Lambda **starts** the fixed GPU when a user needs it.
-CloudWatch shows an automatic Lambda invocation every five minutes; the invoker
-resource is not visible to this role. Live `GPU_SCHEDULE_ENABLED=true` applies the
-07:00-19:00 Singapore fixed-GPU window. The inference ASG has matching recurring
-07:00 min/desired 1 and 19:00 min/desired 0 actions, so its off-hours baseline is zero.
+The fixed GPU is running and its live Lambda schedule was verified as enabled with
+start 0, end 24, timezone Singapore. The inference ASG matches
+that availability with a continuous minimum floor of 1. Its retained recurring 07:00
+and 19:00 Singapore actions set min 1 and max 192 but leave desired capacity unset,
+so neither action resets a busy autoscaled fleet. The 19:00 action keeps its historical
+`daily-stop` name but no longer scales the ASG to zero or one.
 
 ## 2. CloudFront distributions
 
@@ -345,6 +352,43 @@ Two more things that cost an hour if you meet them cold:
   disk even when only `voice-live-gateway` is restarted; it activates at their next restart
   or reboot. Check `git status --porcelain` first — `gpu-inference-worker/src/index.js`
   carries an uncommitted local edit that must survive.
+- **The script reports success even when the remote command failed.** It prints "Deployed
+  workers to staging" unconditionally after `aws ssm wait`, with no check of the invocation's
+  exit code. Read the invocation output, never the script's last line.
+
+### ⚠️ Root-owned files, the delayed cost of one root-run deploy
+
+Because SSM runs as root, a deploy whose `npm`/`git` steps were *not* prefixed with
+`sudo -iu ubuntu` leaves files on disk owned by `root`. This happened at least once before
+2026-08-06 and left **14,802** root-owned paths: all three `node_modules` trees, plus ~31
+tracked source files (`live-gateway/src/routes/liveChat.js`, `lambda/router.js`,
+`gpu-inference-worker/src/index.js`, `scripts/`, `docs/`, `systemd/`).
+
+It stays hidden for months, because the two things you normally do still work:
+
+- **`git pull` succeeds even on root-owned tracked files.** Git replaces a file by writing a
+  new one into the directory, so it needs write permission on the *parent directory* — which
+  is still `ubuntu`. Only an **in-place** edit of those paths fails.
+- **`npm ci --dry-run` reports "up to date".** It resolves the tree without writing, so it
+  cannot see the permission problem. Only a real `npm ci` fails, with `EACCES` on something
+  like `node_modules/.bin/mime`.
+
+So the bill arrives at the next deploy that changes a dependency — the one deploy where you
+least want a surprise. Detect and fix:
+
+```bash
+R=/home/ubuntu/VoiceCloning
+sudo find $R -user root -not -path '*/.git/*' | wc -l        # expect 0
+sudo find $R -user root -not -path '*/.git/*' -not -path '*/node_modules/*'   # tracked files
+for d in gpu-worker gpu-inference-worker live-gateway; do
+  sudo chown -R ubuntu:ubuntu $R/$d/node_modules
+done
+sudo -iu ubuntu npm --prefix $R/live-gateway ci --omit=dev   # a REAL ci is the only proof
+```
+
+Fixed 2026-08-06 for `node_modules` (14,802 → 31, verified by a real `npm ci` on all three
+packages). The ~31 tracked source files are **still root-owned** — harmless until something
+edits one in place.
 
 ### Gateway deploy and rollback (staging)
 
@@ -384,12 +428,76 @@ past a dependency *addition* without it leaves the tree fine and the lockfile ly
 therefore `c70bf7d`. Shipped the auth + transcript gateway with `LIVE_AUTH_ENABLED=false`
 and an empty `TRANSCRIPT_TABLE_NAME` — deliberately inert, see below.
 
-### Switching transcript storage on (it shipped inert)
+**2026-08-06 deploy:** `dbfd763` → `550f9a2` (fast-forward; rollback SHA `dbfd763`). No env
+change. Shipped time-ordered session ids, the `signInDay` attribute and the
+`signins-by-day` GSI. Note the on-box HEAD was `dbfd763`, not the `755562a` recorded above —
+confirm `rev-parse HEAD` on the box rather than assuming this ledger is the last word.
+Verified after restart: a sign-in wrote `SIGNIN#2026-08-06T08:17:12.780Z` with
+`signInDay 2026-08-06`, the next socket wrote `SESSION#2026-08-06T08:17:30.839Z#878516d1#META`
+in the new format, and `npm run report -- --day 2026-08-06` resolved it through the index.
 
-The 2026-08-05 deploy put the code on the box with `LIVE_AUTH_ENABLED=false` and an empty
-`TRANSCRIPT_TABLE_NAME`. Both are needed, and **either one alone records nothing**: with no
-authentication there is no identity to attribute a row to, and with no table name the store
-is never built. `/readyz` reports the half-configured case rather than failing silently.
+### Switching transcript storage on
+
+Both `LIVE_AUTH_ENABLED=true` and `TRANSCRIPT_TABLE_NAME` are needed, and **either one alone
+records nothing**: with no authentication there is no identity to attribute a row to, and
+with no table name the store is never built. `/readyz` reports the half-configured case
+rather than failing silently.
+
+> The first draft of this section said the 2026-08-05 deploy shipped inert. It did, but the
+> box was switched on later the same day, so by the time anyone read this it was wrong.
+> Check the running config before trusting it:
+> `sudo -u ubuntu grep -E '^(LIVE_AUTH_ENABLED|ENTRA_|TRANSCRIPT_)' /home/ubuntu/VoiceCloning/live-gateway/.env`
+
+### ⚠️ A new `/api/live/*` route needs **two** routing changes, not zero
+
+Both layers match the live-gateway paths **exactly**, so a new route silently lands somewhere
+else and looks like a code bug. Adding `POST /api/live/session/signin` needed:
+
+1. **CloudFront** — a cache behavior for the new path, ordered *before* `/api/*`. Without it
+   the request goes to the Lambda, which answers
+   `{"error":"No Lambda route for POST /api/live/session/signin"}`.
+2. **The ALB** — a listener rule for the new path forwarding to the gateway target group.
+   Without it the request falls to the *default* rule, which is the training worker, and
+   Express answers `Cannot POST /api/live/session/signin`.
+
+Those two error bodies are the fastest way to tell which layer is missing. A third symptom,
+`{"ok":false,"code":"auth_disabled"}`, means routing is correct and you reached a gateway
+with `LIVE_AUTH_ENABLED=false`.
+
+### ⚠️ CloudFront OAC silently destroys a bearer token
+
+The Lambda origin on `E3MLIO4CZFOPEO` carried OAC `EEPE53W4BCAQ8`
+(`lambda-cloudfront-OAC_V3`) with **`SigningBehavior: always`**. CloudFront then signs every
+request to that origin with SigV4 and **replaces the viewer's `Authorization` header** with
+its own signature. The client's `Bearer <id token>` never survives the hop.
+
+The symptom is maximally misleading: `readBearerToken()` sees `AWS4-HMAC-SHA256…`, does not
+match `/^Bearer\s+/`, and returns `''`, so the Lambda answers its generic
+`401 Sign in to use the voice assistant.` — a *sign-in* error caused by a *CDN* setting.
+Meanwhile the live gateway authenticates the same token perfectly, because the ALB origin has
+no OAC. "Chat works but voice fails" is the signature of this bug.
+
+Fixed by attaching a separate OAC, `E2FQU7VYHBAXBC` (`vcs-lambda-oac-no-override`,
+`SigningBehavior: no-override`), to that origin only. `no-override` signs only when the viewer
+sent no `Authorization`, so unauthenticated calls behave exactly as before and bearer tokens
+pass through. The original OAC is shared — its name suggests other projects use it — so it was
+left untouched rather than edited in place.
+
+Note the function URL is `AuthType: NONE`, so the signing was never load-bearing.
+
+**Verifying without a real token:** send a syntactically valid JWT with an invented `kid`. If
+the header survives, `resolveKey` refetches JWKS and the first call takes ~0.5-0.6 s; a
+stripped header fails at `malformed` before any network work, in ~0.25 s.
+
+**Read origin *domains*, not origin IDs.** On `E3MLIO4CZFOPEO` the origin whose Id is
+`voice-gpu-alb-815777974…` has DomainName `voice-gpu-alb-staging-1031778835…` — the Id is a
+stale label kept across a repoint. Reading the Id leads to the confident, wrong conclusion
+that the staging distributions are served by the dev ALB:
+
+```bash
+aws cloudfront get-distribution-config --id E3MLIO4CZFOPEO \
+  --query 'DistributionConfig.Origins.Items[].{id:Id,domain:DomainName}'
+```
 
 ```bash
 R=/home/ubuntu/VoiceCloning; F=$R/live-gateway/.env
@@ -417,19 +525,97 @@ Read the ⚠️ below first — this is the flip that closes the chatbot-text ki
 voice-live-gateway` while conversations keep working normally — by design, storage never
 takes down a lesson. Check the log after the first sign-in rather than assuming success.
 
-### ⚠️ One gateway, several clients — before enabling `LIVE_AUTH_ENABLED`
+### Faculty SSO rollout (2026-08-18 — deployed, one human gate outstanding)
 
-Every staging distribution reaches the *same* live gateway. Only the **gi** build
-authenticates (`VITE_API_AUTH_MODE=entra-id`, sends a `session.auth` frame). The
-**chatbot-text** kiosk on `d3k2rz0hqm8nxi` opens `chat/realtime` with no token at all, so
-turning `LIVE_AUTH_ENABLED=true` closes each of its sockets with **4401** and its live chat
-stops working. Verify who is still using that kiosk before flipping, and expect the same
-question for `live-fast` and `training`, which also carry a `VITE_LIVE_GATEWAY_URL`.
+The faculty `chatbot-text` site now requires Microsoft sign-in with the narrower
+`staff.main.ntu.edu.sg,assoc.main.ntu.edu.sg` allowlist. Lectures is unchanged and still
+admits its student-inclusive allowlist. **The one gate that has not been exercised is a real
+staff/associate sign-in** — do not describe faculty SSO as proven until that passes and
+lecturer rows are seen in the table.
 
-The reverse mismatch bites too: a gi client that sends `session.auth` to a gateway *older*
-than 2026-08-05 has its `session.init` swallowed behind the auth frame, silently stripping
-the GI system prompt — the tutor answers as a generic assistant. Deploy the gateway before,
-or with, any gi client build.
+Faculty data is isolated from the main student transcript table. The gateway selects the
+store from `X-VCS-Site: faculty`, stamped by CloudFront as a custom origin header on both of
+the faculty distribution's dynamic origins. Never use a viewer-supplied email, request body,
+or `Origin` header to select the table. Lectures sends no marker and keeps
+`TRANSCRIPT_TABLE_NAME`.
+
+#### What was provisioned
+
+`vcs-staging-lecturers` exists in `ap-northeast-2`: `PK`/`SK` string keys, on-demand billing,
+GSI `signins-by-day` (`signInDay`/`signedInAt`, `INCLUDE` projection of `email` and
+`displayName`), TTL on `ttl`, and PITR enabled. It mirrors `vcs-staging-transcripts`.
+
+Two things the earlier handoff assumed needed an administrator turned out not to:
+
+- **`dynamodb:CreateTable` is tag-gated, not absent.** The intern role can create a table
+  only when the request carries `CreatorId=INTERNS2026`; the 2026-08-17 denial was a missing
+  tag, not a missing action. `vcs-staging-transcripts` carries the same tag. Tag every new
+  table this way or creation fails with a bare AccessDenied that reads like no permission.
+- **The gateway's write grant did not need an IAM change.** `iam:*` is denied to the intern
+  role, but `dynamodb:PutResourcePolicy` is allowed, so the grant lives in a resource-based
+  policy on the table itself: `PutItem` for `role/VoiClo_GPU`, plus resource-policy
+  management for `role/Nathanael_Ng_Intern2026` — DynamoDB rejects any resource policy that
+  would lock the caller out of editing it. This is narrower than an IAM change (one
+  principal, one action, one table) and is visible next to the table.
+
+Verify a write grant from the instance, never from a laptop — the grant is on the instance
+role. `ConditionalCheckFailedException` means allowed and writes nothing;
+`AccessDeniedException` means blocked:
+
+    aws dynamodb put-item --region ap-northeast-2 --table-name vcs-staging-lecturers       --item '{"PK":{"S":"USER#zzPermProbe"},"SK":{"S":"PROFILE"}}'       --condition-expression 'attribute_exists(zzNeverPresent)'
+
+#### The routing gap the original plan missed
+
+The faculty distribution had **no `/api/live/session/*` cache behavior**, so the client's
+sign-in POST fell through to the `/api/*` Lambda origin and returned
+`No Lambda route for POST /api/live/session/signin`. Sign-in rows could never have been
+written, and the header work alone would not have revealed it. The behavior was copied
+verbatim from the lectures distribution (same ALB origin id, cache policy
+`4135ea2d-6df8-44a3-9df3-4b5a84be39ad`, origin request policy
+`216adef6-5c7f-47e4-b989-5492eafa07d3`) and inserted **before** the `/api/*` catch-all, since
+CloudFront matches behaviors in order. When adding a distribution, diff its behaviors against
+lectures rather than assuming the origins are enough.
+
+#### Deployed state
+
+1. Faculty distribution `E38A3666CJ7FVJ`: `X-VCS-Site: faculty` on the Lambda and ALB origins
+   (the S3 origin is deliberately untouched, and the Lambda origin keeps `X-Demo-Request`),
+   plus the `/api/live/session/*` behavior above.
+2. Gateway on `i-0f0da8be59367f7a8` pulled to `a43d671` and restarted
+   (`voice-live-gateway` only). `.env` gained `FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS`,
+   `LECTURER_TABLE_NAME=vcs-staging-lecturers`, the two faculty CORS origins, and an emptied
+   `LIVE_AUTH_EXEMPT_ORIGINS`; `/readyz` is 200 with `problems: []`. Backup: `.env.bak.presso`.
+   systemd reads `live-gateway/.env`, not the `.env.livegateway.deployment.staging` beside it.
+3. Staging Lambda redeployed. The merge added `FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS` and
+   emptied `LIVE_AUTH_EXEMPT_ORIGINS` and changed nothing else; `LIVE_DEMO_LOCKOUT` and the
+   two `VOICE_PROFILE_INTERNAL_*` keys survived, confirming the merge preserves live-only keys.
+4. `chatbot-text` rebuilt and deployed (`assets/index-zgw-uRR3.js`) with `/*` invalidated. The
+   served bundle contains the client id, the `/common` authority and the staff/assoc domains,
+   and **no** `student.main.ntu.edu.sg`.
+
+Note that pulling the gateway box also moved `gpu-inference-worker` source on disk (the repo
+is shared). That code is not running yet and lands only at its next restart.
+
+#### Verified
+
+Gateway 180/180, Lambda 139/139, client 355/355. Live: faculty and lectures both serve 200;
+`POST /api/live/session/signin` is 401 `missing` on both; an unauthenticated WebSocket is
+refused identically on both; the lectures bundle hash is unchanged; `vcs-staging-lecturers`
+is ACTIVE with its GSI ACTIVE and 0 items.
+
+#### Still to verify (needs a human with a real account)
+
+A staff/associate account signs in and can use text and cloned voice; a student-domain account
+is rejected; faculty `PROFILE`, `SIGNIN`, session and turn rows appear **only** in
+`vcs-staging-lecturers`; and a lectures login still writes **only** to
+`vcs-staging-transcripts`. Until a real sign-in happens, the `X-VCS-Site` store selection is
+verified only by unit tests, and a sign-in write failure is invisible in the browser —
+`recordSignIn` is fire-and-forget and the response reports `recorded: true` regardless, so
+confirm in the table, not in the response.
+
+Rollback: restore `.env.bak.presso` and `git checkout e6dd61de` on the gateway, the Lambda
+environment snapshot and previous code, the previous client artifact, and the saved
+distribution config. Keep the table rather than deleting possible lecturer records.
 
 ## 9. Access / operations
 
@@ -489,15 +675,14 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The current image is `ami-021aeb72894b8c79b` (snapshot
-   `snap-09cf487a09a2c82f3`), built from commit `330d329`. Launch template
+   port 3004. The current image is `ami-0538dcd9374f9ecdb`. Launch template
    `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 15) uses this AMI, `g6.xlarge`,
+   (`lt-07728350a25e691a4`, default version 26) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
-   ASG `vcs-staging-gpu-inference` runs at desired capacity 1 during 07:00-19:00 with baseline
-   `i-0b8ce19b5fe17d751`;
-   `AWSServiceRoleForAutoScaling` also exists. Minimum
-   capacity 1; recurring scheduled actions set min/desired 0 outside that window.
+   ASG `vcs-staging-gpu-inference` has a continuous min/desired floor of 1;
+   `AWSServiceRoleForAutoScaling` also exists. Retained recurring 07:00 and 19:00
+   actions both set min 1 and max 192 while leaving desired capacity unset, matching
+   the fixed GPU's 24-hour availability without resetting autoscaled capacity.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
@@ -713,14 +898,12 @@ healthy in `vcs-staging-tg-3002`; it never stops the instance or creates a sched
 .\scripts\ensure-staging-live-gateway.ps1 -Apply
 ```
 
-The live Lambda contains 07:00-19:00 Singapore schedule values and
-`GPU_SCHEDULE_ENABLED=true` was applied on 2026-07-31. A direct in-window invocation
-returned `in-window-running`. CloudWatch later showed exactly one Lambda invocation
-every five minutes, including quiet hours, so an automatic invoker exists. This role
-cannot list the scheduler resource and the Lambda policy does not identify a classic
-EventBridge rule; the exact fixed-GPU invoker remains unverified. On 2026-08-01 the
-inference ASG received verified recurring `vcs-staging-daily-start` (07:00, min/desired
-1) and `vcs-staging-daily-stop` (19:00, min/desired 0) actions in `Asia/Singapore`.
+The fixed GPU was changed to 24-hour availability on 2026-08-13; live readback found
+it running with the Lambda schedule enabled from hour 0 through 24. The inference ASG
+was aligned live the same day: verified recurring `vcs-staging-daily-start` (07:00)
+and the historically named `vcs-staging-daily-stop` (19:00) both set min 1 and max 192
+with desired capacity unset in `Asia/Singapore`. Neither action resets autoscaled
+capacity; the latter therefore no longer stops baseline inference capacity.
 The deployed Lambda code can couple manual stop/termination to the ASG, but activation
 was rolled back because its execution role lacks `autoscaling:DescribeAutoScalingGroups`
 and `autoscaling:UpdateAutoScalingGroup`.

@@ -26,6 +26,7 @@ try {
     'config',
     'analytics',
     'learners',
+    'chatbot-prompt',
     'inference',
     'instance',
     'live',

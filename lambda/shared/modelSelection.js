@@ -1,6 +1,6 @@
 import path from 'path';
 import { getObject, listObjects, uploadBuffer } from './s3.js';
-import { loadClipScores } from './clipScores.js';
+import { loadClipQualityMetrics } from './clipScores.js';
 import { gpuGet, inferenceGet, inferencePost } from './gpuWorker.js';
 import { useGpuWorkerArtifacts } from './artifacts.js';
 import { isSafePathSegment } from './paths.js';
@@ -104,6 +104,22 @@ function transcriptWordCount(transcript = '') {
   return clean ? clean.split(' ').filter(Boolean).length : 0;
 }
 
+function transcriptTokenSet(transcript = '') {
+  return new Set(String(transcript || '').toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
+}
+
+function jaccardSimilarity(left, right) {
+  if (!left.size || !right.size) return 0;
+  let intersection = 0;
+  for (const value of left) if (right.has(value)) intersection += 1;
+  return intersection / (left.size + right.size - intersection);
+}
+
+function clipStartSeconds(filename = '') {
+  const match = String(filename).match(/_(\d+)_(\d+)\.[a-z0-9]+$/i);
+  return match ? Number(match[1]) / REF_SAMPLE_RATE_HZ : null;
+}
+
 // Mirrors the frontend's describeReferenceCandidate eligibility (referenceSelection.js):
 // a clip only qualifies as a STRICT reference if it is a known 3-9s slice with a
 // complete-sentence transcript, a preferred audio type, and no risky-name hints.
@@ -125,6 +141,7 @@ function isStrictReferenceCandidate(file) {
   if (file?.clean === false) return false;
   if (file?.stableLoudness === false) return false;
   if (file?.steadyStyle === false) return false;
+  if (file?.qualityMetrics?.eligible === false) return false;
   return true;
 }
 
@@ -168,10 +185,41 @@ function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
         .localeCompare(b.file.filename || getBasename(b.file.path));
     });
 
-  return {
-    primary: ranked[0].file,
-    aux: ranked.slice(1, maxAux + 1).map((entry) => entry.file),
-  };
+  const primary = ranked[0];
+  const remaining = ranked.slice(1);
+  const selected = [];
+  const covered = transcriptTokenSet(primary.file?.transcript);
+  const selectedTokenSets = [covered];
+  const selectedStarts = [clipStartSeconds(primary.file?.filename)].filter(Number.isFinite);
+  while (selected.length < maxAux && remaining.length > 0) {
+    let bestIndex = 0;
+    let bestUtility = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const candidate = remaining[index];
+      const tokens = transcriptTokenSet(candidate.file?.transcript);
+      const novel = [...tokens].filter((token) => !covered.has(token)).length;
+      const noveltyRatio = tokens.size ? novel / tokens.size : 0;
+      const similarity = Math.max(...selectedTokenSets.map((set) => jaccardSimilarity(tokens, set)));
+      const start = clipStartSeconds(candidate.file?.filename);
+      const distance = Number.isFinite(start) && selectedStarts.length
+        ? Math.min(...selectedStarts.map((value) => Math.abs(value - start)))
+        : 0;
+      const utility = candidate.score + noveltyRatio * 35 - similarity * 30 + Math.min(distance / 30, 1) * 12;
+      if (utility > bestUtility) {
+        bestUtility = utility;
+        bestIndex = index;
+      }
+    }
+    const [winner] = remaining.splice(bestIndex, 1);
+    selected.push(winner.file);
+    const tokens = transcriptTokenSet(winner.file?.transcript);
+    selectedTokenSets.push(tokens);
+    for (const token of tokens) covered.add(token);
+    const start = clipStartSeconds(winner.file?.filename);
+    if (Number.isFinite(start)) selectedStarts.push(start);
+  }
+
+  return { primary: primary.file, aux: selected };
 }
 
 function extractExpNameFromModelRef(modelRef = '') {
@@ -215,16 +263,18 @@ async function loadTrainingAudioFilesForExp(expName) {
     // ASR file may not exist yet.
   }
 
-  const clipScores = await loadClipScores(normalizedExpName);
+  const clipMetrics = await loadClipQualityMetrics(normalizedExpName);
   return wavFiles.map((filename) => {
     const info = transcriptMap.get(filename) || {};
+    const qualityMetrics = clipMetrics.get(filename);
     return {
       filename,
       key: `${denoisedPrefix}${filename}`,
       path: `${denoisedPrefix}${filename}`,
       transcript: info.transcript || '',
       lang: info.lang || '',
-      qualityScore: clipScores.get(filename),
+      qualityScore: qualityMetrics?.score,
+      qualityMetrics,
     };
   });
 }

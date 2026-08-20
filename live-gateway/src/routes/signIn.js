@@ -53,13 +53,16 @@ export function bearerToken(headerValue) {
  * @param {{ authenticate: (frame: object) => Promise<object> } | null} options.authenticator
  *   Null when LIVE_AUTH_ENABLED is off — there is then no verified identity to
  *   attribute a row to, so the route reports that rather than inventing one.
- * @param {{ recordSignIn: (identity: object) => boolean } | null} options.transcriptStore
+ * @param {{ recordSignIn: (identity: object, options?: object) => boolean } | null} options.transcriptStore
  *   Null when TRANSCRIPT_TABLE_NAME is empty (storage disabled).
  */
 export function createSignInHandler({
   authenticator,
   transcriptStore,
+  transcriptStoreForRequest = null,
+  identityPolicy = (identity) => identity,
   storageConfigured = Boolean(TRANSCRIPT_TABLE_NAME),
+  storageConfiguredForRequest = null,
   logger = console,
 }) {
   return async function handleSignIn(req, res) {
@@ -88,6 +91,7 @@ export function createSignInHandler({
       // sign-in to record, and every credential that opens a door is one more to
       // get wrong. The socket keeps its bypass; this route is token-only.
       identity = await authenticator.authenticate({ token, loadTestSecret: '', loadTestUser: 0 });
+      identity = identityPolicy(identity, req);
     } catch (error) {
       res.status(statusForError(error)).json({
         ok: false,
@@ -101,8 +105,17 @@ export function createSignInHandler({
     // student cannot use the lesson. A failed write is logged and reported in
     // the response, and the caller treats it as success either way.
     let recorded = false;
+    const requestStore = transcriptStoreForRequest
+      ? transcriptStoreForRequest(req)
+      : transcriptStore;
+    const requestStorageConfigured = storageConfiguredForRequest
+      ? storageConfiguredForRequest(req)
+      : storageConfigured;
     try {
-      recorded = transcriptStore?.recordSignIn(identity) === true;
+      // The only caller that passes event: true. This route fires once per
+      // browser sign-in, so one row here is one login; openSession deliberately
+      // does not, because sockets reopen mid-visit. See recordSignIn's docblock.
+      recorded = requestStore?.recordSignIn(identity, { event: true }) === true;
     } catch (error) {
       logger.error?.('[signin] could not record sign-in', error?.message);
     }
@@ -113,7 +126,7 @@ export function createSignInHandler({
       // Distinguishes "storage is switched off" from "storage is on and this
       // identity was skipped" (a synthetic user). Without it both look like
       // recorded:false, and the first is a deploy mistake worth seeing.
-      storage: storageConfigured ? 'enabled' : 'disabled',
+      storage: requestStorageConfigured ? 'enabled' : 'disabled',
     });
   };
 }

@@ -113,6 +113,9 @@ export const SPEAKER_MIN_SIMILARITY = Math.min(1, Math.max(0, parseFloatEnv(read
 // last successful /ref-audio/warm payload at boot (persisted OUTSIDE the wiped caches)
 // so that first request is hot. OFF by default — opt in after validating on the box,
 // since it force-starts the python server at boot (allocates GPU immediately).
+// Keep this opt-in. Staging gates Target Optimizer startup with a systemd ExecStartPost
+// warm, so also enabling the in-process warm would race two model/profile loads. Hosts
+// without that external gate may explicitly set WARM_ON_BOOT=true.
 export const WARM_ON_BOOT = parseBooleanEnv(readEnv('WARM_ON_BOOT'), false);
 
 // All synthesis enters one bounded FIFO scheduler. GPT-SoVITS and the selected

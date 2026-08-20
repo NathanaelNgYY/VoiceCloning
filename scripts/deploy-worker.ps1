@@ -15,7 +15,23 @@ $gatewayEnvTemplate = if ($Env -eq 'dev') {
 } else {
   'live-gateway/.env.livegateway.deployment.staging'
 }
-$gatewayEnvSetup = "node scripts/merge-env-file.mjs $gatewayEnvTemplate live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET TRANSCRIPT_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT;"
+$gatewayEnvKeys = @(
+  'CORS_ORIGIN',
+  'LIVE_AUTH_ENABLED',
+  'ENTRA_TENANT_ID',
+  'ENTRA_AUDIENCE',
+  'ENTRA_ALLOWED_EMAIL_DOMAINS',
+  'LIVE_AUTH_LOADTEST_SECRET',
+  'TRANSCRIPT_TABLE_NAME',
+  'TRANSCRIPT_TABLE_REGION',
+  'TRANSCRIPT_TTL_DAYS',
+  'TRANSCRIPT_STORE_SYNTHETIC',
+  'TRANSCRIPT_STORE_ASSISTANT'
+)
+if ($Env -eq 'staging') {
+  $gatewayEnvKeys += @('FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS', 'LIVE_AUTH_EXEMPT_ORIGINS', 'LECTURER_TABLE_NAME')
+}
+$gatewayEnvSetup = "node scripts/merge-env-file.mjs $gatewayEnvTemplate live-gateway/.env $($gatewayEnvKeys -join ' ');"
 $remote = "set -e; cd /home/ubuntu/VoiceCloning; git -c safe.directory=/home/ubuntu/VoiceCloning fetch origin; git -c safe.directory=/home/ubuntu/VoiceCloning checkout $($cfg.branch); git -c safe.directory=/home/ubuntu/VoiceCloning pull --ff-only; npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $gatewayEnvSetup $relaySetup sudo systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 8; curl -sf localhost:3001/healthz; curl -sf localhost:3003/healthz; curl -sf localhost:3002/readyz"
 
 if ($DryRun) { Write-Host "[dry-run] $($cfg.workerAccess) to $($cfg.instanceId): $remote"; exit 0 }

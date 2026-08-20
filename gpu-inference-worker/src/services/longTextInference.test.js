@@ -251,6 +251,20 @@ test('a doubled-word take scores lower than a clean take, all else equal', () =>
   assert.ok(doubled < clean, `doubled (${doubled}) should score below clean (${clean})`);
 });
 
+test('a verifier-detected duplicated word lowers fallback candidate score', () => {
+  const analysis = analyzeAudioQuality(makeNoiseWav(4.0), 'treatment and monitoring continued');
+  const base = {
+    coverage: 1,
+    missingWords: [],
+    suspectWords: [],
+    extraWords: [],
+    repeatedPhrases: [],
+  };
+  const clean = scoreAudioCandidate(analysis, { ...base, duplicatedWords: [] });
+  const duplicated = scoreAudioCandidate(analysis, { ...base, duplicatedWords: ['treatment'] });
+  assert.ok(duplicated < clean, `duplicated (${duplicated}) should score below clean (${clean})`);
+});
+
 test('candidate scoring prefers a verified technical-word pronunciation', () => {
   const analysis = analyzeAudioQuality(makeNoiseWav(4.0), 'the Michaelis constant');
   const base = {

@@ -3,6 +3,7 @@ import { handler as liveHandler } from './live/index.js';
 
 export const ROUTES = [
   { name: 'ConfigFunction', methods: ['GET'], pattern: /^\/api\/config\/?$/u, modulePath: './config/index.js' },
+  { name: 'ChatbotPromptFunction', methods: ['GET', 'PUT'], pattern: /^\/api\/chatbot\/system-prompt(?:\/categories)?\/?$/u, modulePath: './chatbot-prompt/index.js' },
   { name: 'AnalyticsFunction', methods: ['POST'], pattern: /^\/api\/analytics\/events\/?$/u, modulePath: './analytics/index.js' },
   { name: 'LearnersFunction', methods: ['GET', 'DELETE'], pattern: /^\/api\/(?:learner\/me|supervisor\/(?:concepts|users(?:\/[^/]+|\/[^/]+\/events|\/[^/]+\/lessons\/[^/]+\/concepts\/[^/]+)?))\/?$/u, modulePath: './learners/index.js' },
   { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },

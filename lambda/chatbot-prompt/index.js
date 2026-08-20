@@ -1,0 +1,238 @@
+// Deployed chatbot system prompt, per category.
+//
+// The instructions panel in the chatbot frontend used to be a per-browser edit:
+// the text lived in localStorage and the *shipped* default was the constant
+// baked into the client bundle, so changing the prompt everyone else sees meant
+// editing source and rebuilding. This route is the shared copy — the panel's
+// "Deploy" button PUTs here, and every chatbot frontend GETs it at startup, so
+// one editor's change reaches the staging apps without a rebuild.
+//
+// A *category* is one assistant: one lecture's instructions and its reference
+// documents. The category id is the lecture slug the lecture site already routes
+// on (`/lesson/gi-bleeding` → category `gi-bleeding`), so a student's page asks
+// for its own assistant with no new concept and no mapping table. Each category
+// is one S3 object, which is what makes two lecturers deploying at the same time
+// safe: different categories are different keys and cannot clobber each other.
+//
+// Prompts stay in S3 rather than moving to the DynamoDB tables added for
+// sign-ins. A category carries its reference documents inline (up to 200k chars
+// of prompt plus 200k of documents), which does not fit DynamoDB's 400 KB item
+// limit, and the bucket is versioned — so every deploy already keeps a
+// recoverable history of the one before it.
+import { uploadBuffer, getObject, listObjects } from '../shared/s3.js';
+import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
+
+// The pre-category object: one global prompt for every frontend. Still read as
+// the fallback below, so the apps deployed before categories existed keep
+// serving what was last deployed to them.
+export const SYSTEM_PROMPT_KEY = 'chatbot-config/system-prompt.json';
+
+export const CATEGORY_PREFIX = 'chatbot-config/system-prompt/';
+
+// What a request with no `category` means. Also what the standalone kiosks (no
+// lesson, so no slug) run.
+export const DEFAULT_CATEGORY = 'default';
+
+// Category ids land in an S3 key, so this is a path-safety boundary as much as a
+// naming rule: no dots, no slashes, no escapes out of the prefix. Deliberately
+// the same shape as the lecture slugs in the course data.
+export const CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+
+// Generous, but bounded: the shipped default is ~30k characters, so this only
+// rejects clearly broken input.
+export const MAX_PROMPT_CHARS = 200_000;
+
+// The lecturer's uploaded reference documents travel with the prompt. They used
+// to live in the authoring browser's localStorage, which meant a deploy silently
+// dropped them: the author's own test conversation had the PDFs and every
+// student's did not. Storing them here is what makes "deploy" mean the whole
+// assistant, not just the textarea.
+//
+// The cap is the client's own MAX_DOCUMENTS_CHARS budget with headroom — the
+// client truncates to 180k before the model ever sees it, so anything past this
+// is a broken caller rather than an ambitious reading list.
+export const MAX_DOCUMENTS_CHARS = 200_000;
+export const MAX_DOCUMENTS = 50;
+
+export function isValidCategory(value) {
+  return typeof value === 'string' && CATEGORY_PATTERN.test(value);
+}
+
+export function categoryKey(category) {
+  return `${CATEGORY_PREFIX}${category}.json`;
+}
+
+/** The requested category, or '' when the caller sent something unusable. */
+export function readCategory(event) {
+  const raw = event?.queryStringParameters?.category;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return DEFAULT_CATEGORY;
+  const normalized = String(raw).trim().toLowerCase();
+  return isValidCategory(normalized) ? normalized : '';
+}
+
+function normalizeDocuments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((doc) => doc && typeof doc.name === 'string' && typeof doc.text === 'string')
+    .map((doc) => ({ name: doc.name, text: doc.text }));
+}
+
+function totalDocumentChars(docs) {
+  return docs.reduce((sum, doc) => sum + doc.name.length + doc.text.length, 0);
+}
+
+function isMissingObject(error) {
+  const name = error?.name || error?.Code || '';
+  return name === 'NoSuchKey' || name === 'NotFound' || error?.$metadata?.httpStatusCode === 404;
+}
+
+function isCategoriesPath(event) {
+  const path = event?.rawPath || event?.requestContext?.http?.path || event?.path || '';
+  return /\/categories\/?$/u.test(String(path));
+}
+
+/** The id a category object's key encodes, or '' for anything else in the prefix. */
+export function categoryFromKey(key) {
+  if (!String(key || '').startsWith(CATEGORY_PREFIX)) return '';
+  const name = String(key).slice(CATEGORY_PREFIX.length);
+  if (!name.endsWith('.json')) return '';
+  const id = name.slice(0, -'.json'.length);
+  return isValidCategory(id) ? id : '';
+}
+
+export function createHandler({
+  readObject = getObject,
+  writeObject = uploadBuffer,
+  listStoredObjects = listObjects,
+  now = () => new Date().toISOString(),
+} = {}) {
+  return async function handler(event) {
+    const method = event.requestContext?.http?.method || 'GET';
+    if (method === 'OPTIONS') {
+      return preflight(event);
+    }
+
+    if (isCategoriesPath(event)) {
+      if (method !== 'GET') return err(405, 'Method not allowed', event);
+      try {
+        const objects = await listStoredObjects(CATEGORY_PREFIX);
+        const categories = objects
+          .map((object) => ({
+            category: categoryFromKey(object.key),
+            updatedAt: object.lastModified ? new Date(object.lastModified).toISOString() : '',
+          }))
+          .filter((entry) => entry.category)
+          .sort((a, b) => a.category.localeCompare(b.category));
+        return ok({ categories }, {}, event);
+      } catch (error) {
+        console.error('[chatbot-prompt] list failed', error);
+        return err(500, 'Could not list the deployed categories.', event);
+      }
+    }
+
+    const category = readCategory(event);
+    if (!category) {
+      return err(400, 'category must be lowercase letters, numbers and hyphens', event);
+    }
+
+    if (method === 'GET') {
+      // A category with nothing deployed to it falls back to the pre-category
+      // object rather than to nothing. During the rollout every lecture asks for
+      // its own category for the first time, and answering those with an empty
+      // prompt would drop every student back to the bundled default — a silent
+      // downgrade of a working assistant. Once a category has been deployed to
+      // even once, its own object always wins.
+      let stored = null;
+      for (const key of [categoryKey(category), SYSTEM_PROMPT_KEY]) {
+        try {
+          stored = JSON.parse((await readObject(key)).toString('utf-8'));
+          break;
+        } catch (error) {
+          if (isMissingObject(error)) continue;
+          console.error('[chatbot-prompt] read failed', error);
+          return err(500, 'Could not read the deployed instructions.', event);
+        }
+      }
+
+      if (!stored) {
+        // Nothing deployed yet — the frontend falls back to its built-in default.
+        return ok({ category, prompt: '', documents: [], updatedAt: '', updatedBy: '' }, {}, event);
+      }
+
+      return ok({
+        category,
+        prompt: typeof stored.prompt === 'string' ? stored.prompt : '',
+        // schemaVersion 1 records predate uploaded documents and have no such
+        // field; they read back as a prompt with no reference material.
+        documents: normalizeDocuments(stored.documents),
+        updatedAt: stored.updatedAt || '',
+        updatedBy: stored.updatedBy || '',
+      }, {}, event);
+    }
+
+    if (method !== 'PUT') {
+      return err(405, 'Method not allowed', event);
+    }
+
+    // Deliberately unauthenticated, unchanged from before categories. The editor
+    // lives only on the text-chat kiosk build, and the operator's decision is
+    // that anyone who can reach that page may change the instructions.
+    //
+    // Categories raise the stakes of that decision rather than settling it: a
+    // deploy can now overwrite a *different* lecturer's assistant, not just the
+    // single shared one. The faculty site does sign in now (Entra, faculty email
+    // domains) and `../shared/liveAuth.js` can verify that token here — wire it
+    // up before this leaves staging.
+    let body;
+    try {
+      body = parseJsonBody(event);
+    } catch {
+      return err(400, 'Invalid JSON body', event);
+    }
+
+    const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+    if (prompt.length > MAX_PROMPT_CHARS) {
+      return err(413, `prompt must be ${MAX_PROMPT_CHARS} characters or fewer`, event);
+    }
+
+    // Absent `documents` means "no reference material", not "leave what is already
+    // deployed". A deploy publishes the editor's whole state, so a lecturer who
+    // removes every PDF and deploys must actually see them gone on the lecture
+    // site — silently preserving them would be the same class of bug as silently
+    // dropping them.
+    const documents = normalizeDocuments(body?.documents);
+    if (documents.length > MAX_DOCUMENTS) {
+      return err(413, `documents must number ${MAX_DOCUMENTS} or fewer`, event);
+    }
+    if (totalDocumentChars(documents) > MAX_DOCUMENTS_CHARS) {
+      return err(413, `documents must total ${MAX_DOCUMENTS_CHARS} characters or fewer`, event);
+    }
+
+    // Either half is a publishable assistant on its own: papers with no typed
+    // instructions are a valid configuration (the frontends supply their neutral
+    // built-in instructions when the prompt is empty). Only a deploy that carries
+    // neither is meaningless, and rejecting it stops an accidental empty publish
+    // from wiping a working assistant.
+    if (!prompt.trim() && documents.length === 0) {
+      return err(400, 'prompt or documents is required', event);
+    }
+
+    // schemaVersion 3 adds `category`. It is stored as well as keyed on so a raw
+    // object is self-describing when read out of the bucket.
+    const record = { schemaVersion: 3, category, prompt, documents, updatedAt: now() };
+    try {
+      await writeObject(
+        categoryKey(category),
+        Buffer.from(JSON.stringify(record), 'utf-8'),
+        'application/json',
+      );
+    } catch (error) {
+      console.error('[chatbot-prompt] write failed', error);
+      return err(500, 'Could not deploy the instructions.', event);
+    }
+
+    return ok({ category, updatedAt: record.updatedAt }, {}, event);
+  };
+}
+
+export const handler = createHandler();

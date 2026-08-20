@@ -334,6 +334,19 @@ test('resolveSavedProfileReferenceSelection transcript guard avoids an empty-tra
   assert.equal(selection.ref_audio_path, 'training/datasets/lecturer-a/denoised/usable_0_160000.wav');
 });
 
+test('resolveSavedProfileReferenceSelection excludes measured acoustic failures', async () => {
+  const selection = await resolveSavedProfileReferenceSelection({
+    sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
+  }, {
+    listTrainingAudioFiles: async () => [
+      { filename: 'clipped_0_160000.wav', path: 'd/clipped_0_160000.wav', transcript: 'This apparently strong sentence is badly clipped.', lang: 'en', qualityScore: 99, qualityMetrics: { score: 99, eligible: false } },
+      { filename: 'clean_160000_320000.wav', path: 'd/clean_160000_320000.wav', transcript: 'This clean sentence should become the reference.', lang: 'en', qualityScore: 75, qualityMetrics: { score: 75, eligible: true } },
+    ],
+  });
+
+  assert.equal(selection.ref_audio_path, 'd/clean_160000_320000.wav');
+});
+
 test('loadModelPair returns canonical training paths even when ref warm resolves local cache paths', async () => {
   const calls = [];
 
