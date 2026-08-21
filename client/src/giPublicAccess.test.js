@@ -42,6 +42,10 @@ const devGiEnv = readFileSync(
   new URL("../env/dev/gi.env", import.meta.url),
   "utf8",
 );
+const livePageSource = readFileSync(
+  new URL("./pages/LivePage.jsx", import.meta.url),
+  "utf8",
+);
 const stagingFacultyEnv = readFileSync(
   new URL("../env/staging/chatbot-text.env", import.meta.url),
   "utf8",
@@ -200,11 +204,11 @@ test("the dev client sends a token type both dev backends verify", () => {
 test("the shared voice API attaches the configured Microsoft token", () => {
   assert.match(
     apiServiceSource,
-    /import\s*\{\s*acquireApiToken,\s*shouldAttachApiToken\s*\}\s*from\s*['\"]@\/auth\/msalClient['\"]/,
+    /import\s*\{\s*acquireApiToken,\s*acquireApiTokenSilent,\s*shouldAttachApiToken\s*\}\s*from\s*['\"]@\/auth\/msalClient['\"]/,
   );
   assert.match(
     apiServiceSource,
-    /if \(shouldAttachApiToken\(\)\)[\s\S]*?acquireApiToken\(\)[\s\S]*?['\"]X-VCS-Entra-Token['\"][\s\S]*?token/,
+    /if \(shouldAttachApiToken\(\)\)[\s\S]*?['\"]X-VCS-Entra-Token['\"][\s\S]*?token/,
   );
   assert.match(apiServiceSource, /api\.post\(['\"]\/live\/tts-sentence['\"]/);
 });
@@ -291,6 +295,22 @@ test("the faculty chatbot uses Microsoft SSO with only staff domains", () => {
 test("client deploys force the SPA shell to revalidate instead of reopening an old bundle", () => {
   assert.match(deployClientSource, /aws s3 cp\s+"\$dist\\index\.html"\s+"\$target\/index\.html"/);
   assert.match(deployClientSource, /--cache-control\s+"no-cache, no-store, must-revalidate"/);
+});
+
+test("GI reloads a document restored from browser history instead of showing an obsolete login snapshot", () => {
+  assert.match(mainSource, /window\.addEventListener\('pageshow', reloadRestoredDocument\)/);
+  assert.match(mainSource, /event\?\.persisted[\s\S]*?window\.location\.reload\(\)/);
+});
+
+test("background model loading does not fail just because silent token refresh is temporarily unavailable", () => {
+  assert.match(apiServiceSource, /optionalAuth \? await acquireApiTokenSilent\(\) : await acquireApiToken\(\)/);
+  assert.match(apiServiceSource, /api\.get\('\/models', \{ vcsOptionalAuth: true \}\)/);
+  assert.match(apiServiceSource, /api\.post\('\/models\/select',[\s\S]*?\{ vcsOptionalAuth: true \}\)/);
+});
+
+test("the current-config filename cannot push Save new outside its card", () => {
+  assert.match(livePageSource, /className="min-w-0 flex-1"[\s\S]*?className="mt-0\.5 truncate text-xs/);
+  assert.match(livePageSource, /className="h-8 shrink-0 whitespace-nowrap rounded-xl/);
 });
 
 test("GI keeps the deployed D25 login presentation while faculty uses its own layout", () => {

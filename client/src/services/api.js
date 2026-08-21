@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { acquireApiToken, shouldAttachApiToken } from '@/auth/msalClient';
+import { acquireApiToken, acquireApiTokenSilent, shouldAttachApiToken } from '@/auth/msalClient';
 import {
   createVoiceProfileBrowserDebugSummary,
   writeVoiceProfileBrowserDebug,
@@ -95,12 +95,17 @@ async function sha256Hex(text) {
 
 api.interceptors.request.use(async (config) => {
   config.headers = config.headers || {};
+  const optionalAuth = config.vcsOptionalAuth === true;
+  delete config.vcsOptionalAuth;
   if (shouldAttachApiToken()) {
-    const token = await acquireApiToken();
-    if (!token) throw new Error('Authentication token is unavailable. Please sign in again.');
+    // Model discovery/loading is a background operation against endpoints that
+    // are intentionally public in the current backend. A transient MSAL refresh
+    // failure must not turn that background warm into a misleading HTTP 403.
+    const token = optionalAuth ? await acquireApiTokenSilent() : await acquireApiToken();
+    if (!token && !optionalAuth) throw new Error('Authentication token is unavailable. Please sign in again.');
     // CloudFront signs the Lambda origin request with SigV4, which owns the
     // standard Authorization header. This separate header reaches Lambda intact.
-    setHeader(config.headers, 'X-VCS-Entra-Token', token);
+    if (token) setHeader(config.headers, 'X-VCS-Entra-Token', token);
   }
 
   const method = String(config.method || 'get').toLowerCase();
@@ -276,7 +281,7 @@ export function getTrainingRunMetadata(expName) {
 // Models
 
 export function getModels() {
-  return api.get('/models');
+  return api.get('/models', { vcsOptionalAuth: true });
 }
 
 export function selectModels(gptPath, sovitsPath, options = {}) {
@@ -297,7 +302,7 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
         ref_audio_path: refAudioPath,
         aux_ref_audio_paths: auxRefAudioPaths,
       } : {}),
-    });
+    }, { vcsOptionalAuth: true });
   }
   return api.post('/models/select', {
     gptPath,
@@ -308,7 +313,7 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
       ref_audio_path: refAudioPath,
       aux_ref_audio_paths: auxRefAudioPaths,
     } : {}),
-  });
+  }, { vcsOptionalAuth: true });
 }
 
 export function activateVoiceProfile(profile) {

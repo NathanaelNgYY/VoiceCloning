@@ -10,9 +10,13 @@ Last updated: 2026-08-21
 - Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
-- Final deployed Dev client assets are Training `index-DfO-Y2BR.js`, Live Fast
-  `index-DeMzT9k8.js`, and GI `index-DzQsGqe4.js`. Their CloudFront invalidations completed;
+- Final deployed Dev client assets are Training `index-DSP9b2By.js`, Live Fast
+  `index-DKYckGK7.js`, and GI `index-Bii-ZJZj.js`. Their CloudFront invalidations completed;
   all three public hosts returned HTTP 200 with those assets and the expected cache header.
+- The inference-config header now truncates long filenames without moving Save new outside
+  its card. Background model discovery/load uses silent optional auth because those endpoints
+  are public; protected analytics/synthesis still requires a token. A `pageshow` guard reloads
+  browser-history snapshots so an obsolete faculty-style login is not restored.
 - Model load waits for the selected model's rank-1 config. Curated/user-reordered rank 1 is
   authoritative. Untouched or legacy cross-model `default` rank 1 runs scored `Use best`
   only on the experiment derived from the selected weights, then stores the same references
@@ -24,7 +28,7 @@ Last updated: 2026-08-21
   Reference selection uses measured metrics and diversity. The shadow phoneme verifier has
   monotonic per-phone CTC evidence and a weakest-phone floor. Real listening comparison and
   held-out phoneme calibration are still required; tests do not prove audible improvement.
-- Final automated evidence: client 402/402 and Lambda 197/197. Browser verification with a
+- Final automated evidence: client 405/405 and Lambda 197/197. Browser verification with a
   real allowlisted Microsoft account remains pending.
 
 ## Current Staging State

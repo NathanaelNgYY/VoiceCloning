@@ -5299,9 +5299,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <p className="text-sm font-semibold text-slate-800">Inference controls</p>
               <div className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-slate-800">Current config</p>
-                    <p className="mt-0.5 text-xs text-slate-500">
+                    <p className="mt-0.5 truncate text-xs text-slate-500" title={`${currentLiveFastMetadata.configName} · ${currentReferenceMetadata.primary ? fallbackName(currentReferenceMetadata.selectedPaths.primary) : 'no reference'}`}>
                       {currentLiveFastMetadata.configName} · {currentReferenceMetadata.primary ? fallbackName(currentReferenceMetadata.selectedPaths.primary) : 'no reference'}
                     </p>
                   </div>
@@ -5311,7 +5311,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     size="sm"
                     onClick={() => saveCurrentVoiceConfig()}
                     disabled={!selectedProfile || !selectedGPT || !selectedSoVITS || !refAudioPath || isConversationActive || loadingModel || Boolean(savingConfigId)}
-                    className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
+                    className="h-8 shrink-0 whitespace-nowrap rounded-xl border-slate-200 bg-white shadow-none"
                   >
                     {savingConfigId && !voiceConfigs.some((item) => item.configId === savingConfigId)
                       ? <Loader2 size={13} className="animate-spin" />

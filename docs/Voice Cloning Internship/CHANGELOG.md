@@ -2,6 +2,16 @@
 
 ## 2026-08-21
 
+- Fixed three dev client regressions: long current-config filenames no longer push Save new
+  outside its card; public background model discovery/loading no longer depends on an
+  interactive Entra token refresh (protected calls remain authenticated); and a document
+  restored from browser history is reloaded instead of showing the obsolete faculty login.
+  Repeated `/api/models/select` probes through Dev GI/Live Fast returned 200; the model Lambda
+  itself cannot emit 403. Client tests passed 405/405 and the GI production build passed.
+- Redeployed all three Dev clients only. Invalidations completed; HTTP readback returned
+  Training `index-DSP9b2By.js`, Live Fast `index-DKYckGK7.js`, and GI `index-Bii-ZJZj.js`
+  with `no-store, must-revalidate, no-cache`. The live GI bundle contains D25, `pageshow`,
+  and optional model-auth code. No Lambda, GPU, staging, or faculty deployment changed.
 - Fixed rank-1 reference lifecycle on dev. Model loading now waits for the selected
   profile's configs; curated/user-reordered rank 1 remains authoritative, while untouched
   auto defaults are recalculated only from the experiment derived from the selected model
