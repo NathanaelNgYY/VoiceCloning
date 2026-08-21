@@ -533,10 +533,10 @@ Sol Low is probably the best choice.`,
   );
 
   assert.deepEqual(chunks, [
-    'Deep reasoning, criticism and architecture Opus 4.8 Low greater than Sol Low greater than Terra Low Opus is preferable when you need the model to challenge your approach,',
-    'detect conceptual weaknesses and reason through unfamiliar problems. Implementing and debugging code Sol Low is probably the best choice.',
+    'Deep reasoning, criticism and architecture Opus 4.8 Low greater than Sol Low greater than Terra Low Opus is preferable when you need the model to challenge your approach, detect conceptual weaknesses and reason through unfamiliar problems.',
+    'Implementing and debugging code Sol Low is probably the best choice.',
   ]);
-  assert.ok(chunks.every((chunk) => chunk.length <= 170), JSON.stringify(chunks));
+  assert.ok(chunks.every((chunk) => chunk.length <= 240), JSON.stringify(chunks));
   assert.ok(!chunks.includes('Deep reasoning, criticism and architecture'));
   assert.ok(!chunks.includes('Implementing and debugging code'));
 });
@@ -596,7 +596,7 @@ test('full-quality options hard-fail instead of publishing a known-bad silent ch
   }
 });
 
-test('single-sentence Full uses its best usable take after five when ASR is unavailable', async () => {
+test('single-sentence Full does not regenerate usable audio when ASR itself is unavailable', async () => {
   let synthCalls = 0;
   mock.method(inferenceServer, 'synthesize', async () => {
     synthCalls += 1;
@@ -616,7 +616,8 @@ test('single-sentence Full uses its best usable take after five when ASR is unav
       }),
     );
     assert.ok(Buffer.isBuffer(result.audioBuffer) && result.audioBuffer.length > 44);
-    assert.equal(synthCalls, 5);
+    assert.equal(synthCalls, 1);
+    assert.equal(result.chunks[0].fallback, true);
   } finally {
     mock.restoreAll();
   }

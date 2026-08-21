@@ -79,8 +79,9 @@ Last updated: 2026-08-21
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
   schedule is 0-24. Lambda cannot directly manage ASG capacity under its current role.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
-- Full chunking is aligned with Dev at the shared 240-character automatic boundary. Staging's
-  Dean profile plus rank-1 Fast/Full defaults match Dev settings and retain identical references.
+- Full chunking is aligned at 240 characters. Full reuses warm medium ASR with strict beam/tail
+  gates and no longer regenerates five times when ASR itself is unavailable. Staging's Dean
+  profile and rank-1 defaults match Dev settings and retain identical references.
 - Stopped builder `i-0f6c399842bd8cc38` and verifier canary `i-0e4ef8844a120d069`
   require administrator termination.
 

@@ -12,10 +12,12 @@
   now 240, and staging's saved Dean profile/default/Live Full settings match Dev without changing
   any reference path. A same-text browser timing comparison after deployment remains pending.
 
-- 2026-08-21: staging Full generation can have an extreme first-chunk tail. One exact request
-  took 460.03 seconds total, with chunk 0 consuming 451.95 seconds and six attempts after
-  sentence fallback; another took 429.11 seconds, with a 312.86-second first chunk. SSE proves
-  attempt counts and durations, but not which internal verifier/model stage dominated.
+- 2026-08-21 fixed in code: staging Full generation had an extreme retry tail. A later durable
+  event record proved five first-chunk takes consumed 310.66 seconds specifically because
+  transcription verification was unavailable. Full lazily loaded `large-v3`, exceeded the 60s
+  request deadline, then regenerated even though new audio cannot restore ASR. Full now reuses
+  warm medium with its stricter beam/tail gates and stops after one usable take on ASR outage.
+  Live staging timing after deployment remains pending.
 
 - 2026-08-21 fixed: completed staging Full audio could show “still being finalized” after a
   refresh because staging origins were absent from S3 CORS and an originating worker retained

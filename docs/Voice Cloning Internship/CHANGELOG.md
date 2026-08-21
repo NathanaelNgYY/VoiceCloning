@@ -2,6 +2,12 @@
 
 ## 2026-08-21
 
+- Root-caused staging Full's abnormal latency from durable SSE events and verifier code. Session
+  `e163e730-aef7-4720-b763-f51fdc0681f1` spent 310.66 seconds on five first-chunk takes because
+  lazy `large-v3` verification exceeded its deadline and returned unavailable; chunk two then
+  spent 179.14 seconds on five more takes. Full now retains strict beam/timing/tail gates using
+  the already-warm medium model by default, and an unavailable verifier keeps the first
+  acoustically usable best-effort take instead of regenerating audio that cannot repair ASR.
 - Diagnosed the claimed Dev/staging Full mismatch from live S3 manifests and worker process
   environments. The same passage used one 240-character chunk on Dev but two 170-character
   chunks on staging because Dev explicitly set `FULL_MAX_CHUNK_LENGTH=240` while staging fell
