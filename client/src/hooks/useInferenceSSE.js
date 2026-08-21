@@ -38,6 +38,7 @@ export function useInferenceSSE() {
       initialStatus: initialState.initialStatus || 'waiting',
       initialTotalChunks: initialState.initialTotalChunks || 0,
       initialCompletedChunks: initialState.initialCompletedChunks || 0,
+      initialChunks: Array.isArray(initialState.initialChunks) ? initialState.initialChunks : [],
       initialCurrentChunkText: initialState.initialCurrentChunkText || '',
       initialError: initialState.initialError || null,
     });

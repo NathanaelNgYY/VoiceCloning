@@ -95,6 +95,11 @@ import {
 import { concatWavBlobs } from '@/lib/wavConcat';
 import { waitForPlayableAudioSource } from '@/lib/audioReadiness';
 import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
+import {
+  clearPendingFullTts,
+  loadPendingFullTts,
+  savePendingFullTts,
+} from '@/lib/pendingFullTts';
 import { fetchDatamuseArpabet } from '@/lib/arpabet';
 import {
   parsePronunciationCsv,
@@ -459,6 +464,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
+  const fullTtsSubmissionRef = useRef(false);
+  const restoredFullTtsRef = useRef(false);
   const completingFullTtsSessionRef = useRef('');
   // Tracks which Full Inference chunks have already been pulled for queued playback.
   const fullQueuedFetchRef = useRef({ sessionId: '', fetched: 0, busy: false });
@@ -2109,6 +2116,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
       return;
     }
+    if (fullTtsSubmissionRef.current) {
+      setTtsWarning('A Full Inference request is already active. Reusing it prevents duplicate GPU work.');
+      return;
+    }
+    fullTtsSubmissionRef.current = true;
     // Maximum-quality Full preflight: automatically surface words that would fall
     // through to neural pronunciation guessing. Stop once so the user can add an
     // override; a deliberate second click acknowledges the warning and proceeds.
@@ -2127,6 +2139,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setOovScanError('');
       const warningKey = `${text}\n${flagged.join('|').toLowerCase()}`;
       if (scanState.dictionaryLoaded && flagged.length > 0 && fullOovAcknowledgedKey !== warningKey) {
+        fullTtsSubmissionRef.current = false;
         setFullOovAcknowledgedKey(warningKey);
         setTtsWarning(
           `Review ${flagged.length} pronunciation ${flagged.length === 1 ? 'word' : 'words'} below before Full synthesis. `
@@ -2153,10 +2166,21 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       const res = await startGeneration({ ...baseParams, ...liveFullRefParams });
       const { sessionId } = res.data;
-      pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel, route };
+      const pending = {
+        sessionId,
+        text,
+        voiceName,
+        languageLabel,
+        route,
+        savedAt: Date.now(),
+      };
+      pendingFullTtsRef.current = pending;
+      savePendingFullTts(pending);
       ttsInference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
+      fullTtsSubmissionRef.current = false;
       pendingFullTtsRef.current = null;
+      clearPendingFullTts();
       setTtsError(friendlyTtsError(err, 'Could not generate text to speech audio.'));
       setStreamingRoute(null);
       if (route === 'fullQueued') stopQueuedTtsPlayback();
@@ -2260,6 +2284,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (pendingFullTtsRef.current?.sessionId === sessionId) {
         pendingFullTtsRef.current = null;
       }
+      fullTtsSubmissionRef.current = false;
+      clearPendingFullTts();
       completingFullTtsSessionRef.current = '';
       // Server is done producing chunks; let queue end-detection finish naturally.
       queueProducingRef.current = false;
@@ -2847,6 +2873,63 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   useEffect(() => {
+    if (restoredFullTtsRef.current) return;
+    restoredFullTtsRef.current = true;
+    const pending = loadPendingFullTts();
+    if (!pending) return;
+
+    pendingFullTtsRef.current = pending;
+    fullTtsSubmissionRef.current = true;
+    setTtsText(pending.text);
+    setStreamingRoute(pending.route);
+    setTtsWarning('Reconnected to the Full Inference request that was active before refresh. No new GPU request was started.');
+    if (pending.route === 'fullQueued') {
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true, paused: false };
+      fullQueuedFetchRef.current = { sessionId: pending.sessionId, fetched: 0, busy: false };
+      queueProducingRef.current = true;
+      setQueuePlayback({ active: true, paused: false });
+    }
+    ttsInference.connect(pending.sessionId, {
+      initialStatus: 'waiting',
+      initialTotalChunks: pending.totalChunks,
+      initialCompletedChunks: pending.completedChunks,
+      initialChunks: pending.chunks,
+      initialCurrentChunkText: pending.currentChunkText,
+    });
+  }, [ttsInference.connect]);
+
+  useEffect(() => {
+    if (!streamingRoute) return undefined;
+    const warnBeforeLeaving = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [streamingRoute]);
+
+  useEffect(() => {
+    const pending = pendingFullTtsRef.current;
+    if (!streamingRoute || !pending) return;
+    const updated = {
+      ...pending,
+      totalChunks: ttsInference.totalChunks,
+      completedChunks: ttsInference.completedChunks,
+      chunks: ttsInference.chunks,
+      currentChunkText: ttsInference.currentChunkText,
+      savedAt: Date.now(),
+    };
+    pendingFullTtsRef.current = updated;
+    savePendingFullTts(updated);
+  }, [
+    streamingRoute,
+    ttsInference.totalChunks,
+    ttsInference.completedChunks,
+    ttsInference.chunks,
+    ttsInference.currentChunkText,
+  ]);
+
+  useEffect(() => {
     const pending = pendingFullTtsRef.current;
     if (!pending) return;
 
@@ -2855,6 +2938,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     } else if (ttsInference.status === 'error' || ttsInference.status === 'cancelled') {
       setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
       pendingFullTtsRef.current = null;
+      fullTtsSubmissionRef.current = false;
+      clearPendingFullTts();
       setStreamingRoute(null);
       if (pending.route === 'fullQueued') stopQueuedTtsPlayback();
       ttsInference.reset();
@@ -2877,6 +2962,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         } else if (state.status === 'error' || state.status === 'cancelled') {
           setTtsError(state.error || 'Could not generate text to speech audio.');
           pendingFullTtsRef.current = null;
+          fullTtsSubmissionRef.current = false;
+          clearPendingFullTts();
           setStreamingRoute(null);
           if (pending.route === 'fullQueued') stopQueuedTtsPlayback();
           ttsInference.reset();
@@ -4121,8 +4208,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {streamingRoute && (
               <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
                 {ttsInference.totalChunks > 0
-                  ? `Evaluating up to five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
-                  : 'Preparing maximum-quality synthesis…'}
+                  ? `Full Inference: evaluating up to five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing Full Inference maximum-quality synthesis…'}
               </p>
             )}
             <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
