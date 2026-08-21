@@ -4,6 +4,12 @@ import test from "node:test";
 
 const configSource = readFileSync(new URL("./config.js", import.meta.url), "utf8");
 const giAppSource = readFileSync(new URL("./GiApp.jsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const loginPageSource = readFileSync(new URL("./pages/LoginPage.jsx", import.meta.url), "utf8");
+const microsoftEntryPageSource = readFileSync(
+  new URL("./components/auth/MicrosoftEntryPage.jsx", import.meta.url),
+  "utf8",
+);
 const appAuthGateSource = readFileSync(new URL("./auth/AppAuthGate.jsx", import.meta.url), "utf8");
 const mainSource = readFileSync(new URL("./main.jsx", import.meta.url), "utf8");
 const deployClientSource = readFileSync(
@@ -280,6 +286,15 @@ test("the faculty chatbot uses Microsoft SSO with only staff domains", () => {
     /^VITE_ENTRA_ALLOWED_EMAIL_DOMAINS=staff\.main\.ntu\.edu\.sg,assoc\.main\.ntu\.edu\.sg$/m,
   );
   assert.doesNotMatch(stagingFacultyEnv, /student\.main\.ntu\.edu\.sg/);
+});
+
+test("GI keeps the deployed D25 login presentation while faculty uses its own layout", () => {
+  assert.match(loginPageSource, /title = 'Login'/);
+  assert.match(loginPageSource, /description = 'Welcome to LKCMedicine Lecture'/);
+  assert.match(loginPageSource, /variant = 'lecture'/);
+  assert.match(microsoftEntryPageSource, /variant === 'lecture'/);
+  assert.match(microsoftEntryPageSource, /Sign in with your Microsoft account/);
+  assert.match(appSource, /<LoginPage[\s\S]*?variant="faculty"[\s\S]*?title="Faculty Voice Assistant"/);
 });
 
 test("faculty has no backend auth exemption and uses a lecturer table", () => {

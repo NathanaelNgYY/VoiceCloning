@@ -1,6 +1,11 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-20
+Last updated: 2026-08-21
+
+- Dev GI login now uses the centered D25 staging presentation rather than the faculty
+  split-panel design. Only dev GI was deployed (`assets/index-B8cRtBnz.js`); its
+  CloudFront invalidation completed, the public bundle retains analytics, client tests
+  pass 398/398, and screenshot-level browser verification remains pending.
 
 - Dev now contains the staging application changes plus dev learner analytics and the
   dev-only voice-quality work at local commit `5aeb30f`. GitHub push is still blocked

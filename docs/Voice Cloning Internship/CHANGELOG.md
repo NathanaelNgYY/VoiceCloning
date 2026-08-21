@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-08-21
+
+- Restored the dev GI login to the centered D25 staging presentation while keeping the
+  faculty split-panel presentation explicit and separate. Added a regression test for
+  that routing boundary and deployed only dev GI (`assets/index-B8cRtBnz.js`); CloudFront
+  invalidation `IBVI7EWNF2UUHAOKXCIC9BE35Y` completed. The public bundle contains the
+  D25 copy and dev analytics. Client tests passed 398/398 and the GI production build
+  passed; screenshot-level browser verification remains pending because the local
+  in-app browser connection failed.
+
 ## 2026-08-20
 
 - Merged staging application source into dev while preserving learner analytics and
