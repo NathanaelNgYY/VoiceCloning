@@ -1,7 +1,7 @@
 import { S3_BUCKET } from '../config.js';
 import { getObject, listObjects, uploadBuffer } from './s3Storage.js';
 
-class SSEManager {
+export class SSEManager {
   constructor() {
     this.clients = new Map();
     this.buffers = new Map();
