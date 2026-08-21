@@ -54,12 +54,29 @@ try {
     Remove-Item $envDst -Force -ErrorAction SilentlyContinue
   }
 }
-if ($buildMode -eq 'gi') {
-  aws s3 sync $dist $target --delete --exclude "videos/*" --region $cfg.s3Region
-} else {
-  aws s3 sync $dist $target --delete --region $cfg.s3Region
-}
+# Cache headers are load-bearing, and the two files types need opposite ones.
+#
+# Everything under assets/ is content-hashed by Vite, so a given URL's bytes can
+# never change: cache it forever. index.html is the one unhashed file and it is
+# the map to those hashes, so it must be revalidated on every load.
+#
+# Uploading with no Cache-Control at all (which this script did until 2026-08-21)
+# leaves the browser to invent its own heuristic freshness for index.html. A
+# returning visitor then runs a stale index.html pointing at the previous build's
+# hashed bundle, which --delete has already removed from the bucket -> 403 -> a
+# blank page that only a hard refresh clears. The CloudFront invalidation below
+# does not help: the stale copy is in the browser, past every edge.
+#
+# --delete stays: assets/ is not a shared namespace, and the deleted files are
+# exactly the ones no current index.html references. `videos/` is excluded from
+# it on gi because those are uploaded out of band and are not part of the build.
+$deleteArgs = if ($buildMode -eq 'gi') { @('--delete', '--exclude', 'videos/*') } else { @('--delete') }
+aws s3 sync $dist $target $deleteArgs --exclude "index.html" --cache-control "public,max-age=31536000,immutable" --region $cfg.s3Region
 if ($LASTEXITCODE -ne 0) { throw "s3 sync failed" }
+# cp, not sync: sync compares size and mtime, so an unchanged index.html would be
+# skipped and would keep whatever headers it already has.
+aws s3 cp "$dist\index.html" "$target/index.html" --cache-control "no-cache" --content-type "text/html" --region $cfg.s3Region
+if ($LASTEXITCODE -ne 0) { throw "index.html upload failed" }
 aws cloudfront create-invalidation --distribution-id $distro --paths "/*"
 if ($LASTEXITCODE -ne 0) { throw "invalidation failed" }
 Write-Host "Deployed $Mode client to $Env"
