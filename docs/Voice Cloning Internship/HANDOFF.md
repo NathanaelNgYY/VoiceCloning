@@ -55,11 +55,18 @@ Last updated: 2026-08-21
   and 312.86 seconds. A refresh created a second identical 401.63-second session before the
   refresh-reconnect fix. The recorded ASG scale-out started about 34 minutes before this job,
   so the refresh did not cause that scale-out. First-chunk stage profiling remains pending.
+- A later exact Full request completed a valid 929,324-byte WAV in 460.03 seconds. Its first
+  chunk took 451.95 seconds and six attempts after sentence fallback; chunk 1 took 7.68 seconds.
+  Staging origins were missing from shared-bucket CORS and terminal sessions could remain
+  marked local on the originating worker, causing the false finalization error after refresh.
+  CORS is corrected and terminal SSE state is cleared so reconnect uses durable S3 replay.
 - Faculty SSO is deployed at `faculty.lkcmedicine.org`: Microsoft sign-in admits only
   staff/associate domains and writes to `vcs-staging-lecturers`. Lectures remains separate.
   A real staff sign-in and lecturer-table write are still unverified.
 - Staging Live Fast uses two normal takes and at most two catastrophic-babble reseeds.
-  AMI `ami-0b05ebda8d96a924f` is available and staging launch template v27 is default.
+  All five observed staging workers and the Dev fixed worker received terminal SSE cleanup;
+  worker tests passed 253/253. AMI `ami-0b843a377ac5c8412` is available and staging launch
+  template v28 is default. A fresh instance boot from v28 remains unverified.
 - Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 was
   observed after the 2026-08-21 baseline occupancy alarm scaled it from 1 to 5.
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
@@ -98,3 +105,5 @@ Last updated: 2026-08-21
 7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
    the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
    and model stages; do not change the 3→5 policy without a controlled quality comparison.
+8. Verify the next naturally launched staging instance boots LT v28, loads DeanVoice, and
+   passes readiness; do not recycle the healthy fleet solely for this check.

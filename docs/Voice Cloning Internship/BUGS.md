@@ -8,9 +8,14 @@
 ## Active
 
 - 2026-08-21: staging Full generation can have an extreme first-chunk tail. One exact request
-  took 429.11 seconds total, with chunk 0 consuming five attempts and 312.86 seconds; its
-  refreshed duplicate took 401.63 seconds with a 312.21-second first chunk. SSE proves the
+  took 460.03 seconds total, with chunk 0 consuming 451.95 seconds and six attempts after
+  sentence fallback; another took 429.11 seconds, with a 312.86-second first chunk. SSE proves
   attempt counts and durations, but not which internal verifier/model stage dominated.
+
+- 2026-08-21 fixed: completed staging Full audio could show “still being finalized” after a
+  refresh because staging origins were absent from S3 CORS and an originating worker retained
+  terminal session locality instead of using durable replay. CORS and terminal cleanup are
+  live; a new browser refresh reproduction remains pending.
 
 - 2026-08-21: Dev `/api/transcribe` returns 500 because the fixed GPU lacks
   `tools/asr/transcribe_single.py`. This is separate from synthesis and did not create the

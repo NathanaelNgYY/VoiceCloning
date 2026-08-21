@@ -2,9 +2,12 @@
 
 - [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the
   session ID before/after, and prove only one new S3 session exists. Unit/build and live-bundle
-  readback pass, but the browser automation runtime failed before this end-to-end check.
+  readback plus terminal-SSE tests pass, but the end-to-end browser check remains pending.
+- [ ] Verify the next naturally launched staging worker uses LT v28 / AMI
+  `ami-0b843a377ac5c8412`, loads DeanVoice, and becomes ready. Do not recycle healthy GPUs
+  solely for this boot check.
 - [ ] Instrument first-chunk model loading, ASR, phoneme CTC, and candidate ranking on staging.
-  The 2026-08-21 incident spent 312.86 seconds on chunk 0 across five attempts; do not reduce
+  The latest incident spent 451.95 seconds on chunk 0 across six split-path attempts; do not reduce
   the 3→5 policy until a controlled quality/latency comparison identifies the slow stage.
 - [ ] Add backend idempotency or a distributed active-request lease if duplicate prevention
   must cover separate tabs/devices or cleared session storage; current recovery is per tab.

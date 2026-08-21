@@ -2,6 +2,20 @@
 
 ## 2026-08-21
 
+- Diagnosed screenshot session `8509fed4-c1cc-449c-9965-d8bbdcb9530d`: inference completed
+  a valid 929,324-byte WAV in 460.03 seconds. Chunk 0 took 451.95 seconds and six attempts
+  after whole-chunk failure triggered sentence fallback; chunk 1 took 7.68 seconds. Existing
+  events do not identify which internal verifier/model stage dominated the first chunk.
+- Fixed the post-refresh finalization failure at two layers. Added all four staging origins
+  to the shared audio bucket CORS and verified the exact result returns HTTP 200, RIFF/WAVE,
+  and the staging `Access-Control-Allow-Origin`. Terminal inference now clears worker-local
+  SSE prepared state, forcing later reconnects through durable S3 replay. Worker tests passed
+  253/253; the focused cleanup test passed on Dev and all five then-live staging workers.
+- Rolling staging restarts initially caused two ASG replacements because ELB health remained
+  authoritative during cold model loading. Recovery temporarily used EC2 health, patched and
+  readied the replacement workers, then restored ELB health; five targets were healthy. Baked
+  AMI `ami-0b843a377ac5c8412` and promoted launch template v28 as default. The healthy fleet
+  was not recycled, so a fresh boot from v28 remains unverified.
 - Investigated an exact staging Full request from the user's screenshot. Session
   `878ab6b4-ee76-48a7-8f23-46fb0204334b` took 429.11 seconds; chunk 0 used all five attempts
   and 312.86 seconds. Refresh created identical session
