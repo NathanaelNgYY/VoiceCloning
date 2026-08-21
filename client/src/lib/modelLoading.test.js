@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
+  resolveWarmedReferencePrompt,
   isSelectedModelLoaded,
   resolveInferenceStatusState,
   sameLoadedWeights,
@@ -205,6 +206,8 @@ test('extractModelSelectWarmedReferenceSelection normalizes the warmed reference
   assert.deepEqual(extractModelSelectWarmedReferenceSelection({
     warmedReferences: {
       ref_audio_path: 'refs/primary.wav',
+      prompt_text: '  Correct transcript.  ',
+      prompt_lang: 'EN',
       aux_ref_audio_paths: [
         'refs/aux-1.wav',
         '',
@@ -225,6 +228,8 @@ test('extractModelSelectWarmedReferenceSelection normalizes the warmed reference
       'refs/aux-4.wav',
       'refs/aux-5.wav',
     ],
+    promptText: 'Correct transcript.',
+    promptLang: 'EN',
   });
 
   assert.equal(extractModelSelectWarmedReferenceSelection({
@@ -233,6 +238,25 @@ test('extractModelSelectWarmedReferenceSelection normalizes the warmed reference
       aux_ref_audio_paths: ['refs/aux-1.wav'],
     },
   }), null);
+});
+
+test('warmed reference prompt never follows a stale active profile from another primary clip', () => {
+  assert.deepEqual(resolveWarmedReferencePrompt({
+    refAudioPath: 'refs/new-primary.wav',
+    promptText: 'Correct transcript for the new clip.',
+    promptLang: 'EN',
+  }, {
+    path: 'refs/new-primary.wav',
+    transcript: 'Manifest transcript fallback.',
+    lang: 'en',
+  }, {
+    ref_audio_path: 'refs/old-primary.wav',
+    prompt_text: 'Stale transcript from the old clip.',
+    prompt_lang: 'en',
+  }), {
+    promptText: 'Correct transcript for the new clip.',
+    promptLang: 'EN',
+  });
 });
 
 test('resolveInferenceStatusState preserves the last known loaded weights when status omits loaded paths', () => {

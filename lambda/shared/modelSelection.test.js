@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadModelPair } from './modelSelection.js';
+import { loadModelPair, persistSavedProfileReferenceSelection } from './modelSelection.js';
 import { resolveSavedProfileReferenceSelection } from './modelSelection.js';
 
 function bufferJson(value) {
@@ -27,6 +27,35 @@ function withEnv(values, fn) {
       }
     });
 }
+
+test('reference persistence repairs a stale transcript even when reference paths are unchanged', async () => {
+  const primaryPath = 'training/datasets/dean/denoised/primary.wav';
+  const auxPaths = Array.from({ length: 5 }, (_, index) => (
+    `training/datasets/dean/denoised/aux-${index + 1}.wav`
+  ));
+  const writes = [];
+  const changed = await persistSavedProfileReferenceSelection({
+    voiceProfileId: 'dean-v1',
+    ref_audio_path: primaryPath,
+    aux_ref_audio_paths: auxPaths,
+    prompt_text: 'Transcript belonging to the previous primary.',
+    prompt_lang: 'en',
+  }, {
+    ref_audio_path: primaryPath,
+    aux_ref_audio_paths: auxPaths,
+    prompt_text: 'Transcript belonging to this primary.',
+    prompt_lang: 'en',
+  }, {
+    readObject: async () => null,
+    writeObject: async (key, buffer) => writes.push({
+      key,
+      body: JSON.parse(buffer.toString('utf-8')),
+    }),
+  });
+
+  assert.equal(changed, true);
+  assert.equal(writes[0].body.prompt_text, 'Transcript belonging to this primary.');
+});
 
 test('loadModelPair prefers the saved voice profile references before training-audio auto selection', async () => {
   const calls = [];
@@ -235,11 +264,17 @@ test('loadModelPair refreshes a complete stale profile when its default config i
     assert.deepEqual(listedExpNames, ['lecturer-new']);
     assert.equal(response.warmedReferences.ref_audio_path, newFiles[0].path);
     assert.equal(response.warmedReferences.aux_ref_audio_paths.length, 5);
+    assert.equal(response.warmedReferences.prompt_text, newFiles[0].transcript);
+    assert.equal(response.warmedReferences.prompt_lang, newFiles[0].lang);
     assert.equal(writes.length, 3);
     assert.equal(writes[0].key, 'voice-profiles/lecturer-new-v1.json');
     assert.equal(writes[0].body.ref_audio_path, newFiles[0].path);
+    assert.equal(writes[0].body.prompt_text, newFiles[0].transcript);
+    assert.equal(writes[0].body.prompt_lang, newFiles[0].lang);
     assert.equal(writes[2].key, 'voice-profile-configs/lecturer-new-v1/default.json');
     assert.equal(writes[2].body.referenceMetadata.mode, 'auto');
+    assert.equal(writes[2].body.referenceMetadata.primary.transcript, newFiles[0].transcript);
+    assert.equal(writes[2].body.referenceMetadata.primary.lang, newFiles[0].lang);
     assert.deepEqual(calls.at(-1), {
       routePath: '/ref-audio/warm',
       body: response.warmedReferences,
@@ -376,6 +411,8 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
         sovitsKey: 'models/user-models/sovits/lecturer-a-e25-s100.pth',
         ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
         aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
+        prompt_text: 'This is the balanced reference clip for the lecturer voice.',
+        prompt_lang: 'en',
         updatedAt: writes[0].body.updatedAt,
       },
     });
@@ -389,6 +426,8 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
         ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
         aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
         activatedAt: '2026-06-03T08:00:00.000Z',
+        prompt_text: 'This is the balanced reference clip for the lecturer voice.',
+        prompt_lang: 'en',
         updatedAt: writes[1].body.updatedAt,
       },
     });
@@ -402,11 +441,15 @@ test('loadModelPair auto-selects primary and aux when the saved profile has fewe
       body: {
         ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
         aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
+        prompt_text: 'This is the balanced reference clip for the lecturer voice.',
+        prompt_lang: 'en',
       },
     });
     assert.deepEqual(response.warmedReferences, {
       ref_audio_path: 'training/datasets/lecturer-a/lecturer-a_reference_0_192000.wav',
       aux_ref_audio_paths: ['training/datasets/lecturer-a/lecturer-a_support_0_160000.wav'],
+      prompt_text: 'This is the balanced reference clip for the lecturer voice.',
+      prompt_lang: 'en',
     });
   });
 });

@@ -296,11 +296,16 @@ async function loadTrainingAudioFilesForExp(expName) {
 function normalizeReferenceWarmPayload({
   ref_audio_path = '',
   aux_ref_audio_paths = [],
+  prompt_text = '',
+  prompt_lang = '',
 } = {}) {
   const refAudioPath = String(ref_audio_path || '').trim();
   if (!refAudioPath) {
     return null;
   }
+
+  const promptText = String(prompt_text || '').replace(/\s+/gu, ' ').trim();
+  const promptLang = String(prompt_lang || '').trim();
 
   return {
     ref_audio_path: refAudioPath,
@@ -309,6 +314,8 @@ function normalizeReferenceWarmPayload({
         .map((item) => String(item || '').trim())
         .filter(Boolean)
       : [],
+    ...(promptText ? { prompt_text: promptText } : {}),
+    ...(promptLang ? { prompt_lang: promptLang } : {}),
   };
 }
 
@@ -324,6 +331,8 @@ function sameReferenceWarmPayload(left, right) {
     normalizedLeft.ref_audio_path === normalizedRight.ref_audio_path
     && normalizedLeft.aux_ref_audio_paths.length === normalizedRight.aux_ref_audio_paths.length
     && normalizedLeft.aux_ref_audio_paths.every((path, index) => path === normalizedRight.aux_ref_audio_paths[index])
+    && (normalizedLeft.prompt_text || '') === (normalizedRight.prompt_text || '')
+    && (normalizedLeft.prompt_lang || '') === (normalizedRight.prompt_lang || '')
   );
 }
 
@@ -473,6 +482,8 @@ export async function resolveSavedProfileReferenceSelection(profile, {
   return normalizeReferenceWarmPayload({
     ref_audio_path: selection.primary.path,
     aux_ref_audio_paths: selection.aux.map((file) => file.path),
+    prompt_text: selection.primary.transcript,
+    prompt_lang: selection.primary.lang,
   }) || existingSelection;
 }
 
@@ -560,6 +571,8 @@ async function resolveReferenceWarmState({
           ? normalizeReferenceWarmPayload({
             ref_audio_path: selection.primary.path,
             aux_ref_audio_paths: selection.aux.map((file) => file.path),
+            prompt_text: selection.primary.transcript,
+            prompt_lang: selection.primary.lang,
           })
           : null;
         if (warmPayload) {
@@ -709,7 +722,11 @@ export async function writeDefaultVoiceProfileConfig(profile, selection, {
         primary: normalizedSelection.ref_audio_path,
         aux: normalizedSelection.aux_ref_audio_paths || [],
       },
-      primary: { path: normalizedSelection.ref_audio_path },
+      primary: {
+        path: normalizedSelection.ref_audio_path,
+        transcript: normalizedSelection.prompt_text || '',
+        lang: normalizedSelection.prompt_lang || '',
+      },
       aux: (normalizedSelection.aux_ref_audio_paths || []).map((item) => ({ path: item })),
     },
     sample: {},

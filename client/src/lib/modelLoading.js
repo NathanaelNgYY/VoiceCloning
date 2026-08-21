@@ -100,6 +100,28 @@ export function extractModelSelectWarmedReferenceSelection(result = {}) {
       .filter(Boolean)
       .filter((path) => path !== primaryPath)
       .slice(0, 5),
+    promptText: String(result?.warmedReferences?.prompt_text || '').trim(),
+    promptLang: String(result?.warmedReferences?.prompt_lang || '').trim(),
+  };
+}
+
+export function resolveWarmedReferencePrompt(selection = {}, primaryFile = {}, activeProfile = {}) {
+  const primaryPath = String(selection.refAudioPath || '').trim();
+  const activeProfileMatchesPrimary = primaryPath
+    && String(activeProfile?.ref_audio_path || '').trim() === primaryPath;
+  return {
+    promptText: String(
+      selection.promptText
+      || primaryFile?.transcript
+      || (activeProfileMatchesPrimary ? activeProfile?.prompt_text : '')
+      || '',
+    ).trim(),
+    promptLang: String(
+      selection.promptLang
+      || primaryFile?.lang
+      || (activeProfileMatchesPrimary ? activeProfile?.prompt_lang : '')
+      || '',
+    ).trim(),
   };
 }
 

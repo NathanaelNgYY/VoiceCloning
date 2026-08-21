@@ -77,6 +77,7 @@ import {
   extractModelSelectWarmedReferenceSelection,
   isSelectedModelLoaded,
   resolveInferenceStatusState,
+  resolveWarmedReferencePrompt,
   sameLoadedWeights,
   shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
@@ -1248,20 +1249,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         lang: '',
       }
     ));
+    const resolvedPrompt = resolveWarmedReferencePrompt(
+      selection,
+      primaryFile,
+      selectedActiveProfile,
+    );
 
     pendingAutoSyncFingerprintRef.current = '';
     autoSyncRequestFingerprintRef.current = '';
     setRefAudioPath(primaryPath);
-    setPromptText(
-      selectedActiveProfile
-        ? String(selectedActiveProfile.prompt_text || '')
-        : String(primaryFile?.transcript || ''),
-    );
-    setPromptLang(
-      selectedActiveProfile
-        ? normalizeReferenceLanguage(selectedActiveProfile.prompt_lang)
-        : normalizeReferenceLanguage(primaryFile?.lang),
-    );
+    setPromptText(resolvedPrompt.promptText);
+    setPromptLang(normalizeReferenceLanguage(resolvedPrompt.promptLang));
     setAuxRefAudios(auxMatches);
     setPreviewReference({ path: '', url: null, filename: '', role: '' });
 
@@ -1270,6 +1268,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         current ? {
           ...current,
           ref_audio_path: primaryPath,
+          prompt_text: resolvedPrompt.promptText,
+          prompt_lang: normalizeReferenceLanguage(resolvedPrompt.promptLang),
           aux_ref_audio_paths: selection.auxRefAudioPaths,
         } : current
       ));
