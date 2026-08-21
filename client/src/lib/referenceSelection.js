@@ -67,6 +67,37 @@ function transcriptWordCount(transcript = '') {
   return clean ? clean.split(' ').filter(Boolean).length : 0;
 }
 
+function transcriptTokens(transcript = '') {
+  return String(transcript || '')
+    .toLowerCase()
+    .match(/[\p{L}\p{N}']+/gu) || [];
+}
+
+function tokenSet(transcript = '') {
+  return new Set(transcriptTokens(transcript));
+}
+
+function jaccardSimilarity(left, right) {
+  if (!left.size || !right.size) return 0;
+  let intersection = 0;
+  for (const value of left) if (right.has(value)) intersection += 1;
+  return intersection / (left.size + right.size - intersection);
+}
+
+function clipStartSeconds(filename = '') {
+  const match = String(filename).match(/_(\d+)_(\d+)\.[a-z0-9]+$/i);
+  return match ? Number(match[1]) / REF_SAMPLE_RATE_HZ : null;
+}
+
+function acousticRejectionReasons(file) {
+  const metrics = file?.qualityMetrics;
+  if (!metrics || metrics.eligible !== false) return [];
+  const reasons = Array.isArray(metrics.rejection_reasons) && metrics.rejection_reasons.length
+    ? metrics.rejection_reasons.join(', ')
+    : 'the acoustic quality gate rejected it';
+  return [`Measured audio quality is ineligible: ${reasons}.`];
+}
+
 function scoreBreakdown(file) {
   const filename = file?.filename || '';
   const ext = extensionOf(filename);
@@ -74,7 +105,8 @@ function scoreBreakdown(file) {
   // Measured audio quality (SNR/clarity/duration, 0-100) from score_clips.py,
   // cached in clip-scores.json after training. When present it dominates ranking
   // among eligible clips; absent it stays neutral so filename/transcript cues lead.
-  const audioScore = Number(file?.qualityScore);
+  const audioScore = Number(file?.qualityMetrics?.score ?? file?.qualityScore);
+  const consistency = Number(file?.qualityMetrics?.consistency);
 
   const breakdown = {
     transcript: transcriptScore(file?.transcript),
@@ -83,7 +115,7 @@ function scoreBreakdown(file) {
     filenameHints: 0,
     duration: durationScore(filename),
     sentenceEnding: hasSentenceEnding(file?.transcript) ? 10 : -18,
-    speakerConsistency: 0,
+    speakerConsistency: Number.isFinite(consistency) ? Math.round(consistency * 12) : 0,
     audioQuality: Number.isFinite(audioScore) ? audioScore : 0,
   };
 
@@ -150,6 +182,7 @@ export function describeReferenceCandidate(file) {
   if (!checks.stableLoudness) reasons.push('Clip is not marked as stable in loudness.');
   if (!checks.steadyStyle) reasons.push('Clip is not marked as steady in voice/tone.');
   if (!checks.goodAudioType) reasons.push('Audio file type is not preferred for reference use.');
+  reasons.push(...acousticRejectionReasons(file));
 
   return {
     file,
@@ -163,6 +196,51 @@ export function describeReferenceCandidate(file) {
     durationSeconds,
     transcriptWordCount: wordCount,
   };
+}
+
+function chooseDiverseAuxiliaries(ranked, primaryMetadata, maxAux) {
+  const selected = [];
+  const remaining = ranked.filter((candidate) => candidate !== primaryMetadata);
+  const coveredTokens = tokenSet(primaryMetadata.file?.transcript);
+  const selectedTokenSets = [coveredTokens];
+  const selectedStarts = [clipStartSeconds(primaryMetadata.filename)].filter(Number.isFinite);
+
+  while (selected.length < maxAux && remaining.length > 0) {
+    let bestIndex = 0;
+    let bestUtility = -Infinity;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const candidate = remaining[index];
+      const tokens = tokenSet(candidate.file?.transcript);
+      const novelCount = [...tokens].filter((token) => !coveredTokens.has(token)).length;
+      const noveltyRatio = tokens.size ? novelCount / tokens.size : 0;
+      const maxSimilarity = Math.max(...selectedTokenSets.map((set) => jaccardSimilarity(tokens, set)));
+      const start = clipStartSeconds(candidate.filename);
+      const nearestDistance = Number.isFinite(start) && selectedStarts.length
+        ? Math.min(...selectedStarts.map((value) => Math.abs(value - start)))
+        : 0;
+      const timeDiversity = Math.min(nearestDistance / 30, 1);
+
+      // Quality remains the largest term, but auxiliaries now add phonetic/text
+      // coverage and distant source regions instead of merely taking ranks 2-N.
+      const utility = candidate.score
+        + noveltyRatio * 35
+        - maxSimilarity * 30
+        + timeDiversity * 12;
+      if (utility > bestUtility) {
+        bestUtility = utility;
+        bestIndex = index;
+      }
+    }
+
+    const [winner] = remaining.splice(bestIndex, 1);
+    selected.push(winner);
+    const winnerTokens = tokenSet(winner.file?.transcript);
+    selectedTokenSets.push(winnerTokens);
+    for (const token of winnerTokens) coveredTokens.add(token);
+    const winnerStart = clipStartSeconds(winner.filename);
+    if (Number.isFinite(winnerStart)) selectedStarts.push(winnerStart);
+  }
+  return selected;
 }
 
 function rankCandidateMetadata(candidates) {
@@ -208,15 +286,15 @@ export function chooseBestReferenceSet(files, { maxAux = 5 } = {}) {
 
   const primaryMetadata = ranked[0];
   const primary = primaryMetadata.file;
-  const auxMetadata = ranked.slice(1, maxAux + 1);
+  const auxMetadata = chooseDiverseAuxiliaries(ranked, primaryMetadata, maxAux);
   const aux = auxMetadata.map((entry) => entry.file);
 
   const usedQualityScores = ranked.some(
     (entry) => Number.isFinite(Number(entry.file?.qualityScore)),
   );
   const reason = usedQualityScores
-    ? 'Auto-picked by measured audio quality (SNR, clarity, duration), with strict eligibility filtering and a transcript/language tie-break.'
-    : 'Auto-picked after hard filtering for 3-9s duration, complete sentence transcript, clean single-speaker/stable-loudness markers, and steady voice/tone, then ranked by score.';
+    ? 'Auto-picked the primary by measured acoustic quality and strict eligibility; auxiliaries maximize clean transcript coverage and source-region diversity.'
+    : 'Auto-picked the primary after strict 3-9s sentence filtering; auxiliaries maximize transcript coverage and source-region diversity.';
 
   return {
     primary,

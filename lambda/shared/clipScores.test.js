@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loadClipScores } from './clipScores.js';
+import { loadClipQualityMetrics, loadClipScores } from './clipScores.js';
 
 function bufferJson(value) {
   return Buffer.from(JSON.stringify(value), 'utf-8');
@@ -47,4 +47,18 @@ test('loadClipScores skips entries with non-numeric scores', async () => {
   assert.equal(scores.get('good.wav'), 70);
   assert.equal(scores.has('bad.wav'), false);
   assert.equal(scores.has('none.wav'), false);
+});
+
+test('loadClipQualityMetrics preserves acoustic eligibility details', async () => {
+  const metrics = await loadClipQualityMetrics('lecturer-a', {
+    readObject: async () => Buffer.from(JSON.stringify({
+      'clip.wav': { score: 88.2, eligible: false, rejection_reasons: ['clipping_above_0.1pct'] },
+    })),
+  });
+
+  assert.deepEqual(metrics.get('clip.wav'), {
+    score: 88.2,
+    eligible: false,
+    rejection_reasons: ['clipping_above_0.1pct'],
+  });
 });

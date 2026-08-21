@@ -285,6 +285,8 @@ test('models select auto-selects and warms references from training audio when r
             aux_ref_audio_paths: [
               'training/datasets/LhlChinese/denoised/support_0_160000.wav',
             ],
+            prompt_text: 'Today we are reviewing the quarterly planning update together.',
+            prompt_lang: 'zh',
           },
         },
       ]);

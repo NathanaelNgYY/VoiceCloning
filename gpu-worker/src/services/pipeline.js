@@ -15,6 +15,7 @@ import { STEPS } from './trainingSteps.js';
 import { downloadPrefix, uploadDirectory, uploadFile } from './s3Sync.js';
 import { recordTrainingLog } from './trainingLogger.js';
 import { sendTrainingCompleteEmail } from './emailService.js';
+import { buildFilteredTrainingManifest } from './trainingQuality.js';
 
 function sendStep(sessionId, stepIndex, status, detail) {
   trainingState.setStepStatus(stepIndex, status, detail || '');
@@ -173,6 +174,9 @@ export async function runPipelineWithS3(sessionId, {
   const slicedDir = path.join(dataDir, 'sliced');
   const denoisedDir = path.join(dataDir, 'denoised');
   const asrDir = path.join(dataDir, 'asr');
+  const clipScoresPath = path.join(dataDir, 'clip-scores.json');
+  const qualityReportPath = path.join(dataDir, 'training-quality-report.json');
+  const filteredAsrListPath = path.join(asrDir, 'denoised.filtered.list');
   const logsDir = path.join(GPT_SOVITS_ROOT, 'logs', expName);
   const sovitsWeightsDir = path.join(localExpDir, 'weights', 'sovits');
   const gptWeightsDir = path.join(localExpDir, 'weights', 'gpt');
@@ -198,10 +202,45 @@ export async function runPipelineWithS3(sessionId, {
   }
 
   function getAsrListFile() {
+    if (fs.existsSync(filteredAsrListPath)) return filteredAsrListPath;
     const asrFiles = fs.readdirSync(asrDir).filter(f => f.endsWith('.list'));
     return asrFiles.length > 0
       ? path.join(asrDir, asrFiles[0])
       : path.join(asrDir, 'denoised.list');
+  }
+
+  async function ensureClipScores() {
+    if (fs.existsSync(clipScoresPath)) return;
+    recordTrainingLog(sessionId, {
+      stream: 'stdout',
+      data: 'Measuring clip quality before feature extraction...\n',
+    });
+    await processManager.run({
+      scriptPath: SCRIPTS.scoreClips,
+      args: [denoisedDir, '--json', clipScoresPath],
+      sessionId,
+    });
+  }
+
+  function writeFilteredTrainingManifest() {
+    const originalList = fs.readdirSync(asrDir)
+      .filter((filename) => filename.endsWith('.list') && filename !== path.basename(filteredAsrListPath))
+      .map((filename) => path.join(asrDir, filename))[0];
+    if (!originalList) throw new Error('ASR failed: no transcript manifest was produced');
+
+    const scoreEntries = JSON.parse(fs.readFileSync(clipScoresPath, 'utf-8'));
+    const filtered = buildFilteredTrainingManifest({
+      manifestText: fs.readFileSync(originalList, 'utf-8'),
+      scoreEntries,
+    });
+    fs.writeFileSync(filteredAsrListPath, filtered.manifestText);
+    fs.writeFileSync(qualityReportPath, JSON.stringify(filtered.report, null, 2));
+    recordTrainingLog(sessionId, {
+      stream: filtered.report.rejectedClips > 0 ? 'stderr' : 'stdout',
+      data: `Training quality gate kept ${filtered.report.keptClips}/${filtered.report.totalClips} clips `
+        + `(${filtered.report.keptDurationSeconds}s); rejected ${filtered.report.rejectedClips}.\n`,
+    });
+    return filtered.report;
   }
 
   const steps = [
@@ -245,16 +284,19 @@ export async function runPipelineWithS3(sessionId, {
 
     // Step 2: ASR
     async () => {
-      if (dirHasFiles(asrDir, /\.list$/i)) {
-        return skipStep(sessionId, 2, 'ASR transcript already exists');
+      const existingAsr = dirHasFiles(asrDir, /\.list$/i);
+      await ensureClipScores();
+      if (!existingAsr) {
+        sendStep(sessionId, 2, 'running');
+        await processManager.run({
+          scriptPath: SCRIPTS.asr,
+          args: ['-i', denoisedDir, '-o', asrDir, '-s', asrModel, '-l', asrLanguage, '-p', 'int8'],
+          sessionId,
+        });
+        assertDirHasFiles(asrDir, /\.list$/i, 'ASR');
       }
-      sendStep(sessionId, 2, 'running');
-      await processManager.run({
-        scriptPath: SCRIPTS.asr,
-        args: ['-i', denoisedDir, '-o', asrDir, '-s', asrModel, '-l', asrLanguage, '-p', 'int8'],
-        sessionId,
-      });
-      assertDirHasFiles(asrDir, /\.list$/i, 'ASR');
+      writeFilteredTrainingManifest();
+      if (existingAsr) return skipStep(sessionId, 2, 'ASR transcript already exists; quality gate refreshed');
     },
 
     // Step 3: 1-get-text.py
@@ -402,25 +444,6 @@ export async function runPipelineWithS3(sessionId, {
       }
     }
 
-    // ── Reference-clip quality scoring (non-fatal) ──
-    const clipScoresPath = path.join(dataDir, 'clip-scores.json');
-    try {
-      recordTrainingLog(sessionId, {
-        stream: 'stdout',
-        data: 'Scoring reference clips for audio quality...\n',
-      });
-      await processManager.run({
-        scriptPath: SCRIPTS.scoreClips,
-        args: [denoisedDir, '--json', clipScoresPath],
-        sessionId,
-      });
-    } catch (scoreErr) {
-      recordTrainingLog(sessionId, {
-        stream: 'stderr',
-        data: `Clip scoring failed (non-fatal): ${scoreErr.message || scoreErr}\n`,
-      });
-    }
-
     // ── S3 Sync Up ──
     recordTrainingLog(sessionId, {
       stream: 'stdout',
@@ -432,6 +455,9 @@ export async function runPipelineWithS3(sessionId, {
     await uploadDirectory(asrDir, `${s3DataPrefix}asr/`);
     if (fs.existsSync(clipScoresPath)) {
       await uploadFile(clipScoresPath, `${s3DataPrefix}clip-scores.json`);
+    }
+    if (fs.existsSync(qualityReportPath)) {
+      await uploadFile(qualityReportPath, `${s3DataPrefix}training-quality-report.json`);
     }
     await uploadDirectory(sovitsWeightsDir, `models/user-models/sovits/`);
     await uploadDirectory(gptWeightsDir, `models/user-models/gpt/`);

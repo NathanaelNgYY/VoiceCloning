@@ -45,6 +45,15 @@ test('a bearer token is read regardless of header casing', () => {
   assert.equal(readBearerToken({ headers: { Authorization: 'Bearer   abc  ' } }), 'abc');
 });
 
+test('the Entra header survives a SigV4-signed CloudFront Lambda origin', () => {
+  assert.equal(readBearerToken({
+    headers: {
+      authorization: 'AWS4-HMAC-SHA256 cloudfront-origin-signature',
+      'X-VCS-Entra-Token': 'entra-token',
+    },
+  }), 'entra-token');
+});
+
 test('anything that is not a bearer token reads as absent', () => {
   assert.equal(readBearerToken({ headers: { authorization: 'abc' } }), '');
   assert.equal(readBearerToken({ headers: { authorization: 'Basic abc' } }), '');

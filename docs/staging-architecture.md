@@ -67,13 +67,15 @@ Each distro has three origin types: S3 (static, via OAC; bucket policy on the sh
 
 **Complete environment map (do not infer environment from a similar name):**
 
-| Environment | GPU EC2 | Lambda | Training | Live TTS | Chatbot | S3 application prefix |
-|---|---|---|---|---|---|---|
-| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net (gi) + d3k2rz0hqm8nxi.cloudfront.net (kiosk) | `echolect-staging/` |
-| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
+| Environment | GPU EC2 | Lambda | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) | S3 application prefix |
+|---|---|---|---|---|---|---|---|
+| staging | `voice-gpu-staging` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | d3k2rz0hqm8nxi.cloudfront.net | `echolect-staging/` |
+| dev | `VoiClo-GPU-Seoul` | `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | none | `echolect/` |
 
-`d3fwx6qxeaxfmo.cloudfront.net` is the separate GI-bleeding chatbot, not the dev
-Dean chatbot.
+These names are authoritative: `chatbot`/`chatbot-text` in deployment tooling mean
+the video GI and non-video Dean builds respectively. Dev has no separate Dean
+distribution. `d3fwx6qxeaxfmo.cloudfront.net` is a separate legacy GI-bleeding
+chatbot and is not part of this dev/staging map.
 
 **AWS ownership and runtime roles:** both rows are in account `329599637774` and
 are operated by assuming
@@ -267,6 +269,69 @@ name. Dev has no ASG or scheduled capacity actions; the five-minute
 the fixed instance. `WARM_ON_BOOT=true` keeps inference ALB-ready after service
 restarts. GitHub `separate-containers-new` was verified synchronized through
 operations/docs commit `8b963eb`; AWS dev application source remains `070a99a`.
+
+### Dev identified learner analytics deployment (2026-08-07)
+
+`vcs-dev-transcripts` now exists in `ap-northeast-2` with `PK`/`SK`, on-demand
+billing, GSI `GSI1` (`GSI1PK`/`GSI1SK`), deletion protection, project/environment/data
+classification tags, TTL on `ttl`, and point-in-time recovery. PITR was enabled and
+read back from the successful `UpdateContinuousBackups` response on 2026-08-07.
+
+The dev-first implementation at `4c8911a` is deployed to dev only. The non-staging
+Lambda has authentication and `LEARNER_TABLE_NAME=vcs-dev-transcripts`; the fixed dev
+gateway is running the same commit with transcript storage/authentication enabled; and
+the GI client bundle `assets/index-BIiMcuh6.js` is live on distribution `EYZ4NLNGITY7T`.
+That distribution routes `/api/live/session/*` to the existing dev ALB before the
+general `/api/*` Lambda behavior. No staging resource was changed.
+
+- `VoiClo_GPU` performed a controlled `PutItem` through SSM using the instance profile;
+  the probe row had a ten-minute TTL.
+- The operator successfully enabled PITR.
+- IAM policy inspection remains denied, so Lambda table access has not been independently
+  proven without a real signed-in analytics request.
+
+Public checks pass for the login page/90-day notice, gateway readiness, completed
+CloudFront deployment, `/api/learner/me` and supervisor anonymous 401s, and the gateway
+sign-in route's missing-token 401. Remaining verification requires a real NTU sign-in:
+identified S3 analytics subject, DynamoDB profile/evidence/summary rows, personalized
+prompt retrieval, and supervisor-role rejection/acceptance. Do not promote to staging.
+
+On 2026-08-09, the two existing developer identities were added to the dev Lambda's
+`SUPERVISOR_OIDS` allowlist. This grants `/supervisor` access by immutable verified Entra
+object ID without requiring a staff email or changing learner-table records. The normal
+`Supervisor` app-role path remains supported, and staging remains unchanged. Do not record
+the object IDs in source control or project memory.
+
+Repeated-question evidence was added and deployed to dev on 2026-08-07. The client compares
+content-token overlap for up to ten minutes, ignores matches within eight seconds, and emits
+at most two repeat signals per question cluster. A deterministic curated classifier may
+assign both questions to the same concept across different video timestamps only at
+confidence 0.75 or higher; ambiguous or tied matches cannot override time. Otherwise Lambda
+requires both timestamps to map to the same authored concept. Similarity must be at least
+0.65 and accepted evidence weighs 1. The analytics/S3 batch contains concept,
+similarity, and timing metadata but no question text; the existing DynamoDB transcript row
+still contains the chat text. The non-staging Lambda update and CloudFront invalidation
+completed successfully. The dev `/supervisor`
+learner detail keeps Summary as the default tab and adds a secondary Learning signals tab.
+Lessons are collapsible; the tab ranks qualifying concepts with proportional score bars,
+status, total evidence-event count, contributing signal types, and updated time. DynamoDB
+currently stores a total evidence count and a set of signal types, not counts by signal type,
+so the UI deliberately does not claim per-signal frequencies. Live dev bundle is
+`assets/index-CplLB5_6.js`.
+
+GI voice selection is environment-separated but behaviorally identical. Both clients become ready
+from configured ID `deanvoice-v1` without a startup profile GET and include that ID in every synthesis
+request. Each environment's synthesis backend resolves its own saved profile under `echolect/` or
+`echolect-staging/`; neither client reads or changes shared `active.json`. Dev serves
+`assets/index-CplLB5_6.js`; staging serves `assets/index-Cklj8mCD.js`. The staging change did not alter
+its ASG, gateway, TTS, or training stacks.
+
+Dev voice authentication is intentionally frontend-scoped. GI's Lambda origin injects
+`X-Demo-Request: true`; with `LIVE_AUTH_DEMO_ONLY=true`, `/api/live/*` requires a Microsoft
+token only for those tagged GI requests. The normal dev TTS, Training, and Dean distributions
+remain unsigned/public. Analytics, learner, and supervisor handlers retain their own mandatory
+auth guards and do not use this exception. The GI Axios client must attach the same ID token as
+the WebSocket; omitting it caused the 2026-08-07 signed-in voice 401.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 

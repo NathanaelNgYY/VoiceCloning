@@ -314,7 +314,7 @@ test('handleLiveTtsRequest removes pause-heavy periods from dotted initialisms',
   });
 });
 
-test('handleLiveTtsRequest leaves compact chemical formulas unchanged on Live Fast', async () => {
+test('handleLiveTtsRequest expands compact chemical formulas on Live Fast', async () => {
   const module = await loadInferenceRouteModule();
 
   await module.handleLiveTtsRequest({
@@ -327,13 +327,34 @@ test('handleLiveTtsRequest leaves compact chemical formulas unchanged on Live Fa
       ref_audio_path: '/tmp/reference.wav',
     }),
     synthesize: async (params) => {
-      assert.match(params.text, /C6H12O6/u);
-      assert.match(params.text, /\(CH2O\)n/u);
-      assert.doesNotMatch(params.text, /open parenthesis|twelve/u);
+      assert.match(params.text, /see six, aitch twelve, oh six/u);
+      assert.match(params.text, /open parenthesis, see, aitch two, oh, close parenthesis, en/u);
+      assert.doesNotMatch(params.text, /C6H12O6|\(CH2O\)n/u);
       return Buffer.from('RIFFdemo');
     },
     verifyChunk: null,
   });
+});
+
+test('pronunciation precedence applies aliases, then protects ARPAbet-only capital words', async () => {
+  const module = await loadInferenceRouteModule();
+
+  assert.equal(await module.prepareTextBeforeNormalization('STEREOCHEMISTRY', {
+    loadEntries: async () => [{
+      word: 'STEREOCHEMISTRY',
+      arpabet: 'S T EH2 R IY0 OW0 K EH1 M IH0 S T R IY0',
+      synthesisAlias: 'stereo chemistry',
+    }],
+  }), 'stereo chemistry');
+
+  assert.equal(await module.prepareTextBeforeNormalization('WHO', {
+    loadEntries: async () => [{ word: 'WHO', arpabet: 'W UW1' }],
+  }), 'WHO');
+
+  assert.equal(await module.prepareTextBeforeNormalization('WHO', {
+    loadEntries: async () => [],
+  }), 'W H O');
+});
 
 // skip_verify is a client-only flag (the first clip of a reply gates
 // time-to-first-audio). The retry/verification behaviour it disables now lives in
@@ -358,5 +379,4 @@ test('handleLiveTtsRequest never forwards skip_verify to the engine', async () =
   });
 
   assert.equal(synthesizeCalls, 1);
-});
 });

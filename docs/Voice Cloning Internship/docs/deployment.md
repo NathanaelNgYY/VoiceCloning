@@ -38,14 +38,38 @@ The repo docs describe a split cloud deployment:
 The authoritative resource-level inventory is repo `docs/staging-architecture.md`;
 always read and live-verify it before AWS work.
 
-| Environment | GPU | Lambda | Training CF | Live TTS CF | Chatbot CF | S3 prefix |
-|---|---|---|---|---|---|---|
-| staging | `voice-gpu-staging` | function ending `-staging` | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | `echolect-staging/` |
-| dev | `VoiClo-GPU-Seoul` | function without `-staging` | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | `echolect/` |
+### Dev learner analytics checkpoint (2026-08-07)
 
-Staging additionally owns kiosk chatbot `d3k2rz0hqm8nxi.cloudfront.net`; dev does
-not need or have its counterpart. `d3fwx6qxeaxfmo.cloudfront.net` is the separate
-GI-bleeding chatbot and is not part of the dev/staging pairing above.
+- `vcs-dev-transcripts` is live in Seoul with deletion protection, TTL, and point-in-time
+  recovery. Real NTU sign-in has proven the profile, session/turn, concept, and summary rows.
+- Query the raw partition value `USER#<oid>`; do not include `PK = ` inside the value field.
+- Support inference uses a 30-day rolling window. Two rewinds produce only
+  `possible_support`; two clarification requests produce `support_recommended`. The internal
+  score caps at `3` and qualifying count at four. Long pauses and transcript scrolling are
+  raw analytics only. Supervisors can reset one learner concept and rebuild its summary.
+- Dev bundle `assets/index-DUXyI87I.js` coalesces scrubs, recognizes clarification repeats,
+  hides per-learner score, and shows the supervisor-only distinct-learner cohort ranking.
+- The two current developers have dev-only supervisor access through the Lambda
+  `SUPERVISOR_OIDS` Entra object-ID allowlist. This is independent of email domain and does
+  not change DynamoDB learner roles. Keep the IDs out of source control; staging is unchanged.
+- Operational interpretation: a concept row holds rolling qualifying events; its separate
+  lesson summary row is derived chatbot/dashboard guidance. Two rewinds should produce score
+  `1`, count `2`, and `possible_support`. After an initial question, two clarification
+  follow-ups at least eight seconds apart should produce the maximum score `3`, count `4`,
+  and `support_recommended`. Wait ten seconds before reading the table.
+- A learner/concept reset clears only derived support state. Old session/transcript rows and
+  immutable raw event batches remain for audit and do not restore or influence the cleared
+  score. Use two distinct authenticated learners to validate cohort ranking; repeated actions
+  by one learner still count as one learner for that concept.
+
+| Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
+|---|---|---|---|---|
+| staging | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | d3k2rz0hqm8nxi.cloudfront.net |
+| dev | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | none |
+
+Staging uses the `echolect-staging/` application prefix and the `-staging` Lambda;
+dev uses `echolect/` and the Lambda without a suffix. `d3fwx6qxeaxfmo.cloudfront.net`
+is a separate legacy GI-bleeding chatbot and is not part of this dev/staging map.
 
 Both environments are in account `329599637774`, primarily in Seoul
 (`ap-northeast-2`). Operators assume

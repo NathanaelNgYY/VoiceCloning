@@ -7,6 +7,9 @@ import {
   filterLiveFullConfigs,
   filterLiveFastConfigs,
   normalizeLiveFullSettings,
+  configHasForeignReferencePaths,
+  isAutoManagedLiveFastConfig,
+  referencePathBelongsToExperiment,
 } from './liveFullSetup.js';
 
 test('normalizeLiveFullSettings keeps system full inference defaults stable', () => {
@@ -61,6 +64,47 @@ test('live full and live fast config filters keep saved lists isolated', () => {
 
   assert.deepEqual(filterLiveFastConfigs(configs).map((item) => item.configId), ['default']);
   assert.deepEqual(filterLiveFullConfigs(configs).map((item) => item.configId), ['full-a', 'full-b']);
+});
+
+test('only the untouched system default remains auto-managed', () => {
+  assert.equal(isAutoManagedLiveFastConfig({
+    configId: 'default',
+    referenceMetadata: { mode: 'auto' },
+  }), true);
+  assert.equal(isAutoManagedLiveFastConfig({
+    configId: 'default',
+    referenceMetadata: { mode: 'strict' },
+  }), false);
+  assert.equal(isAutoManagedLiveFastConfig({
+    configId: 'custom',
+    referenceMetadata: { mode: 'auto' },
+  }), false);
+  assert.equal(isAutoManagedLiveFastConfig({
+    configId: 'default',
+    referenceMetadata: {
+      mode: 'strict',
+      selectedPaths: { primary: 'training/datasets/old-voice/denoised/ref.wav' },
+    },
+  }, 'new-voice'), true);
+});
+
+test('reference ownership uses an exact normalized experiment path segment', () => {
+  assert.equal(referencePathBelongsToExperiment(
+    'C:\\workspace\\data\\dea-voice-version2\\denoised\\ref.wav',
+    'dea-voice-version2',
+  ), true);
+  assert.equal(referencePathBelongsToExperiment(
+    'training/datasets/dea-voice-version20/denoised/ref.wav',
+    'dea-voice-version2',
+  ), false);
+  assert.equal(configHasForeignReferencePaths({
+    referenceMetadata: {
+      selectedPaths: {
+        primary: 'training/datasets/dea-voice-version2/denoised/ref.wav',
+        aux: ['training/datasets/leehseinlongnew/denoised/aux.wav'],
+      },
+    },
+  }, 'dea-voice-version2'), true);
 });
 
 test('buildLiveFullConfigPayload marks configs as live full only', () => {

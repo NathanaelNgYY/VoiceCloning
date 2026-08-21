@@ -111,12 +111,12 @@ def edit_similarity(expected, observed):
     return max(0.0, 1.0 - previous[-1] / max(len(a), len(b), 1))
 
 
-def ctc_viterbi_score(log_probs, target_ids, blank_id):
-    """Best CTC path score for a fixed phone sequence, normalized by audio frames."""
+def ctc_viterbi_alignment(log_probs, target_ids, blank_id):
+    """Align a fixed phone sequence monotonically and expose per-phone evidence."""
     import torch
 
     if not target_ids or log_probs.ndim != 2 or log_probs.shape[0] < 1:
-        return float("-inf")
+        return {"score": float("-inf"), "coverage": 0.0, "phones": []}
     extended = [blank_id]
     for token in target_ids:
         extended.extend([token, blank_id])
@@ -125,29 +125,91 @@ def ctc_viterbi_score(log_probs, target_ids, blank_id):
     previous[0] = log_probs[0, blank_id]
     if states > 1:
         previous[1] = log_probs[0, extended[1]]
+    backpointers = [torch.full((states,), -1, dtype=torch.long, device=log_probs.device)]
     for frame in range(1, log_probs.shape[0]):
         current = torch.full((states,), float("-inf"), device=log_probs.device)
+        frame_backpointers = torch.full((states,), -1, dtype=torch.long, device=log_probs.device)
         for state, token in enumerate(extended):
-            choices = [previous[state]]
+            source_states = [state]
             if state > 0:
-                choices.append(previous[state - 1])
+                source_states.append(state - 1)
             if state > 1 and token != blank_id and token != extended[state - 2]:
-                choices.append(previous[state - 2])
-            current[state] = torch.stack(choices).max() + log_probs[frame, token]
+                source_states.append(state - 2)
+            choices = torch.stack([previous[source] for source in source_states])
+            best_choice = int(torch.argmax(choices).item())
+            current[state] = choices[best_choice] + log_probs[frame, token]
+            frame_backpointers[state] = source_states[best_choice]
         previous = current
-    final = previous[-1] if states == 1 else torch.stack([previous[-1], previous[-2]]).max()
-    return float(final.item() / max(1, log_probs.shape[0]))
+        backpointers.append(frame_backpointers)
+
+    final_states = [states - 1] if states == 1 else [states - 1, states - 2]
+    final_values = torch.stack([previous[state] for state in final_states])
+    final_choice = int(torch.argmax(final_values).item())
+    final_state = final_states[final_choice]
+    final = final_values[final_choice]
+    if not torch.isfinite(final):
+        return {"score": float("-inf"), "coverage": 0.0, "phones": []}
+
+    state_path = [final_state]
+    state = final_state
+    for frame in range(log_probs.shape[0] - 1, 0, -1):
+        state = int(backpointers[frame][state].item())
+        if state < 0:
+            return {"score": float("-inf"), "coverage": 0.0, "phones": []}
+        state_path.append(state)
+    state_path.reverse()
+
+    phones = []
+    visited = 0
+    for target_index, token_id in enumerate(target_ids):
+        token_state = target_index * 2 + 1
+        frames = [frame for frame, aligned_state in enumerate(state_path) if aligned_state == token_state]
+        if not frames:
+            phones.append({"tokenId": token_id, "startFrame": None, "endFrame": None, "confidence": 0.0})
+            continue
+        visited += 1
+        confidence = float(log_probs[frames, token_id].exp().mean().item())
+        phones.append({
+            "tokenId": token_id,
+            "startFrame": frames[0],
+            "endFrame": frames[-1],
+            "confidence": round(confidence, 4),
+        })
+    confidences = [phone["confidence"] for phone in phones]
+    return {
+        "score": float(final.item() / max(1, log_probs.shape[0])),
+        "coverage": visited / max(1, len(target_ids)),
+        "minPhoneConfidence": min(confidences) if confidences else 0.0,
+        "meanPhoneConfidence": sum(confidences) / max(1, len(confidences)),
+        "phones": phones,
+    }
 
 
-def crop_passes(score, min_ctc, min_similarity):
-    return score["ctcScore"] >= min_ctc and score["similarity"] >= min_similarity
+def ctc_viterbi_score(log_probs, target_ids, blank_id):
+    """Backward-compatible normalized score helper."""
+    return ctc_viterbi_alignment(log_probs, target_ids, blank_id)["score"]
 
 
-def classify_phoneme_scores(crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity, terminal=False):
+def crop_passes(score, min_ctc, min_similarity, min_phone_confidence=0.0):
+    return (
+        score["ctcScore"] >= min_ctc
+        and score["similarity"] >= min_similarity
+        and score.get("alignmentCoverage", 1.0) >= 1.0
+        and score.get("minPhoneConfidence", 1.0) >= min_phone_confidence
+    )
+
+
+def classify_phoneme_scores(
+    crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity,
+    terminal=False, min_phone_confidence=0.0,
+):
     """Return pass/reject/uncertain using agreement across nearby word crops."""
     if not crop_scores:
         return "uncertain"
-    passing = [score for score in crop_scores if crop_passes(score, min_ctc, min_similarity)]
+    passing = [
+        score for score in crop_scores
+        if crop_passes(score, min_ctc, min_similarity, min_phone_confidence)
+    ]
     if terminal:
         # Timestamp paddings share one Whisper alignment and are correlated evidence.
         # A terminal approval also needs an independently speech-end-anchored crop.
@@ -302,13 +364,18 @@ def verify_phonemes(path, start, end, arpabet, state, terminal=False):
         log_probs = torch.log_softmax(logits.float(), dim=-1)
         predicted_ids = torch.argmax(logits, dim=-1)
         observed_ipa = processor.batch_decode(predicted_ids.unsqueeze(0))[0]
+        alignment = ctc_viterbi_alignment(log_probs, target_ids, blank_id)
         crop_scores.append({
             "family": family,
             "paddingSec": round(padding, 3),
             "start": round(clip_start, 4),
             "end": round(clip_end, 4),
             "observed": observed_ipa,
-            "ctcScore": round(ctc_viterbi_score(log_probs, target_ids, blank_id), 4),
+            "ctcScore": round(alignment["score"], 4),
+            "alignmentCoverage": round(alignment["coverage"], 4),
+            "minPhoneConfidence": round(alignment.get("minPhoneConfidence", 0.0), 4),
+            "meanPhoneConfidence": round(alignment.get("meanPhoneConfidence", 0.0), 4),
+            "phoneAlignment": alignment["phones"],
             "similarity": round(edit_similarity(expected_ipa, observed_ipa), 4),
         })
 
@@ -319,13 +386,15 @@ def verify_phonemes(path, start, end, arpabet, state, terminal=False):
     min_similarity = float(os.environ.get("PHONEME_MIN_SIMILARITY", "0.5"))
     reject_ctc = float(os.environ.get("PHONEME_REJECT_MAX_CTC_LOG_PROB", "-5.5"))
     reject_similarity = float(os.environ.get("PHONEME_REJECT_MAX_SIMILARITY", "0.25"))
+    min_phone_confidence = float(os.environ.get("PHONEME_MIN_PHONE_CONFIDENCE", "0.015"))
     decision = classify_phoneme_scores(
-        crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity, terminal=terminal
+        crop_scores, min_ctc, min_similarity, reject_ctc, reject_similarity,
+        terminal=terminal, min_phone_confidence=min_phone_confidence,
     )
     best = max(
         crop_scores,
         key=lambda score: (
-            score["ctcScore"] >= min_ctc and score["similarity"] >= min_similarity,
+            crop_passes(score, min_ctc, min_similarity, min_phone_confidence),
             score["similarity"],
             score["ctcScore"],
         ),
@@ -338,6 +407,10 @@ def verify_phonemes(path, start, end, arpabet, state, terminal=False):
         "observed": best["observed"],
         "ctcScore": best["ctcScore"],
         "similarity": best["similarity"],
+        "alignmentCoverage": best["alignmentCoverage"],
+        "minPhoneConfidence": best["minPhoneConfidence"],
+        "meanPhoneConfidence": best["meanPhoneConfidence"],
+        "phoneAlignment": best["phoneAlignment"],
         "crops": crop_scores,
         "model": verifier["name"],
     }

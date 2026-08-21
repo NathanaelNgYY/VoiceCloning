@@ -8,7 +8,7 @@
 
 ## Start Here
 
-- Frontend entry and routes: `client/src/App.jsx`
+- Frontend entry and routes: `client/src/App.jsx`; GI `/admin` routes: `client/src/GiApp.jsx`
 - REST router: `lambda/router.js`
 - Training worker entry: `gpu-worker/src/index.js`
 - Inference worker entry: `gpu-inference-worker/src/index.js`
@@ -23,6 +23,7 @@
   - Upload training audio, start/stop training, read training state.
 - `src/pages/LivePage.jsx`
   - Live chatbot UI, model selection, trained reference selection, cloned voice playback, Text to Speech tab, pronunciation admin panel.
+- `src/pages/SupervisorDashboardPage.jsx` — dev `/admin` graph ranking and learner evidence; S3 index/evidence replays: `scripts/backfill-analytics-user-index.mjs`, `scripts/backfill-learner-evidence.mjs`.
 - `src/hooks/useSSE.js` — Nine-step training SSE including speaker verification.
 - `src/hooks/useInferenceSSE.js` — Long-text inference SSE.
 - `src/hooks/useLiveSpeech.js`

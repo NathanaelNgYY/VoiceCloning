@@ -1,10 +1,8 @@
 # Per-user chat transcript storage — design plan
 
-**Status:** **deployed to staging and writing rows** (2026-08-06, commit `550f9a2`) — the
-"not deployed" this line said until then is no longer true. Sign-ins from the staging host
-now reach the table; SSO itself is still blocked on the tenant question below, so the only
-identities in it are ours.
-**Related:** `docs/staging-architecture.md` (staging stack), `client/env/staging/gi.env` (SSO config, staged but **not deployed**).
+**Status:** deployed to dev on 2026-08-07 and staging on 2026-08-06. Faculty SSO was
+deployed on staging on 2026-08-18; environment-specific human sign-in verification remains.
+**Related:** `docs/staging-architecture.md` (staging stack), `client/env/staging/gi.env`.
 
 ## Decision log
 
@@ -678,3 +676,45 @@ work. The committed `client/env/staging/gi.env` is unchanged and still carries b
 
 Until (3) is done, "the gate rejects everything" and "the gate is correctly configured" look
 identical from the outside.
+
+## Dev per-user behaviour checkpoint — 2026-08-06
+
+The dev-first implementation now authenticates analytics, derives the immutable `oid`
+server-side, maps recorded video behaviour to an authored GI concept timeline, aggregates
+cautious evidence, stores learner summaries, retrieves the current user's summary for
+chatbot teaching guidance, and exposes supervisor-role-protected user/detail endpoints plus
+the `/supervisor` UI. Structured OpenAI summary generation is optional and falls back to
+deterministic wording if its dedicated key is absent or the API fails.
+
+Local tests/build pass, and `vcs-dev-transcripts` was created with the required GSI, TTL,
+deletion protection, and tags. Deployment is intentionally paused: the operator cannot
+grant the Lambda/gateway runtime access or enable point-in-time recovery. Exact grants and
+the safe continuation order are recorded in `docs/staging-architecture.md` and project
+memory.
+
+### Dev deployment update — 2026-08-07
+
+PITR is enabled. The dev Lambda, fixed dev gateway, `/api/live/session/*` CloudFront
+behavior, and dev GI client are deployed. The gateway instance role proved `PutItem` with
+an expiring probe; anonymous learner/supervisor/sign-in calls fail closed. No staging
+resource changed. A real NTU sign-in and the resulting profile/evidence/summary,
+personalization, and supervisor flows remain unverified.
+
+Repeated-question scoring is also live in dev. Near-duplicate questions asked 8 seconds to
+10 minutes apart receive 1.25 evidence. A deterministic curated classifier can preserve a
+clear concept across different video timestamps only when both questions agree at confidence
+0.75 or higher; ambiguous, tied, or unknown classifications fall back to requiring the same
+timestamp-authored concept. One cluster is capped at two signals. Raw question text remains
+in the DynamoDB transcript table as before but is not copied into the analytics event/S3
+batch, which stores only derived concept, similarity, and timing metadata.
+
+The dev supervisor UI now presents each learner's lessons as collapsible sections with
+Summary and Learning signals tabs. The secondary tab charts qualifying concepts using the
+stored evidence score and shows total evidence events plus contributing signal types. It
+does not show counts per signal type because that aggregation is not stored.
+
+GI cloned-voice REST calls now attach the same Microsoft ID token as the authenticated
+WebSocket. The dev Lambda enforces voice auth only when GI's CloudFront origin supplies its
+deployment-controlled `X-Demo-Request` marker, preserving unsigned access for the separate
+normal dev TTS, Training, and Dean clients. Analytics and learner/supervisor routes remain
+authenticated regardless of that marker.

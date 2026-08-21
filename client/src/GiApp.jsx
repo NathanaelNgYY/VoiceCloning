@@ -5,6 +5,7 @@ import { LessonPage } from '@/pages/LessonPage.jsx';
 import { LoginPage } from '@/pages/LoginPage.jsx';
 import { SearchPage } from '@/pages/SearchPage.jsx';
 import GiChatPage from '@/pages/GiChatPage.jsx';
+import { SupervisorDashboardPage } from '@/pages/SupervisorDashboardPage.jsx';
 import {
   PostLoginRedirectHandler,
   ProtectedRoute,
@@ -55,6 +56,15 @@ export default function GiApp() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <SupervisorDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/supervisor" element={<Navigate to="/admin" replace />} />
         <Route
           path="/chat"
           element={

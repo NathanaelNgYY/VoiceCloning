@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, LogOut, ArrowRight, BookOpenText } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/useAuth";
 import { config } from "@/config";
+import { getMyLearnerAccess } from "@/services/learnerAnalytics";
 
 export function SearchPage() {
   const navigate = useNavigate();
@@ -12,6 +13,24 @@ export function SearchPage() {
   const [results, setResults] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isSupervisor, setIsSupervisor] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!config.giAuthEnabled || !auth.isAuthenticated) return undefined;
+
+    getMyLearnerAccess()
+      .then((access) => {
+        if (active) setIsSupervisor(access.isSupervisor);
+      })
+      .catch(() => {
+        if (active) setIsSupervisor(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [auth.isAuthenticated]);
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -61,17 +80,28 @@ export function SearchPage() {
       />
 
       {/* Header with Logout */}
-      <header className="relative z-10 flex h-16 items-center justify-end px-6">
+      <header className="relative z-10 flex h-16 items-center justify-end gap-2 px-6">
         {config.giAuthEnabled && auth.isAuthenticated ? (
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-red-50/50 hover:text-red-600"
-            title="Sign out"
-          >
-            <LogOut className="size-4" />
-            <span>Sign out</span>
-          </button>
+          <>
+            {isSupervisor ? (
+              <button
+                type="button"
+                onClick={() => navigate('/admin')}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 active:-translate-y-px"
+              >
+                Admin analytics
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-500 transition hover:bg-red-50/50 hover:text-red-600"
+              title="Sign out"
+            >
+              <LogOut className="size-4" />
+              <span>Sign out</span>
+            </button>
+          </>
         ) : null}
       </header>
 

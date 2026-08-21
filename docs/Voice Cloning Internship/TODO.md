@@ -1,5 +1,40 @@
 # Active TODO
 
+- [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the
+  session ID before/after, and prove only one new S3 session exists. Unit/build and live-bundle
+  readback plus terminal-SSE tests pass, but the end-to-end browser check remains pending.
+- [ ] Verify the next naturally launched staging worker uses LT v28 / AMI
+  `ami-0b843a377ac5c8412`, loads DeanVoice, and becomes ready. Do not recycle healthy GPUs
+  solely for this boot check.
+- [ ] Instrument first-chunk model loading, ASR, phoneme CTC, and candidate ranking on staging.
+  The latest incident spent 451.95 seconds on chunk 0 across six split-path attempts; do not reduce
+  the 3→5 policy until a controlled quality/latency comparison identifies the slow stage.
+- [ ] Add backend idempotency or a distributed active-request lease if duplicate prevention
+  must cover separate tabs/devices or cleared session storage; current recovery is per tab.
+- [ ] In a fresh Dev browser session, load `dea-voice-version2-v1`, preview the selected
+  primary, and confirm the UI transcript is “a lot of technology that involves patients'
+  data.” Then run a controlled synthesis/listening comparison; profile/config/manifest
+  integrity is verified, but audible pronunciation improvement is not.
+- [ ] Restore Dev single-file transcription support. `/api/transcribe` currently returns 500
+  because `/home/ubuntu/gpt-sovits-v2pro/tools/asr/transcribe_single.py` is absent; this did
+  not cause the saved prompt mismatch but blocked an independent ASR check of the reference.
+- [ ] Isolate the reported Dev pronunciation/gibberish regression before retaining or
+  reverting the quality work. Current live comparison is confounded: Dev uses
+  `dea-voice-version2-v1`, staging uses `deanvoice-v1`. On Dev, hold weights, rank-1
+  primary/aux references, text, inference settings, and seeds constant; compare the old
+  rank-ordered auxiliaries against diversity selection, then verifier off/on. Training
+  filtering requires same-input old/new retrains. Do not promote these changes to staging.
+- [ ] Browser-reproduce staging Full generation while switching tabs: completed RIFF/WAVE
+  output should enter history without a false “still being finalized” error, and the GPU
+  badge should fall when the inference `/models` route is unavailable rather than following
+  the fixed training worker.
+- [ ] Run one new dev training job on representative clean/noisy recordings; inspect
+  `clip-scores.json` and `training-quality-report.json`, confirm the gate retains enough
+  speech, then compare old/new reference sets and cloned audio blind. This deployment
+  has structural/test evidence only, not audible-quality evidence.
+- [ ] Collect human-labeled dev phoneme crops with controls and use
+  `python/calibrate_phoneme_thresholds.py` on a training split; validate the selected
+  thresholds on a held-out split before changing the deployed defaults.
 - [ ] Browser-verify the deployed faculty SSO on `https://faculty.lkcmedicine.org`: a real
   staff/associate account signs in and can use text and cloned voice; a student-domain account
   is rejected; faculty `PROFILE`/`SIGNIN`/session/turn rows appear only in
@@ -8,7 +43,6 @@
   site header and the missing `/api/live/session/*` behavior, gateway, Lambda, client) — see
   `docs/staging-architecture.md`. Check the table, not the HTTP response: a failed sign-in
   write still returns `recorded: true`.
-
 - [ ] Ask an administrator to terminate stopped standalone verifier canary
   `i-0e4ef8844a120d069`; the internship role is denied termination.
 - [ ] Ask an administrator to terminate stopped staging AMI builder
@@ -17,8 +51,10 @@
   during its next running window. Lambda and LT v26 match and a direct public prime
   returned HTTP 200 RIFF; the fixed gateway stopped before its `.env` could be updated.
 
-- [ ] Browser-verify deployed dev `/admin` with an allowlisted Microsoft account: home button,
-  graph sort/filter, cohort counts, detailed evidence, prefetched S3 Events, and mobile layout.
+- [ ] Browser-verify deployed dev login from a newly opened tab and `/admin` with an
+  allowlisted Microsoft account: confirm the first render (without refresh) visually matches
+  D25 rather than faculty, then check the home button, graph
+  sort/filter, cohort counts, detailed evidence, prefetched S3 Events, and mobile layout.
 
 - [ ] Verify the live conservative support model: a pause/transcript scroll must not affect a
   concept, two rewinds must produce only `possible_support`, and two delayed “even simpler”
@@ -31,6 +67,10 @@
 - [ ] Add a liveness-only health endpoint for the fixed staging SSE progress relay
   and point `vcs-staging-tg-3003` at it; preserve S3 cross-host progress polling and
   verify synthesis still routes only to `vcs-stg-opt-3103`.
+- [ ] Bake `resemblyzer` into a canary staging inference AMI, verify the speaker gate
+  becomes active, benchmark its latency/quality cost, then promote through a reviewed
+  launch-template version. Do not hand-patch ephemeral ASG instances.
+- [ ] Repair the email mock that fails without configured mail environment values.
 - [ ] Repair the worker test suites: the compact-formula inference test leaves a
   nested subtest unfinished, and the email mock fails without configured mail env.
 
@@ -105,6 +145,9 @@
 - [ ] Browser-test the deployed Live Full chunk generation library: regenerate one chunk at least three times, listen to every archived take, restore the oldest, and confirm the displaced current take returns to the library while textarea/chunk preview/final playback/download use the restored version without synthesis. Verify histories remain independent across chunks and insert/delete clear them.
 
 - [ ] In the deployed pronunciation UI, save and load `stereochemistry` with synthesis spelling `stereo chemistry`, then compare no-alias vs alias audio in Fast and Full at sentence start/middle/end. Confirm spacing improves clarity without an unnatural pause and inspect ASR/full-span phoneme logs; delete or revise the alias if listening is worse.
+- [ ] If alias tokens must synthesize from custom phonemes rather than GPT-SoVITS defaults,
+  design an explicit per-alias-token ARPAbet schema. Do not guess boundaries in one flat
+  ARPAbet sequence or globally override common alias words.
 
 - [ ] Browser-test the deployed Live Fast TTS and Fast Queue saved-output gain at -6/0/+3/+6 dB, including saved-config restore and multi-clip queued playback; confirm clipping stays below the -1 dBFS ceiling.
 

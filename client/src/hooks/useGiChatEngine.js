@@ -16,6 +16,8 @@ import {
 } from '@/lib/giVoicePin';
 import { buildSavedVoiceModelSnapshot } from '@/lib/savedVoiceProfile';
 import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
+import { getMyLearnerSummary } from '@/services/learnerAnalytics';
+import { buildLearnerSupportGuidance } from '@/lib/learnerGuidance';
 import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
@@ -28,13 +30,20 @@ import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
 // optional poll for where that video is right now, so the assistant can resolve
 // "what does she mean here?". The standalone kiosk has no video and passes
 // neither.
-export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } = {}) {
+export function useGiChatEngine({
+  lessonContext = '',
+  lessonSlug = 'gi-bleeding',
+  category,
+  getVideoPosition = null,
+  onUserQuestion = null,
+} = {}) {
   const { workerReady, configured } = useGpuStatus();
   const backendQueryable = !configured || workerReady;
 
   const [activeProfile, setActiveProfile] = useState(null);
   const [profileError, setProfileError] = useState('');
   const [clearedBeforeId, setClearedBeforeId] = useState('');
+  const [learnerSummary, setLearnerSummary] = useState(null);
 
   const profileRequestRef = useRef(0);
   const voicePinOptions = useMemo(() => ({
@@ -73,8 +82,18 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     // prompt and documents (or the bundled default) are the source of truth here.
     const prompt = resolveChatbotSystemPrompt({ allowLocalOverride: false });
     const documents = resolveChatbotDocuments({ allowLocalOverride: false });
-    return assembleSystemPrompt({ prompt, documents, lessonContext });
-  }, [lessonContext, deployedPromptVersion]);
+    const assembled = assembleSystemPrompt({ prompt, documents, lessonContext });
+    const supportGuidance = buildLearnerSupportGuidance(learnerSummary);
+    return supportGuidance ? `${assembled}\n\n${supportGuidance}` : assembled;
+  }, [learnerSummary, lessonContext, deployedPromptVersion]);
+
+  useEffect(() => {
+    let active = true;
+    getMyLearnerSummary(lessonSlug)
+      .then((summary) => { if (active) setLearnerSummary(summary); })
+      .catch(() => { if (active) setLearnerSummary(null); });
+    return () => { active = false; };
+  }, [lessonSlug]);
 
   const loadActiveProfile = useCallback(async () => {
     const requestId = ++profileRequestRef.current;
@@ -159,6 +178,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     fastMaxChunkWords: fastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: fastSettings.maxSentencesPerChunk,
     getVideoPosition,
+    onUserQuestion,
   });
 
   // Pick up a deploy the moment a conversation ends, so the next one runs the
@@ -176,8 +196,7 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
     }
   }, [liveSpeech.phase, refreshDeployedPrompt]);
 
-  // "New chat" clears the visible transcript without touching engine state
-  // (design decision D3 — no persistence, no conversation list).
+  // "New chat" hides the transcript and closes the current realtime session.
   const visibleMessages = useMemo(() => {
     if (!clearedBeforeId) return liveSpeech.messages;
     const cutoff = liveSpeech.messages.findIndex((message) => message.id === clearedBeforeId);
@@ -187,7 +206,14 @@ export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } 
   const newChat = useCallback(() => {
     const last = liveSpeech.messages[liveSpeech.messages.length - 1];
     setClearedBeforeId(last ? last.id : '');
-  }, [liveSpeech.messages]);
+    // Hiding the bubbles is not enough on its own. The Realtime conversation
+    // lives on OpenAI's side, and the socket stays open between turns for the
+    // whole session — so every message this just hid is still context for the
+    // next reply, and a "new" chat inherits the character drift of the old one.
+    // stop() closes the socket (and no-ops when already idle); the next turn,
+    // typed or spoken, opens a fresh session from a standing start.
+    liveSpeech.stop();
+  }, [liveSpeech.messages, liveSpeech.stop]);
 
   const toggleMute = useCallback(() => {
     if (liveSpeech.isMicInputEnabled) {

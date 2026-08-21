@@ -173,6 +173,8 @@ export function createTranscriptStore({
       PK: userPartitionKey(identity.oid),
       SK: USER_PROFILE_KEY,
       lastSeenAt: seenAt,
+      GSI1PK: 'USERS',
+      GSI1SK: `${seenAt}#${identity.oid}`,
       ...who,
       // Slides forward on every sign-in, so an active student's row does not
       // expire underneath their still-live transcripts.

@@ -299,6 +299,7 @@ function AppShell() {
                 config.authEnabled
                   ? (
                     <LoginPage
+                      variant="faculty"
                       title="Faculty Voice Assistant"
                       description="Speak with the assistant your students hear, then write and deploy the instructions it answers them with."
                       accountHint="Use your NTU staff account to continue."

@@ -158,4 +158,12 @@ audio {
   --primary-foreground: 0 0% 100%;
   --primary-soft: 266 33% 96%; /* #f4f1f8 */
   --ring: 308 62% 30%;
+
+  /* Chart marks for the admin analytics. The recommended slot is a lighter step
+     of the same 308 brand hue: #7c1d6f itself sits below the readable lightness
+     band for a fill. The pair was validated for colour-vision deficiency
+     separation and contrast against a white card, so changing either one means
+     re-validating both. */
+  --chart-recommended: 308 59% 40%; /* #a32a92 */
+  --chart-possible: 32 95% 44%; /* #d97706 */
 }

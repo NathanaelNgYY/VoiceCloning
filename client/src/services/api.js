@@ -1,11 +1,11 @@
 import axios from 'axios';
+import { acquireApiToken, acquireApiTokenSilent, shouldAttachApiToken } from '@/auth/msalClient';
 import {
   createVoiceProfileBrowserDebugSummary,
   writeVoiceProfileBrowserDebug,
 } from '../lib/voiceProfileDebug.js';
 import { API_BASE_URL, resolveApiPath, getStorageMode, isS3Mode } from '@/lib/runtimeConfig';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
-import { acquireApiTokenSilent, shouldAttachApiToken } from '@/auth/msalClient';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -94,22 +94,18 @@ async function sha256Hex(text) {
 }
 
 api.interceptors.request.use(async (config) => {
-  // The Lambda verifies a bearer token on the synthesis routes
-  // (lambda/shared/liveAuth.js). Attaching it here rather than at each call site
-  // because this axios instance is the only thing every backend request shares —
-  // api/httpClient.js attaches one too, but nothing that synthesises speech goes
-  // through it, which is how the live TTS path came to be calling a protected
-  // route bare and failing with "Sign in to use the voice assistant."
-  //
-  // Silent acquisition only. The redirecting variant would hand the page to
-  // Microsoft in the middle of a live conversation, losing the session; a 401 is
-  // recoverable, a discarded conversation is not.
+  config.headers = config.headers || {};
+  const optionalAuth = config.vcsOptionalAuth === true;
+  delete config.vcsOptionalAuth;
   if (shouldAttachApiToken()) {
-    const token = await acquireApiTokenSilent();
-    if (token) {
-      config.headers = config.headers || {};
-      setHeader(config.headers, 'Authorization', `Bearer ${token}`);
-    }
+    // Model discovery/loading is a background operation against endpoints that
+    // are intentionally public in the current backend. A transient MSAL refresh
+    // failure must not turn that background warm into a misleading HTTP 403.
+    const token = optionalAuth ? await acquireApiTokenSilent() : await acquireApiToken();
+    if (!token && !optionalAuth) throw new Error('Authentication token is unavailable. Please sign in again.');
+    // CloudFront signs the Lambda origin request with SigV4, which owns the
+    // standard Authorization header. This separate header reaches Lambda intact.
+    if (token) setHeader(config.headers, 'X-VCS-Entra-Token', token);
   }
 
   const method = String(config.method || 'get').toLowerCase();
@@ -120,7 +116,6 @@ api.interceptors.request.use(async (config) => {
   const body = serializeJsonBody(config.data);
   config.data = body;
   config.transformRequest = [(data) => data];
-  config.headers = config.headers || {};
   setHeader(config.headers, 'Content-Type', 'application/json');
   setHeader(config.headers, 'x-amz-content-sha256', await sha256Hex(body));
   return config;
@@ -286,12 +281,13 @@ export function getTrainingRunMetadata(expName) {
 // Models
 
 export function getModels() {
-  return api.get('/models');
+  return api.get('/models', { vcsOptionalAuth: true });
 }
 
 export function selectModels(gptPath, sovitsPath, options = {}) {
   const refAudioPath = String(options?.ref_audio_path || '').trim();
   const voiceProfileId = String(options?.voiceProfileId || '').trim();
+  const refreshAutoReferences = options?.refresh_auto_references === true;
   const auxRefAudioPaths = Array.isArray(options?.aux_ref_audio_paths)
     ? options.aux_ref_audio_paths.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5)
     : [];
@@ -301,21 +297,23 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
       gptKey: gptPath,
       sovitsKey: sovitsPath,
       ...(voiceProfileId ? { voiceProfileId } : {}),
+      ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
       ...(refAudioPath ? {
         ref_audio_path: refAudioPath,
         aux_ref_audio_paths: auxRefAudioPaths,
       } : {}),
-    });
+    }, { vcsOptionalAuth: true });
   }
   return api.post('/models/select', {
     gptPath,
     sovitsPath,
     ...(voiceProfileId ? { voiceProfileId } : {}),
+    ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
     ...(refAudioPath ? {
       ref_audio_path: refAudioPath,
       aux_ref_audio_paths: auxRefAudioPaths,
     } : {}),
-  });
+  }, { vcsOptionalAuth: true });
 }
 
 export function activateVoiceProfile(profile) {

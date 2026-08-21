@@ -2220,6 +2220,9 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
   if (chunks.length === 0) {
     inferenceState.setError('No text to synthesize');
     sseManager.send(sessionId, 'error', { message: 'No text to synthesize' });
+    // The terminal event is durable in S3. Release local prepared-state so a
+    // later reconnect uses shared replay instead of attaching to an empty buffer.
+    sseManager.clearSession(sessionId);
     return;
   }
 
@@ -2352,6 +2355,11 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     sseManager.send(sessionId, 'error', { message: err.message });
   } finally {
     activeSessions.delete(sessionId);
+    // `prepareSession` keeps an event sequence even after the original browser
+    // disconnects. Leaving it behind makes a post-completion reconnect look local,
+    // so addClient opens an empty stream and never replays the S3 terminal event.
+    // Once generation is terminal, every reconnect must use durable shared replay.
+    sseManager.clearSession(sessionId);
   }
 }
 
