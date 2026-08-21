@@ -105,13 +105,14 @@ test('instance status keeps the fixed worker health probe by default', async () 
   }
 });
 
-test('instance status can require the inference fleet to report model readiness', async () => {
+test('instance status can require the inference fleet endpoint to be reachable', async () => {
   const previousFetch = globalThis.fetch;
   const urls = [];
+  let inferenceStatus = 200;
   globalThis.fetch = async (url) => {
     urls.push(String(url));
-    return new Response(JSON.stringify({ ready: false }), {
-      status: 200,
+    return new Response(JSON.stringify({ gpt: [], sovits: [] }), {
+      status: inferenceStatus,
       headers: { 'Content-Type': 'application/json' },
     });
   };
@@ -136,8 +137,17 @@ test('instance status can require the inference fleet to report model readiness'
         rawPath: '/api/instance/status',
       });
 
-      assert.equal(JSON.parse(response.body).workerReady, false);
-      assert.deepEqual(urls, ['http://inference-fleet.test/inference/status']);
+      assert.equal(JSON.parse(response.body).workerReady, true);
+      inferenceStatus = 503;
+      const unavailableResponse = await handler({
+        requestContext: { http: { method: 'GET' } },
+        rawPath: '/api/instance/status',
+      });
+      assert.equal(JSON.parse(unavailableResponse.body).workerReady, false);
+      assert.deepEqual(urls, [
+        'http://inference-fleet.test/models',
+        'http://inference-fleet.test/models',
+      ]);
     });
   } finally {
     globalThis.fetch = previousFetch;

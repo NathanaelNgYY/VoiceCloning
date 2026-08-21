@@ -160,14 +160,10 @@ async function checkWorkerReady() {
   const timeout = setTimeout(() => controller.abort(), 2500);
   try {
     const response = await fetch(
-      `${baseUrl}${target === 'inference' ? '/inference/status' : '/healthz'}`,
+      `${baseUrl}${target === 'inference' ? '/models' : '/healthz'}`,
       { signal: controller.signal },
     );
-    if (!response.ok) return false;
-    if (target !== 'inference') return true;
-
-    const status = await response.json();
-    return status?.ready === true;
+    return response.ok;
   } catch {
     return false;
   } finally {
