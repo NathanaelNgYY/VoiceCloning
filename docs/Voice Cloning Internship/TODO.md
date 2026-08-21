@@ -1,5 +1,12 @@
 # Active TODO
 
+- [ ] In a fresh Dev browser session, load `dea-voice-version2-v1`, preview the selected
+  primary, and confirm the UI transcript is “a lot of technology that involves patients'
+  data.” Then run a controlled synthesis/listening comparison; profile/config/manifest
+  integrity is verified, but audible pronunciation improvement is not.
+- [ ] Restore Dev single-file transcription support. `/api/transcribe` currently returns 500
+  because `/home/ubuntu/gpt-sovits-v2pro/tools/asr/transcribe_single.py` is absent; this did
+  not cause the saved prompt mismatch but blocked an independent ASR check of the reference.
 - [ ] Isolate the reported Dev pronunciation/gibberish regression before retaining or
   reverting the quality work. Current live comparison is confounded: Dev uses
   `dea-voice-version2-v1`, staging uses `deanvoice-v1`. On Dev, hold weights, rank-1

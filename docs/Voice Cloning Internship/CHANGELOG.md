@@ -2,6 +2,19 @@
 
 ## 2026-08-21
 
+- Fixed a Dev reference-audio data-integrity regression. Auto selection could update the
+  primary path while retaining a stale `prompt_text`; the live selected WAV's manifest said
+  “a lot of technology that involves patients' data,” but the profile/UI showed unrelated
+  COVID-19 text. Lambda now carries transcript/language with warmed references, persists them
+  to the saved and active profile plus rank-1 default config, and treats same paths with stale
+  prompt metadata as needing repair. The client uses the warmed/manifest prompt and accepts an
+  active-profile fallback only when its primary path matches.
+- Deployed Dev Lambda and Live Fast asset `index-Dg8e9UEi.js`; invalidation
+  `I3UEHK4GOA8D0MNIN8BHX8SWWW` completed. Repaired live `dea-voice-version2-v1` and its
+  auto-managed `default` rank-1 config. Public readback proved profile/config/manifest prompt
+  equality, the same primary and five auxiliaries in exact order, and same-experiment paths.
+  Staging remained on `index-hWSTVBvH.js`. Tests: client 408/408, Lambda 200/200, Live Fast
+  build. Audible quality and fresh-browser preview remain unverified.
 - Fixed two staging Live Fast UI failures. The shared GPU badge now uses an explicit
   staging-only inference-fleet `/models` liveness probe; Dev still checks its fixed
   worker `/healthz`. A first attempt to gate on loaded-model readiness was rejected

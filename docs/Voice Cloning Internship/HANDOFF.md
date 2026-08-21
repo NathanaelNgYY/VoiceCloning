@@ -11,7 +11,7 @@ Last updated: 2026-08-21
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
 - Final deployed Dev client assets are Training `index-DSP9b2By.js`, Live Fast
-  `index-DKYckGK7.js`, and GI `index-Bii-ZJZj.js`. Their CloudFront invalidations completed;
+  `index-Dg8e9UEi.js`, and GI `index-Bii-ZJZj.js`. Their CloudFront invalidations completed;
   all three public hosts returned HTTP 200 with those assets and the expected cache header.
 - The inference-config header now truncates long filenames without moving Save new outside
   its card. Background model discovery/load uses silent optional auth because those endpoints
@@ -24,6 +24,12 @@ Last updated: 2026-08-21
 - `dea-voice-version2-v1` was repaired live: its old `leehseinlongnew` references were
   replaced by one primary and five auxiliary `dea-voice-version2` clips. S3 readback proved
   profile/config equality, six same-experiment paths, rank 1, and mode `auto`.
+- Dev model selection now carries the selected primary clip's transcript/language through
+  reference warming and repairs stale prompt metadata even when the paths did not change.
+  Live `dea-voice-version2-v1` previously paired its selected `...340800...464000.wav` with
+  “Good evening...COVID-19”; its manifest actually says “a lot of technology that involves
+  patients' data.” The active profile and auto-managed rank-1 default config are repaired and
+  match the manifest while retaining the same primary, five auxiliaries, and exact aux order.
 - Training now filters acoustically bad or implausibly transcribed clips before features.
   Reference selection uses measured metrics and diversity. The shadow phoneme verifier has
   monotonic per-phone CTC evidence and a weakest-phone floor. Real listening comparison and
@@ -31,7 +37,7 @@ Last updated: 2026-08-21
   A user comparison reported worse Dev pronunciation/gibberish, but used Dev
   `dea-voice-version2-v1` versus staging `deanvoice-v1`, so the cause is not isolated.
   Treat the Dev quality work as unvalidated and do not promote it to staging.
-- Final automated evidence: client 405/405 and Lambda 197/197. Browser verification with a
+- Final automated evidence: client 408/408 and Lambda 200/200. Browser verification with a
   real allowlisted Microsoft account remains pending.
 
 ## Current Staging State
@@ -72,7 +78,8 @@ Last updated: 2026-08-21
 2. Open Dev GI in a new tab with an allowlisted account and confirm the first render (without
    refresh) is D25, then verify sign-in, Dean text/audio, `/admin`, and mobile layout.
 3. Exercise the new voice config lifecycle: untouched default reselects only same-model clips;
-   Update/reorder pins rank 1; Load previews a config without rewriting the profile.
+   Update/reorder pins rank 1; Load previews a config without rewriting the profile. Listen to
+   the repaired Dev primary and confirm the transcript displayed after a fresh model load.
 4. Run a representative clean/noisy Dev training job and inspect `clip-scores.json` and
    `training-quality-report.json`; compare old/new reference sets and cloned audio blind.
 5. Collect labeled phoneme crops, calibrate on a training split, and validate on held-out audio

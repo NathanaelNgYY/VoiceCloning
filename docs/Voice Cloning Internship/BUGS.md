@@ -7,6 +7,11 @@
 
 ## Active
 
+- 2026-08-21: Dev `/api/transcribe` returns 500 because the fixed GPU lacks
+  `tools/asr/transcribe_single.py`. This is separate from synthesis and did not create the
+  stale reference prompt, but it prevents using that endpoint for an independent reference
+  transcript audit.
+
 - 2026-08-21: a user listening comparison found Dev more prone to mispronunciation and
   gibberish than staging. The outcome is credible, but the comparison did not isolate the
   new selector/verifier/training gates: Dev served `dea-voice-version2-v1` and staging served
@@ -87,6 +92,12 @@
   decide whether to remove the public 30-second timeout exposure.
 
 ## Recently Fixed
+
+- 2026-08-21: Dev auto-selection changed the primary reference path but preserved the old
+  profile's `prompt_text`, pairing `...340800...464000.wav` with unrelated COVID-19 text.
+  Model warming now transports primary transcript/language, same-path comparisons include
+  them, and the client refuses a stale active-profile prompt from another primary. The live
+  active profile and auto rank-1 config now match the training manifest; staging was unchanged.
 
 - 2026-08-07: GI's replacement authenticated startup profile GET could race client token availability,
   falsely claiming a signed-in user was unsigned and leaving voice readiness empty. GI now makes no
