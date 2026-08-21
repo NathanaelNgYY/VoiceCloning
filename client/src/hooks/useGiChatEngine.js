@@ -28,7 +28,14 @@ import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
 // optional poll for where that video is right now, so the assistant can resolve
 // "what does she mean here?". The standalone kiosk has no video and passes
 // neither.
-export function useGiChatEngine({ lessonContext = '', getVideoPosition = null } = {}) {
+//
+// `category` names which deployed assistant to load — the lesson slug on the
+// lecture site, omitted on the kiosk so it falls back to the default category.
+export function useGiChatEngine({
+  lessonContext = '',
+  getVideoPosition = null,
+  category,
+} = {}) {
   const { workerReady, configured } = useGpuStatus();
   const backendQueryable = !configured || workerReady;
 
