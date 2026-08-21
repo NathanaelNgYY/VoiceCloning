@@ -1,14 +1,10 @@
 # Active TODO
 
-- [ ] Refresh user-level `VCS_AWS_*`, then deploy unified commit `c18691d` to both environments:
-  both Lambdas and Live Fast clients, Dev fixed inference/training workers, and staging fixed
-  training plus inference fleet. Bake/promote the resulting staging AMI and verify public behavior.
+- [ ] Verify the next natural staging scale-out uses LT v29 / AMI `ami-09e94f91882b29b91`,
+  reaches DeanVoice plus phoneme/speaker readiness, and carries the merged inference hashes.
 - [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the
   session ID before/after, and prove only one new S3 session exists. Unit/build and live-bundle
   readback plus terminal-SSE tests pass, but the end-to-end browser check remains pending.
-- [ ] Verify the next naturally launched staging worker uses LT v28 / AMI
-  `ami-0b843a377ac5c8412`, loads DeanVoice, and becomes ready. Do not recycle healthy GPUs
-  solely for this boot check.
 - [ ] Instrument first-chunk model loading, ASR, phoneme CTC, and candidate ranking on staging.
   The latest incident spent 451.95 seconds on chunk 0 across six split-path attempts; do not reduce
   the 3→5 policy until a controlled quality/latency comparison identifies the slow stage.

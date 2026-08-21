@@ -675,9 +675,9 @@ The implemented staging design keeps the public hostnames and separates roles:
 2. Inference instances run only `gpu-inference-worker` plus the pinned AWS ALB Target
    Optimizer proxy. Each target advertises physical concurrency `2`.
 3. New target group `vcs-stg-opt-3103` uses data port 3103 and Target Optimizer control
-   port 3004. The current image is `ami-0538dcd9374f9ecdb`. Launch template
+   port 3004. The current image is `ami-09e94f91882b29b91`. Launch template
    `vcs-staging-gpu-inference`
-   (`lt-07728350a25e691a4`, default version 26) uses this AMI, `g6.xlarge`,
+   (`lt-07728350a25e691a4`, default version 29) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
    ASG `vcs-staging-gpu-inference` has a continuous min/desired floor of 1;
    `AWSServiceRoleForAutoScaling` also exists. Retained recurring 07:00 and 19:00

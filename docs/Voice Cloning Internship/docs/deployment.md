@@ -292,11 +292,12 @@ reference, five auxiliary references, throwaway synthesis, and the real TTS rout
 prepared once by each ASG instance before Target Optimizer starts. This avoids a
 redundant student-entry warm-up burst.
 
-## Staging ASG State (2026-07-31)
+## Staging ASG State (2026-08-21)
 
-- Current image `ami-021aeb72894b8c79b` contains commit `330d329`; launch template
-  `lt-07728350a25e691a4` default version 20 uses `g6.xlarge`, `VoiClo_GPU`, and the
-  staging GPU security group.
+- Current image `ami-09e94f91882b29b91` contains unified inference source from commit
+  `2807e1c`; launch template `lt-07728350a25e691a4` default version 29 uses `g6.xlarge`,
+  `VoiClo_GPU`, and the staging GPU security group. A forced canary scale-out is IAM-denied;
+  verify this image on the next natural scale-out.
 - ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. The healthy baseline
   instance is selected by the ASG; describe it live instead of relying on a saved
   instance ID. Min 1 keeps a warm baseline in `subnet-0c1937ef298f54500`.

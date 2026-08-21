@@ -2,6 +2,23 @@
 
 ## 2026-08-21
 
+- Deployed unified commit `2807e1c` to both environment Lambdas; Dev Training/TTS/GI;
+  staging Training/TTS/GI; and the staging-only faculty client. Public assets are Dev
+  `index-Cc6cF0sB.js`, `index-D0VsmmM8.js`, `index-B9gUM8Zv.js`; staging
+  `index-BkPu5fIc.js`, `index-BcbvrzpN.js`, `index-B9gUM8Zv.js`; faculty
+  `index-CdSgyAB-.js`. Every SPA shell returned HTTP 200 with no-store cache headers.
+- Deployed the same inference, training-quality, and gateway source to both fixed hosts. Dev
+  remains outside any ASG and alone configures `vcs-dev-transcripts`; staging alone retains
+  inference-fleet readiness and faculty staff/associate policy with `vcs-staging-lecturers`.
+  Dev alone shows advanced controls; deployed-bundle inspection proved staging compiled them out.
+- Rolled unified inference quality/pronunciation/retry code across all five staging ASG workers
+  under temporary EC2 health, then restored ELB health. All five matched source hashes, reported
+  DeanVoice, phoneme and speaker verifiers ready, and were healthy targets. Direct staging worker
+  TTS returned HTTP 200 RIFF in 2.28 seconds; Dev public TTS returned RIFF in 8.95 seconds after
+  its restart/model load. This short smoke does not prove the prior Full latency tail is fixed.
+- Baked verified AMI `ami-09e94f91882b29b91` and promoted launch template v29; v29 differs from
+  v28 only by ImageId. IAM denied a forced desired-capacity increase, so fresh-image boot remains
+  pending the next natural scale-out. GitHub push remains blocked by missing interactive credentials.
 - Unified the local Dev and staging branch tips at merge commit `c18691d`. Advanced TTS controls
   are now one shared implementation gated by `VITE_SHOW_ADVANCED_SETTINGS=true` on Dev and
   `false` on staging. Verified the other intended boundaries: only Dev configures
