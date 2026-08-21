@@ -32,6 +32,14 @@ const stagingGiEnv = readFileSync(
   new URL("../env/staging/gi.env", import.meta.url),
   "utf8",
 );
+const stagingLiveFastEnv = readFileSync(
+  new URL("../env/staging/live-fast.env", import.meta.url),
+  "utf8",
+);
+const devLiveFastEnv = readFileSync(
+  new URL("../env/dev/live-fast.env", import.meta.url),
+  "utf8",
+);
 // Dev runs the same gated build against its own backends. It went without an
 // env override entirely for a while, which deploy-client.ps1 treats as "no
 // override needed" rather than as an error, so
@@ -61,6 +69,12 @@ const stagingLambdaEnv = readFileSync(
   new URL("../../lambda/.env.deployment.staging", import.meta.url),
   "utf8",
 );
+
+test("Dev and staging use one LivePage with environment-specific advanced controls", () => {
+  assert.match(livePageSource, /import\.meta\.env\.VITE_SHOW_ADVANCED_SETTINGS/);
+  assert.match(devLiveFastEnv, /^VITE_SHOW_ADVANCED_SETTINGS=true$/m);
+  assert.match(stagingLiveFastEnv, /^VITE_SHOW_ADVANCED_SETTINGS=false$/m);
+});
 
 test("the staging GI build gates the lesson site behind NTU Microsoft sign-in", () => {
   assert.match(stagingGiEnv, /^VITE_GI_AUTH_ENABLED=true$/m);

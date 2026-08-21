@@ -194,7 +194,10 @@ const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 
 // Advanced settings are still fully wired up (state + auto-applied defaults);
 // this just hides the collapsible UI so it doesn't confuse end users. Flip to
 // true to expose the panel again.
-const SHOW_ADVANCED_SETTINGS = true;
+// Keep Dev and staging on identical application code. Visibility is an explicit
+// deployment concern: Dev exposes tuning controls, while staging applies the
+// saved settings without exposing the panel.
+const SHOW_ADVANCED_SETTINGS = import.meta.env.VITE_SHOW_ADVANCED_SETTINGS !== 'false';
 
 function buildConfigId(seed = '') {
   const slug = String(seed || 'config')
