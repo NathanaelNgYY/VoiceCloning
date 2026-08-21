@@ -4,6 +4,9 @@ Last updated: 2026-08-21
 
 ## Current Dev State
 
+- Local branches `separate-containers-new` and `codex/staging-multi-user-scaling` now point to
+  the same merge commit `c18691d`. The common application code is not yet deployed because the
+  user-level AWS session expired. Prepared Live Fast builds and Lambda ZIP are local only.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Dev remains fixed-instance/on-demand: `GPU_SCHEDULE_ENABLED=false`, no inference ASG, and fixed
   GPU `i-03f258d470a2fa73f` belongs to no ASG.
@@ -46,6 +49,9 @@ Last updated: 2026-08-21
 
 ## Current Staging State
 
+- The shared code makes environment differences explicit: Dev alone configures its learner table;
+  staging alone sets `GPU_STATUS_READINESS_TARGET=inference`; Dev shows advanced TTS controls and
+  staging hides them through `VITE_SHOW_ADVANCED_SETTINGS`. No quality/retry fork remains locally.
 - Live Fast now reports GPU readiness from the routed inference fleet `/models` endpoint,
   not the fixed training worker. Dev retains its fixed-worker probe. The hidden-tab Full
   output path accepts a downloaded RIFF/WAVE without waiting for throttled media metadata.
@@ -107,3 +113,6 @@ Last updated: 2026-08-21
    and model stages; do not change the 3→5 policy without a controlled quality comparison.
 8. Verify the next naturally launched staging instance boots LT v28, loads DeanVoice, and
    passes readiness; do not recycle the healthy fleet solely for this check.
+9. After refreshing `VCS_AWS_*`, deploy merge `c18691d` to both Lambdas, Live Fast clients,
+   Dev fixed inference/training workers, and the staging fleet/AMI; then verify identical quality
+   code with the intended configuration-only differences.

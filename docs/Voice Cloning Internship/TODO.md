@@ -1,5 +1,8 @@
 # Active TODO
 
+- [ ] Refresh user-level `VCS_AWS_*`, then deploy unified commit `c18691d` to both environments:
+  both Lambdas and Live Fast clients, Dev fixed inference/training workers, and staging fixed
+  training plus inference fleet. Bake/promote the resulting staging AMI and verify public behavior.
 - [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the
   session ID before/after, and prove only one new S3 session exists. Unit/build and live-bundle
   readback plus terminal-SSE tests pass, but the end-to-end browser check remains pending.

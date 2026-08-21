@@ -2,6 +2,15 @@
 
 ## 2026-08-21
 
+- Unified the local Dev and staging branch tips at merge commit `c18691d`. Advanced TTS controls
+  are now one shared implementation gated by `VITE_SHOW_ADVANCED_SETTINGS=true` on Dev and
+  `false` on staging. Verified the other intended boundaries: only Dev configures
+  `LEARNER_TABLE_NAME`; only staging configures `GPU_STATUS_READINESS_TARGET=inference`.
+  Client 412/412, Lambda 200/200, and inference-worker 253/253 passed. Training-worker tests
+  remained at the documented 21/22 because its email mock requires absent mail configuration.
+  Both Live Fast builds and the Lambda ZIP were prepared, but nothing from this merge was deployed:
+  `VCS_AWS_*` expired before rollout. Forty uncached staging current-session probes found no active
+  Full request to cancel; the sole observed session was complete.
 - Diagnosed screenshot session `8509fed4-c1cc-449c-9965-d8bbdcb9530d`: inference completed
   a valid 929,324-byte WAV in 460.03 seconds. Chunk 0 took 451.95 seconds and six attempts
   after whole-chunk failure triggered sentence fallback; chunk 1 took 7.68 seconds. Existing
