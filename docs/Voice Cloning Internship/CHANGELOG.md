@@ -8,6 +8,8 @@
   spent 179.14 seconds on five more takes. Full now retains strict beam/timing/tail gates using
   the already-warm medium model by default, and an unavailable verifier keeps the first
   acoustically usable best-effort take instead of regenerating audio that cannot repair ASR.
+  Deployed the exact fix to Dev and all five staging workers. The formerly problematic text
+  completed directly on staging in 18 seconds with five takes, versus 490.19 seconds before.
 - Diagnosed the claimed Dev/staging Full mismatch from live S3 manifests and worker process
   environments. The same passage used one 240-character chunk on Dev but two 170-character
   chunks on staging because Dev explicitly set `FULL_MAX_CHUNK_LENGTH=240` while staging fell
@@ -16,8 +18,8 @@
   primary and five auxiliary references; bucket versioning and an explicit backup retain rollback.
 - Deployed unified commit `2807e1c` to both environment Lambdas; Dev Training/TTS/GI;
   staging Training/TTS/GI; and the staging-only faculty client. Public assets are Dev
-  `index-Cc6cF0sB.js`, `index-D0VsmmM8.js`, `index-B9gUM8Zv.js`; staging
-  `index-BkPu5fIc.js`, `index-BcbvrzpN.js`, `index-B9gUM8Zv.js`; faculty
+  `index-Cc6cF0sB.js`, `index-CvBWG-Iy.js`, `index-B9gUM8Zv.js`; staging
+  `index-BkPu5fIc.js`, `index-MsbyZc5S.js`, `index-B9gUM8Zv.js`; faculty
   `index-CdSgyAB-.js`. Every SPA shell returned HTTP 200 with no-store cache headers.
 - Deployed the same inference, training-quality, and gateway source to both fixed hosts. Dev
   remains outside any ASG and alone configures `vcs-dev-transcripts`; staging alone retains
@@ -28,9 +30,9 @@
   DeanVoice, phoneme and speaker verifiers ready, and were healthy targets. Direct staging worker
   TTS returned HTTP 200 RIFF in 2.28 seconds; Dev public TTS returned RIFF in 8.95 seconds after
   its restart/model load. This short smoke does not prove the prior Full latency tail is fixed.
-- Baked verified AMI `ami-09e94f91882b29b91` and promoted launch template v29; v29 differs from
-  v28 only by ImageId. IAM denied a forced desired-capacity increase, so fresh-image boot remains
-  pending the next natural scale-out. GitHub push remains blocked by missing interactive credentials.
+- Baked AMI `ami-0fdeab564c09be219` with inference fix `331586a` and promoted launch template
+  v30. AWS readback proves the AMI is available, v30 is latest/default, and the ASG follows
+  `$Default`; a fresh v30 boot remains pending the next natural scale-out. GitHub push remains blocked.
 - Unified the local Dev and staging branch tips at merge commit `c18691d`. Advanced TTS controls
   are now one shared implementation gated by `VITE_SHOW_ADVANCED_SETTINGS=true` on Dev and
   `false` on staging. Verified the other intended boundaries: only Dev configures

@@ -11,10 +11,10 @@
     "workerAccess": "ssm",
     "autoscaling": {
       "targetGroupName": "vcs-stg-opt-3103",
-      "sourceAmiId": "ami-09e94f91882b29b91",
+      "sourceAmiId": "ami-0fdeab564c09be219",
       "launchTemplateName": "vcs-staging-gpu-inference",
       "launchTemplateId": "lt-07728350a25e691a4",
-      "launchTemplateVersion": 29,
+      "launchTemplateVersion": 30,
       "autoScalingGroupName": "vcs-staging-gpu-inference",
       "serviceLinkedRoleReady": true,
       "created": true,

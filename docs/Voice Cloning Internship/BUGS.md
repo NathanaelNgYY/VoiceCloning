@@ -17,7 +17,8 @@
   transcription verification was unavailable. Full lazily loaded `large-v3`, exceeded the 60s
   request deadline, then regenerated even though new audio cannot restore ASR. Full now reuses
   warm medium with its stricter beam/tail gates and stops after one usable take on ASR outage.
-  Live staging timing after deployment remains pending.
+  The formerly problematic text completed directly on staging in 18 seconds with five takes;
+  equivalent end-to-end browser timing remains pending.
 
 - 2026-08-21 fixed: completed staging Full audio could show “still being finalized” after a
   refresh because staging origins were absent from S3 CORS and an originating worker retained

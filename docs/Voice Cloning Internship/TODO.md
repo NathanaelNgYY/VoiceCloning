@@ -1,13 +1,13 @@
 # Active TODO
 
-- [ ] Verify the next natural staging scale-out uses LT v29 / AMI `ami-09e94f91882b29b91`,
+- [ ] Verify the next natural staging scale-out uses LT v30 / AMI `ami-0fdeab564c09be219`,
   reaches DeanVoice plus phoneme/speaker readiness, and carries the merged inference hashes.
 - [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the
   session ID before/after, and prove only one new S3 session exists. Unit/build and live-bundle
   readback plus terminal-SSE tests pass, but the end-to-end browser check remains pending.
-- [ ] Instrument first-chunk model loading, ASR, phoneme CTC, and candidate ranking on staging.
-  The latest incident spent 451.95 seconds on chunk 0 across six split-path attempts; do not reduce
-  the 3→5 policy until a controlled quality/latency comparison identifies the slow stage.
+- [ ] Browser-time representative staging Full requests after the warm-medium ASR fix and compare
+  Dev with identical model, references, settings, text, and retry outcomes. The formerly problematic
+  text took 18 seconds directly on staging; do not reduce 3→5 without a controlled quality comparison.
 - [ ] Add backend idempotency or a distributed active-request lease if duplicate prevention
   must cover separate tabs/devices or cleared session storage; current recovery is per tab.
 - [ ] In a fresh Dev browser session, load `dea-voice-version2-v1`, preview the selected

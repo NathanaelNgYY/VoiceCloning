@@ -5,8 +5,8 @@ Last updated: 2026-08-21
 ## Current Dev State
 
 - Local branches `separate-containers-new` and `codex/staging-multi-user-scaling` share the
-  unified application history. Commit `2807e1c` was deployed to both Lambdas, clients, and fixed
-  GPU services; the remaining deployment-config documentation commit is local only.
+  unified application history. Application commit `2807e1c` is deployed to both Lambdas and
+  clients; inference latency fix `331586a` is deployed to Dev and every staging GPU worker.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Dev remains fixed-instance/on-demand: `GPU_SCHEDULE_ENABLED=false`, no inference ASG, and fixed
   GPU `i-03f258d470a2fa73f` belongs to no ASG.
@@ -14,7 +14,7 @@ Last updated: 2026-08-21
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
 - Final deployed Dev client assets are Training `index-Cc6cF0sB.js`, Live Fast
-  `index-D0VsmmM8.js`, and GI `index-B9gUM8Zv.js`. Their CloudFront invalidations were created;
+  `index-CvBWG-Iy.js`, and GI `index-B9gUM8Zv.js`. Their CloudFront invalidations were created;
   all three public hosts returned HTTP 200 with those assets and the expected cache header.
 - The inference-config header now truncates long filenames without moving Save new outside
   its card. Background model discovery/load uses silent optional auth because those endpoints
@@ -55,13 +55,13 @@ Last updated: 2026-08-21
 - Live Fast now reports GPU readiness from the routed inference fleet `/models` endpoint,
   not the fixed training worker. Dev retains its fixed-worker probe. The hidden-tab Full
   output path accepts a downloaded RIFF/WAVE without waiting for throttled media metadata.
-  Lambda and Live Fast asset `index-BcbvrzpN.js` are deployed; public status/model/inference
+  Lambda and Live Fast asset `index-MsbyZc5S.js` are deployed; public status/model/inference
   readback passed. A real background-tab browser reproduction is still pending.
-- An exact staging Full request took 429.11 seconds; its first chunk consumed five attempts
-  and 312.86 seconds. A refresh created a second identical 401.63-second session before the
-  refresh-reconnect fix. The recorded ASG scale-out started about 34 minutes before this job,
-  so the refresh did not cause that scale-out. First-chunk stage profiling remains pending.
-- A later exact Full request completed a valid 929,324-byte WAV in 460.03 seconds. Its first
+- Durable events proved one staging Full request took 490.19 seconds because lazy `large-v3`
+  verification timed out, then Full generated ten takes across two chunks. Full now uses warm
+  medium ASR with the existing strict beam/timing/tail gates and stops after one usable take if
+  ASR itself is unavailable. The same text completed directly on staging in 18 seconds with five takes.
+- A prior exact Full request completed a valid 929,324-byte WAV in 460.03 seconds. Its first
   chunk took 451.95 seconds and six attempts after sentence fallback; chunk 1 took 7.68 seconds.
   Staging origins were missing from shared-bucket CORS and terminal sessions could remain
   marked local on the originating worker, causing the false finalization error after refresh.
@@ -72,8 +72,8 @@ Last updated: 2026-08-21
 - Staging Live Fast uses two normal takes and at most two catastrophic-babble reseeds.
   All five staging workers now run the unified quality/pronunciation/retry code, match hashes,
   and are healthy with DeanVoice plus both verifiers active. A direct worker TTS returned a valid
-  WAV in 2.28 seconds. AMI `ami-09e94f91882b29b91` is available and staging launch template
-  v29 is default. Forced canary scale-out was denied, so a fresh v29 boot remains unverified.
+  WAV in 2.28 seconds. AMI `ami-0fdeab564c09be219` is available and staging launch template
+  v30 is latest/default; the ASG follows `$Default`. A fresh v30 scale-out boot remains unverified.
 - Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 was
   observed after the 2026-08-21 baseline occupancy alarm scaled it from 1 to 5.
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
@@ -115,5 +115,5 @@ Last updated: 2026-08-21
 7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
    the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
    and model stages; do not change the 3→5 policy without a controlled quality comparison.
-8. Verify the next natural staging scale-out boots LT v29 / AMI `ami-09e94f91882b29b91`, loads
+8. Verify the next natural staging scale-out boots LT v30 / AMI `ami-0fdeab564c09be219`, loads
    DeanVoice and both verifiers, and carries the merged inference file hashes.
