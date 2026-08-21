@@ -282,6 +282,7 @@ export function getModels() {
 export function selectModels(gptPath, sovitsPath, options = {}) {
   const refAudioPath = String(options?.ref_audio_path || '').trim();
   const voiceProfileId = String(options?.voiceProfileId || '').trim();
+  const refreshAutoReferences = options?.refresh_auto_references === true;
   const auxRefAudioPaths = Array.isArray(options?.aux_ref_audio_paths)
     ? options.aux_ref_audio_paths.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 5)
     : [];
@@ -291,6 +292,7 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
       gptKey: gptPath,
       sovitsKey: sovitsPath,
       ...(voiceProfileId ? { voiceProfileId } : {}),
+      ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
       ...(refAudioPath ? {
         ref_audio_path: refAudioPath,
         aux_ref_audio_paths: auxRefAudioPaths,
@@ -301,6 +303,7 @@ export function selectModels(gptPath, sovitsPath, options = {}) {
     gptPath,
     sovitsPath,
     ...(voiceProfileId ? { voiceProfileId } : {}),
+    ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
     ...(refAudioPath ? {
       ref_audio_path: refAudioPath,
       aux_ref_audio_paths: auxRefAudioPaths,

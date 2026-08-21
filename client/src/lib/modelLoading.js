@@ -65,15 +65,20 @@ export function buildModelSelectWarmPayload({
   voiceProfileId = '',
   refAudioPath = '',
   auxRefAudioPaths = [],
+  refreshAutoReferences = false,
 } = {}) {
   const primaryPath = String(refAudioPath || '').trim();
   const normalizedVoiceProfileId = String(voiceProfileId || '').trim();
   if (!primaryPath) {
-    return normalizedVoiceProfileId ? { voiceProfileId: normalizedVoiceProfileId } : {};
+    return {
+      ...(normalizedVoiceProfileId ? { voiceProfileId: normalizedVoiceProfileId } : {}),
+      ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
+    };
   }
 
   return {
     ...(normalizedVoiceProfileId ? { voiceProfileId: normalizedVoiceProfileId } : {}),
+    ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
     ref_audio_path: primaryPath,
     aux_ref_audio_paths: Array.from(auxRefAudioPaths || [])
       .map((item) => String(item || '').trim())

@@ -228,6 +228,20 @@ function extractExpNameFromModelRef(modelRef = '') {
   return match ? match[1] : '';
 }
 
+function referenceSelectionBelongsToExperiment(selection, expName = '') {
+  const normalizedExpName = String(expName || '').trim().toLowerCase();
+  if (!normalizedExpName) return true;
+  const normalized = normalizeReferenceWarmPayload(selection);
+  if (!normalized) return true;
+  return [normalized.ref_audio_path, ...normalized.aux_ref_audio_paths].every((referencePath) => (
+    String(referencePath || '')
+      .replace(/\\/gu, '/')
+      .split('/')
+      .filter(Boolean)
+      .some((segment) => segment.toLowerCase() === normalizedExpName)
+  ));
+}
+
 async function loadTrainingAudioFilesForExp(expName) {
   const normalizedExpName = String(expName || '').trim();
   if (!normalizedExpName || !isSafePathSegment(normalizedExpName)) {
@@ -403,6 +417,8 @@ async function resolveSavedProfileWarmPayload({
     if (!savedProfileMatchesModelPair(profile, { gptKey, gptPath, sovitsKey, sovitsPath })) {
       return null;
     }
+    const expName = extractExpNameFromModelRef(sovitsKey || sovitsPath || gptKey || gptPath);
+    if (!referenceSelectionBelongsToExperiment(profile, expName)) return null;
 
     const warmPayload = normalizeReferenceWarmPayload(profile);
     return warmPayload && hasAuxiliaryReferenceSelection(profile) ? warmPayload : null;
@@ -415,6 +431,8 @@ async function resolveSavedProfileWarmPayload({
   if (!savedProfileMatchesModelPair(activeProfile, { gptKey, gptPath, sovitsKey, sovitsPath })) {
     return null;
   }
+  const expName = extractExpNameFromModelRef(sovitsKey || sovitsPath || gptKey || gptPath);
+  if (!referenceSelectionBelongsToExperiment(activeProfile, expName)) return null;
 
   const warmPayload = normalizeReferenceWarmPayload(activeProfile);
   return warmPayload && hasAuxiliaryReferenceSelection(activeProfile) ? warmPayload : null;
@@ -479,6 +497,8 @@ async function resolveSavedProfileReferenceWarmState({
   if (!savedProfileMatchesModelPair(profile, { gptKey, gptPath, sovitsKey, sovitsPath })) {
     return null;
   }
+  const expName = extractExpNameFromModelRef(sovitsKey || sovitsPath || gptKey || gptPath);
+  if (!referenceSelectionBelongsToExperiment(profile, expName)) return null;
 
   const existingSelection = normalizeReferenceWarmPayload(profile);
   if (existingSelection && hasAuxiliaryReferenceSelection(profile)) {
@@ -512,17 +532,60 @@ async function resolveReferenceWarmState({
   sovitsPath = '',
   ref_audio_path = '',
   aux_ref_audio_paths = [],
+  refresh_auto_references = false,
 } = {}, {
   listTrainingAudioFiles = loadTrainingAudioFilesForExp,
   readObject = getObject,
 } = {}) {
   const explicit = normalizeReferenceWarmPayload({ ref_audio_path, aux_ref_audio_paths });
   if (explicit) {
+    const expName = extractExpNameFromModelRef(sovitsKey || sovitsPath || gptKey || gptPath);
+    if (!referenceSelectionBelongsToExperiment(explicit, expName)) {
+      throw new Error(`Reference selection does not belong to selected experiment ${expName}`);
+    }
     return {
       warmPayload: explicit,
       savedProfile: null,
       shouldPersist: false,
     };
+  }
+
+  if (refresh_auto_references) {
+    const expName = extractExpNameFromModelRef(sovitsKey || sovitsPath || gptKey || gptPath);
+    if (expName) {
+      const files = await listTrainingAudioFiles(expName);
+      if (isScoredStrictSelectionReady(files)) {
+        const selection = chooseBestReferenceSet(files);
+        const warmPayload = selection.primary
+          ? normalizeReferenceWarmPayload({
+            ref_audio_path: selection.primary.path,
+            aux_ref_audio_paths: selection.aux.map((file) => file.path),
+          })
+          : null;
+        if (warmPayload) {
+          const normalizedVoiceProfileId = String(voiceProfileId || '').trim();
+          const candidateProfile = normalizedVoiceProfileId && isSafePathSegment(normalizedVoiceProfileId)
+            ? await readSavedProfile(getProfileStorageKey(normalizedVoiceProfileId), { readObject })
+            : null;
+          const savedProfile = candidateProfile && savedProfileMatchesModelPair(candidateProfile, {
+            gptKey,
+            gptPath,
+            sovitsKey,
+            sovitsPath,
+          })
+            ? candidateProfile
+            : null;
+          return {
+            warmPayload,
+            savedProfile,
+            shouldPersist: Boolean(
+              savedProfile
+              && !sameReferenceWarmPayload(normalizeReferenceWarmPayload(savedProfile), warmPayload)
+            ),
+          };
+        }
+      }
+    }
   }
 
   const savedProfileWarmState = await resolveSavedProfileReferenceWarmState({
@@ -708,6 +771,7 @@ export async function loadModelPair({
   sovitsPath = '',
   ref_audio_path = '',
   aux_ref_audio_paths = [],
+  refresh_auto_references = false,
 } = {}, {
   postInference = inferencePost,
   listTrainingAudioFiles = loadTrainingAudioFilesForExp,
@@ -725,6 +789,7 @@ export async function loadModelPair({
     sovitsPath,
     ref_audio_path,
     aux_ref_audio_paths,
+    refresh_auto_references,
   };
 
   let lastStatus = null;

@@ -182,6 +182,116 @@ test('loadModelPair falls back to the active saved profile before training-audio
   });
 });
 
+test('loadModelPair refreshes a complete stale profile when its default config is auto-managed', async () => {
+  const listedExpNames = [];
+  const writes = [];
+  const calls = [];
+  const oldAux = Array.from({ length: 5 }, (_, index) => `training/datasets/old/aux-${index + 1}.wav`);
+  const newFiles = Array.from({ length: 6 }, (_, index) => ({
+    filename: `lecturer-new_clip_${index * 160000}_${index * 160000 + 160000}.wav`,
+    path: `training/datasets/lecturer-new/denoised/lecturer-new_clip_${index * 160000}_${index * 160000 + 160000}.wav`,
+    transcript: `This is clean reference sentence number ${index + 1}.`,
+    lang: 'en',
+    qualityScore: 90 - index,
+    qualityMetrics: { eligible: true },
+  }));
+
+  await withEnv({ MODEL_SOURCE: 'gpu-worker' }, async () => {
+    const response = await loadModelPair({
+      voiceProfileId: 'lecturer-new-v1',
+      gptKey: 'models/user-models/gpt/lecturer-new-e25.ckpt',
+      sovitsKey: 'models/user-models/sovits/lecturer-new-e25-s100.pth',
+      refresh_auto_references: true,
+    }, {
+      postInference: async (routePath, body = {}) => {
+        calls.push({ routePath, body });
+        return routePath.startsWith('/inference/weights/')
+          ? { loaded: { gptPath: body.gptPath, sovitsPath: body.sovitsPath } }
+          : body;
+      },
+      listTrainingAudioFiles: async (expName) => {
+        listedExpNames.push(expName);
+        return newFiles;
+      },
+      readObject: async (key) => {
+        if (key === 'voice-profiles/lecturer-new-v1.json' || key === 'voice-profiles/active.json') {
+          return bufferJson({
+            voiceProfileId: 'lecturer-new-v1',
+            displayName: 'Lecturer New',
+            gptKey: 'models/user-models/gpt/lecturer-new-e25.ckpt',
+            sovitsKey: 'models/user-models/sovits/lecturer-new-e25-s100.pth',
+            ref_audio_path: 'training/datasets/old/primary.wav',
+            aux_ref_audio_paths: oldAux,
+            ...(key.endsWith('/active.json') ? { activatedAt: '2026-08-20T00:00:00.000Z' } : {}),
+          });
+        }
+        return null;
+      },
+      writeObject: async (key, buffer) => {
+        writes.push({ key, body: JSON.parse(buffer.toString('utf-8')) });
+      },
+    });
+
+    assert.deepEqual(listedExpNames, ['lecturer-new']);
+    assert.equal(response.warmedReferences.ref_audio_path, newFiles[0].path);
+    assert.equal(response.warmedReferences.aux_ref_audio_paths.length, 5);
+    assert.equal(writes.length, 3);
+    assert.equal(writes[0].key, 'voice-profiles/lecturer-new-v1.json');
+    assert.equal(writes[0].body.ref_audio_path, newFiles[0].path);
+    assert.equal(writes[2].key, 'voice-profile-configs/lecturer-new-v1/default.json');
+    assert.equal(writes[2].body.referenceMetadata.mode, 'auto');
+    assert.deepEqual(calls.at(-1), {
+      routePath: '/ref-audio/warm',
+      body: response.warmedReferences,
+    });
+  });
+});
+
+test('auto refresh never persists another model pair references into the requested profile', async () => {
+  const writes = [];
+  const files = Array.from({ length: 6 }, (_, index) => ({
+    filename: `lecturer-new_clip_${index * 160000}_${index * 160000 + 160000}.wav`,
+    path: `training/datasets/lecturer-new/denoised/lecturer-new_clip_${index * 160000}_${index * 160000 + 160000}.wav`,
+    transcript: `This is clean reference sentence number ${index + 1}.`,
+    lang: 'en',
+    qualityScore: 90 - index,
+    qualityMetrics: { eligible: true },
+  }));
+
+  await withEnv({ MODEL_SOURCE: 'gpu-worker' }, async () => {
+    const response = await loadModelPair({
+      voiceProfileId: 'wrong-profile-v1',
+      gptKey: 'models/user-models/gpt/lecturer-new-e25.ckpt',
+      sovitsKey: 'models/user-models/sovits/lecturer-new-e25-s100.pth',
+      refresh_auto_references: true,
+    }, {
+      postInference: async (routePath, body = {}) => (
+        routePath.startsWith('/inference/weights/')
+          ? { loaded: { gptPath: body.gptPath, sovitsPath: body.sovitsPath } }
+          : body
+      ),
+      listTrainingAudioFiles: async () => files,
+      readObject: async (key) => (
+        key === 'voice-profiles/wrong-profile-v1.json'
+          ? bufferJson({
+            voiceProfileId: 'wrong-profile-v1',
+            gptKey: 'models/user-models/gpt/someone-else-e25.ckpt',
+            sovitsKey: 'models/user-models/sovits/someone-else-e25-s100.pth',
+            ref_audio_path: 'training/datasets/someone-else/primary.wav',
+            aux_ref_audio_paths: [],
+          })
+          : null
+      ),
+      writeObject: async (key, buffer) => {
+        writes.push({ key, body: JSON.parse(buffer.toString('utf-8')) });
+      },
+    });
+
+    assert.equal(response.warmedReferences.ref_audio_path, files[0].path);
+    assert.deepEqual(writes, []);
+  });
+});
+
 test('loadModelPair auto-selects primary and aux when the saved profile has fewer than five auxiliary references', async () => {
   const calls = [];
   const readKeys = [];

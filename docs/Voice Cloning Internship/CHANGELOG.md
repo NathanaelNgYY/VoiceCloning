@@ -2,6 +2,21 @@
 
 ## 2026-08-21
 
+- Fixed rank-1 reference lifecycle on dev. Model loading now waits for the selected
+  profile's configs; curated/user-reordered rank 1 remains authoritative, while untouched
+  auto defaults are recalculated only from the experiment derived from the selected model
+  pair. Legacy default configs carrying another experiment's paths are migrated through the
+  same safe auto path. Added client and Lambda model/reference ownership guards. The Load
+  button changes only the current inference pipeline and no longer activates a profile.
+- Repaired live `dea-voice-version2-v1`: its default/profile previously contained six
+  `leehseinlongnew` paths. A deployed model-select refresh chose one primary and five aux
+  under `dea-voice-version2`; S3 readback proved the profile/config sets are identical,
+  all six paths belong to that experiment, rank is 1, and mode is `auto`.
+- Client deployment now uploads `index.html` with `no-store, must-revalidate, no-cache`,
+  preventing a first navigation from running the deleted faculty-style GI bundle before a
+  refresh. Dev Lambda and all three clients were redeployed; invalidations completed and
+  public readback returned HTTP 200 with assets `index-DfO-Y2BR.js`, `index-DeMzT9k8.js`,
+  and `index-DzQsGqe4.js`. Tests: client 402/402; Lambda 197/197; diff check passed.
 - Restored the dev GI login to the centered D25 staging presentation while keeping the
   faculty split-panel presentation explicit and separate. Added a regression test for
   that routing boundary and deployed only dev GI (`assets/index-B8cRtBnz.js`); CloudFront

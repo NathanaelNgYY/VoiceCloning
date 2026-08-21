@@ -69,6 +69,7 @@ import {
   buildLiveFullRefParams,
   filterLiveFastConfigs,
   filterLiveFullConfigs,
+  isAutoManagedLiveFastConfig,
   normalizeLiveFullSettings,
 } from '@/lib/liveFullSetup';
 import {
@@ -335,6 +336,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [activeVoiceProfileError, setActiveVoiceProfileError] = useState('');
   const [voiceConfigs, setVoiceConfigs] = useState([]);
   const [loadingVoiceConfigs, setLoadingVoiceConfigs] = useState(false);
+  const [loadedVoiceConfigsProfileId, setLoadedVoiceConfigsProfileId] = useState('');
   const [voiceConfigError, setVoiceConfigError] = useState('');
   const [loadedConfigId, setLoadedConfigId] = useState('');
   const [trainingRunMetadata, setTrainingRunMetadata] = useState(null);
@@ -434,6 +436,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const previewRequestRef = useRef(0);
   const configSampleUrlsRef = useRef({});
   const voiceConfigsRef = useRef([]);
+  const voiceConfigLoadRequestRef = useRef(0);
+  const selectedExpNameRef = useRef('');
   const autoDefaultConfigKeyRef = useRef('');
   const autoLoadedLiveFastConfigProfileRef = useRef('');
   const liveFullDefaultKeyRef = useRef('');
@@ -467,6 +471,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedGPT = selectedProfile?.gptModel?.path || '';
   const selectedSoVITS = selectedProfile?.sovitsModel?.path || '';
   const selectedExpName = selectedProfile?.expName || '';
+  selectedExpNameRef.current = selectedExpName;
   const selectedVoiceProfileId = selectedProfile ? buildVoiceProfileId(selectedProfile.displayName) : '';
   const canRestoreActiveVoiceProfile = matchesSavedVoiceProfileSelection({
     profile: activeVoiceProfile,
@@ -792,21 +797,26 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   async function loadVoiceConfigs(voiceProfileId = selectedVoiceProfileId) {
+    const requestId = ++voiceConfigLoadRequestRef.current;
     if (!voiceProfileId) {
       setVoiceConfigs([]);
       setLiveFullConfigs([]);
+      setLoadedVoiceConfigsProfileId('');
       setVoiceConfigError('');
       return;
     }
+    setLoadedVoiceConfigsProfileId('');
     setLoadingVoiceConfigs(true);
     try {
       const res = await getVoiceProfileConfigs(voiceProfileId);
+      if (voiceConfigLoadRequestRef.current !== requestId) return;
       const configs = res.data.configs || [];
       const liveFastConfigs = filterLiveFastConfigs(configs);
       const nextLiveFullConfigs = filterLiveFullConfigs(configs);
       voiceConfigsRef.current = liveFastConfigs;
       setVoiceConfigs(liveFastConfigs);
       setLiveFullConfigs(nextLiveFullConfigs);
+      setLoadedVoiceConfigsProfileId(voiceProfileId);
       console.info('[voice-configs] loaded configs', {
         voiceProfileId,
         count: configs.length,
@@ -823,18 +833,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           sample: config.sample || null,
         })),
       });
-      if (liveFastConfigs[0] && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId) {
+      if (
+        liveFastConfigs[0]
+        && !isAutoManagedLiveFastConfig(liveFastConfigs[0], selectedExpName)
+        && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId
+      ) {
         autoLoadedLiveFastConfigProfileRef.current = voiceProfileId;
         applyVoiceConfig(liveFastConfigs[0], { silent: true });
         await syncRankOneConfigToVoiceProfile(liveFastConfigs[0], { context: 'startup rank #1 config' });
       }
       setVoiceConfigError('');
     } catch (err) {
+      if (voiceConfigLoadRequestRef.current !== requestId) return;
       setVoiceConfigs([]);
       setLiveFullConfigs([]);
       setVoiceConfigError(err.response?.data?.error || err.message || 'Could not load saved configs.');
     } finally {
-      setLoadingVoiceConfigs(false);
+      if (voiceConfigLoadRequestRef.current === requestId) {
+        setLoadingVoiceConfigs(false);
+      }
     }
   }
 
@@ -1265,27 +1282,36 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   async function loadSelectedModel(attempt = 0, requestVersion = null) {
-    if (!selectedProfile || isConversationActive) return;
+    // Rank #1 is the source of truth for references. Never race model warming
+    // against the config request, because that can fall back to stale profile refs.
+    if (
+      !selectedProfile
+      || isConversationActive
+      || loadedVoiceConfigsProfileId !== selectedVoiceProfileId
+    ) return;
     const activeRequestVersion = requestVersion ?? (modelLoadVersionRef.current + 1);
     if (requestVersion == null) modelLoadVersionRef.current = activeRequestVersion;
     const selectionChanged = () => activeRequestVersion !== modelLoadVersionRef.current;
     setLoadingModel(true); setModelError('');
     try {
       const rankOneConfig = voiceConfigsRef.current[0] || null;
+      const rankOneIsAutoManaged = isAutoManagedLiveFastConfig(rankOneConfig, selectedExpName);
       const rankOneReferences = getConfigReferencePaths(rankOneConfig);
       const response = await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
         voiceProfileId: selectedVoiceProfileId,
-        refAudioPath: rankOneReferences.primaryPath,
-        auxRefAudioPaths: rankOneReferences.auxPaths,
+        refAudioPath: rankOneIsAutoManaged ? '' : rankOneReferences.primaryPath,
+        auxRefAudioPaths: rankOneIsAutoManaged ? [] : rankOneReferences.auxPaths,
+        refreshAutoReferences: rankOneIsAutoManaged,
       }));
       if (selectionChanged()) {
         return;
       }
       const latestRankOneConfig = voiceConfigsRef.current[0] || rankOneConfig;
-      const syncedSelection = latestRankOneConfig
+      const latestRankOneIsAutoManaged = isAutoManagedLiveFastConfig(latestRankOneConfig, selectedExpName);
+      const syncedSelection = latestRankOneConfig && !latestRankOneIsAutoManaged
         ? null
         : syncLoadedModelReferenceSelection(response.data || {});
-      if (latestRankOneConfig) {
+      if (latestRankOneConfig && !latestRankOneIsAutoManaged) {
         applyVoiceConfig(latestRankOneConfig, { silent: true });
         await syncRankOneConfigToVoiceProfile(latestRankOneConfig, { context: 'model-load rank #1 config' });
         if (selectionChanged()) {
@@ -1299,7 +1325,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         loadedSoVITSPath: selectedSoVITS,
       });
       setReferenceMessage(
-        latestRankOneConfig
+        latestRankOneConfig && !latestRankOneIsAutoManaged
           ? `Loaded rank #1 config ${latestRankOneConfig.configName || latestRankOneConfig.configId} after model load.`
           : syncedSelection
           ? `${syncedSelection.primaryFilename} loaded with ${syncedSelection.auxRefAudioPaths.length} auxiliary clip${syncedSelection.auxRefAudioPaths.length === 1 ? '' : 's'}.`
@@ -1393,6 +1419,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       }),
       rank: rankOneConfig.rank || 1,
       sample: rankOneConfig.sample || {},
+      referenceMetadata: {
+        ...currentReferenceMetadata,
+        ...(isAutoManagedLiveFastConfig(rankOneConfig, selectedExpName) ? { mode: 'auto' } : {}),
+      },
     };
     const res = await saveVoiceProfileConfig(selectedVoiceProfileId, rankOneConfig.configId, payload);
     const saved = res.data.config;
@@ -1426,7 +1456,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
-  async function saveCurrentVoiceConfig(existingConfig = null, { applySaved = true } = {}) {
+  async function saveCurrentVoiceConfig(existingConfig = null, { applySaved = true, referenceMode = '' } = {}) {
     if (!selectedVoiceProfileId || !refAudioPath) return;
     const configId = existingConfig?.configId || buildConfigId(selectedProfile?.displayName || selectedVoiceProfileId);
     setSavingConfigId(configId);
@@ -1440,6 +1470,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         }),
         rank: existingConfig?.rank || voiceConfigs.length + 1,
         sample: existingConfig?.sample || {},
+        ...(referenceMode ? {
+          referenceMetadata: { ...currentReferenceMetadata, mode: referenceMode },
+        } : {}),
       };
       const res = await saveVoiceProfileConfig(selectedVoiceProfileId, configId, payload);
       const saved = res.data.config;
@@ -1697,11 +1730,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setVoiceConfigError('');
     try {
       applyVoiceConfig(config);
-      if (Number(config.rank || 0) === 1) {
-        await syncRankOneConfigToVoiceProfile(config, { required: true, context: 'loaded rank #1 config' });
-      } else {
-        applyConfigAsActiveLiveFastProfile(config);
-      }
+      // Load is session/pipeline-only. Rank #1 persistence happens when a config
+      // is saved, updated, reordered, or selected during model load; previewing a
+      // config must not rewrite the persistent voice profile.
+      applyConfigAsActiveLiveFastProfile(config);
       setReferenceMessage(`Loaded config ${config.configName || config.configId} into inference.`);
       console.info('[voice-configs] loaded config into inference', {
         voiceProfileId: selectedVoiceProfileId,
@@ -3216,12 +3248,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   ]);
 
   useEffect(() => {
+    if (loadedVoiceConfigsProfileId !== selectedVoiceProfileId) return;
     if (!shouldLoadSelectedProfile({ serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel })) return;
     const loadKey = `${selectedProfile.gptModel.path}::${selectedProfile.sovitsModel.path}`;
     if (autoLoadAttemptKeyRef.current === loadKey) return;
     autoLoadAttemptKeyRef.current = loadKey;
     loadSelectedModel();
-  }, [serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel]);
+  }, [
+    serverReady,
+    selectedProfile,
+    selectedVoiceProfileId,
+    loadedVoiceConfigsProfileId,
+    loadedGPTPath,
+    loadedSoVITSPath,
+    isConversationActive,
+    loadingModel,
+  ]);
 
   useEffect(() => {
     if (!selectedExpName) {
@@ -3273,7 +3315,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // When a saved config #1 / restorable profile governs the reference, the
     // auto-select isn't running, so there's nothing to upgrade — don't poll and
     // don't nag about training audio quality.
-    if (canRestoreActiveVoiceProfile && voiceConfigs.length > 0) return undefined;
+    if (
+      canRestoreActiveVoiceProfile
+      && voiceConfigs.length > 0
+      && !isAutoManagedLiveFastConfig(voiceConfigs[0], selectedExpName)
+    ) return undefined;
     let ignore = false;
     let attempts = 0;
     const MAX_ATTEMPTS = 10; // ~60s at the 6s cadence below
@@ -3348,7 +3394,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       configName: `${selectedProfile.displayName} default`,
       rank: 1,
       sample: {},
-    });
+    }, { referenceMode: 'auto' });
   }, [
     loadingVoiceConfigs,
     voiceConfigs.length,
@@ -3510,7 +3556,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   useEffect(() => {
     if (loadingActiveVoiceProfile || loadingVoiceConfigs) return;
-    if (canRestoreActiveVoiceProfile && voiceConfigs.length > 0) return;
+    if (
+      canRestoreActiveVoiceProfile
+      && voiceConfigs.length > 0
+      && !isAutoManagedLiveFastConfig(voiceConfigs[0], selectedExpName)
+    ) return;
 
     if (!shouldAutoApplyBestReferenceSet({
       selectedSourceKey: selectedExpName,
@@ -3585,7 +3635,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       // it to the profile *before* re-fetching - otherwise the restore effect would
       // blindly re-apply the broken set and silently revert the saved config.
       const rankOneConfig = voiceConfigsRef.current[0] || null;
-      if (rankOneConfig) {
+      if (rankOneConfig && !isAutoManagedLiveFastConfig(rankOneConfig, selectedExpNameRef.current)) {
         try {
           await syncRankOneConfigToVoiceProfile(rankOneConfig, { context: 'gpu-ready rank #1 config' });
         } catch {

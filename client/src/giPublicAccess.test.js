@@ -288,6 +288,11 @@ test("the faculty chatbot uses Microsoft SSO with only staff domains", () => {
   assert.doesNotMatch(stagingFacultyEnv, /student\.main\.ntu\.edu\.sg/);
 });
 
+test("client deploys force the SPA shell to revalidate instead of reopening an old bundle", () => {
+  assert.match(deployClientSource, /aws s3 cp\s+"\$dist\\index\.html"\s+"\$target\/index\.html"/);
+  assert.match(deployClientSource, /--cache-control\s+"no-cache, no-store, must-revalidate"/);
+});
+
 test("GI keeps the deployed D25 login presentation while faculty uses its own layout", () => {
   assert.match(loginPageSource, /title = 'Login'/);
   assert.match(loginPageSource, /description = 'Welcome to LKCMedicine Lecture'/);

@@ -97,6 +97,14 @@ if ($buildMode -eq 'gi') {
   aws s3 sync $dist $target --delete --region $cfg.s3Region
 }
 if ($LASTEXITCODE -ne 0) { throw "s3 sync failed" }
+# Hashed assets may be cached, but the SPA shell must be revalidated on every open.
+# Otherwise a browser can reuse yesterday's index.html and execute a deleted bundle
+# until the user manually refreshes.
+aws s3 cp "$dist\index.html" "$target/index.html" `
+  --cache-control "no-cache, no-store, must-revalidate" `
+  --content-type "text/html" `
+  --region $cfg.s3Region
+if ($LASTEXITCODE -ne 0) { throw "index.html cache metadata update failed" }
 aws cloudfront create-invalidation --distribution-id $distro --paths "/*"
 if ($LASTEXITCODE -ne 0) { throw "invalidation failed" }
 Write-Host "Deployed $Mode client to $Env"

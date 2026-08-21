@@ -191,6 +191,16 @@ test('buildModelSelectWarmPayload forwards voiceProfileId when model loading sho
   });
 });
 
+test('buildModelSelectWarmPayload can refresh a system-managed auto reference set', () => {
+  assert.deepEqual(buildModelSelectWarmPayload({
+    voiceProfileId: 'lecturer-a-v1',
+    refreshAutoReferences: true,
+  }), {
+    voiceProfileId: 'lecturer-a-v1',
+    refresh_auto_references: true,
+  });
+});
+
 test('extractModelSelectWarmedReferenceSelection normalizes the warmed reference set returned by model loading', () => {
   assert.deepEqual(extractModelSelectWarmedReferenceSelection({
     warmedReferences: {

@@ -23,8 +23,9 @@
   during its next running window. Lambda and LT v26 match and a direct public prime
   returned HTTP 200 RIFF; the fixed gateway stopped before its `.env` could be updated.
 
-- [ ] Browser-verify deployed dev login and `/admin` with an allowlisted Microsoft account:
-  confirm the login visually matches D25 (not faculty), then check the home button, graph
+- [ ] Browser-verify deployed dev login from a newly opened tab and `/admin` with an
+  allowlisted Microsoft account: confirm the first render (without refresh) visually matches
+  D25 rather than faculty, then check the home button, graph
   sort/filter, cohort counts, detailed evidence, prefetched S3 Events, and mobile layout.
 
 - [ ] Verify the live conservative support model: a pause/transcript scroll must not affect a
