@@ -7,6 +7,11 @@
 
 ## Active
 
+- 2026-08-21 fixed: identical Full text split into one chunk on Dev and two on staging because
+  Dev set `FULL_MAX_CHUNK_LENGTH=240` and staging used the 170 fallback. The shared fallback is
+  now 240, and staging's saved Dean profile/default/Live Full settings match Dev without changing
+  any reference path. A same-text browser timing comparison after deployment remains pending.
+
 - 2026-08-21: staging Full generation can have an extreme first-chunk tail. One exact request
   took 460.03 seconds total, with chunk 0 consuming 451.95 seconds and six attempts after
   sentence fallback; another took 429.11 seconds, with a 312.86-second first chunk. SSE proves
@@ -25,8 +30,8 @@
 - 2026-08-21: a user listening comparison found Dev more prone to mispronunciation and
   gibberish than staging. The outcome is credible, but the comparison did not isolate the
   new selector/verifier/training gates: Dev served `dea-voice-version2-v1` and staging served
-  `deanvoice-v1`, with different weights/references. Treat the Dev quality changes as
-  unvalidated, keep them out of staging, and run controlled same-model component A/Bs.
+  `deanvoice-v1`, with different weights/references. Treat the quality changes as unvalidated
+  despite their later explicit promotion to staging, and run controlled same-model component A/Bs.
 
 - 2026-08-14 fixed: Live Fast defaulted to three normal takes and could add four
   catastrophic-babble reseeds; it now uses two normal takes plus at most two escape

@@ -4453,7 +4453,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
                       { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                       { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
-                      { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
+                      { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 240 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
                       { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                     ].map(({ label, display, min, max, step, val, set }) => (
                       <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
@@ -4484,7 +4484,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
                     </p>
                     <p className="mt-1 truncate">
-                      chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
+                      chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (240 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
                     </p>
                   </div>
 
@@ -5828,7 +5828,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                     { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
                     { label: 'Saved output gain', display: `${liveFullOutputGainDb > 0 ? '+' : ''}${liveFullOutputGainDb.toFixed(1)} dB`, min: -6, max: 6, step: 0.5, val: liveFullOutputGainDb, set: setLiveFullOutputGainDb },
-                    { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
+                    { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 240 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
                     { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                   ].map(({ label, display, min, max, step, val, set }) => (
                     <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
@@ -5859,7 +5859,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)} · gain {liveFullSettings.outputGainDb > 0 ? '+' : ''}{liveFullSettings.outputGainDb.toFixed(1)} dB
                   </p>
                   <p className="mt-1 truncate">
-                    chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
+                    chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (240 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
                   </p>
                 </div>
 

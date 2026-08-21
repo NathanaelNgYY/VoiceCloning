@@ -79,6 +79,8 @@ Last updated: 2026-08-21
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
   schedule is 0-24. Lambda cannot directly manage ASG capacity under its current role.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
+- Full chunking is aligned with Dev at the shared 240-character automatic boundary. Staging's
+  Dean profile plus rank-1 Fast/Full defaults match Dev settings and retain identical references.
 - Stopped builder `i-0f6c399842bd8cc38` and verifier canary `i-0e4ef8844a120d069`
   require administrator termination.
 
@@ -112,7 +114,5 @@ Last updated: 2026-08-21
 7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
    the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
    and model stages; do not change the 3→5 policy without a controlled quality comparison.
-8. Verify the next naturally launched staging instance boots LT v28, loads DeanVoice, and
-   passes readiness; do not recycle the healthy fleet solely for this check.
-9. Verify the next natural staging scale-out boots LT v29 / AMI `ami-09e94f91882b29b91`, loads
+8. Verify the next natural staging scale-out boots LT v29 / AMI `ami-09e94f91882b29b91`, loads
    DeanVoice and both verifiers, and carries the merged inference file hashes.

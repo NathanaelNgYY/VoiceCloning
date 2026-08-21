@@ -64,9 +64,9 @@ export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_M
 // hard medical word from sitting deep in a long sentence where the AR decoder is
 // likeliest to rush/clip it, and make a failed re-roll cost less text; too short loses
 // the context that steadies pronunciation and adds chunk seams.
-// 170 remains the hard default quality boundary. Sentence grouping and the
-// short-context exception may not exceed it. Tune via FULL_MAX_CHUNK_LENGTH.
-export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 170));
+// Keep the shared default aligned with the fixed Dev GPU. A lower per-host
+// fallback made identical Full requests split differently across environments.
+export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 240));
 
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended

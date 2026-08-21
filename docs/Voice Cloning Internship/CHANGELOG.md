@@ -2,6 +2,12 @@
 
 ## 2026-08-21
 
+- Diagnosed the claimed Dev/staging Full mismatch from live S3 manifests and worker process
+  environments. The same passage used one 240-character chunk on Dev but two 170-character
+  chunks on staging because Dev explicitly set `FULL_MAX_CHUNK_LENGTH=240` while staging fell
+  back to 170. Changed the shared fallback and UI label to 240. Normalized staging DeanVoice's
+  profile, rank-1 default, and rank-1 Live Full defaults to Dev values while preserving the exact
+  primary and five auxiliary references; bucket versioning and an explicit backup retain rollback.
 - Deployed unified commit `2807e1c` to both environment Lambdas; Dev Training/TTS/GI;
   staging Training/TTS/GI; and the staging-only faculty client. Public assets are Dev
   `index-Cc6cF0sB.js`, `index-D0VsmmM8.js`, `index-B9gUM8Zv.js`; staging
