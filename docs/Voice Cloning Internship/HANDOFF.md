@@ -11,7 +11,7 @@ Last updated: 2026-08-21
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
 - Final deployed Dev client assets are Training `index-DSP9b2By.js`, Live Fast
-  `index-Dg8e9UEi.js`, and GI `index-Bii-ZJZj.js`. Their CloudFront invalidations completed;
+  `index-BG18849o.js`, and GI `index-Bii-ZJZj.js`. Their CloudFront invalidations completed;
   all three public hosts returned HTTP 200 with those assets and the expected cache header.
 - The inference-config header now truncates long filenames without moving Save new outside
   its card. Background model discovery/load uses silent optional auth because those endpoints
@@ -37,7 +37,11 @@ Last updated: 2026-08-21
   A user comparison reported worse Dev pronunciation/gibberish, but used Dev
   `dea-voice-version2-v1` versus staging `deanvoice-v1`, so the cause is not isolated.
   Treat the Dev quality work as unvalidated and do not promote it to staging.
-- Final automated evidence: client 408/408 and Lambda 200/200. Browser verification with a
+- A pending Full/Full Queue session is persisted per browser tab after the backend accepts it.
+  Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
+  progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
+  This is not cross-tab/device backend idempotency.
+- Final automated evidence: client 411/411 and Lambda 200/200. Browser verification with a
   real allowlisted Microsoft account remains pending.
 
 ## Current Staging State
@@ -45,14 +49,19 @@ Last updated: 2026-08-21
 - Live Fast now reports GPU readiness from the routed inference fleet `/models` endpoint,
   not the fixed training worker. Dev retains its fixed-worker probe. The hidden-tab Full
   output path accepts a downloaded RIFF/WAVE without waiting for throttled media metadata.
-  Lambda and Live Fast asset `index-hWSTVBvH.js` are deployed; public status/model/inference
+  Lambda and Live Fast asset `index-DOi5z7E_.js` are deployed; public status/model/inference
   readback passed. A real background-tab browser reproduction is still pending.
+- An exact staging Full request took 429.11 seconds; its first chunk consumed five attempts
+  and 312.86 seconds. A refresh created a second identical 401.63-second session before the
+  refresh-reconnect fix. The recorded ASG scale-out started about 34 minutes before this job,
+  so the refresh did not cause that scale-out. First-chunk stage profiling remains pending.
 - Faculty SSO is deployed at `faculty.lkcmedicine.org`: Microsoft sign-in admits only
   staff/associate domains and writes to `vcs-staging-lecturers`. Lectures remains separate.
   A real staff sign-in and lecturer-table write are still unverified.
 - Staging Live Fast uses two normal takes and at most two catastrophic-babble reseeds.
   AMI `ami-0b05ebda8d96a924f` is available and staging launch template v27 is default.
-- Staging inference ASG `vcs-staging-gpu-inference` has live min/desired 1/2, max 192.
+- Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 was
+  observed after the 2026-08-21 baseline occupancy alarm scaled it from 1 to 5.
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
   schedule is 0-24. Lambda cannot directly manage ASG capacity under its current role.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
@@ -86,3 +95,6 @@ Last updated: 2026-08-21
    before changing verifier thresholds.
 6. For staging event work, follow `docs/staging-architecture.md` and `TODO.md`; prewarm known
    bursts because reactive scaling is too slow for sudden arrivals.
+7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
+   the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
+   and model stages; do not change the 3→5 policy without a controlled quality comparison.

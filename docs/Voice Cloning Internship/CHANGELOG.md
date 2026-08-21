@@ -2,6 +2,21 @@
 
 ## 2026-08-21
 
+- Investigated an exact staging Full request from the user's screenshot. Session
+  `878ab6b4-ee76-48a7-8f23-46fb0204334b` took 429.11 seconds; chunk 0 used all five attempts
+  and 312.86 seconds. Refresh created identical session
+  `33adc6fc-61be-4da6-be55-768057873031`, which took 401.63 seconds and repeated a
+  312.21-second first chunk. The observed ASG scale-out began about 34 minutes earlier under
+  the baseline occupancy alarm, so this refresh did not trigger that scaling activity.
+- Full and Full Queue generation now persists the accepted session per browser tab, restores
+  text/chunks/progress after refresh, reconnects the same SSE stream without a second POST,
+  warns before navigation, and synchronously blocks duplicate clicks. Progress explicitly
+  names Full Inference. This does not provide cross-tab/device backend idempotency.
+- Deployed Live Fast to staging as `index-DOi5z7E_.js` (invalidation
+  `ICJUWF1RCYM56MU1GHVCW3VHP3`) and Dev as `index-BG18849o.js` (invalidation
+  `I434CDARPHT2W7SJU573U68KIU`). Both invalidations completed and public bundle readback found
+  the reconnect and progress copy. Tests: client 411/411 and Live Fast build. The browser
+  runtime failed to initialize, so an actual mid-generation refresh remains unverified.
 - Fixed a Dev reference-audio data-integrity regression. Auto selection could update the
   primary path while retaining a stale `prompt_text`; the live selected WAV's manifest said
   “a lot of technology that involves patients' data,” but the profile/UI showed unrelated

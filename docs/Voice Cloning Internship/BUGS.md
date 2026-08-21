@@ -7,6 +7,11 @@
 
 ## Active
 
+- 2026-08-21: staging Full generation can have an extreme first-chunk tail. One exact request
+  took 429.11 seconds total, with chunk 0 consuming five attempts and 312.86 seconds; its
+  refreshed duplicate took 401.63 seconds with a 312.21-second first chunk. SSE proves the
+  attempt counts and durations, but not which internal verifier/model stage dominated.
+
 - 2026-08-21: Dev `/api/transcribe` returns 500 because the fixed GPU lacks
   `tools/asr/transcribe_single.py`. This is separate from synthesis and did not create the
   stale reference prompt, but it prevents using that endpoint for an independent reference
@@ -92,6 +97,12 @@
   decide whether to remove the public 30-second timeout exposure.
 
 ## Recently Fixed
+
+- 2026-08-21: refreshing during Full/Full Queue generation discarded the in-memory client
+  session, so submitting again created another independent GPU job. Pending session identity,
+  text, chunks, and progress now survive per-tab refresh; the client reconnects the existing
+  SSE stream, warns before navigation, and locks duplicate clicks. Cross-tab/device dedupe is
+  still outside this client-only fix.
 
 - 2026-08-21: Dev auto-selection changed the primary reference path but preserved the old
   profile's `prompt_text`, pairing `...340800...464000.wav` with unrelated COVID-19 text.
