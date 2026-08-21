@@ -28,11 +28,19 @@ Last updated: 2026-08-21
   Reference selection uses measured metrics and diversity. The shadow phoneme verifier has
   monotonic per-phone CTC evidence and a weakest-phone floor. Real listening comparison and
   held-out phoneme calibration are still required; tests do not prove audible improvement.
+  A user comparison reported worse Dev pronunciation/gibberish, but used Dev
+  `dea-voice-version2-v1` versus staging `deanvoice-v1`, so the cause is not isolated.
+  Treat the Dev quality work as unvalidated and do not promote it to staging.
 - Final automated evidence: client 405/405 and Lambda 197/197. Browser verification with a
   real allowlisted Microsoft account remains pending.
 
 ## Current Staging State
 
+- Live Fast now reports GPU readiness from the routed inference fleet `/models` endpoint,
+  not the fixed training worker. Dev retains its fixed-worker probe. The hidden-tab Full
+  output path accepts a downloaded RIFF/WAVE without waiting for throttled media metadata.
+  Lambda and Live Fast asset `index-hWSTVBvH.js` are deployed; public status/model/inference
+  readback passed. A real background-tab browser reproduction is still pending.
 - Faculty SSO is deployed at `faculty.lkcmedicine.org`: Microsoft sign-in admits only
   staff/associate domains and writes to `vcs-staging-lecturers`. Lectures remains separate.
   A real staff sign-in and lecturer-table write are still unverified.
@@ -59,13 +67,15 @@ Last updated: 2026-08-21
 
 ## Next Session
 
-1. Open Dev GI in a new tab with an allowlisted account and confirm the first render (without
+1. Run a controlled Dev quality comparison using identical weights, reference set, inference
+   settings, text, and seeds; vary selector/verifier behavior separately before reverting.
+2. Open Dev GI in a new tab with an allowlisted account and confirm the first render (without
    refresh) is D25, then verify sign-in, Dean text/audio, `/admin`, and mobile layout.
-2. Exercise the new voice config lifecycle: untouched default reselects only same-model clips;
+3. Exercise the new voice config lifecycle: untouched default reselects only same-model clips;
    Update/reorder pins rank 1; Load previews a config without rewriting the profile.
-3. Run a representative clean/noisy Dev training job and inspect `clip-scores.json` and
+4. Run a representative clean/noisy Dev training job and inspect `clip-scores.json` and
    `training-quality-report.json`; compare old/new reference sets and cloned audio blind.
-4. Collect labeled phoneme crops, calibrate on a training split, and validate on held-out audio
+5. Collect labeled phoneme crops, calibrate on a training split, and validate on held-out audio
    before changing verifier thresholds.
-5. For staging event work, follow `docs/staging-architecture.md` and `TODO.md`; prewarm known
+6. For staging event work, follow `docs/staging-architecture.md` and `TODO.md`; prewarm known
    bursts because reactive scaling is too slow for sudden arrivals.

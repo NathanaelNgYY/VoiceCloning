@@ -1,5 +1,15 @@
 # Active TODO
 
+- [ ] Isolate the reported Dev pronunciation/gibberish regression before retaining or
+  reverting the quality work. Current live comparison is confounded: Dev uses
+  `dea-voice-version2-v1`, staging uses `deanvoice-v1`. On Dev, hold weights, rank-1
+  primary/aux references, text, inference settings, and seeds constant; compare the old
+  rank-ordered auxiliaries against diversity selection, then verifier off/on. Training
+  filtering requires same-input old/new retrains. Do not promote these changes to staging.
+- [ ] Browser-reproduce staging Full generation while switching tabs: completed RIFF/WAVE
+  output should enter history without a false “still being finalized” error, and the GPU
+  badge should fall when the inference `/models` route is unavailable rather than following
+  the fixed training worker.
 - [ ] Run one new dev training job on representative clean/noisy recordings; inspect
   `clip-scores.json` and `training-quality-report.json`, confirm the gate retains enough
   speech, then compare old/new reference sets and cloned audio blind. This deployment

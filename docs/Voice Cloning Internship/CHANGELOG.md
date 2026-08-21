@@ -2,6 +2,21 @@
 
 ## 2026-08-21
 
+- Fixed two staging Live Fast UI failures. The shared GPU badge now uses an explicit
+  staging-only inference-fleet `/models` liveness probe; Dev still checks its fixed
+  worker `/healthz`. A first attempt to gate on loaded-model readiness was rejected
+  during live verification because it would block the profile-driven model loader.
+  Full output finalization now accepts a fully downloaded RIFF/WAVE blob while the
+  tab is hidden instead of waiting for browser media events that Chrome may throttle.
+  Deployed staging Lambda and Live Fast asset `index-hWSTVBvH.js`; invalidation
+  `I6DAN0EKKBNFANJ5NI8ARCJN7M` completed. Live readback: badge ready, `/api/models`
+  200 with 207 entries, inference ready, and Dev asset unchanged. Tests: staging
+  client 367/367, Lambda 150/150, Live Fast build; background-tab browser repro pending.
+- A user listening comparison reported worse Dev pronunciation/gibberish than staging.
+  This is valid outcome evidence but not an isolated algorithm A/B: live staging used
+  `deanvoice-v1`, while Dev used `dea-voice-version2-v1`. Do not promote the uncalibrated
+  Dev selector/training/verifier work to staging; isolate weights, references, settings,
+  and retry policy before deciding which change to revert.
 - Fixed three dev client regressions: long current-config filenames no longer push Save new
   outside its card; public background model discovery/loading no longer depends on an
   interactive Entra token refresh (protected calls remain authenticated); and a document
