@@ -1,6 +1,6 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-21
+Last updated: 2026-08-24
 
 ## Current Dev State
 
@@ -49,6 +49,8 @@ Last updated: 2026-08-21
 
 ## Current Staging State
 
+- Fixed in code, not deployed: deep warm and request-time enforcement now share one canonical
+  model-cache path and production snapshot; deployment and first/second-turn timing remain.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
   staging alone sets `GPU_STATUS_READINESS_TARGET=inference`; Dev shows advanced TTS controls and
   staging hides them through `VITE_SHOW_ADVANCED_SETTINGS`. No quality/retry fork remains locally.
@@ -82,9 +84,6 @@ Last updated: 2026-08-21
 - Full chunking is aligned at 240 characters. Full reuses warm medium ASR with strict beam/tail
   gates and no longer regenerates five times when ASR itself is unavailable. Staging's Dean
   profile and rank-1 defaults match Dev settings and retain identical references.
-- Stopped builder `i-0f6c399842bd8cc38` and verifier canary `i-0e4ef8844a120d069`
-  require administrator termination.
-
 ## Operating Rules
 
 - Code repo/branch: `VoiceCloning` / `separate-containers-new`.

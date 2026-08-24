@@ -1,5 +1,8 @@
 # Active TODO
 
+- [ ] Deploy the canonical model-cache/deep-warm fix to a staging canary, verify warm and
+  request status report the same hashed Dean paths, compare first/second authenticated GI
+  turn timing, then bake and promote a replacement AMI if the penalty is removed.
 - [ ] Verify the next natural staging scale-out uses LT v30 / AMI `ami-0fdeab564c09be219`,
   reaches DeanVoice plus phoneme/speaker readiness, and carries the merged inference hashes.
 - [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the

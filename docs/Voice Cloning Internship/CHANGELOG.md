@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-24
+
+- Fixed the staging first-request model reload caused by two cache identities for the same
+  S3 weight key. Added one key-derived hashed cache resolver shared by `/models/download`
+  and request-time voice enforcement; deep route warm now also carries the complete
+  production `voice_model` snapshot. Tests: 20/20 targeted inference/model/warm tests,
+  Node syntax checks, Bash syntax check, and `git diff --check`. Not deployed or timed live.
+
 ## 2026-08-21
 
 - Root-caused staging Full's abnormal latency from durable SSE events and verifier code. Session

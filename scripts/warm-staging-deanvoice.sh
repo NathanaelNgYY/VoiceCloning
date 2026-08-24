@@ -56,7 +56,10 @@ active_profile="$(
 voice_profile_id="$(jq -er '.voiceProfileId | select(type == "string" and length > 0)' <<<"${active_profile}")"
 gpt_key="$(jq -er '(.gptKey // .gptPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
 sovits_key="$(jq -er '(.sovitsKey // .sovitsPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
-warm_body="$(jq -c '
+warm_body="$(jq -c \
+  --arg voice_profile_id "${voice_profile_id}" \
+  --arg gpt_ref "${gpt_key}" \
+  --arg sovits_ref "${sovits_key}" '
   {
     voiceProfileId,
     ref_audio_path,
@@ -64,7 +67,13 @@ warm_body="$(jq -c '
     prompt_text: (.prompt_text // ""),
     prompt_lang: (.prompt_lang // "en"),
     text_lang: (.text_lang // .prompt_lang // "en"),
-    warm_text: "The staging voice is ready."
+    warm_text: "The staging voice is ready.",
+    voice_model: {
+      voiceProfileId: $voice_profile_id,
+      gptRef: $gpt_ref,
+      sovitsRef: $sovits_ref,
+      revision: (.updatedAt // .revision // "")
+    }
   }
   | select(.ref_audio_path | type == "string" and length > 0)
 ' <<<"${active_profile}")"

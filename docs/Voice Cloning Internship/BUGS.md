@@ -7,6 +7,13 @@
 
 ## Active
 
+- 2026-08-24 fixed in code: staging deep warm cached model weights by basename while
+  request-time voice isolation cached the same S3 keys under key-derived hashed names.
+  Production therefore treated an already-warmed model as a different local model and
+  reloaded it on the first routed request. Model download and request enforcement now share
+  one canonical cache resolver, and route warm includes the production model snapshot.
+  Deployment plus first/second-turn timing remain pending.
+
 - 2026-08-21 fixed: identical Full text split into one chunk on Dev and two on staging because
   Dev set `FULL_MAX_CHUNK_LENGTH=240` and staging used the 170 fallback. The shared fallback is
   now 240, and staging's saved Dean profile/default/Live Full settings match Dev without changing
