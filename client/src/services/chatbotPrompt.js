@@ -104,7 +104,7 @@ export async function deployChatbotSystemPrompt(
   });
 
   if (!response.ok) {
-    let message = `Deploy failed (${response.status}).`;
+    let message = `Publish failed (${response.status}).`;
     try {
       const data = await response.json();
       if (data?.error) message = data.error;

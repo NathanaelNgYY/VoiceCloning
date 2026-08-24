@@ -3987,7 +3987,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
    * The panel's contents are replaced from that category's own browser-local
    * draft, or left empty for the load effect to fill from what is deployed.
    * Nothing carries over: text left on screen from the previous lecture would be
-   * deployed under this one's name on the next click of Deploy.
+   * published under this one's name on the next click of Publish.
    */
   function handleSelectChatbotCategory(value) {
     const next = normalizeChatbotCategory(value);
@@ -4037,7 +4037,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   async function handleDeployChatbotSystemPrompt() {
-    setChatbotDeployState({ status: 'deploying', message: 'Deploying…' });
+    setChatbotDeployState({ status: 'deploying', message: 'Publishing…' });
     try {
       // Both halves of the panel ship together: the typed instructions and the
       // uploaded PDFs they refer to. Deploying the text alone is what used to
@@ -4056,14 +4056,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setChatbotDeployState({
         status: 'deployed',
         message: result?.updatedAt
-          ? `Deployed ${chatbotCategory} ${new Date(result.updatedAt).toLocaleTimeString()}`
-          : `Deployed ${chatbotCategory}`,
+          ? `Published ${chatbotCategory} ${new Date(result.updatedAt).toLocaleTimeString()}`
+          : `Published ${chatbotCategory}`,
       });
       // A first deploy is what creates a lecture, so the picker only learns about
       // it now.
       refreshChatbotCategories();
     } catch (error) {
-      setChatbotDeployState({ status: 'error', message: error?.message || 'Deploy failed.' });
+      setChatbotDeployState({ status: 'error', message: error?.message || 'Publish failed.' });
     }
   }
 
@@ -5156,7 +5156,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 title="Publish these instructions and reference documents to every chatbot frontend"
                 className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-40"
               >
-                {chatbotDeployState.status === 'deploying' ? 'Deploying…' : 'Deploy'}
+                {chatbotDeployState.status === 'deploying' ? 'Publishing…' : 'Publish'}
               </button>
               <button
                 type="button"
