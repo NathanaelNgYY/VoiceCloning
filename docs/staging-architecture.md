@@ -420,6 +420,30 @@ left untouched rather than edited in place.
 
 Note the function URL is `AuthType: NONE`, so the signing was never load-bearing.
 
+**This is per-distribution, and faculty hit it a second time (2026-08-21).** The OAC lives on
+the origin, not the function, so fixing lectures did nothing for `E38A3666CJ7FVJ` — it still
+carried `EEPE53W4BCAQ8` and produced the identical "chat works, voice fails" report after the
+faculty SSO rollout. Swapped to `E2FQU7VYHBAXBC`; the two distributions' Lambda origins now
+match. **Any distribution that serves an authenticated build needs this OAC.** As of
+2026-08-21 the remaining five (`EC2SYT1OKGW9Q`, `E3DE2SRSU9JAEG`, `E2KTGN0G56FW71`,
+`E36CNBL620DMGM`, `EYZ4NLNGITY7T`) still carry the always-signing OAC — harmless only while
+their builds send no token, and a latent 401 the moment one does:
+
+```bash
+for D in EC2SYT1OKGW9Q E3DE2SRSU9JAEG E3MLIO4CZFOPEO E38A3666CJ7FVJ; do
+  printf '%-16s ' "$D"
+  aws cloudfront get-distribution-config --id $D     --query "join(' ', DistributionConfig.Origins.Items[?contains(DomainName,'lambda-url')].OriginAccessControlId)" --output text
+done
+```
+
+**Verifying the fix without a real token** (the timing recipe above is unreliable now —
+`JWKS_REFETCH_COOLDOWN_MS` suppresses the refetch on a warm container). Fire ~20 *concurrent*
+requests so some land on cold environments, once with a syntactically valid `Bearer` JWT and
+once with no `Authorization` at all, and compare the tail. A surviving header pays for a JWKS
+fetch on each cold container; a stripped one throws `missing` before any network work. After
+the fix, faculty measured p90 0.266 s / max 0.330 s with a token versus p90 0.144 s /
+max 0.172 s without — and matched lectures (p90 0.266 s / max 0.333 s).
+
 **Verifying without a real token:** send a syntactically valid JWT with an invented `kid`. If
 the header survives, `resolveKey` refetches JWKS and the first call takes ~0.5-0.6 s; a
 stripped header fails at `malformed` before any network work, in ~0.25 s.
