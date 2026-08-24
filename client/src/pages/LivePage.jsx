@@ -513,6 +513,23 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     sameLoadedWeights(p.gptModel?.path, loadedGPTPath) && sameLoadedWeights(p.sovitsModel?.path, loadedSoVITSPath)
   ) || null;
 
+  // A voice with a saved profile is resolved by the backend per request, on
+  // whichever GPU instance serves the call — references included. Waiting for
+  // one instance's status poll to report it loaded is meaningless behind a load
+  // balancer, and never converges once the group holds more than one instance.
+  const selectedVoiceResolvesPerRequest = canEditInstructions
+    && Boolean(selectedVoiceProfileId)
+    && myVoices.some((voice) => (
+      voice.displayName === selectedProfile?.displayName && voice.hasSavedProfile
+    ));
+  // The voice the user is about to hear. Once it is resolved per request the
+  // loaded-model report describes some arbitrary instance rather than this
+  // chat, so naming that voice would be actively wrong; elsewhere the loaded
+  // model is still the honest answer and the label is unchanged.
+  const speakingProfile = selectedVoiceResolvesPerRequest
+    ? (selectedProfile || loadedProfile)
+    : (loadedProfile || selectedProfile);
+
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
   const liveLanguageConfig = getLiveLanguageConfig(liveLanguage);
   const liveFastSettings = useMemo(() => normalizeLiveFastSettings({
@@ -2043,7 +2060,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       speed_factor: speed,
       output_gain_db: liveFastOutputGainDb,
     };
-    const voiceName = loadedProfile?.displayName || selectedProfile?.displayName || '';
+    const voiceName = speakingProfile?.displayName || '';
     const languageLabel = liveLanguageConfig.label;
 
     setTtsError('');
@@ -2847,7 +2864,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         route: 'fast',
         url: URL.createObjectURL(result.blob),
         text,
-        voiceName: loadedProfile?.displayName || selectedProfile?.displayName || '',
+        voiceName: speakingProfile?.displayName || '',
         languageLabel: liveLanguageConfig.label,
       });
       setPronunciationMessage(`Generated Live Fast pronunciation test for ${word}.`);
@@ -3886,15 +3903,6 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedModelLoaded = isSelectedModelLoaded({
     serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
   });
-  // A voice with a saved profile is resolved by the backend per request, on
-  // whichever GPU instance serves the call — references included. Waiting for
-  // one instance's status poll to report it loaded is meaningless behind a load
-  // balancer, and never converges once the group holds more than one instance.
-  const selectedVoiceResolvesPerRequest = canEditInstructions
-    && Boolean(selectedVoiceProfileId)
-    && myVoices.some((voice) => (
-      voice.displayName === selectedProfile?.displayName && voice.hasSavedProfile
-    ));
   const isReady = (selectedModelLoaded && Boolean(liveRefParams))
     || (serverReady && selectedVoiceResolvesPerRequest);
   // Last line of defence against a raw CloudFront/nginx 503/404 page ever rendering
@@ -4283,7 +4291,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <div>
                 <p className="text-sm font-semibold text-slate-800">Input text</p>
                 <p className="mt-1 text-xs text-slate-400">
-                  {loadedProfile?.displayName || 'Selected voice'} · {liveLanguageConfig.label} · {loadedConfigId || 'current config'}
+                  {speakingProfile?.displayName || 'Selected voice'} · {liveLanguageConfig.label} · {loadedConfigId || 'current config'}
                 </p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500">
@@ -5105,7 +5113,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           <div className="mt-4 text-center">
             <p className="text-sm font-medium text-slate-700">{statusText}</p>
             <p className="mt-0.5 text-xs text-slate-400">
-              {loadedProfile?.displayName || '—'} · {liveLanguageConfig.label}
+              {speakingProfile?.displayName || '—'} · {liveLanguageConfig.label}
             </p>
           </div>
         </div>
