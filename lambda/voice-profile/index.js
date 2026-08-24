@@ -4,11 +4,16 @@ import { isSafePathSegment } from '../shared/paths.js';
 import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { buildVoiceProfileId, isNtuEmail, normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
-import { listTrainedVoiceNames } from '../shared/trainedVoices.js';
+import { bestModelsForVoice, listTrainedVoiceNames } from '../shared/trainedVoices.js';
+import {
+  persistSavedProfileReferenceSelection,
+  resolveSavedProfileReferenceSelection,
+} from '../shared/modelSelection.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
 const PROFILE_PREFIX = 'voice-profiles/';
 const MY_PROFILES_PATH = /^\/api\/voice-profile\/mine\/?$/u;
+const ENSURE_PROFILE_PATH = /^\/api\/voice-profile\/ensure\/?$/u;
 const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
 const ACTIVATE_PROFILE_PATH = /^\/api\/voice-profile\/activate\/?$/u;
 const INTERNAL_PROFILE_PATH = /^\/api\/voice-profile\/internal\/([^/]+)\/?$/u;
@@ -225,6 +230,9 @@ export function createHandler({
   readObject = defaultReadObject,
   listProfileObjects = () => listObjects(PROFILE_PREFIX),
   listVoiceNames = listTrainedVoiceNames,
+  findBestModels = bestModelsForVoice,
+  resolveReferences = resolveSavedProfileReferenceSelection,
+  persistProfile = persistSavedProfileReferenceSelection,
   writeObject = uploadBuffer,
   warmReferenceAudio = async (profile) => inferencePost('/ref-audio/warm', {
     ref_audio_path: profile.ref_audio_path,
@@ -309,6 +317,76 @@ export function createHandler({
 
         voices.sort((left, right) => String(left.displayName || '').localeCompare(String(right.displayName || '')));
         return ok({ email: normalizeEmail(email), isAdmin, scope, voices }, {}, event);
+      }
+
+      // Synthesis resolves a voice per request by id, which is the only thing
+      // that works when more than one GPU instance sits behind the load
+      // balancer. That resolution reads voice-profiles/<id>.json, and training
+      // never writes one — so a freshly trained voice needs its record created
+      // before it can be spoken. This does exactly that, once, on demand.
+      if (method === 'POST' && ENSURE_PROFILE_PATH.test(routePath)) {
+        if (!authGuard) return err(503, 'Voice profile authentication is not configured', event);
+        let identity;
+        try {
+          identity = await authGuard.authorize(event);
+        } catch {
+          return err(401, 'Sign in to set up your voice', event);
+        }
+
+        let body;
+        try {
+          body = parseJsonBody(event);
+        } catch {
+          return err(400, 'Invalid JSON body', event);
+        }
+
+        const voiceName = String(body.voiceName || '').trim();
+        if (!voiceName || !isSafePathSegment(voiceName)) {
+          return err(400, 'voiceName must be a safe path segment', event);
+        }
+        // A lecturer may only ever create a record for a voice they own.
+        if (!ownsVoiceName(identity?.email, voiceName)) {
+          return err(403, `${normalizeEmail(identity?.email)} does not own a voice called ${voiceName}`, event);
+        }
+
+        const voiceProfileId = buildVoiceProfileId(voiceName);
+        const existing = await parseStoredProfile(readObject, getProfileStorageKey(voiceProfileId));
+        if (existing) {
+          return ok({ voiceProfileId, displayName: existing.displayName, created: false }, {}, event);
+        }
+
+        const models = await findBestModels(voiceName);
+        if (!models) {
+          return err(404, `${voiceName} has no trained models to build a voice from`, event);
+        }
+
+        const draft = {
+          voiceProfileId,
+          displayName: voiceName,
+          ownerEmail: normalizeEmail(identity?.email),
+          gptKey: models.gptKey,
+          sovitsKey: models.sovitsKey,
+          prompt_lang: 'en',
+          text_lang: 'en',
+          preferredRoute: 'sentence',
+          aux_ref_audio_paths: [],
+          defaults: {},
+        };
+
+        // Reference clips are chosen from the run's own training audio. Without
+        // them there is nothing to speak from, so this is a hard failure rather
+        // than a half-built record.
+        const selection = await resolveReferences(draft);
+        if (!selection?.ref_audio_path) {
+          return err(
+            409,
+            `${voiceName} has no usable reference audio yet. Open it in the TTS page and pick a reference clip.`,
+            event,
+          );
+        }
+
+        await persistProfile({ ...draft, ...selection }, selection);
+        return ok({ voiceProfileId, displayName: voiceName, created: true }, {}, event);
       }
 
       if (method === 'GET' && internalMatch) {

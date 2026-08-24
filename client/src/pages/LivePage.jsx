@@ -8,6 +8,7 @@ import {
   activateVoiceProfile,
   deleteVoiceProfileConfig,
   getFullActiveVoiceProfile,
+  ensureVoiceProfile,
   getMyVoiceProfiles,
   getVoiceProfileConfigs,
   saveVoiceProfileConfig,
@@ -297,6 +298,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [myVoicesLoading, setMyVoicesLoading] = useState(false);
   const [myVoicesError, setMyVoicesError] = useState('');
   const [myVoicesReloadToken, setMyVoicesReloadToken] = useState(0);
+  const ensuredVoiceRef = useRef('');
   // Which assistant this panel is editing. Each category is stored separately,
   // so switching here swaps the whole panel — instructions, documents and the
   // browser-local draft of both.
@@ -2321,7 +2323,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   // The panel speaks in saved-profile terms; the page selects by the key derived
   // from the model filenames, which is the display name normalised.
-  function handleSelectMyVoice(voice) {
+  async function handleSelectMyVoice(voice) {
     const key = normalizeVoiceKey(voice?.displayName);
     const match = availableProfiles.find((profile) => profile.key === key);
     if (!match) {
@@ -2330,6 +2332,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
     setMyVoicesError('');
     handleVoiceSelection(match.key);
+    // Synthesis resolves the voice per request by id, which needs a saved
+    // profile record; training never writes one. Create it on first use rather
+    // than making the lecturer visit the TTS page. Selection has already
+    // happened, so a failure here degrades to the old pre-loaded path.
+    if (voice?.hasSavedProfile === false) {
+      try {
+        await ensureVoiceProfile(voice.displayName);
+        setMyVoices((voices) => voices.map((item) => (
+          item.voiceProfileId === voice.voiceProfileId ? { ...item, hasSavedProfile: true } : item
+        )));
+      } catch (err) {
+        setMyVoicesError(
+          err?.response?.data?.error || err?.message || `Could not finish setting up ${voice.displayName}.`,
+        );
+      }
+    }
   }
 
   function handleVoiceSelection(value) {
@@ -3393,6 +3411,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (ownMatch) {
         setSelectedPersonKey(ownMatch.key);
         autoLoadAttemptKeyRef.current = '';
+        // The default voice needs the same saved record as a hand-picked one.
+        if (ownVoice.hasSavedProfile === false && ensuredVoiceRef.current !== ownVoice.displayName) {
+          ensuredVoiceRef.current = ownVoice.displayName;
+          ensureVoiceProfile(ownVoice.displayName)
+            .then(() => setMyVoices((voices) => voices.map((item) => (
+              item.voiceProfileId === ownVoice.voiceProfileId ? { ...item, hasSavedProfile: true } : item
+            ))))
+            .catch(() => { /* selection still works through the pre-loaded path */ });
+        }
         return;
       }
     }

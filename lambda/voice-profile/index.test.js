@@ -715,3 +715,131 @@ test('an unauthenticated caller is refused before any storage is read', async ()
   assert.equal(response.statusCode, 401);
   assert.equal(listed, false);
 });
+
+// --- POST /api/voice-profile/ensure ----------------------------------------
+
+const SELECTION = {
+  ref_audio_path: 'training/datasets/cs-nathanael-ng/denoised/clip.wav',
+  aux_ref_audio_paths: ['training/datasets/cs-nathanael-ng/denoised/aux.wav'],
+  prompt_text: 'a lot of technology.',
+};
+
+function ensureHandler(identity, overrides = {}) {
+  return createHandler({
+    authGuard: { authorize: async () => identity },
+    readObject: async () => null,
+    findBestModels: async () => ({
+      gptKey: 'models/user-models/gpt/cs-nathanael-ng-e25.ckpt',
+      sovitsKey: 'models/user-models/sovits/cs-nathanael-ng_e20_s2220.pth',
+    }),
+    resolveReferences: async () => SELECTION,
+    persistProfile: async () => true,
+    ...overrides,
+  });
+}
+
+function ensureEvent(body) {
+  return {
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/voice-profile/ensure',
+    body: JSON.stringify(body),
+  };
+}
+
+const NAT = { email: 'CS-NATHANAEL.NG@assoc.main.ntu.edu.sg', oid: 'oid-nat' };
+
+test('ensure builds a saved profile for a trained voice that has none', async () => {
+  const written = [];
+  const handler = ensureHandler(NAT, {
+    persistProfile: async (profile, selection) => { written.push({ profile, selection }); return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    voiceProfileId: 'cs-nathanael-ng-v1',
+    displayName: 'cs-nathanael-ng',
+    created: true,
+  });
+
+  assert.equal(written.length, 1);
+  const { profile } = written[0];
+  assert.equal(profile.voiceProfileId, 'cs-nathanael-ng-v1');
+  assert.equal(profile.ownerEmail, 'cs-nathanael.ng@assoc.main.ntu.edu.sg', 'the owner is recorded');
+  assert.equal(profile.gptKey, 'models/user-models/gpt/cs-nathanael-ng-e25.ckpt');
+  assert.equal(profile.ref_audio_path, SELECTION.ref_audio_path);
+});
+
+test('ensure is idempotent — an existing profile is returned, not rebuilt', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, {
+    readObject: async () => Buffer.from(JSON.stringify({
+      voiceProfileId: 'cs-nathanael-ng-v1', displayName: 'cs-nathanael-ng',
+    }), 'utf-8'),
+    persistProfile: async () => { persisted += 1; return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).created, false);
+  assert.equal(persisted, 0, 'an existing profile must not be overwritten');
+});
+
+test('ensure refuses a voice the caller does not own', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, { persistProfile: async () => { persisted += 1; return true; } });
+
+  for (const voiceName of ['DeanVoice', 'alice-tan', 'cs-nathanael-ng2']) {
+    const response = await handler(ensureEvent({ voiceName }));
+    assert.equal(response.statusCode, 403, `${voiceName} must be refused`);
+  }
+  assert.equal(persisted, 0);
+});
+
+test('ensure refuses a numbered copy the naming rule cannot produce', async () => {
+  const handler = ensureHandler(NAT);
+  // copies start at _2; _1 is never a name this email can own
+  assert.equal((await handler(ensureEvent({ voiceName: 'cs-nathanael-ng_1' }))).statusCode, 403);
+  assert.equal((await handler(ensureEvent({ voiceName: 'cs-nathanael-ng_2' }))).statusCode, 200);
+});
+
+test('ensure rejects an unsafe voice name before doing anything', async () => {
+  const handler = ensureHandler(NAT);
+  for (const voiceName of ['', '../escape', 'has space']) {
+    const response = await handler(ensureEvent({ voiceName }));
+    assert.equal(response.statusCode, 400, `${voiceName} must be rejected`);
+  }
+});
+
+test('ensure reports a voice with no trained models rather than writing a stub', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, {
+    findBestModels: async () => null,
+    persistProfile: async () => { persisted += 1; return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 404);
+  assert.equal(persisted, 0);
+});
+
+test('ensure refuses to write a profile with no reference audio', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, {
+    resolveReferences: async () => ({}),
+    persistProfile: async () => { persisted += 1; return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 409);
+  assert.match(JSON.parse(response.body).error, /reference clip/u);
+  assert.equal(persisted, 0, 'a voice with nothing to speak from must not be half-created');
+});
+
+test('ensure refuses an unauthenticated caller', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('no token'); } },
+    persistProfile: async () => { throw new Error('must not be reached'); },
+  });
+  assert.equal((await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }))).statusCode, 401);
+});

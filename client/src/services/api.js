@@ -385,6 +385,13 @@ export function getMyVoiceProfiles(scope = 'mine') {
   return api.get('/voice-profile/mine', { params: scope === 'all' ? { scope: 'all' } : {} });
 }
 
+// Creates the saved profile record for a trained voice that has none. Synthesis
+// resolves a voice per request by id and reads that record, so without it a
+// freshly trained voice cannot be spoken at all.
+export function ensureVoiceProfile(voiceName) {
+  return api.post('/voice-profile/ensure', { voiceName });
+}
+
 export function getVoiceProfileConfigs(voiceProfileId) {
   return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
 }
