@@ -43,10 +43,10 @@ Last updated: 2026-08-24
 ## Current Staging State
 
 - Model-aware coordination is live on staging: matching free slot -> demand-idle reassignment ->
-  per-model scale-out, with two admitted slots per GPU. Fresh DeanV2 v33 boot and routed WAV
-  passed; clean v34 fallback boot passed without repair and v34 is ASG/default at desired 1. The
-  application Lambda routing flag and lectures GI capacity-starting UI are deployed. Direct
-  coordinator WAV and unauthenticated 401 canaries passed; authenticated browser audio remains.
+  per-model scale-out, with two admitted slots per GPU. Live tests passed resident routing,
+  Nathanael->Dean idle reassignment, pending DeanV2 scale-out/claim/deep warm, and exact 2/2
+  saturation with no hidden queue; the third request truthfully returned capacity-starting and
+  raised desired 1->2. Authenticated browser audio remains unverified.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
@@ -74,13 +74,12 @@ Last updated: 2026-08-24
   and are healthy with DeanVoice plus both verifiers active. AMI `ami-09603b8ca5f8a228b` is
   available and launch template v31 is latest/default; a fresh v31 node completed production-shaped
   deep warm before becoming healthy. Authenticated first/second-turn timing remains pending.
-- Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 remains
-  from the earlier baseline action. The over-aggressive 1->5 policy is corrected live:
-  baseline and fleet alarms require 3/3 one-minute periods at 70%, baseline goes to two,
-  and later steps add one. This prevents a short two-slot single-user burst from launching
-  four extra GPUs, but it is not yet model-aware autoscaling.
-  The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
-  schedule is 0-24. Lambda cannot directly manage ASG capacity under its current role.
+- Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192. Last observed after the
+  saturation test: desired 2, one ready DeanV2 worker and one newly starting DeanV2 claim.
+  Testing exposed that legacy scale alarms still use bypassed Target Optimizer metrics. The
+  provisioner now locally disables those global scale-out actions and uses coordinator Lambda
+  invocations for 15-minute scale-in, but expired `VCS_AWS_*` blocked deployment/readback.
+  The 07:00/19:00 Singapore actions preserve min 1 without forcing desired.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
 - Full chunking is aligned at 240 characters. Full reuses warm medium ASR with strict beam/tail
   gates and no longer regenerates five times when ASR itself is unavailable. Staging's Dean

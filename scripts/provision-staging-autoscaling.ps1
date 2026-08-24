@@ -531,14 +531,13 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-occupancy-70pct-1m `
-    --alarm-description "Add $ScaleOutAddCapacity GPUs at or above $($cfg.baselineScaleCapacity) healthy GPUs while occupied synthesis slots are at least $($cfg.scaleOutOccupancyPercent)%." `
+    --alarm-description "Telemetry only: legacy Target Optimizer occupancy at or above $($cfg.scaleOutOccupancyPercent)%. Model-aware scale-out is owned by the coordinator." `
     --metrics "file://$occupancyQueriesPath" `
     --evaluation-periods $cfg.scaleOutEvaluationPeriods `
     --datapoints-to-alarm $cfg.scaleOutEvaluationPeriods `
     --threshold $cfg.scaleOutOccupancyPercent `
     --comparison-operator GreaterThanOrEqualToThreshold `
-    --treat-missing-data notBreaching `
-    --alarm-actions $scaleOutPolicy.PolicyARN
+    --treat-missing-data notBreaching --no-actions-enabled
 
   $baselineOccupancyQueries = @(
     @{
@@ -591,27 +590,26 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-baseline-occupancy-70pct-1m `
-    --alarm-description "Set capacity to $($cfg.baselineScaleCapacity) below that healthy count when occupied synthesis slots reach $($cfg.scaleOutOccupancyPercent)%." `
+    --alarm-description "Telemetry only: legacy baseline Target Optimizer occupancy at or above $($cfg.scaleOutOccupancyPercent)%. Model-aware scale-out is owned by the coordinator." `
     --metrics "file://$baselineOccupancyQueriesPath" `
     --evaluation-periods $cfg.scaleOutEvaluationPeriods `
     --datapoints-to-alarm $cfg.scaleOutEvaluationPeriods `
     --threshold $cfg.scaleOutOccupancyPercent `
     --comparison-operator GreaterThanOrEqualToThreshold `
-    --treat-missing-data notBreaching `
-    --alarm-actions $baselineScalePolicy.PolicyARN
+    --treat-missing-data notBreaching --no-actions-enabled
 
-  # Target Optimizer emits no request-count datapoint during a completely quiet
-  # minute. Treating missing data as breaching changes the alarm state, but gives
-  # Step Scaling no numeric breach value and therefore performs no adjustment.
-  # Fill missing minutes with an explicit zero so the -1 policy can execute.
+  # Application synthesis now invokes the model coordinator directly, bypassing
+  # Target Optimizer. Use the coordinator's native Lambda invocation metric so
+  # real requests reset the idle window. Fill missing minutes with an explicit
+  # zero so the -1 policy can execute after a genuinely quiet period.
   $idleRequestQueries = @(
     @{
       Id = 'requests'
       MetricStat = @{
         Metric = @{
-          Namespace = 'AWS/ApplicationELB'
-          MetricName = 'TargetControlRequestCount'
-          Dimensions = @(@{ Name = 'LoadBalancer'; Value = $albResource })
+          Namespace = 'AWS/Lambda'
+          MetricName = 'Invocations'
+          Dimensions = @(@{ Name = 'FunctionName'; Value = $ModelCoordinatorFunctionName })
         }
         Period = 60
         Stat = 'Sum'
@@ -621,7 +619,7 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
     @{
       Id = 'filledrequests'
       Expression = 'FILL(requests,0)'
-      Label = 'Target Optimizer requests (missing=0)'
+      Label = 'Model coordinator invocations (missing=0)'
       ReturnData = $true
     }
   ) | ConvertTo-Json -Depth 8 -Compress
@@ -633,7 +631,7 @@ if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   )
   Invoke-AwsJson cloudwatch put-metric-alarm --region $cfg.region `
     --alarm-name vcs-staging-inference-no-traffic-15m `
-    --alarm-description 'Scale in one instance after fifteen consecutive minutes with no Target Optimizer requests.' `
+    --alarm-description 'Scale in one instance after fifteen consecutive minutes with no model coordinator invocations.' `
     --metrics "file://$idleRequestQueriesPath" `
     --evaluation-periods $cfg.scaleInIdleMinutes `
     --datapoints-to-alarm $cfg.scaleInIdleMinutes `

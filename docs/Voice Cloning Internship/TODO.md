@@ -1,8 +1,9 @@
 # Active TODO
 
-- [ ] In an authenticated lectures browser, request DeanV2 through the deployed application
-  Lambda and confirm audio plus the model-starting UI. Then live-test five-minute idle
-  reassignment and two-slot saturation; direct coordinator WAV, fresh boot, and unit evidence pass.
+- [ ] Refresh user-level `VCS_AWS_*`, deploy/read back the coordinator-metric scale-alarm fix,
+  wait for a genuine 15-minute idle scale-in to desired 1, then request DeanV2 in an authenticated
+  lectures browser and confirm audio plus the model-starting UI. Direct live tests already pass
+  idle reassignment, fresh pending-model boot, exact 2/2 saturation, and third-request scale-out.
 - [ ] Browser-time first and second authenticated staging GI/Live Fast replies after the
   canonical-cache rollout. Worker/fresh-boot evidence proves the reload mismatch is removed,
   but public end-to-end timing is still needed to quantify OpenAI/WebSocket overhead.

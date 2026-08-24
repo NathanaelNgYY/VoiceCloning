@@ -2,6 +2,18 @@
 
 ## 2026-08-24
 
+- Live-tested the staging coordinator flow. A demand-idle Nathanael GPU reassigned to Dean and
+  returned RIFF, a second Dean request reused the resident model, and a no-spare DeanV2 request
+  returned `MODEL_CAPACITY_STARTING`, raised desired 1->2, and created an exact pending claim.
+  Fresh launch-template v34 instance `i-03c1822c8745e271e` claimed DeanV2 without repair, loaded
+  the weight pair in 260s, completed deep warm, registered READY with two slots, and returned a
+  436,524-byte routed WAV in 9.57s. A saturation canary observed 2 active/0 queued/max 2; both
+  admitted requests returned RIFF and the third was not queued, instead starting another GPU.
+  The test exposed one remaining alarm mismatch: scale alarms still observed the bypassed Target
+  Optimizer path. `scripts/provision-staging-autoscaling.ps1` now makes legacy ALB scale-out alarms
+  telemetry-only and bases 15-minute scale-in on coordinator Lambda invocations. Local checks:
+  coordinator 7/7, worker 18/18, Lambda 18/18, client 15/15, GI build, PowerShell syntax, and
+  provisioner dry-run. Deployment/readback and final scale-in are blocked by expired `VCS_AWS_*`.
 - Completed the staging-only model-aware coordinator rollout. Table
   `vcs-staging-model-workers`, coordinator Lambda, security groups, AMI
   `ami-0591726e79645b0cc`, launch-template v34, ASG, and new instances carry the required
