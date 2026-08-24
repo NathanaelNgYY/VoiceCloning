@@ -2,6 +2,26 @@
 
 ## 2026-08-24
 
+- Implemented but did not deploy the staging model-coordinator slice. A dedicated Lambda
+  chooses a matching two-slot worker, otherwise reassigns only a zero-active/zero-queued
+  worker after both worker activity and its resident model's demand have been idle for the
+  configured interval, otherwise increases ASG desired capacity by one. Workers expose
+  authenticated status/assignment routes, reject a hidden third coordinator request, and
+  deep-warm an assigned weight pair before readiness. A new instance atomically claims the
+  oldest pending model assignment before boot warm and falls back to the active Dean profile
+  only when no assignment is pending or the coordinator is unavailable. The lecture client
+  preserves a truthful model-starting message. Tests: coordinator decisions 4/4, focused
+  Lambda 18/18, focused worker 16/16, client 89/89, staging GI build, both Lambda packages,
+  and syntax checks; the new DynamoDB claim path is packaged but not integration-tested.
+  Deployment is blocked because the assumed role remains denied `iam:PutRolePolicy` on
+  `Liu_Teng_Yu_Intern2026-LambdaExecutionRole`; no coordinator cloud resources were created.
+- Corrected staging's over-aggressive low-capacity autoscaling. The baseline alarm now
+  requires three consecutive one-minute periods at 70% occupancy and scales to two
+  GPUs instead of five; later occupancy steps also require 3/3 periods and add one GPU
+  instead of ten. Live policy/alarm readback passed without changing desired capacity.
+  Repo config parsing and `git diff --check` passed. Model-aware logical pools remain
+  unimplemented: Lambda is outside the VPC, its role cannot manage the ASG, and the
+  single Target Optimizer target group is round-robin/model-blind.
 - Fixed the staging first-request model reload caused by two cache identities for the same
   S3 weight key. Added one key-derived hashed cache resolver shared by `/models/download`
   and request-time voice enforcement; deep route warm now also carries the complete

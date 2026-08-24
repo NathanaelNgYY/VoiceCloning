@@ -92,7 +92,7 @@ export class SynthesisScheduler {
     return this.active === 0 || this.activeModelKey === modelKey;
   }
 
-  acquire({ modelKey, signal, priority = false, cancelKey = '' } = {}) {
+  acquire({ modelKey, signal, priority = false, cancelKey = '', allowQueue = true } = {}) {
     const normalizedKey = normalizedModelKey(modelKey);
     const replyKey = normalizedCancelKey(cancelKey);
     if (signal?.aborted) {
@@ -108,6 +108,13 @@ export class SynthesisScheduler {
     // a queued request just because they happen to match the currently active voice.
     if (this.queue.length === 0 && this.canStart(normalizedKey)) {
       return Promise.resolve(this.startLease(normalizedKey, this.now()));
+    }
+    if (!allowQueue) {
+      return Promise.reject(new SynthesisQueueError(
+        503,
+        'This GPU has no free synthesis slot.',
+        'NO_FREE_SLOT',
+      ));
     }
     if (this.queue.length >= this.maxQueueDepth) {
       return Promise.reject(new SynthesisQueueError(

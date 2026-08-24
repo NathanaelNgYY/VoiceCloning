@@ -5,6 +5,7 @@ import inferenceRoutes, { handleLiveTtsRequest } from './routes/inference.js';
 import modelsRoutes from './routes/models.js';
 import artifactRoutes from './routes/artifacts.js';
 import activityRoutes from './routes/activity.js';
+import coordinatorRoutes from './routes/coordinator.js';
 import { inferenceServer } from './services/inferenceServer.js';
 import { transcriptionVerifier } from './services/transcriptionVerifier.js';
 import { speakerSimilarity } from './services/speakerSimilarity.js';
@@ -57,6 +58,7 @@ app.use('/', inferenceRoutes);
 app.use('/', modelsRoutes);
 app.use('/', artifactRoutes);
 app.use('/', activityRoutes);
+app.use('/', coordinatorRoutes);
 
 const server = app.listen(WORKER_PORT, WORKER_HOST, () => {
   console.log(`[gpu-inference-worker] Running on http://${WORKER_HOST}:${WORKER_PORT}`);

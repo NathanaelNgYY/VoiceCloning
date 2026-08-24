@@ -404,12 +404,22 @@ export async function synthesize(params) {
 
   if (res.status !== 200) {
     const text = await res.data.text();
+    let payload = null;
+    try { payload = JSON.parse(text); } catch { /* non-JSON proxy response */ }
+    if (payload?.code === 'MODEL_CAPACITY_STARTING' || payload?.code === 'MODEL_CAPACITY_LIMIT') {
+      const error = responseError(payload.error || 'This lecture voice is preparing.', res.status);
+      error.code = payload.code;
+      error.retryAfterSeconds = Number(payload.retryAfterSeconds) || 0;
+      error.scaleStarted = payload.scaleStarted === true;
+      error.voiceProfileId = payload.voiceProfileId || '';
+      throw error;
+    }
     if (isGpuOfflineResponse(res.status, text)) {
       throw gpuOfflineError(res.status);
     }
     let message;
     try {
-      message = JSON.parse(text).error;
+      message = payload?.error || JSON.parse(text).error;
     } catch {
       message = text;
     }

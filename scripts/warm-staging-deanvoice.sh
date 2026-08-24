@@ -48,37 +48,71 @@ for _ in $(seq 1 60); do
 done
 finish_phase "wait_for_worker"
 
-active_profile="$(
-  aws s3 cp \
-    "s3://${S3_BUCKET}/${s3_prefix}voice-profiles/active.json" - \
-    --region "${S3_REGION}"
-)"
-voice_profile_id="$(jq -er '.voiceProfileId | select(type == "string" and length > 0)' <<<"${active_profile}")"
-gpt_key="$(jq -er '(.gptKey // .gptPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
-sovits_key="$(jq -er '(.sovitsKey // .sovitsPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
-warm_body="$(jq -c \
-  --arg voice_profile_id "${voice_profile_id}" \
-  --arg gpt_ref "${gpt_key}" \
-  --arg sovits_ref "${sovits_key}" '
-  {
-    voiceProfileId,
-    ref_audio_path,
-    aux_ref_audio_paths: (.aux_ref_audio_paths // []),
-    prompt_text: (.prompt_text // ""),
-    prompt_lang: (.prompt_lang // "en"),
-    text_lang: (.text_lang // .prompt_lang // "en"),
-    warm_text: "The staging voice is ready.",
-    voice_model: {
-      voiceProfileId: $voice_profile_id,
-      gptRef: $gpt_ref,
-      sovitsRef: $sovits_ref,
-      revision: (.updatedAt // .revision // "")
-    }
-  }
-  | select(.ref_audio_path | type == "string" and length > 0)
-' <<<"${active_profile}")"
+warm_body=""
+coordinator_function="${MODEL_COORDINATOR_FUNCTION_NAME:-}"
+if [[ -n "${coordinator_function}" ]]; then
+  imds_token="$(curl --fail --silent --show-error --max-time 2 \
+    --request PUT \
+    --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    http://169.254.169.254/latest/api/token 2>/dev/null || true)"
+  instance_id=""
+  if [[ -n "${imds_token}" ]]; then
+    instance_id="$(curl --fail --silent --show-error --max-time 2 \
+      --header "X-aws-ec2-metadata-token: ${imds_token}" \
+      http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || true)"
+  fi
+  claim_path="/tmp/vcs-model-coordinator-claim.json"
+  if [[ -n "${instance_id}" ]] && aws lambda invoke \
+    --function-name "${coordinator_function}" \
+    --region "${MODEL_COORDINATOR_REGION:-${S3_REGION}}" \
+    --cli-binary-format raw-in-base64-out \
+    --payload "$(jq -nc --arg instance_id "${instance_id}" '{action:"claim", instanceId:$instance_id}')" \
+    "${claim_path}" >/dev/null; then
+    warm_body="$(jq -c '.assignment.synthesisBody // empty' "${claim_path}")"
+  else
+    echo 'Coordinator boot claim was unavailable; using the active staging profile.' >&2
+  fi
+  rm -f "${claim_path}"
+fi
+
 if [[ -z "${warm_body}" ]]; then
-  echo "Active voice profile ${voice_profile_id} has no reference audio." >&2
+  active_profile="$(
+    aws s3 cp \
+      "s3://${S3_BUCKET}/${s3_prefix}voice-profiles/active.json" - \
+      --region "${S3_REGION}"
+  )"
+  voice_profile_id="$(jq -er '.voiceProfileId | select(type == "string" and length > 0)' <<<"${active_profile}")"
+  gpt_key="$(jq -er '(.gptKey // .gptPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
+  sovits_key="$(jq -er '(.sovitsKey // .sovitsPath) | select(type == "string" and length > 0)' <<<"${active_profile}")"
+  warm_body="$(jq -c \
+    --arg voice_profile_id "${voice_profile_id}" \
+    --arg gpt_ref "${gpt_key}" \
+    --arg sovits_ref "${sovits_key}" '
+    {
+      voiceProfileId,
+      ref_audio_path,
+      aux_ref_audio_paths: (.aux_ref_audio_paths // []),
+      prompt_text: (.prompt_text // ""),
+      prompt_lang: (.prompt_lang // "en"),
+      text_lang: (.text_lang // .prompt_lang // "en"),
+      warm_text: "The staging voice is ready.",
+      voice_model: {
+        voiceProfileId: $voice_profile_id,
+        gptRef: $gpt_ref,
+        sovitsRef: $sovits_ref,
+        revision: (.updatedAt // .revision // "")
+      }
+    }
+    | select(.ref_audio_path | type == "string" and length > 0)
+  ' <<<"${active_profile}")"
+else
+  voice_profile_id="$(jq -er '(.voice_model.voiceProfileId // .voiceProfileId) | select(type == "string" and length > 0)' <<<"${warm_body}")"
+  gpt_key="$(jq -er '.voice_model.gptRef | select(type == "string" and length > 0)' <<<"${warm_body}")"
+  sovits_key="$(jq -er '.voice_model.sovitsRef | select(type == "string" and length > 0)' <<<"${warm_body}")"
+  echo "Claimed coordinator boot assignment for ${voice_profile_id}."
+fi
+if [[ -z "${warm_body}" ]]; then
+  echo "Voice profile ${voice_profile_id} has no reference audio." >&2
   exit 1
 fi
 

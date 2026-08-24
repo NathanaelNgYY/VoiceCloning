@@ -1,0 +1,63 @@
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { inferencePost, inferencePostBinary } from './gpuWorker.js';
+
+const client = new LambdaClient({ region: process.env.AWS_REGION || 'ap-northeast-2' });
+
+function functionName() {
+  return String(process.env.MODEL_COORDINATOR_FUNCTION_NAME || '').trim();
+}
+
+async function invokeCoordinator(payload, { lambdaClient = client } = {}) {
+  const name = functionName();
+  if (!name) return null;
+  const response = await lambdaClient.send(new InvokeCommand({
+    FunctionName: name,
+    InvocationType: 'RequestResponse',
+    Payload: Buffer.from(JSON.stringify(payload)),
+  }));
+  const raw = Buffer.from(response.Payload || []).toString('utf8');
+  let result;
+  try { result = raw ? JSON.parse(raw) : {}; } catch { result = { statusCode: 500, error: raw || 'Invalid coordinator response' }; }
+  if (response.FunctionError) {
+    const error = new Error(result.errorMessage || result.error || 'Model coordinator failed');
+    error.statusCode = 503;
+    throw error;
+  }
+  return result;
+}
+
+function throwCoordinatorError(result) {
+  const error = new Error(result.error || `Model coordinator request failed (${result.statusCode || 500})`);
+  error.statusCode = Number(result.statusCode) || 500;
+  error.code = result.code;
+  error.retryAfterSeconds = result.retryAfterSeconds;
+  error.scaleStarted = result.scaleStarted;
+  error.voiceProfileId = result.voiceProfileId;
+  throw error;
+}
+
+export async function coordinatedInferencePostBinary(routePath, body = {}, headers = {}) {
+  if (!functionName()) return inferencePostBinary(routePath, body, headers);
+  const result = await invokeCoordinator({ action: 'synthesize', routePath, body, headers });
+  if (!result || Number(result.statusCode) >= 400) throwCoordinatorError(result || {});
+  return {
+    buffer: Buffer.from(result.bodyBase64 || '', 'base64'),
+    contentType: result.contentType || 'application/octet-stream',
+    queueWaitMs: result.queueWaitMs,
+    capacityRetryCount: 0,
+    capacityRetrySleepMs: 0,
+    workerId: result.workerId,
+  };
+}
+
+export async function coordinatedInferencePost(routePath, body = {}, headers = {}) {
+  if (!functionName() || routePath !== '/live/cancel') return inferencePost(routePath, body, headers);
+  const result = await invokeCoordinator({ action: 'cancel', replyToken: body.replyToken });
+  if (!result || Number(result.statusCode) >= 400) throwCoordinatorError(result || {});
+  return result;
+}
+
+export async function getCoordinatedModelStatus(body = {}) {
+  if (!functionName()) return null;
+  return invokeCoordinator({ action: 'status', body });
+}

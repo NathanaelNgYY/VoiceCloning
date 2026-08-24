@@ -19,6 +19,8 @@ param(
   [int]$SynthesisSlotsPerInstance = $(if ($env:VCS_STAGING_SYNTHESIS_SLOTS_PER_INSTANCE) {
     [int]$env:VCS_STAGING_SYNTHESIS_SLOTS_PER_INSTANCE
   } else { -1 }),
+  [string]$ModelCoordinatorFunctionName = $env:VCS_STAGING_MODEL_COORDINATOR_FUNCTION_NAME,
+  [string]$ModelCoordinatorAuthToken = $env:VCS_STAGING_MODEL_COORDINATOR_AUTH_TOKEN,
   [string]$PrimeAuthSecret = $env:VCS_STAGING_PRIME_SECRET,
   [switch]$Apply,
   [switch]$SwitchListener
@@ -95,6 +97,16 @@ if ([int]$cfg.baselineScaleCapacity -lt 2 -or
 if ($SynthesisSlotsPerInstance -lt 1 -or
   $SynthesisSlotsPerInstance -gt 10) {
   throw 'SynthesisSlotsPerInstance must be from 1 to 10.'
+}
+if ([bool]$ModelCoordinatorFunctionName -xor [bool]$ModelCoordinatorAuthToken) {
+  throw 'ModelCoordinatorFunctionName and ModelCoordinatorAuthToken must be provided together.'
+}
+if ($ModelCoordinatorFunctionName -and
+  $ModelCoordinatorFunctionName -notmatch '^Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging-') {
+  throw 'The model coordinator must use the approved staging Lambda prefix.'
+}
+if ($ModelCoordinatorAuthToken -and $ModelCoordinatorAuthToken -notmatch '^[0-9a-f]{64}$') {
+  throw 'ModelCoordinatorAuthToken must be a 64-character lowercase hexadecimal token.'
 }
 if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeUrl) -or
   [string]$cfg.publicPrimeUrl -notmatch '^https://') {
@@ -176,6 +188,9 @@ write_files:
     content: |
       [Service]
       ExecStartPost=/home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh
+      Environment=MODEL_COORDINATOR_FUNCTION_NAME=__MODEL_COORDINATOR_FUNCTION_NAME__
+      Environment=MODEL_COORDINATOR_REGION=__MODEL_COORDINATOR_REGION__
+      Environment=MODEL_COORDINATOR_AUTH_TOKEN=__MODEL_COORDINATOR_AUTH_TOKEN__
       TimeoutStartSec=900
   - path: /usr/local/sbin/vcs-prime-public-route.sh
     owner: root:root
@@ -258,6 +273,15 @@ $userData = $userData.Replace('__PUBLIC_PRIME_URL__', [string]$cfg.publicPrimeUr
 $userData = $userData.Replace('__PUBLIC_PRIME_BODY_B64__', $publicPrimeBodyB64)
 $userData = $userData.Replace('__PUBLIC_PRIME_AUTH_B64__', $publicPrimeAuthB64)
 $userData = $userData.Replace(
+  '__MODEL_COORDINATOR_FUNCTION_NAME__',
+  [string]$ModelCoordinatorFunctionName
+)
+$userData = $userData.Replace('__MODEL_COORDINATOR_REGION__', [string]$cfg.region)
+$userData = $userData.Replace(
+  '__MODEL_COORDINATOR_AUTH_TOKEN__',
+  [string]$ModelCoordinatorAuthToken
+)
+$userData = $userData.Replace(
   '__PUBLIC_PRIME_DELAY_SECONDS__',
   [string][int]$cfg.publicPrimeDelaySeconds
 )
@@ -284,7 +308,8 @@ if (-not $tg) {
     --health-check-port ([string]$cfg.targetDataPort) --health-check-path /healthz `
     --health-check-interval-seconds 10 --healthy-threshold-count 2 `
     --unhealthy-threshold-count 2 `
-    --tags "Key=Environment,Value=staging" "Key=ManagedBy,Value=VoiceCloningRepo"
+    --tags "Key=CreatorId,Value=INTERNS2026" "Key=Project,Value=Interns2026" `
+      "Key=Environment,Value=staging" "Key=ManagedBy,Value=VoiceCloningRepo"
 }
 $targetGroupArn = if ($tg) {
   $tg.TargetGroups[0].TargetGroupArn
@@ -311,6 +336,8 @@ $launchData = @{
   TagSpecifications = @(
     @{ ResourceType = 'instance'; Tags = @(
       @{ Key = 'Name'; Value = 'voice-gpu-staging-asg' },
+      @{ Key = 'CreatorId'; Value = 'INTERNS2026' },
+      @{ Key = 'Project'; Value = 'Interns2026' },
       @{ Key = 'Environment'; Value = 'staging' },
       @{ Key = 'ManagedBy'; Value = 'VoiceCloningRepo' }
     ) }
@@ -330,7 +357,7 @@ if (-not $lt) {
     --launch-template-name $cfg.launchTemplateName `
     --version-description $AmiId `
     --launch-template-data "file://$launchDataPath" `
-    --tag-specifications "ResourceType=launch-template,Tags=[{Key=Environment,Value=staging},{Key=ManagedBy,Value=VoiceCloningRepo}]"
+    --tag-specifications "ResourceType=launch-template,Tags=[{Key=CreatorId,Value=INTERNS2026},{Key=Project,Value=Interns2026},{Key=Environment,Value=staging},{Key=ManagedBy,Value=VoiceCloningRepo}]"
 } elseif ($Apply) {
   $version = Invoke-AwsJson ec2 create-launch-template-version --region $cfg.region `
     --launch-template-name $cfg.launchTemplateName `
@@ -414,7 +441,7 @@ if ($Apply -and $targetGroupArn) {
 if ($albResource -and $targetGroupResource -and $listenerRoutesToTarget) {
   $baselineScalePolicy = Invoke-AwsJson autoscaling put-scaling-policy --region $cfg.region `
     --auto-scaling-group-name $cfg.autoScalingGroupName `
-    --policy-name vcs-staging-inference-baseline-to-five `
+    --policy-name vcs-staging-inference-baseline-to-two `
     --policy-type StepScaling `
     --adjustment-type ExactCapacity `
     --estimated-instance-warmup $cfg.healthCheckGracePeriodSeconds `

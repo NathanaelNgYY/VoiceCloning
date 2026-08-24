@@ -42,6 +42,21 @@ test('rejects arrivals when the bounded queue is full', async () => {
   (await queued).release();
 });
 
+test('coordinator direct admission rejects instead of creating a third queued slot', async () => {
+  const scheduler = new SynthesisScheduler({ maxConcurrency: 2, maxQueueDepth: 5, maxWaitMs: 1000 });
+  const first = await scheduler.acquire({ modelKey: 'dean' });
+  const second = await scheduler.acquire({ modelKey: 'dean' });
+  await assert.rejects(
+    scheduler.acquire({ modelKey: 'dean', allowQueue: false }),
+    (error) => error instanceof SynthesisQueueError
+      && error.statusCode === 503
+      && error.code === 'NO_FREE_SLOT',
+  );
+  assert.equal(scheduler.getStats().queued, 0);
+  first.release();
+  second.release();
+});
+
 test('capacity retries are FIFO within a priority lane ahead of normal queued work', async () => {
   const scheduler = new SynthesisScheduler({
     maxConcurrency: 1,

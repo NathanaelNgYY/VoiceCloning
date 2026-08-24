@@ -13,13 +13,6 @@ Last updated: 2026-08-24
 - Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
-- Final deployed Dev client assets are Training `index-Cc6cF0sB.js`, Live Fast
-  `index-CvBWG-Iy.js`, and GI `index-B9gUM8Zv.js`. Their CloudFront invalidations were created;
-  all three public hosts returned HTTP 200 with those assets and the expected cache header.
-- The inference-config header now truncates long filenames without moving Save new outside
-  its card. Background model discovery/load uses silent optional auth because those endpoints
-  are public; protected analytics/synthesis still requires a token. A `pageshow` guard reloads
-  browser-history snapshots so an obsolete faculty-style login is not restored.
 - Model load waits for the selected model's rank-1 config. Curated/user-reordered rank 1 is
   authoritative. Untouched or legacy cross-model `default` rank 1 runs scored `Use best`
   only on the experiment derived from the selected weights, then stores the same references
@@ -49,6 +42,11 @@ Last updated: 2026-08-24
 
 ## Current Staging State
 
+- Model-aware coordination is implemented locally but not deployed: matching free slot ->
+  demand-idle zero-work reassignment -> one-instance scale-out. New instances atomically claim
+  the oldest pending voice before deep warm; only an empty/unavailable queue falls back to Dean.
+  Runtime policies were reportedly attached directly, but provisioning is now blocked because
+  deployment role `Liu_Teng_Yu_Intern2026` is denied `dynamodb:DescribeTable` on the registry.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
@@ -76,8 +74,11 @@ Last updated: 2026-08-24
   and are healthy with DeanVoice plus both verifiers active. AMI `ami-09603b8ca5f8a228b` is
   available and launch template v31 is latest/default; a fresh v31 node completed production-shaped
   deep warm before becoming healthy. Authenticated first/second-turn timing remains pending.
-- Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 was
-  observed after the 2026-08-21 baseline occupancy alarm scaled it from 1 to 5.
+- Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 remains
+  from the earlier baseline action. The over-aggressive 1->5 policy is corrected live:
+  baseline and fleet alarms require 3/3 one-minute periods at 70%, baseline goes to two,
+  and later steps add one. This prevents a short two-slot single-user burst from launching
+  four extra GPUs, but it is not yet model-aware autoscaling.
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
   schedule is 0-24. Lambda cannot directly manage ASG capacity under its current role.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.

@@ -1,5 +1,13 @@
 # Active TODO
 
+- [ ] Runtime policies were reportedly attached directly; grant deployment role
+  `Liu_Teng_Yu_Intern2026` scoped create/describe/TTL/tag access to DynamoDB table
+  `vcs-staging-model-workers`, then provision and canary the local staging coordinator.
+  Do not enable `MODEL_COORDINATOR_FUNCTION_NAME` until the coordinator Lambda, registry,
+  private worker routing, auth token, and worker assignment endpoints pass end-to-end checks.
+  The GPU instance role also needs scoped invoke access for the boot-assignment claim.
+  Bake/promote a new inference AMI only after one fresh scale-out claims and deeply warms the
+  pending model before serving it; then verify idle reassignment and protected scale-in.
 - [ ] Browser-time first and second authenticated staging GI/Live Fast replies after the
   canonical-cache rollout. Worker/fresh-boot evidence proves the reload mismatch is removed,
   but public end-to-end timing is still needed to quantify OpenAI/WebSocket overhead.

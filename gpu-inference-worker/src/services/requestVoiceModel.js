@@ -27,6 +27,18 @@ export function voiceModelKey(body = {}) {
     .digest('hex');
 }
 
+// GPU residency depends only on the exact weight pair. Voice-profile identity and
+// reference audio remain part of the immutable request, but do not require another
+// copy of identical weights in GPU memory.
+export function modelResidencyKey(body = {}) {
+  const model = readVoiceModelSnapshot(body);
+  if (!model.gptRef && !model.sovitsRef) return '';
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({ gptRef: model.gptRef, sovitsRef: model.sovitsRef }))
+    .digest('hex');
+}
+
 export async function ensureRequestVoiceModel(body = {}) {
   const requested = readVoiceModelSnapshot(body);
   if (!requested.gptRef && !requested.sovitsRef) return inferenceServer.getLoadedWeights();

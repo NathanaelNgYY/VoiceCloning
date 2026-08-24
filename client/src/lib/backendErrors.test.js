@@ -48,6 +48,13 @@ test('does not retry a genuine client-side rejection', () => {
   assert.equal(isRetryableSynthesisError(err), false);
 });
 
+test('does not hide a model-capacity start behind rapid synthesis retries', () => {
+  const err = new Error('This lecture voice is preparing on a GPU.');
+  err.code = 'MODEL_CAPACITY_STARTING';
+  err.status = 503;
+  assert.equal(isRetryableSynthesisError(err), false);
+});
+
 test('does not retry a cancelled clip', () => {
   // 499 is the worker rejecting a barged-in reply — re-issuing it would resurrect
   // audio the user already talked over.

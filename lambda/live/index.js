@@ -1,5 +1,5 @@
 import { corsHeaders, err, ok, preflight, parseJsonBody } from '../shared/cors.js';
-import { inferencePost, inferencePostBinary } from '../shared/gpuWorker.js';
+import { coordinatedInferencePost, coordinatedInferencePostBinary } from '../shared/modelCoordinator.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
 import { demoHeaders, isDemoEvent } from '../shared/demoOrigin.js';
 import { createLiveAuthGuard, isAuthExemptOrigin } from '../shared/liveAuth.js';
@@ -28,8 +28,8 @@ function isCancelPath(event) {
 
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
-  postBinary = inferencePostBinary,
-  post = inferencePost,
+  postBinary = coordinatedInferencePostBinary,
+  post = coordinatedInferencePost,
   now = () => performance.now(),
   invocationState = { cold: true, environmentId: randomUUID() },
   authGuard = createLiveAuthGuard(),
@@ -146,6 +146,23 @@ export function createHandler({
         return err(error.statusCode, error.message);
       }
       if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599) {
+        if (error.code === 'MODEL_CAPACITY_STARTING' || error.code === 'MODEL_CAPACITY_LIMIT') {
+          return {
+            statusCode: error.statusCode,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': String(Math.max(1, Number(error.retryAfterSeconds) || 30)),
+              ...corsHeaders,
+            },
+            body: JSON.stringify({
+              error: error.message,
+              code: error.code,
+              retryAfterSeconds: error.retryAfterSeconds,
+              scaleStarted: error.scaleStarted === true,
+              voiceProfileId: error.voiceProfileId || '',
+            }),
+          };
+        }
         return err(error.statusCode, error.message);
       }
       return err(500, error.message);

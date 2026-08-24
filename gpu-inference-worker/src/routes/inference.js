@@ -46,7 +46,13 @@ import {
 import { transcriptionVerifier } from '../services/transcriptionVerifier.js';
 import { speakerSimilarity } from '../services/speakerSimilarity.js';
 import { SynthesisQueueError, synthesisScheduler } from '../services/synthesisScheduler.js';
-import { ensureRequestVoiceModel, voiceModelKey } from '../services/requestVoiceModel.js';
+import {
+  ensureRequestVoiceModel,
+  modelResidencyKey,
+  readVoiceModelSnapshot,
+  voiceModelKey,
+} from '../services/requestVoiceModel.js';
+import { coordinatorState } from '../services/coordinatorState.js';
 
 const router = Router();
 export function synthesisBusy() {
@@ -70,15 +76,26 @@ async function acquireSynthesisLease(req, res) {
   let lease = null;
   req.once('aborted', abort);
   try {
+    if (coordinatorState.snapshot().draining) {
+      throw new SynthesisQueueError(503, 'This GPU is changing voice models. Please retry shortly.', 'MODEL_REASSIGNING');
+    }
     lease = await synthesisScheduler.acquire({
       modelKey: voiceModelKey(req.body),
       signal: controller.signal,
       priority: Number.parseInt(req.get('X-VCS-Capacity-Retry') || '0', 10) > 0,
       cancelKey: replyCancelKey(req),
+      allowQueue: req.get('X-VCS-Coordinator-Direct') !== '1',
     });
     req.off('aborted', abort);
     res.set('X-Synthesis-Queue-Wait-Ms', String(lease.queueWaitMs));
     await ensureRequestVoiceModel(req.body);
+    const residencyKey = modelResidencyKey(req.body);
+    if (residencyKey) {
+      coordinatorState.assign({
+        modelKey: residencyKey,
+        voiceProfileId: readVoiceModelSnapshot(req.body).voiceProfileId,
+      });
+    }
     return lease;
   } catch (error) {
     req.off('aborted', abort);
