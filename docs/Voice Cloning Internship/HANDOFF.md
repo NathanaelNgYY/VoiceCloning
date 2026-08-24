@@ -43,10 +43,9 @@ Last updated: 2026-08-24
 ## Current Staging State
 
 - Model-aware coordination is implemented locally but not deployed: matching free slot ->
-  demand-idle zero-work reassignment -> one-instance scale-out. New instances atomically claim
-  the oldest pending voice before deep warm; only an empty/unavailable queue falls back to Dean.
-  Runtime policies were reportedly attached directly, but provisioning is now blocked because
-  deployment role `Liu_Teng_Yu_Intern2026` is denied `dynamodb:DescribeTable` on the registry.
+  demand-idle reassignment -> one-instance scale-out. Tagged table, private SG, and VPC Lambda
+  are live and its status canary passed; routing remains disabled and all workers are unchanged.
+  Worker canary is blocked by denied deployment-role `autoscaling:SetInstanceProtection`.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;

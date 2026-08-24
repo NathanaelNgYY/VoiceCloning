@@ -274,14 +274,18 @@ async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
   return { started: true, pending };
 }
 
+export function bootAssignmentClaimable(item, instanceId, now = Date.now()) {
+  return item?.entity === 'PENDING'
+    && Boolean(item.synthesisBody)
+    && now - Number(item.requestedAt || 0) < pendingTtlMs
+    && (!item.claimedBy || item.claimedBy === instanceId || Number(item.claimExpiresAt || 0) < now);
+}
+
 async function claimBootAssignment(instanceId, now = Date.now()) {
   if (!instanceId) return { statusCode: 400, error: 'instanceId is required' };
   const items = await scanState();
   const pending = items
-    .filter((item) => item.entity === 'PENDING'
-      && item.synthesisBody
-      && now - Number(item.requestedAt || 0) < pendingTtlMs
-      && (!item.claimedBy || Number(item.claimExpiresAt || 0) < now))
+    .filter((item) => bootAssignmentClaimable(item, instanceId, now))
     .sort((left, right) => Number(left.requestedAt || 0) - Number(right.requestedAt || 0));
 
   for (const candidate of pending) {
@@ -290,7 +294,7 @@ async function claimBootAssignment(instanceId, now = Date.now()) {
         TableName: tableName,
         Key: { id: candidate.id },
         UpdateExpression: 'SET claimedBy = :instanceId, claimExpiresAt = :claimExpiresAt',
-        ConditionExpression: 'attribute_not_exists(claimedBy) OR claimExpiresAt < :now',
+        ConditionExpression: 'attribute_not_exists(claimedBy) OR claimedBy = :instanceId OR claimExpiresAt < :now',
         ExpressionAttributeValues: {
           ':instanceId': instanceId,
           ':claimExpiresAt': now + pendingTtlMs,

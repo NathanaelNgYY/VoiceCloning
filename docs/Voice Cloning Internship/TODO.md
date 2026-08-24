@@ -1,8 +1,9 @@
 # Active TODO
 
-- [ ] Runtime policies were reportedly attached directly; grant deployment role
-  `Liu_Teng_Yu_Intern2026` scoped create/describe/TTL/tag access to DynamoDB table
-  `vcs-staging-model-workers`, then provision and canary the local staging coordinator.
+- [ ] Grant deployment role `Liu_Teng_Yu_Intern2026` scoped
+  `autoscaling:SetInstanceProtection` on `vcs-staging-gpu-inference`, then deploy the longest-idle
+  worker canary. The tagged registry, private SG, and VPC coordinator Lambda are already live;
+  the status canary passed, but no worker or application routing has changed.
   Do not enable `MODEL_COORDINATOR_FUNCTION_NAME` until the coordinator Lambda, registry,
   private worker routing, auth token, and worker assignment endpoints pass end-to-end checks.
   The GPU instance role also needs scoped invoke access for the boot-assignment claim.

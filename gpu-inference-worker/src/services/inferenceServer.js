@@ -81,7 +81,7 @@ async function parseJsonOrText(response) {
 }
 
 export class InferenceServer {
-  constructor({ spawnProcess = spawn, startupTimeoutMs = 300_000 } = {}) {
+  constructor({ spawnProcess = spawn, startupTimeoutMs = 600_000 } = {}) {
     this.process = null;
     this.ready = false;
     this.startPromise = null;

@@ -2,6 +2,15 @@
 
 ## 2026-08-24
 
+- Provisioned the staging coordinator foundation but did not enable traffic routing. Created
+  deletion-protected on-demand table `vcs-staging-model-workers` with TTL, private coordinator
+  SG `sg-0acbdd24318784b70`, and VPC Lambda
+  `Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging-coordinator`; all carry
+  `CreatorId=INTERNS2026`, project, environment, and manager tags. The Lambda status canary
+  accessed DynamoDB/ASG/EC2 and registered all five workers as expected-unreachable before
+  worker rollout. Commit `60b2bc5` is local; GitHub push lacked credentials. Worker canary did
+  not start because deployment role `Liu_Teng_Yu_Intern2026` was denied
+  `autoscaling:SetInstanceProtection`; no worker was restarted or modified.
 - Implemented but did not deploy the staging model-coordinator slice. A dedicated Lambda
   chooses a matching two-slot worker, otherwise reassigns only a zero-active/zero-queued
   worker after both worker activity and its resident model's demand have been idle for the
