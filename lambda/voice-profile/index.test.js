@@ -540,6 +540,10 @@ test('a non-NTU owner is not recorded, so ownership can never point outside the 
 
 // --- GET /api/voice-profile/mine -------------------------------------------
 
+// What the model files say exists. cs-nathanael-ng is trained but has no saved
+// profile — the case that shipped broken.
+const TRAINED_VOICES = ['alice-tan', 'alice-tan_2', 'DeanVoice', 'Obama', 'cs-nathanael-ng'];
+
 const STORED_PROFILES = {
   // Saved after ownerEmail existed.
   'voice-profiles/alice-tan-v1.json': {
@@ -560,9 +564,10 @@ const STORED_PROFILES = {
   },
 };
 
-function mineHandler(identity, { env = {} } = {}) {
+function mineHandler(identity, { env = {}, trained = TRAINED_VOICES } = {}) {
   return createHandler({
     authGuard: { authorize: async () => identity },
+    listVoiceNames: async () => trained,
     listProfileObjects: async () => [
       ...Object.keys(STORED_PROFILES).map((key) => ({ key })),
       // The shared active pointer lives in the same prefix and is not a voice.
@@ -589,6 +594,7 @@ test('a lecturer sees only the voices they own', async () => {
   const body = JSON.parse(response.body);
 
   assert.deepEqual(body.voices.map((voice) => voice.voiceProfileId), ['alice-tan-v1', 'alice-tan_2-v1']);
+  assert.equal(body.voices.every((voice) => voice.hasSavedProfile), true);
   assert.equal(body.scope, 'mine');
   assert.equal(body.isAdmin, false);
   assert.equal(body.email, 'alice.tan@ntu.edu.sg');
@@ -608,6 +614,37 @@ test('a lecturer with no voices gets an empty list, not an error', async () => {
   assert.deepEqual(JSON.parse(response.body).voices, []);
 });
 
+test('a freshly trained voice is listed even though no profile has been saved for it', async () => {
+  // Training writes models and nothing else. Listing only voice-profiles/ hid
+  // every new voice until the lecturer opened the TTS page — the bug this covers.
+  const response = await mineHandler({
+    email: 'CS-NATHANAEL.NG@assoc.main.ntu.edu.sg', oid: 'oid-nat',
+  })(mineEvent());
+
+  const voices = JSON.parse(response.body).voices;
+  assert.deepEqual(voices.map((voice) => voice.displayName), ['cs-nathanael-ng']);
+  assert.equal(voices[0].hasSavedProfile, false);
+  assert.equal(voices[0].voiceProfileId, 'cs-nathanael-ng-v1', 'id is derived when no profile exists');
+  assert.equal(voices[0].isMine, true);
+});
+
+test('a saved profile and its models are one voice, not two', async () => {
+  const response = await mineHandler({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' })(mineEvent());
+  const names = JSON.parse(response.body).voices.map((voice) => voice.displayName);
+  assert.deepEqual(names, ['alice-tan', 'alice-tan_2']);
+});
+
+test('a saved profile whose models are gone is still listed', async () => {
+  const response = await mineHandler(
+    { email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' },
+    { trained: [] },
+  )(mineEvent());
+  assert.deepEqual(
+    JSON.parse(response.body).voices.map((voice) => voice.displayName),
+    ['alice-tan', 'alice-tan_2'],
+  );
+});
+
 test('scope=all is inert for a lecturer and honoured for an admin', async () => {
   const lecturer = await mineHandler({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' })(
     mineEvent({ scope: 'all' }),
@@ -624,7 +661,7 @@ test('scope=all is inert for a lecturer and honoured for an admin', async () => 
   assert.equal(adminBody.scope, 'all');
   assert.deepEqual(
     adminBody.voices.map((voice) => voice.voiceProfileId).sort(),
-    ['alice-tan-v1', 'alice-tan_2-v1', 'deanvoice-v1', 'obama-v1'],
+    ['alice-tan-v1', 'alice-tan_2-v1', 'cs-nathanael-ng-v1', 'deanvoice-v1', 'obama-v1'],
   );
   assert.equal(adminBody.voices.every((voice) => voice.isMine === false), true, 'none are the admin own');
 });
@@ -643,12 +680,14 @@ test('the shared active.json pointer is not listed as a voice', async () => {
   );
   const ids = JSON.parse(response.body).voices.map((voice) => voice.voiceProfileId);
   assert.equal(ids.includes(undefined), false);
-  assert.equal(ids.length, 4);
+  assert.equal(ids.includes('active-v1'), false, 'the shared pointer is not a voice');
+  assert.equal(ids.length, 5);
 });
 
 test('an unreadable record does not hide the rest', async () => {
   const handler = createHandler({
     authGuard: { authorize: async () => ({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' }) },
+    listVoiceNames: async () => [],
     listProfileObjects: async () => [
       { key: 'voice-profiles/broken.json' },
       { key: 'voice-profiles/alice-tan-v1.json' },
@@ -667,6 +706,7 @@ test('an unauthenticated caller is refused before any storage is read', async ()
   let listed = false;
   const handler = createHandler({
     authGuard: { authorize: async () => { throw new Error('no token'); } },
+    listVoiceNames: async () => { listed = true; return []; },
     listProfileObjects: async () => { listed = true; return []; },
     readObject: async () => null,
   });

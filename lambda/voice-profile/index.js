@@ -3,7 +3,8 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
-import { isNtuEmail, normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
+import { buildVoiceProfileId, isNtuEmail, normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
+import { listTrainedVoiceNames } from '../shared/trainedVoices.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
 const PROFILE_PREFIX = 'voice-profiles/';
@@ -158,14 +159,17 @@ export function buildVoiceProfileSummary(profile) {
   };
 }
 
-function buildOwnedVoiceSummary(profile, email) {
+function buildOwnedVoiceSummary({ voiceName, profile = null, email }) {
   return {
-    voiceProfileId: profile.voiceProfileId,
-    displayName: profile.displayName,
-    ...(profile.ownerEmail ? { ownerEmail: profile.ownerEmail } : {}),
-    ...(profile.updatedAt ? { updatedAt: profile.updatedAt } : {}),
-    ...(profile.activatedAt ? { activatedAt: profile.activatedAt } : {}),
-    isMine: profileBelongsTo(profile, email),
+    voiceProfileId: profile?.voiceProfileId || buildVoiceProfileId(voiceName),
+    displayName: voiceName,
+    // A trained voice with no saved profile is still the lecturer's voice; it
+    // just has no reference clip or synthesis settings chosen yet.
+    hasSavedProfile: Boolean(profile),
+    ...(profile?.ownerEmail ? { ownerEmail: profile.ownerEmail } : {}),
+    ...(profile?.updatedAt ? { updatedAt: profile.updatedAt } : {}),
+    ...(profile?.activatedAt ? { activatedAt: profile.activatedAt } : {}),
+    isMine: profile ? profileBelongsTo(profile, email) : ownsVoiceName(email, voiceName),
   };
 }
 
@@ -220,6 +224,7 @@ function wantsFullActiveProfile(event) {
 export function createHandler({
   readObject = defaultReadObject,
   listProfileObjects = () => listObjects(PROFILE_PREFIX),
+  listVoiceNames = listTrainedVoiceNames,
   writeObject = uploadBuffer,
   warmReferenceAudio = async (profile) => inferencePost('/ref-audio/warm', {
     ref_audio_path: profile.ref_audio_path,
@@ -268,14 +273,18 @@ export function createHandler({
         const isAdmin = isAdminIdentity(identity);
         const wantsAll = String(event?.queryStringParameters?.scope || '').trim().toLowerCase() === 'all';
         const scope = wantsAll && isAdmin ? 'all' : 'mine';
+        const email = identity?.email;
 
+        // Trained models are the source of truth for which voices exist; saved
+        // profiles only add reference audio and settings on top. Reading only
+        // the profiles would hide every voice that has been trained but never
+        // opened in the TTS page — which is every freshly trained voice.
+        const trainedNames = await listVoiceNames();
+        const profilesByName = new Map();
         const objects = await listProfileObjects();
-        const keys = objects
-          .map((object) => String(object?.key || ''))
-          .filter((key) => key.endsWith('.json') && key !== ACTIVE_PROFILE_KEY);
-
-        const voices = [];
-        for (const key of keys) {
+        for (const object of objects || []) {
+          const key = String(object?.key || '');
+          if (!key.endsWith('.json') || key === ACTIVE_PROFILE_KEY) continue;
           let profile;
           try {
             profile = await parseStoredProfile(readObject, key);
@@ -283,13 +292,23 @@ export function createHandler({
             // One unreadable record must not hide every other voice.
             continue;
           }
-          if (!profile?.voiceProfileId) continue;
-          const summary = buildOwnedVoiceSummary(profile, identity?.email);
+          const name = String(profile?.displayName || '').trim();
+          if (name) profilesByName.set(name, profile);
+        }
+
+        const names = new Set([...trainedNames, ...profilesByName.keys()]);
+        const voices = [];
+        for (const voiceName of names) {
+          const summary = buildOwnedVoiceSummary({
+            voiceName,
+            profile: profilesByName.get(voiceName) || null,
+            email,
+          });
           if (scope === 'all' || summary.isMine) voices.push(summary);
         }
 
         voices.sort((left, right) => String(left.displayName || '').localeCompare(String(right.displayName || '')));
-        return ok({ email: normalizeEmail(identity?.email), isAdmin, scope, voices }, {}, event);
+        return ok({ email: normalizeEmail(email), isAdmin, scope, voices }, {}, event);
       }
 
       if (method === 'GET' && internalMatch) {

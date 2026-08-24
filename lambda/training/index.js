@@ -2,7 +2,8 @@ import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { describeVoiceIdentity, nextVoiceName, ownsVoiceName } from '../shared/voiceIdentity.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
-import { getObject, headObject, listObjects } from '../shared/s3.js';
+import { getObject, headObject } from '../shared/s3.js';
+import { listTrainedVoiceNames as listTrainedVoices } from '../shared/trainedVoices.js';
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
@@ -16,21 +17,6 @@ async function defaultReadObject(key) {
   return getObject(key);
 }
 
-// A voice exists once its weights do. Both prefixes are small, flat listings.
-async function defaultListTrainedVoiceNames() {
-  const [gptObjects, sovitsObjects] = await Promise.all([
-    listObjects('models/user-models/gpt/'),
-    listObjects('models/user-models/sovits/'),
-  ]);
-  const names = new Set();
-  for (const object of [...gptObjects, ...sovitsObjects]) {
-    const basename = String(object.key || '').split('/').pop() || '';
-    const match = basename.match(/^(.+?)[-_]e\d+(?:[_-]s\d+)?\.(?:ckpt|pth)$/iu);
-    if (match) names.add(match[1]);
-  }
-  return Array.from(names);
-}
-
 function decodeSegment(value) {
   try {
     return decodeURIComponent(value || '');
@@ -41,7 +27,7 @@ function decodeSegment(value) {
 
 export function createHandler({
   readObject = defaultReadObject,
-  listTrainedVoiceNames = defaultListTrainedVoiceNames,
+  listTrainedVoiceNames = listTrainedVoices,
 } = {}) {
   return async function trainingHandler(event) {
   if (event.requestContext?.http?.method === 'OPTIONS') {

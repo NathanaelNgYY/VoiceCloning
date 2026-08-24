@@ -109,11 +109,17 @@ export default function MyVoicesPanel({
                     <span className="block truncate text-xs font-semibold text-slate-800">
                       {voice.displayName}
                     </span>
-                    {showingAll && (
+                    {showingAll ? (
                       <span className="block truncate text-[11px] text-slate-400">
                         {voice.ownerEmail || 'no owner recorded'}
                       </span>
-                    )}
+                    ) : voice.hasSavedProfile === false ? (
+                      // Trained, but nobody has picked a reference clip or
+                      // synthesis settings for it yet in the TTS page.
+                      <span className="block truncate text-[11px] text-slate-400">
+                        trained · no saved settings yet
+                      </span>
+                    ) : null}
                   </span>
                   {isSelected && (
                     <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary">
