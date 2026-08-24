@@ -187,7 +187,7 @@ write_files:
     permissions: '0644'
     content: |
       [Service]
-      ExecStartPost=/home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh
+      ExecStartPost=/usr/bin/bash /home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh
       Environment=MODEL_COORDINATOR_FUNCTION_NAME=__MODEL_COORDINATOR_FUNCTION_NAME__
       Environment=MODEL_COORDINATOR_REGION=__MODEL_COORDINATOR_REGION__
       Environment=MODEL_COORDINATOR_AUTH_TOKEN=__MODEL_COORDINATOR_AUTH_TOKEN__
@@ -262,7 +262,7 @@ bootcmd:
 runcmd:
   - [systemctl, disable, --now, gpu-worker.service]
   - [systemctl, disable, --now, target-optimizer-inference.service]
-  - [/home/ubuntu/VoiceCloning/scripts/install-resemblyzer.sh]
+  - [/usr/bin/bash, /home/ubuntu/VoiceCloning/scripts/install-resemblyzer.sh]
   - [systemctl, daemon-reload]
   - [systemctl, enable, gpu-inference-worker.service]
   - [systemctl, restart, gpu-inference-worker.service]

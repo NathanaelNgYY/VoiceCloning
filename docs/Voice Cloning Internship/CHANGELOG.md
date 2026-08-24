@@ -2,6 +2,31 @@
 
 ## 2026-08-24
 
+- Completed the staging-only model-aware coordinator rollout. Table
+  `vcs-staging-model-workers`, coordinator Lambda, security groups, AMI
+  `ami-0591726e79645b0cc`, launch-template v34, ASG, and new instances carry the required
+  staging/Interns2026 tags. A fresh v33 node reclaimed and deeply warmed pending
+  `deanv2-v1` in 689s, then a routed canary returned a 185,646-byte WAV from that exact
+  worker with zero queue wait. A clean v34 node invoked non-executable boot scripts through
+  Bash, deeply warmed the dynamic active profile in 599s, registered READY with two slots,
+  and required no manual repair; v34 is latest/default and the ASG follows `$Default`.
+  The coordinator-aware application Lambda and lectures GI bundle `index-9LY2pSHn.js` are
+  deployed, `MODEL_COORDINATOR_FUNCTION_NAME` is enabled, and unauthenticated synthesis
+  remains 401. Automated authenticated application audio was unavailable because staging has
+  no exempt origin/load-test credential; browser verification remains. Tests: coordinator
+  7/7, focused worker 18/18, focused Lambda 19/19, client 15/15, provisioner syntax/dry-run,
+  GI build, direct coordinator WAV, fresh-boot warm, live bundle readback, and config canary.
+- Canary evidence exposed and locally fixed a fresh-boot failure, but rollout is not complete.
+  Coordinator scale-out 1->2 produced a manually updated Dean worker that claimed its pending
+  assignment, warmed in 585s, and returned a routed 211,244-byte RIFF with zero queue wait.
+  Tagged AMI `ami-0654f7cfed6571a70` and non-default launch-template v32 then launched
+  `i-086c0f189f40a6167`, which autonomously claimed `deanv2-v1`; its hard-coded 300s Python
+  startup timeout fired before readiness and the restart lost the claim, falling back to Dean.
+  Commit `7e8a69d` doubles the worker startup allowance and lets the same instance reclaim a
+  live assignment; 7/7 coordinator and 15/15 worker tests pass, and the coordinator Lambda has
+  the fix. Worker hotfix upload was blocked when `VCS_AWS_*` expired. ASG is explicitly on v32
+  at desired 3 while account default remains v31; routing is still disabled and rollback or
+  hotfix deployment is required immediately after credentials refresh.
 - Provisioned the staging coordinator foundation but did not enable traffic routing. Created
   deletion-protected on-demand table `vcs-staging-model-workers` with TTL, private coordinator
   SG `sg-0acbdd24318784b70`, and VPC Lambda

@@ -42,10 +42,11 @@ Last updated: 2026-08-24
 
 ## Current Staging State
 
-- Model-aware coordination is implemented locally but not deployed: matching free slot ->
-  demand-idle reassignment -> one-instance scale-out. Tagged table, private SG, and VPC Lambda
-  are live and its status canary passed; routing remains disabled and all workers are unchanged.
-  Worker canary is blocked by denied deployment-role `autoscaling:SetInstanceProtection`.
+- Model-aware coordination is live on staging: matching free slot -> demand-idle reassignment ->
+  per-model scale-out, with two admitted slots per GPU. Fresh DeanV2 v33 boot and routed WAV
+  passed; clean v34 fallback boot passed without manual repair and v34 is ASG/default. The
+  application Lambda routing flag and lectures GI capacity-starting UI are deployed. Direct
+  coordinator WAV and unauthenticated 401 canaries passed; authenticated browser audio remains.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
