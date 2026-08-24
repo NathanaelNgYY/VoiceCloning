@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHandler, handler } from './index.js';
 
-test('training handler forwards start requests to the GPU worker with nested config and email', async () => {
+test('training handler names the run after the NTU email and forwards nested config', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
@@ -19,8 +19,7 @@ test('training handler forwards start requests to the GPU worker with nested con
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
       body: JSON.stringify({
-        expName: 'demo',
-        email: 'user@test.com',
+        email: 'Alice.Tan@staff.main.ntu.edu.sg',
         batchSize: 2,
         sovitsEpochs: 4,
         gptEpochs: 3,
@@ -31,8 +30,8 @@ test('training handler forwards start requests to the GPU worker with nested con
     assert.deepEqual(JSON.parse(response.body), { sessionId: 'worker-session', steps: [] });
     assert.equal(calls[0].url, 'http://gpu-worker.local:3001/train');
     assert.deepEqual(JSON.parse(calls[0].options.body), {
-      expName: 'demo',
-      email: 'user@test.com',
+      expName: 'alice-tan',
+      email: 'alice.tan@staff.main.ntu.edu.sg',
       config: {
         batchSize: 2,
         sovitsEpochs: 4,
@@ -61,7 +60,7 @@ test('training handler forwards training metadata inputs to the GPU worker confi
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
       body: JSON.stringify({
-        expName: 'demo',
+        email: 'demo@ntu.edu.sg',
         skipDenoise: true,
         selectedReferences: {
           mode: 'strict',
@@ -90,7 +89,35 @@ test('training handler forwards training metadata inputs to the GPU worker confi
   }
 });
 
-test('training handler forwards start requests without email when email is omitted', async () => {
+test('training handler refuses to start a run without a usable NTU email', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    for (const body of [{}, { email: 'user@test.com' }, { email: 'nope' }]) {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/train',
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.statusCode, 400, `should reject ${JSON.stringify(body)}`);
+    }
+
+    assert.equal(calls.length, 0, 'no run may reach the GPU worker without an NTU email');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('training handler ignores a client-supplied expName and uses the email-derived one', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
@@ -106,12 +133,35 @@ test('training handler forwards start requests without email when email is omitt
     await handler({
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
-      body: JSON.stringify({ expName: 'demo' }),
+      body: JSON.stringify({ expName: 'DeanVoice', email: 'alice.tan@ntu.edu.sg' }),
     });
 
-    const sentBody = JSON.parse(calls[0].options.body);
-    assert.equal(sentBody.expName, 'demo');
-    assert.equal(sentBody.email, undefined);
+    assert.equal(JSON.parse(calls[0].options.body).expName, 'alice-tan');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('training handler routes the dean to his already-deployed DeanVoice run', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg' }),
+    });
+
+    assert.equal(JSON.parse(calls[0].options.body).expName, 'DeanVoice');
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -198,4 +248,62 @@ test('training metadata returns 404 when no run metadata exists', async () => {
 
   assert.equal(response.statusCode, 404);
   assert.match(JSON.parse(response.body).error, /metadata not found/u);
+});
+
+test('training handler suffixes the run with the requested label so one lecturer keeps several voices', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg', label: '2' }),
+    });
+    assert.equal(JSON.parse(calls[0].options.body).expName, 'DeanVoice_2');
+
+    const rejected = await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg', label: '///' }),
+    });
+    assert.equal(rejected.statusCode, 400);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('a label cannot be used to escape into another lecturer’s voice', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/train',
+      body: JSON.stringify({ email: 'alice@ntu.edu.sg', label: 'tan' }),
+    });
+
+    // alice-tan belongs to alice.tan@ntu.edu.sg; alice@ can only reach alice_tan.
+    assert.equal(JSON.parse(calls[0].options.body).expName, 'alice_tan');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });

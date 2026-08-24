@@ -3,6 +3,7 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
+import { isNtuEmail, normalizeEmail } from '../shared/voiceIdentity.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
 const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
@@ -54,6 +55,18 @@ function normalizeMetadata(metadata = {}) {
   return Object.keys(normalized).length > 0 ? normalized : {};
 }
 
+// A lecturer owns several voices, so ownership cannot be read back out of a
+// name. It is stored on the record instead, falling back to the owner the
+// training run recorded so profiles saved from the TTS page inherit it without
+// the browser having to pass it.
+function resolveOwnerEmail(body) {
+  for (const candidate of [body.ownerEmail, body.metadata?.training?.ownerEmail]) {
+    const email = normalizeEmail(candidate);
+    if (email && isNtuEmail(email)) return email;
+  }
+  return '';
+}
+
 function createVoiceProfileRecord(body, now) {
   const voiceProfileId = String(body.voiceProfileId || '').trim();
   const displayName = String(body.displayName || '').trim();
@@ -66,6 +79,7 @@ function createVoiceProfileRecord(body, now) {
   const promptLang = normalizeLanguage(body.prompt_lang, 'en');
   const textLang = normalizeLanguage(body.text_lang, promptLang);
   const preferredRoute = normalizePreferredRoute(body.preferredRoute);
+  const ownerEmail = resolveOwnerEmail(body);
 
   if (!voiceProfileId) {
     throw new Error('voiceProfileId is required');
@@ -89,6 +103,7 @@ function createVoiceProfileRecord(body, now) {
   return {
     voiceProfileId,
     displayName,
+    ...(ownerEmail ? { ownerEmail } : {}),
     ...(gptKey ? { gptKey } : {}),
     ...(gptPath ? { gptPath } : {}),
     ...(sovitsKey ? { sovitsKey } : {}),
@@ -117,6 +132,7 @@ export function buildVoiceProfileSummary(profile) {
   return {
     voiceProfileId: profile.voiceProfileId,
     displayName: profile.displayName,
+    ...(profile.ownerEmail ? { ownerEmail: profile.ownerEmail } : {}),
     ...(profile.activatedAt ? { activatedAt: profile.activatedAt } : {}),
   };
 }

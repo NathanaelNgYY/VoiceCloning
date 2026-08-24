@@ -485,3 +485,55 @@ test('voice profile internal rejects requests with missing or wrong shared secre
   assert.equal(response.statusCode, 403);
   assert.match(JSON.parse(response.body).error, /Forbidden/u);
 });
+
+test('a saved voice profile records the lecturer who owns it, inheriting it from the training run', async () => {
+  const written = new Map();
+  const handler = createHandler({
+    readObject: async () => null,
+    writeObject: async (key, body) => { written.set(key, JSON.parse(body.toString('utf-8'))); },
+    warmReferenceAudio: async () => {},
+    now: () => '2026-08-24T00:00:00.000Z',
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/voice-profile/activate',
+    body: JSON.stringify({
+      voiceProfileId: 'alice-tan_calm-v1',
+      displayName: 'alice-tan_calm',
+      gptKey: 'models/user-models/gpt/alice-tan_calm-e15.ckpt',
+      sovitsKey: 'models/user-models/sovits/alice-tan_calm_e20_s260.pth',
+      ref_audio_path: 'training/datasets/alice-tan_calm/denoised/ref.wav',
+      metadata: { training: { ownerEmail: 'Alice.Tan@NTU.edu.sg' } },
+    }),
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).ownerEmail, 'alice.tan@ntu.edu.sg');
+  assert.equal(written.get('voice-profiles/alice-tan_calm-v1.json').ownerEmail, 'alice.tan@ntu.edu.sg');
+});
+
+test('a non-NTU owner is not recorded, so ownership can never point outside the university', async () => {
+  const written = new Map();
+  const handler = createHandler({
+    readObject: async () => null,
+    writeObject: async (key, body) => { written.set(key, JSON.parse(body.toString('utf-8'))); },
+    warmReferenceAudio: async () => {},
+    now: () => '2026-08-24T00:00:00.000Z',
+  });
+
+  await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/voice-profile/activate',
+    body: JSON.stringify({
+      voiceProfileId: 'demo-v1',
+      displayName: 'demo',
+      gptKey: 'g.ckpt',
+      sovitsKey: 's.pth',
+      ref_audio_path: 'ref.wav',
+      ownerEmail: 'someone@gmail.com',
+    }),
+  });
+
+  assert.equal('ownerEmail' in written.get('voice-profiles/demo-v1.json'), false);
+});

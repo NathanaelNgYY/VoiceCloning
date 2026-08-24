@@ -1,7 +1,7 @@
-const SAFE_EXP_NAME_RE = /^[A-Za-z0-9._-]+$/u;
+import { describeVoiceIdentity } from './voiceIdentity.js';
+
 const SUPPORTED_AUDIO_EXTENSIONS = new Set(['.wav', '.flac', '.mp3', '.m4a', '.ogg', '.webm', '.mp4']);
 const SUPPORTED_ASR_LANGUAGES = new Set(['en', 'zh', 'ja', 'ko', 'auto']);
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
 function extensionOf(filename = '') {
   const dot = filename.lastIndexOf('.');
@@ -12,9 +12,12 @@ function isIntegerInRange(value, min, max) {
   return Number.isInteger(Number(value)) && Number(value) >= min && Number(value) <= max;
 }
 
+// The run is named after the lecturer's email rather than a typed-in name, so
+// the email is validated once here and the derived name is returned for the
+// caller to submit — nothing else may invent an experiment name.
 export function validateTrainingStart({
-  expName = '',
   email = '',
+  label = '',
   source = '',
   files = [],
   selectedLibraryIds = [],
@@ -26,17 +29,10 @@ export function validateTrainingStart({
   asrLanguage = 'en',
 } = {}) {
   const errors = [];
-  const cleanName = String(expName || '').trim();
+  const identity = describeVoiceIdentity(email, label);
 
-  if (!cleanName) {
-    errors.push('Enter an experiment name.');
-  } else if (!SAFE_EXP_NAME_RE.test(cleanName)) {
-    errors.push('Experiment name may only contain letters, numbers, dots, dashes, and underscores.');
-  }
-
-  const cleanEmail = String(email || '').trim();
-  if (!cleanEmail || !EMAIL_RE.test(cleanEmail)) {
-    errors.push('Enter a valid email address to receive training notifications.');
+  if (!identity.valid) {
+    errors.push(identity.error);
   }
 
   const cleanSource = String(source || '').trim().toLowerCase();
@@ -78,5 +74,9 @@ export function validateTrainingStart({
   return {
     valid: errors.length === 0,
     errors,
+    email: identity.email,
+    label: identity.label,
+    expName: identity.voiceName,
+    voiceProfileId: identity.voiceProfileId,
   };
 }

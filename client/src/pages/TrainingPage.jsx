@@ -5,6 +5,7 @@ import TrainingLibraryPanel from '../components/TrainingLibraryPanel.jsx';
 import {
   deleteTrainingLibraryFile,
   getCurrentTraining,
+  getModels,
   getTrainingLibraryFiles,
   replaceTrainingLibraryFile,
   snapshotTrainingLibraryFiles,
@@ -15,6 +16,8 @@ import {
 } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 import { validateTrainingStart } from '@/lib/trainingValidation';
+import { describeVoiceIdentity } from '@/lib/voiceIdentity';
+import { buildVoiceProfiles } from '@/lib/voiceProfiles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,6 +33,13 @@ import { describeTrainingSelection, resolveTrainingSource } from '@/lib/training
 
 const NOTICE_TIMEOUT_MS = 4200;
 
+function formatTrainedAt(timestamp) {
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+    : '';
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
@@ -37,8 +47,10 @@ function formatSize(bytes) {
 }
 
 export default function TrainingPage() {
-  const [expName, setExpName] = useState('');
   const [email, setEmail] = useState('');
+  const [label, setLabel] = useState('');
+  const [runningExpName, setRunningExpName] = useState('');
+  const [existingVoices, setExistingVoices] = useState([]);
   const [files, setFiles] = useState([]);
   const [batchSize, setBatchSize] = useState(2);
   const [sovitsEpochs, setSovitsEpochs] = useState(20);
@@ -68,6 +80,14 @@ export default function TrainingPage() {
   const canvasRef = useRef(null);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
+  // The voice is named after the lecturer's email so the faculty app can find
+  // it from their sign-in alone. A lecturer may own several, told apart by the
+  // optional label — but never by a name typed from scratch.
+  const voiceIdentity = describeVoiceIdentity(email, label);
+  const showIdentityError = Boolean(email.trim() || label.trim()) && !voiceIdentity.valid;
+  const replacedVoice = voiceIdentity.valid
+    ? existingVoices.find((voice) => voice.name === voiceIdentity.voiceName) || null
+    : null;
   const trainingSource = resolveTrainingSource({
     directFiles: files,
     selectedLibraryIds,
@@ -120,6 +140,26 @@ export default function TrainingPage() {
   useEffect(() => {
     let ignore = false;
 
+    // Only feeds the "this replaces X" warning, so a failure here is silent —
+    // it must never stop someone training.
+    async function loadExistingVoices() {
+      try {
+        const res = await getModels();
+        if (ignore) return;
+        setExistingVoices(buildVoiceProfiles(res.data?.gpt || [], res.data?.sovits || [])
+          .map((profile) => ({ name: profile.expName, trainedAt: profile.recentAt })));
+      } catch {
+        if (!ignore) setExistingVoices([]);
+      }
+    }
+
+    loadExistingVoices();
+    return () => { ignore = true; };
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
     async function restoreTrainingState() {
       try {
         const res = await getCurrentTraining();
@@ -127,7 +167,7 @@ export default function TrainingPage() {
         if (ignore || !current?.sessionId) return;
 
         setSessionId(current.sessionId);
-        setExpName(current.expName || '');
+        setRunningExpName(current.expName || '');
 
         if (current.sessionId === restoredSessionRef.current) return;
 
@@ -426,7 +466,6 @@ export default function TrainingPage() {
 
   async function handleStart() {
     const validation = validateTrainingStart({
-      expName,
       email,
       source: trainingSource,
       files,
@@ -445,8 +484,13 @@ export default function TrainingPage() {
       return;
     }
 
+    const { expName, email: notifyEmail } = validation;
+    setExistingVoices((voices) => (voices.some((voice) => voice.name === expName)
+      ? voices
+      : [...voices, { name: expName, trainedAt: Date.now() }]));
     setUploadError(null);
     setUploading(true);
+    setRunningExpName(expName);
     try {
       if (trainingSource === 'library') {
         await snapshotTrainingLibraryFiles(expName, selectedLibraryIds);
@@ -455,7 +499,8 @@ export default function TrainingPage() {
       }
       const res = await startTraining({
         expName,
-        email,
+        email: notifyEmail,
+        label: validation.label,
         batchSize,
         sovitsEpochs,
         gptEpochs,
@@ -518,7 +563,7 @@ export default function TrainingPage() {
             Train a voice
           </span>
         </h1>
-        <p className="mt-2 text-base text-slate-500">Upload audio clips, name the run, and start.</p>
+        <p className="mt-2 text-base text-slate-500">Enter your NTU email, upload audio clips, and start.</p>
       </div>
 
       {/* Two-column form */}
@@ -527,29 +572,72 @@ export default function TrainingPage() {
         <div className="space-y-7">
           <div className="space-y-2">
             <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              Experiment Name
+              NTU Email
             </Label>
             <Input
-              className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
-              placeholder="e.g. voice-run-01"
-              value={expName}
-              onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+              type="email"
+              className={cn(
+                'h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1',
+                showIdentityError && 'border-red-300 focus-visible:ring-red-300'
+              )}
+              placeholder="you@ntu.edu.sg"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               disabled={isRunning}
+              aria-invalid={showIdentityError || undefined}
+              aria-describedby="training-voice-name"
             />
+            <p id="training-voice-name" className="text-xs text-slate-500">
+              Your voices are named after this address, and we email you here when training finishes.
+            </p>
           </div>
 
           <div className="space-y-2">
             <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              Notify Email
+              Label <span className="normal-case tracking-normal text-slate-300">- optional</span>
             </Label>
             <Input
-              type="email"
               className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. 2, calm, lecture"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
               disabled={isRunning}
+              aria-describedby="training-voice-summary"
             />
+            <p id="training-voice-summary" className="text-xs text-slate-500">
+              Leave blank for your main voice, or label this one to keep it alongside the others.
+            </p>
+          </div>
+
+          <div
+            className={cn(
+              'rounded-xl border px-4 py-3 text-xs',
+              showIdentityError
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : replacedVoice
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-slate-200 bg-slate-50 text-slate-600'
+            )}
+            role={showIdentityError ? 'alert' : undefined}
+          >
+            {showIdentityError ? (
+              voiceIdentity.error
+            ) : voiceIdentity.valid ? (
+              <>
+                Saving as <span className="font-semibold">{voiceIdentity.voiceName}</span>.
+                {replacedVoice ? (
+                  <>
+                    {' '}This replaces the voice you trained
+                    {replacedVoice.trainedAt ? ` on ${formatTrainedAt(replacedVoice.trainedAt)}` : ''}.
+                    {' '}Add a label to keep both.
+                  </>
+                ) : (
+                  ' This creates a new voice.'
+                )}
+              </>
+            ) : (
+              'Enter your NTU email to see what this voice will be called.'
+            )}
           </div>
         </div>
 
@@ -644,6 +732,9 @@ export default function TrainingPage() {
             'bg-slate-300'
           )} />
           {selectionSummary} - {statusLabel}
+          {runningExpName && isRunning ? (
+            <span className="text-slate-400">({runningExpName})</span>
+          ) : null}
         </span>
 
         {(error || uploadError) && (

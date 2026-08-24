@@ -1,14 +1,9 @@
-function slugifyDisplayName(displayName) {
-  return String(displayName || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+import { buildVoiceProfileId as voiceProfileIdFor } from './voiceIdentity.js';
 
+// Same slug rule as the email-to-voice mapping, so a profile saved from the TTS
+// page lands on the id a lecturer's email resolves to.
 export function buildVoiceProfileId(displayName, fallback = 'voice-profile') {
-  const slug = slugifyDisplayName(displayName) || fallback;
-  return `${slug}-v1`;
+  return voiceProfileIdFor(displayName) || voiceProfileIdFor(fallback);
 }
 
 function normalizeDefaults(defaults = {}) {

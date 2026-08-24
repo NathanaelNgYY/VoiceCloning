@@ -3,11 +3,10 @@ import assert from 'node:assert/strict';
 import { validateTrainingStart } from './trainingValidation.js';
 
 const wavFile = { name: 'voice_sample.wav', type: 'audio/wav', size: 8 * 1024 * 1024 };
-const validEmail = 'user@example.com';
+const validEmail = 'alice.tan@ntu.edu.sg';
 
-test('validateTrainingStart accepts a named run with supported audio, bounded settings, and valid email', () => {
+test('validateTrainingStart accepts an NTU address with supported audio and bounded settings', () => {
   const result = validateTrainingStart({
-    expName: 'demo_voice_01',
     email: validEmail,
     source: 'direct',
     files: [wavFile],
@@ -19,41 +18,74 @@ test('validateTrainingStart accepts a named run with supported audio, bounded se
     asrLanguage: 'en',
   });
 
-  assert.deepEqual(result, { valid: true, errors: [] });
+  assert.deepEqual(result, {
+    valid: true,
+    errors: [],
+    email: 'alice.tan@ntu.edu.sg',
+    label: '',
+    expName: 'alice-tan',
+    voiceProfileId: 'alice-tan-v1',
+  });
 });
 
-test('validateTrainingStart rejects missing or unsafe experiment names before upload', () => {
-  assert.deepEqual(validateTrainingStart({ expName: '', email: validEmail, source: 'direct', files: [wavFile] }), {
-    valid: false,
-    errors: ['Enter an experiment name.'],
+test('validateTrainingStart names the run after the email so nothing else can invent one', () => {
+  const result = validateTrainingStart({
+    email: '  ALICE.TAN+lecture@staff.main.ntu.edu.sg ',
+    source: 'direct',
+    files: [wavFile],
   });
 
-  assert.deepEqual(validateTrainingStart({ expName: '../voice', email: validEmail, source: 'direct', files: [wavFile] }), {
-    valid: false,
-    errors: ['Experiment name may only contain letters, numbers, dots, dashes, and underscores.'],
+  assert.equal(result.valid, true);
+  assert.equal(result.expName, 'alice-tan');
+  assert.equal(result.voiceProfileId, 'alice-tan-v1');
+});
+
+test('validateTrainingStart routes the dean to his already-deployed voice', () => {
+  const result = validateTrainingStart({
+    email: 'josephsung@ntu.edu.sg',
+    source: 'direct',
+    files: [wavFile],
   });
+
+  assert.equal(result.expName, 'DeanVoice');
+  assert.equal(result.voiceProfileId, 'deanvoice-v1');
+});
+
+test('validateTrainingStart rejects non-NTU and malformed addresses', () => {
+  assert.deepEqual(validateTrainingStart({ email: 'user@example.com', source: 'direct', files: [wavFile] }).errors, [
+    'Use your NTU email address (an @ntu.edu.sg address).',
+  ]);
+  assert.deepEqual(validateTrainingStart({ email: 'notanemail', source: 'direct', files: [wavFile] }).errors, [
+    'Enter a valid email address.',
+  ]);
+  assert.deepEqual(validateTrainingStart({ email: '', source: 'direct', files: [wavFile] }).errors, [
+    'Enter your NTU email address.',
+  ]);
+});
+
+test('validateTrainingStart yields no experiment name when the email is rejected', () => {
+  const result = validateTrainingStart({ email: 'user@example.com', source: 'direct', files: [wavFile] });
+  assert.equal(result.valid, false);
+  assert.equal(result.expName, '');
+  assert.equal(result.voiceProfileId, '');
 });
 
 test('validateTrainingStart rejects empty or unsupported training audio input', () => {
-  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: validEmail, source: 'direct', files: [] }), {
-    valid: false,
-    errors: ['Upload at least one training audio file.'],
-  });
+  assert.deepEqual(validateTrainingStart({ email: validEmail, source: 'direct', files: [] }).errors, [
+    'Upload at least one training audio file.',
+  ]);
 
   assert.deepEqual(validateTrainingStart({
-    expName: 'voice',
     email: validEmail,
     source: 'direct',
     files: [{ name: 'notes.txt', type: 'text/plain', size: 100 }],
-  }), {
-    valid: false,
-    errors: ['Unsupported audio file: notes.txt. Use WAV, FLAC, MP3, M4A, OGG, WEBM, or MP4.'],
-  });
+  }).errors, [
+    'Unsupported audio file: notes.txt. Use WAV, FLAC, MP3, M4A, OGG, WEBM, or MP4.',
+  ]);
 });
 
 test('validateTrainingStart rejects out-of-range training settings', () => {
   const result = validateTrainingStart({
-    expName: 'voice',
     email: validEmail,
     source: 'direct',
     files: [wavFile],
@@ -76,52 +108,47 @@ test('validateTrainingStart rejects out-of-range training settings', () => {
   ]);
 });
 
-test('validateTrainingStart rejects missing email', () => {
-  assert.deepEqual(validateTrainingStart({ expName: 'voice', email: '', source: 'direct', files: [wavFile] }), {
-    valid: false,
-    errors: ['Enter a valid email address to receive training notifications.'],
-  });
-});
-
-test('validateTrainingStart rejects malformed email addresses', () => {
-  const result = validateTrainingStart({ expName: 'voice', email: 'notanemail', source: 'direct', files: [wavFile] });
-  assert.equal(result.valid, false);
-  assert.deepEqual(result.errors, ['Enter a valid email address to receive training notifications.']);
-});
-
-test('validateTrainingStart accepts email with subdomain and plus addressing', () => {
-  const result = validateTrainingStart({
-    expName: 'voice',
-    email: 'user+tag@mail.example.co.uk',
-    source: 'direct',
-    files: [wavFile],
-  });
-  assert.deepEqual(result, { valid: true, errors: [] });
-});
-
 test('validateTrainingStart accepts shared-library mode with selected library files and no direct uploads', () => {
   const result = validateTrainingStart({
-    expName: 'voice',
     email: validEmail,
     source: 'library',
     files: [],
     selectedLibraryIds: ['lib-1', 'lib-2'],
   });
 
-  assert.deepEqual(result, { valid: true, errors: [] });
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.errors, []);
 });
 
 test('validateTrainingStart rejects shared-library mode when no library files are selected', () => {
   const result = validateTrainingStart({
-    expName: 'voice',
     email: validEmail,
     source: 'library',
     files: [],
     selectedLibraryIds: [],
   });
 
-  assert.deepEqual(result, {
-    valid: false,
-    errors: ['Select at least one shared storage audio file.'],
+  assert.deepEqual(result.errors, ['Select at least one shared storage audio file.']);
+});
+
+test('validateTrainingStart lets one lecturer keep several voices apart with a label', () => {
+  const main = validateTrainingStart({ email: validEmail, source: 'direct', files: [wavFile] });
+  const calm = validateTrainingStart({
+    email: validEmail, label: 'Calm', source: 'direct', files: [wavFile],
   });
+
+  assert.equal(main.expName, 'alice-tan');
+  assert.equal(calm.expName, 'alice-tan_calm');
+  assert.equal(calm.label, 'calm');
+  assert.notEqual(main.voiceProfileId, calm.voiceProfileId);
+});
+
+test('validateTrainingStart rejects a label it cannot turn into a name', () => {
+  const result = validateTrainingStart({
+    email: validEmail, label: '///', source: 'direct', files: [wavFile],
+  });
+
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errors, ['The label may only contain letters, numbers, and dashes.']);
+  assert.equal(result.expName, '');
 });
