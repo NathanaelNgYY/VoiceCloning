@@ -3886,7 +3886,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedModelLoaded = isSelectedModelLoaded({
     serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
   });
-  const isReady = selectedModelLoaded && Boolean(liveRefParams);
+  // A voice with a saved profile is resolved by the backend per request, on
+  // whichever GPU instance serves the call — references included. Waiting for
+  // one instance's status poll to report it loaded is meaningless behind a load
+  // balancer, and never converges once the group holds more than one instance.
+  const selectedVoiceResolvesPerRequest = canEditInstructions
+    && Boolean(selectedVoiceProfileId)
+    && myVoices.some((voice) => (
+      voice.displayName === selectedProfile?.displayName && voice.hasSavedProfile
+    ));
+  const isReady = (selectedModelLoaded && Boolean(liveRefParams))
+    || (serverReady && selectedVoiceResolvesPerRequest);
   // Last line of defence against a raw CloudFront/nginx 503/404 page ever rendering
   // as an error banner — strip HTML and swallow bare gateway errors.
   const displayModelError = useMemo(() => sanitizeBackendError(modelError), [modelError]);
