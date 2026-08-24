@@ -378,6 +378,13 @@ export function getPinnedVoiceProfile(voiceProfileId) {
   return api.get(`/voice-profile/pinned/${encodeURIComponent(voiceProfileId)}`);
 }
 
+// The voices the signed-in lecturer owns. The server resolves ownership from
+// the token's email — never from anything the browser sends — and only honours
+// scope=all for an admin.
+export function getMyVoiceProfiles(scope = 'mine') {
+  return api.get('/voice-profile/mine', { params: scope === 'all' ? { scope: 'all' } : {} });
+}
+
 export function getVoiceProfileConfigs(voiceProfileId) {
   return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
 }

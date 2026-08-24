@@ -8,6 +8,7 @@ import {
   activateVoiceProfile,
   deleteVoiceProfileConfig,
   getFullActiveVoiceProfile,
+  getMyVoiceProfiles,
   getVoiceProfileConfigs,
   saveVoiceProfileConfig,
   selectModels,
@@ -106,7 +107,8 @@ import {
   serializePronunciationCsv,
 } from '@/lib/pronunciationCsv';
 import { buildVoiceProfileId, buildVoiceProfilePayload } from '@/lib/voiceProfilePayload';
-import { resolveInitialVoiceKey } from '@/lib/chatbotVoice';
+import { normalizeVoiceKey, resolveInitialVoiceKey } from '@/lib/chatbotVoice';
+import MyVoicesPanel from '../components/MyVoicesPanel.jsx';
 import {
   resolveChatbotSystemPrompt,
   getDefaultChatbotSystemPrompt,
@@ -282,7 +284,19 @@ function ChatBubble({ message, selected, selectedPart, onPlay, audioRef }) {
 
 export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const kiosk = APP_MODE_CONFIG.kiosk;
+  // Where "please train your voice" sends a lecturer with no voice yet. Blank
+  // (the default) simply drops the link rather than guessing a host.
+  const TRAINING_APP_URL = String(import.meta.env.VITE_TRAINING_APP_URL || '').trim();
   const canEditInstructions = APP_MODE_CONFIG.showInstructionsEditor;
+  // Faculty only: which voices this lecturer owns, resolved server-side from
+  // their signed-in email. `scope` is a request, not a permission — the server
+  // downgrades it to 'mine' for anyone who is not an admin.
+  const [myVoices, setMyVoices] = useState([]);
+  const [myVoicesScope, setMyVoicesScope] = useState('mine');
+  const [myVoicesAdmin, setMyVoicesAdmin] = useState(false);
+  const [myVoicesLoading, setMyVoicesLoading] = useState(false);
+  const [myVoicesError, setMyVoicesError] = useState('');
+  const [myVoicesReloadToken, setMyVoicesReloadToken] = useState(0);
   // Which assistant this panel is editing. Each category is stored separately,
   // so switching here swaps the whole panel — instructions, documents and the
   // browser-local draft of both.
@@ -2305,6 +2319,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
+  // The panel speaks in saved-profile terms; the page selects by the key derived
+  // from the model filenames, which is the display name normalised.
+  function handleSelectMyVoice(voice) {
+    const key = normalizeVoiceKey(voice?.displayName);
+    const match = availableProfiles.find((profile) => profile.key === key);
+    if (!match) {
+      setMyVoicesError(`${voice?.displayName || 'That voice'} has no trained model on this backend yet.`);
+      return;
+    }
+    setMyVoicesError('');
+    handleVoiceSelection(match.key);
+  }
+
   function handleVoiceSelection(value) {
     const nextProfile = availableProfiles.find((profile) => profile.key === value) || null;
     // Keep the visible selection urgent so Radix can close the menu immediately;
@@ -3240,6 +3267,34 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const id = window.setTimeout(() => { if (loadingPreviewPath === 'all') setLoadingPreviewPath(''); }, 8000);
     return () => window.clearTimeout(id);
   }, [loadingPreviewPath]);
+
+  // Faculty only. Failure is shown in the panel rather than thrown: not knowing
+  // which voices you own must never stop the rest of the kiosk working.
+  useEffect(() => {
+    if (!canEditInstructions) return undefined;
+    let ignore = false;
+    setMyVoicesLoading(true);
+    setMyVoicesError('');
+    getMyVoiceProfiles(myVoicesScope)
+      .then((res) => {
+        if (ignore) return;
+        setMyVoices(Array.isArray(res.data?.voices) ? res.data.voices : []);
+        setMyVoicesAdmin(res.data?.isAdmin === true);
+        // The server decides the scope it actually served; trust that, not the request.
+        setMyVoicesScope(res.data?.scope === 'all' ? 'all' : 'mine');
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setMyVoices([]);
+        setMyVoicesError(
+          err?.response?.status === 401
+            ? 'Sign in to see your voices.'
+            : err?.response?.data?.error || err?.message || 'Could not load your voices.',
+        );
+      })
+      .finally(() => { if (!ignore) setMyVoicesLoading(false); });
+    return () => { ignore = true; };
+  }, [canEditInstructions, myVoicesScope, myVoicesReloadToken]);
 
   useEffect(() => {
     const initialVoiceKey = resolveInitialVoiceKey({
@@ -5057,6 +5112,19 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               </button>
             </div>
           </div>
+          <MyVoicesPanel
+            voices={myVoices}
+            isAdmin={myVoicesAdmin}
+            scope={myVoicesScope}
+            loading={myVoicesLoading}
+            error={myVoicesError}
+            selectedVoiceName={selectedProfile?.displayName || ''}
+            disabled={isConversationActive}
+            trainingUrl={TRAINING_APP_URL}
+            onSelectVoice={handleSelectMyVoice}
+            onScopeChange={setMyVoicesScope}
+            onRetry={() => setMyVoicesReloadToken((token) => token + 1)}
+          />
           <div className="border-b border-slate-100 px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">

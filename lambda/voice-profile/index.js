@@ -1,15 +1,36 @@
-import { uploadBuffer, getObject, headObject } from '../shared/s3.js';
+import { uploadBuffer, getObject, headObject, listObjects } from '../shared/s3.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
-import { isNtuEmail, normalizeEmail } from '../shared/voiceIdentity.js';
+import { isNtuEmail, normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
+const PROFILE_PREFIX = 'voice-profiles/';
+const MY_PROFILES_PATH = /^\/api\/voice-profile\/mine\/?$/u;
 const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
 const ACTIVATE_PROFILE_PATH = /^\/api\/voice-profile\/activate\/?$/u;
 const INTERNAL_PROFILE_PATH = /^\/api\/voice-profile\/internal\/([^/]+)\/?$/u;
 const PINNED_PROFILE_PATH = /^\/api\/voice-profile\/pinned\/([^/]+)\/?$/u;
+
+// Same rule as the supervisor analytics routes: an app role, or an explicit
+// object-id allowlist. Deliberately not a second admin mechanism.
+function isAdminIdentity(identity, env = process.env) {
+  const requiredRole = env.SUPERVISOR_APP_ROLE || 'Supervisor';
+  const allowedOids = new Set(
+    String(env.SUPERVISOR_OIDS || '').split(',').map((value) => value.trim()).filter(Boolean),
+  );
+  return Boolean(identity?.roles?.includes(requiredRole) || allowedOids.has(identity?.oid));
+}
+
+// Profiles saved before ownerEmail existed carry no owner, so ownership falls
+// back to the naming rule — DeanVoice belongs to josephsung@ whether or not the
+// record says so.
+export function profileBelongsTo(profile, email) {
+  const owner = normalizeEmail(profile?.ownerEmail);
+  if (owner) return owner === normalizeEmail(email);
+  return ownsVoiceName(email, profile?.displayName);
+}
 
 function getProfileStorageKey(voiceProfileId) {
   return `voice-profiles/${voiceProfileId}.json`;
@@ -137,6 +158,17 @@ export function buildVoiceProfileSummary(profile) {
   };
 }
 
+function buildOwnedVoiceSummary(profile, email) {
+  return {
+    voiceProfileId: profile.voiceProfileId,
+    displayName: profile.displayName,
+    ...(profile.ownerEmail ? { ownerEmail: profile.ownerEmail } : {}),
+    ...(profile.updatedAt ? { updatedAt: profile.updatedAt } : {}),
+    ...(profile.activatedAt ? { activatedAt: profile.activatedAt } : {}),
+    isMine: profileBelongsTo(profile, email),
+  };
+}
+
 async function defaultReadObject(key) {
   const existing = await headObject(key);
   if (!existing) return null;
@@ -187,6 +219,7 @@ function wantsFullActiveProfile(event) {
 
 export function createHandler({
   readObject = defaultReadObject,
+  listProfileObjects = () => listObjects(PROFILE_PREFIX),
   writeObject = uploadBuffer,
   warmReferenceAudio = async (profile) => inferencePost('/ref-audio/warm', {
     ref_audio_path: profile.ref_audio_path,
@@ -218,6 +251,45 @@ export function createHandler({
           {},
           event,
         );
+      }
+
+      // A lecturer sees the voices they own; an admin can ask for all of them.
+      // Ownership is never taken from the request — only from the signed-in
+      // identity — so ?scope=all is inert without the admin role.
+      if (method === 'GET' && MY_PROFILES_PATH.test(routePath)) {
+        if (!authGuard) return err(503, 'Voice profile authentication is not configured', event);
+        let identity;
+        try {
+          identity = await authGuard.authorize(event);
+        } catch {
+          return err(401, 'Sign in to see your voices', event);
+        }
+
+        const isAdmin = isAdminIdentity(identity);
+        const wantsAll = String(event?.queryStringParameters?.scope || '').trim().toLowerCase() === 'all';
+        const scope = wantsAll && isAdmin ? 'all' : 'mine';
+
+        const objects = await listProfileObjects();
+        const keys = objects
+          .map((object) => String(object?.key || ''))
+          .filter((key) => key.endsWith('.json') && key !== ACTIVE_PROFILE_KEY);
+
+        const voices = [];
+        for (const key of keys) {
+          let profile;
+          try {
+            profile = await parseStoredProfile(readObject, key);
+          } catch {
+            // One unreadable record must not hide every other voice.
+            continue;
+          }
+          if (!profile?.voiceProfileId) continue;
+          const summary = buildOwnedVoiceSummary(profile, identity?.email);
+          if (scope === 'all' || summary.isMine) voices.push(summary);
+        }
+
+        voices.sort((left, right) => String(left.displayName || '').localeCompare(String(right.displayName || '')));
+        return ok({ email: normalizeEmail(identity?.email), isAdmin, scope, voices }, {}, event);
       }
 
       if (method === 'GET' && internalMatch) {

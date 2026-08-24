@@ -537,3 +537,141 @@ test('a non-NTU owner is not recorded, so ownership can never point outside the 
 
   assert.equal('ownerEmail' in written.get('voice-profiles/demo-v1.json'), false);
 });
+
+// --- GET /api/voice-profile/mine -------------------------------------------
+
+const STORED_PROFILES = {
+  // Saved after ownerEmail existed.
+  'voice-profiles/alice-tan-v1.json': {
+    voiceProfileId: 'alice-tan-v1', displayName: 'alice-tan',
+    ownerEmail: 'alice.tan@ntu.edu.sg', updatedAt: '2026-08-20T00:00:00.000Z',
+  },
+  'voice-profiles/alice-tan_2-v1.json': {
+    voiceProfileId: 'alice-tan_2-v1', displayName: 'alice-tan_2',
+    ownerEmail: 'alice.tan@ntu.edu.sg', updatedAt: '2026-08-21T00:00:00.000Z',
+  },
+  // Legacy: no ownerEmail at all, ownership must fall back to the name rule.
+  'voice-profiles/deanvoice-v1.json': {
+    voiceProfileId: 'deanvoice-v1', displayName: 'DeanVoice',
+    updatedAt: '2026-06-24T00:00:00.000Z',
+  },
+  'voice-profiles/obama-v1.json': {
+    voiceProfileId: 'obama-v1', displayName: 'Obama', updatedAt: '2026-05-01T00:00:00.000Z',
+  },
+};
+
+function mineHandler(identity, { env = {} } = {}) {
+  return createHandler({
+    authGuard: { authorize: async () => identity },
+    listProfileObjects: async () => [
+      ...Object.keys(STORED_PROFILES).map((key) => ({ key })),
+      // The shared active pointer lives in the same prefix and is not a voice.
+      { key: 'voice-profiles/active.json' },
+    ],
+    readObject: async (key) => (STORED_PROFILES[key]
+      ? Buffer.from(JSON.stringify(STORED_PROFILES[key]), 'utf-8')
+      : null),
+    ...env,
+  });
+}
+
+function mineEvent(query = {}) {
+  return {
+    requestContext: { http: { method: 'GET' } },
+    rawPath: '/api/voice-profile/mine',
+    queryStringParameters: query,
+  };
+}
+
+test('a lecturer sees only the voices they own', async () => {
+  const response = await mineHandler({ email: 'Alice.Tan@ntu.edu.sg', oid: 'oid-alice' })(mineEvent());
+  assert.equal(response.statusCode, 200);
+  const body = JSON.parse(response.body);
+
+  assert.deepEqual(body.voices.map((voice) => voice.voiceProfileId), ['alice-tan-v1', 'alice-tan_2-v1']);
+  assert.equal(body.scope, 'mine');
+  assert.equal(body.isAdmin, false);
+  assert.equal(body.email, 'alice.tan@ntu.edu.sg');
+});
+
+test('a legacy profile with no ownerEmail is matched by its name', async () => {
+  const response = await mineHandler({ email: 'josephsung@ntu.edu.sg', oid: 'oid-dean' })(mineEvent());
+  const body = JSON.parse(response.body);
+
+  assert.deepEqual(body.voices.map((voice) => voice.displayName), ['DeanVoice']);
+  assert.equal(body.voices[0].isMine, true);
+});
+
+test('a lecturer with no voices gets an empty list, not an error', async () => {
+  const response = await mineHandler({ email: 'newcomer@ntu.edu.sg', oid: 'oid-new' })(mineEvent());
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).voices, []);
+});
+
+test('scope=all is inert for a lecturer and honoured for an admin', async () => {
+  const lecturer = await mineHandler({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' })(
+    mineEvent({ scope: 'all' }),
+  );
+  const lecturerBody = JSON.parse(lecturer.body);
+  assert.equal(lecturerBody.scope, 'mine', 'asking for all must not grant it');
+  assert.equal(lecturerBody.voices.length, 2);
+
+  const admin = await mineHandler({ email: 'dev@ntu.edu.sg', oid: 'oid-dev', roles: ['Supervisor'] })(
+    mineEvent({ scope: 'all' }),
+  );
+  const adminBody = JSON.parse(admin.body);
+  assert.equal(adminBody.isAdmin, true);
+  assert.equal(adminBody.scope, 'all');
+  assert.deepEqual(
+    adminBody.voices.map((voice) => voice.voiceProfileId).sort(),
+    ['alice-tan-v1', 'alice-tan_2-v1', 'deanvoice-v1', 'obama-v1'],
+  );
+  assert.equal(adminBody.voices.every((voice) => voice.isMine === false), true, 'none are the admin own');
+});
+
+test('an admin still defaults to their own voices until they ask for all', async () => {
+  const response = await mineHandler({ email: 'dev@ntu.edu.sg', oid: 'oid-dev', roles: ['Supervisor'] })(mineEvent());
+  const body = JSON.parse(response.body);
+  assert.equal(body.isAdmin, true);
+  assert.equal(body.scope, 'mine');
+  assert.deepEqual(body.voices, []);
+});
+
+test('the shared active.json pointer is not listed as a voice', async () => {
+  const response = await mineHandler({ email: 'dev@ntu.edu.sg', oid: 'oid-dev', roles: ['Supervisor'] })(
+    mineEvent({ scope: 'all' }),
+  );
+  const ids = JSON.parse(response.body).voices.map((voice) => voice.voiceProfileId);
+  assert.equal(ids.includes(undefined), false);
+  assert.equal(ids.length, 4);
+});
+
+test('an unreadable record does not hide the rest', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => ({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' }) },
+    listProfileObjects: async () => [
+      { key: 'voice-profiles/broken.json' },
+      { key: 'voice-profiles/alice-tan-v1.json' },
+    ],
+    readObject: async (key) => (key === 'voice-profiles/broken.json'
+      ? Buffer.from('{not json', 'utf-8')
+      : Buffer.from(JSON.stringify(STORED_PROFILES['voice-profiles/alice-tan-v1.json']), 'utf-8')),
+  });
+
+  const response = await handler(mineEvent());
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).voices.map((voice) => voice.displayName), ['alice-tan']);
+});
+
+test('an unauthenticated caller is refused before any storage is read', async () => {
+  let listed = false;
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('no token'); } },
+    listProfileObjects: async () => { listed = true; return []; },
+    readObject: async () => null,
+  });
+
+  const response = await handler(mineEvent());
+  assert.equal(response.statusCode, 401);
+  assert.equal(listed, false);
+});
