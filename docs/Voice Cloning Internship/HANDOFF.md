@@ -44,7 +44,7 @@ Last updated: 2026-08-24
 
 - Model-aware coordination is live on staging: matching free slot -> demand-idle reassignment ->
   per-model scale-out, with two admitted slots per GPU. Fresh DeanV2 v33 boot and routed WAV
-  passed; clean v34 fallback boot passed without manual repair and v34 is ASG/default. The
+  passed; clean v34 fallback boot passed without repair and v34 is ASG/default at desired 1. The
   application Lambda routing flag and lectures GI capacity-starting UI are deployed. Direct
   coordinator WAV and unauthenticated 401 canaries passed; authenticated browser audio remains.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the

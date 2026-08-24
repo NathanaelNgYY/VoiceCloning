@@ -10,6 +10,7 @@
   worker with zero queue wait. A clean v34 node invoked non-executable boot scripts through
   Bash, deeply warmed the dynamic active profile in 599s, registered READY with two slots,
   and required no manual repair; v34 is latest/default and the ASG follows `$Default`.
+  Test capacity was returned to desired 1 after idle/queue checks, retaining the ready v34 node.
   The coordinator-aware application Lambda and lectures GI bundle `index-9LY2pSHn.js` are
   deployed, `MODEL_COORDINATOR_FUNCTION_NAME` is enabled, and unauthenticated synthesis
   remains 401. Automated authenticated application audio was unavailable because staging has
