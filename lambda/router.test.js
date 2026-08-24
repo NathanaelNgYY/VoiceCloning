@@ -109,7 +109,7 @@ test('router resolves training metadata route', () => {
     {
       name: 'TrainingFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/train(?:\/(?:stop|current|metadata\/[^/]+))?\/?$/u,
+      pattern: /^\/api\/train(?:\/(?:stop|current|next-name|metadata\/[^/]+))?\/?$/u,
       modulePath: './training/index.js',
       lambdaPath: '/api/train/metadata/demo',
     },
@@ -171,4 +171,10 @@ test('router resolves per-person voice profile config routes', () => {
       lambdaPath: '/api/voice-profile/configs/michael-tan-v1/warm-ref',
     },
   );
+});
+
+test('router resolves the voice-name allocation route', () => {
+  const route = findRoute('POST', '/api/train/next-name');
+  assert.equal(route?.modulePath, './training/index.js');
+  assert.equal(route?.lambdaPath, '/api/train/next-name');
 });

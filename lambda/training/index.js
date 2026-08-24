@@ -1,8 +1,8 @@
 import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
 import { isSafePathSegment } from '../shared/paths.js';
-import { describeVoiceIdentity } from '../shared/voiceIdentity.js';
+import { describeVoiceIdentity, nextVoiceName, ownsVoiceName } from '../shared/voiceIdentity.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
-import { getObject, headObject } from '../shared/s3.js';
+import { getObject, headObject, listObjects } from '../shared/s3.js';
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
@@ -16,6 +16,21 @@ async function defaultReadObject(key) {
   return getObject(key);
 }
 
+// A voice exists once its weights do. Both prefixes are small, flat listings.
+async function defaultListTrainedVoiceNames() {
+  const [gptObjects, sovitsObjects] = await Promise.all([
+    listObjects('models/user-models/gpt/'),
+    listObjects('models/user-models/sovits/'),
+  ]);
+  const names = new Set();
+  for (const object of [...gptObjects, ...sovitsObjects]) {
+    const basename = String(object.key || '').split('/').pop() || '';
+    const match = basename.match(/^(.+?)[-_]e\d+(?:[_-]s\d+)?\.(?:ckpt|pth)$/iu);
+    if (match) names.add(match[1]);
+  }
+  return Array.from(names);
+}
+
 function decodeSegment(value) {
   try {
     return decodeURIComponent(value || '');
@@ -26,6 +41,7 @@ function decodeSegment(value) {
 
 export function createHandler({
   readObject = defaultReadObject,
+  listTrainedVoiceNames = defaultListTrainedVoiceNames,
 } = {}) {
   return async function trainingHandler(event) {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -50,10 +66,31 @@ export function createHandler({
       return ok(await gpuPost('/train/stop', { sessionId }));
     }
 
+    // The client must know the run's name before it uploads, because the audio
+    // goes to training/datasets/<expName>/raw/. Allocating it here rather than
+    // letting the browser guess is what stops a stale client from uploading
+    // into a voice that already exists.
+    if (method === 'POST' && routePath.endsWith('/train/next-name')) {
+      const identity = describeVoiceIdentity(body.email);
+      if (!identity.valid) return err(400, identity.error);
+
+      const takenNames = await listTrainedVoiceNames();
+      const expName = nextVoiceName(identity.email, takenNames);
+      if (!expName) {
+        return err(409, `${identity.email} has too many voices; delete one before training again`);
+      }
+      return ok({
+        expName,
+        baseVoiceName: identity.baseVoiceName,
+        email: identity.email,
+        existingVoiceNames: takenNames.filter((name) => ownsVoiceName(identity.email, name)).sort(),
+      });
+    }
+
     if (method === 'POST' && routePath.endsWith('/train')) {
       const {
+        expName: requestedExpName,
         email,
-        label,
         batchSize,
         sovitsEpochs,
         gptEpochs,
@@ -65,15 +102,27 @@ export function createHandler({
         selectedReferences,
         sourceDatasetStats,
       } = body;
-      // The run name is derived here rather than taken from the request: a
-      // lecturer may only ever train a voice their own email owns, and the
-      // browser is not trusted to say which one that is. The optional label is
-      // all they get to choose, and it only ever suffixes their own name.
-      const identity = describeVoiceIdentity(email, label);
+      const identity = describeVoiceIdentity(email);
       if (!identity.valid) return err(400, identity.error);
-      const expName = identity.voiceName;
+
+      const takenNames = await listTrainedVoiceNames();
+      // Falling back to a freshly allocated name keeps a client that never
+      // called /train/next-name working, rather than failing it.
+      const expName = String(requestedExpName || '').trim() || nextVoiceName(identity.email, takenNames);
+      if (!expName) {
+        return err(409, `${identity.email} has too many voices; delete one before training again`);
+      }
       if (!isSafePathSegment(expName)) {
         return err(400, 'expName may only contain letters, numbers, dots, dashes, and underscores');
+      }
+      // Two separate guarantees: the name belongs to this lecturer, and it is
+      // not a voice that already exists. Training never replaces a voice, so a
+      // client that proposed a stale name must be told, not obeyed.
+      if (!ownsVoiceName(identity.email, expName)) {
+        return err(403, `${identity.email} does not own a voice called ${expName}`);
+      }
+      if (takenNames.includes(expName)) {
+        return err(409, `${expName} already exists; training would replace it`);
       }
 
       return ok(await gpuPost('/train', {

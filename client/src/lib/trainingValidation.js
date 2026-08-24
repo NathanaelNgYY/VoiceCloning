@@ -12,12 +12,10 @@ function isIntegerInRange(value, min, max) {
   return Number.isInteger(Number(value)) && Number(value) >= min && Number(value) <= max;
 }
 
-// The run is named after the lecturer's email rather than a typed-in name, so
-// the email is validated once here and the derived name is returned for the
-// caller to submit — nothing else may invent an experiment name.
+// The run has no name of its own to validate: it is allocated from the email by
+// the server. Only the email is checked here.
 export function validateTrainingStart({
   email = '',
-  label = '',
   source = '',
   files = [],
   selectedLibraryIds = [],
@@ -29,7 +27,7 @@ export function validateTrainingStart({
   asrLanguage = 'en',
 } = {}) {
   const errors = [];
-  const identity = describeVoiceIdentity(email, label);
+  const identity = describeVoiceIdentity(email);
 
   if (!identity.valid) {
     errors.push(identity.error);
@@ -75,8 +73,6 @@ export function validateTrainingStart({
     valid: errors.length === 0,
     errors,
     email: identity.email,
-    label: identity.label,
-    expName: identity.voiceName,
-    voiceProfileId: identity.voiceProfileId,
+    baseVoiceName: identity.baseVoiceName,
   };
 }

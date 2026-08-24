@@ -22,13 +22,11 @@ test('validateTrainingStart accepts an NTU address with supported audio and boun
     valid: true,
     errors: [],
     email: 'alice.tan@ntu.edu.sg',
-    label: '',
-    expName: 'alice-tan',
-    voiceProfileId: 'alice-tan-v1',
+    baseVoiceName: 'alice-tan',
   });
 });
 
-test('validateTrainingStart names the run after the email so nothing else can invent one', () => {
+test('validateTrainingStart canonicalises the email so one mailbox is one lecturer', () => {
   const result = validateTrainingStart({
     email: '  ALICE.TAN+lecture@staff.main.ntu.edu.sg ',
     source: 'direct',
@@ -36,8 +34,8 @@ test('validateTrainingStart names the run after the email so nothing else can in
   });
 
   assert.equal(result.valid, true);
-  assert.equal(result.expName, 'alice-tan');
-  assert.equal(result.voiceProfileId, 'alice-tan-v1');
+  assert.equal(result.email, 'alice.tan+lecture@staff.main.ntu.edu.sg');
+  assert.equal(result.baseVoiceName, 'alice-tan');
 });
 
 test('validateTrainingStart routes the dean to his already-deployed voice', () => {
@@ -47,8 +45,7 @@ test('validateTrainingStart routes the dean to his already-deployed voice', () =
     files: [wavFile],
   });
 
-  assert.equal(result.expName, 'DeanVoice');
-  assert.equal(result.voiceProfileId, 'deanvoice-v1');
+  assert.equal(result.baseVoiceName, 'DeanVoice');
 });
 
 test('validateTrainingStart rejects non-NTU and malformed addresses', () => {
@@ -63,11 +60,10 @@ test('validateTrainingStart rejects non-NTU and malformed addresses', () => {
   ]);
 });
 
-test('validateTrainingStart yields no experiment name when the email is rejected', () => {
+test('validateTrainingStart yields no voice name when the email is rejected', () => {
   const result = validateTrainingStart({ email: 'user@example.com', source: 'direct', files: [wavFile] });
   assert.equal(result.valid, false);
-  assert.equal(result.expName, '');
-  assert.equal(result.voiceProfileId, '');
+  assert.equal(result.baseVoiceName, '');
 });
 
 test('validateTrainingStart rejects empty or unsupported training audio input', () => {
@@ -129,26 +125,4 @@ test('validateTrainingStart rejects shared-library mode when no library files ar
   });
 
   assert.deepEqual(result.errors, ['Select at least one shared storage audio file.']);
-});
-
-test('validateTrainingStart lets one lecturer keep several voices apart with a label', () => {
-  const main = validateTrainingStart({ email: validEmail, source: 'direct', files: [wavFile] });
-  const calm = validateTrainingStart({
-    email: validEmail, label: 'Calm', source: 'direct', files: [wavFile],
-  });
-
-  assert.equal(main.expName, 'alice-tan');
-  assert.equal(calm.expName, 'alice-tan_calm');
-  assert.equal(calm.label, 'calm');
-  assert.notEqual(main.voiceProfileId, calm.voiceProfileId);
-});
-
-test('validateTrainingStart rejects a label it cannot turn into a name', () => {
-  const result = validateTrainingStart({
-    email: validEmail, label: '///', source: 'direct', files: [wavFile],
-  });
-
-  assert.equal(result.valid, false);
-  assert.deepEqual(result.errors, ['The label may only contain letters, numbers, and dashes.']);
-  assert.equal(result.expName, '');
 });

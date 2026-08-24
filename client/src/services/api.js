@@ -266,6 +266,13 @@ export function startTraining(params) {
   return api.post('/train', params);
 }
 
+// The run's name is allocated by the server, not guessed here: the audio is
+// uploaded to training/datasets/<expName>/raw/ before training starts, so the
+// name has to be settled first and must never land on an existing voice.
+export function allocateTrainingVoiceName(email) {
+  return api.post('/train/next-name', { email });
+}
+
 export function stopTraining(sessionId) {
   return api.post('/train/stop', { sessionId });
 }

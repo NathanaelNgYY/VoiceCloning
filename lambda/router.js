@@ -8,7 +8,7 @@ export const ROUTES = [
   { name: 'LearnersFunction', methods: ['GET', 'DELETE'], pattern: /^\/api\/(?:learner\/me|supervisor\/(?:concepts|users(?:\/[^/]+|\/[^/]+\/events|\/[^/]+\/lessons\/[^/]+\/concepts\/[^/]+)?))\/?$/u, modulePath: './learners/index.js' },
   { name: 'UploadFunction', methods: ['POST'], pattern: /^\/api\/(?:upload|upload-ref)\/(?:presign|confirm)\/?$/u, modulePath: './upload/index.js' },
   { name: 'TrainingLibraryFunction', methods: ['GET', 'POST', 'DELETE'], pattern: /^\/api\/training-library(?:\/(?:snapshot|presign|confirm|[^/]+(?:\/(?:replace-presign|replace-confirm))?))?\/?$/u, modulePath: './training-library/index.js' },
-  { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current|metadata\/[^/]+))?\/?$/u, modulePath: './training/index.js' },
+  { name: 'TrainingFunction', methods: ['GET', 'POST'], pattern: /^\/api\/train(?:\/(?:stop|current|next-name|metadata\/[^/]+))?\/?$/u, modulePath: './training/index.js' },
   { name: 'ModelsFunction', methods: ['GET', 'POST'], pattern: /^\/api\/models(?:\/select)?\/?$/u, modulePath: './models/index.js' },
   { name: 'InferenceFunction', methods: ['GET', 'POST'], pattern: /^\/api\/inference(?:\/(?:generate|regenerate-chunk|restore-chunk|insert-chunk|delete-chunk|scan-oov|result\/[A-Za-z0-9-]+|chunk\/[A-Za-z0-9-]+\/\d+|chunk-preview\/[A-Za-z0-9-]+\/\d+|chunk-version\/[A-Za-z0-9-]+\/\d+\/[A-Za-z0-9-]+|cancel|current|status|start|stop))?\/?$/u, modulePath: './inference/index.js' },
   { name: 'TranscribeFunction', methods: ['POST'], pattern: /^\/api\/transcribe\/?$/u, modulePath: './transcribe/index.js' },

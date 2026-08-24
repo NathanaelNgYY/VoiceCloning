@@ -4,6 +4,7 @@ import FloatingNotice from '../components/FloatingNotice.jsx';
 import TrainingLibraryPanel from '../components/TrainingLibraryPanel.jsx';
 import {
   deleteTrainingLibraryFile,
+  allocateTrainingVoiceName,
   getCurrentTraining,
   getModels,
   getTrainingLibraryFiles,
@@ -16,7 +17,7 @@ import {
 } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 import { validateTrainingStart } from '@/lib/trainingValidation';
-import { describeVoiceIdentity } from '@/lib/voiceIdentity';
+import { describeVoiceIdentity, nextVoiceName, ownsVoiceName } from '@/lib/voiceIdentity';
 import { buildVoiceProfiles } from '@/lib/voiceProfiles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,13 +34,6 @@ import { describeTrainingSelection, resolveTrainingSource } from '@/lib/training
 
 const NOTICE_TIMEOUT_MS = 4200;
 
-function formatTrainedAt(timestamp) {
-  const date = new Date(timestamp);
-  return Number.isFinite(date.getTime())
-    ? date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-    : '';
-}
-
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
@@ -48,9 +42,8 @@ function formatSize(bytes) {
 
 export default function TrainingPage() {
   const [email, setEmail] = useState('');
-  const [label, setLabel] = useState('');
   const [runningExpName, setRunningExpName] = useState('');
-  const [existingVoices, setExistingVoices] = useState([]);
+  const [existingVoiceNames, setExistingVoiceNames] = useState([]);
   const [files, setFiles] = useState([]);
   const [batchSize, setBatchSize] = useState(2);
   const [sovitsEpochs, setSovitsEpochs] = useState(20);
@@ -81,13 +74,17 @@ export default function TrainingPage() {
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
   // The voice is named after the lecturer's email so the faculty app can find
-  // it from their sign-in alone. A lecturer may own several, told apart by the
-  // optional label — but never by a name typed from scratch.
-  const voiceIdentity = describeVoiceIdentity(email, label);
-  const showIdentityError = Boolean(email.trim() || label.trim()) && !voiceIdentity.valid;
-  const replacedVoice = voiceIdentity.valid
-    ? existingVoices.find((voice) => voice.name === voiceIdentity.voiceName) || null
-    : null;
+  // it from their sign-in alone, and every run adds another one. This is only
+  // the preview — the name that is actually used is allocated by the server at
+  // start, so an out-of-date model list here can never overwrite a voice.
+  const voiceIdentity = describeVoiceIdentity(email);
+  const showIdentityError = Boolean(email.trim()) && !voiceIdentity.valid;
+  const previewVoiceName = voiceIdentity.valid
+    ? nextVoiceName(voiceIdentity.email, existingVoiceNames)
+    : '';
+  const ownedVoiceNames = voiceIdentity.valid
+    ? existingVoiceNames.filter((name) => ownsVoiceName(voiceIdentity.email, name))
+    : [];
   const trainingSource = resolveTrainingSource({
     directFiles: files,
     selectedLibraryIds,
@@ -140,16 +137,17 @@ export default function TrainingPage() {
   useEffect(() => {
     let ignore = false;
 
-    // Only feeds the "this replaces X" warning, so a failure here is silent —
-    // it must never stop someone training.
+    // Only feeds the name preview, so a failure here is silent — it must never
+    // stop someone training.
     async function loadExistingVoices() {
       try {
         const res = await getModels();
         if (ignore) return;
-        setExistingVoices(buildVoiceProfiles(res.data?.gpt || [], res.data?.sovits || [])
-          .map((profile) => ({ name: profile.expName, trainedAt: profile.recentAt })));
+        setExistingVoiceNames(buildVoiceProfiles(res.data?.gpt || [], res.data?.sovits || [])
+          .map((profile) => profile.expName)
+          .filter(Boolean));
       } catch {
-        if (!ignore) setExistingVoices([]);
+        if (!ignore) setExistingVoiceNames([]);
       }
     }
 
@@ -484,14 +482,19 @@ export default function TrainingPage() {
       return;
     }
 
-    const { expName, email: notifyEmail } = validation;
-    setExistingVoices((voices) => (voices.some((voice) => voice.name === expName)
-      ? voices
-      : [...voices, { name: expName, trainedAt: Date.now() }]));
+    const { email: notifyEmail } = validation;
     setUploadError(null);
     setUploading(true);
-    setRunningExpName(expName);
     try {
+      // Ask the server for the name before uploading anything: the audio lands
+      // under training/datasets/<expName>/raw/, so guessing here is what would
+      // let a stale model list write into an existing voice.
+      const allocation = await allocateTrainingVoiceName(notifyEmail);
+      const expName = String(allocation.data?.expName || '').trim();
+      if (!expName) throw new Error('The server did not return a name for this voice.');
+      setExistingVoiceNames((names) => (names.includes(expName) ? names : [...names, expName]));
+      setRunningExpName(expName);
+
       if (trainingSource === 'library') {
         await snapshotTrainingLibraryFiles(expName, selectedLibraryIds);
       } else {
@@ -500,7 +503,6 @@ export default function TrainingPage() {
       const res = await startTraining({
         expName,
         email: notifyEmail,
-        label: validation.label,
         batchSize,
         sovitsEpochs,
         gptEpochs,
@@ -517,7 +519,7 @@ export default function TrainingPage() {
       restoredSessionRef.current = res.data.sessionId;
       connect(res.data.sessionId, { initialStatus: 'waiting' });
       showNotice({
-        title: 'Training started',
+        title: `Training ${expName}`,
         message: "Training has started and we'll email you when it's done.",
         tone: 'success',
       });
@@ -588,24 +590,7 @@ export default function TrainingPage() {
               aria-describedby="training-voice-name"
             />
             <p id="training-voice-name" className="text-xs text-slate-500">
-              Your voices are named after this address, and we email you here when training finishes.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              Label <span className="normal-case tracking-normal text-slate-300">- optional</span>
-            </Label>
-            <Input
-              className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
-              placeholder="e.g. 2, calm, lecture"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              disabled={isRunning}
-              aria-describedby="training-voice-summary"
-            />
-            <p id="training-voice-summary" className="text-xs text-slate-500">
-              Leave blank for your main voice, or label this one to keep it alongside the others.
+              Every run creates another voice named after this address. We email you here when it finishes.
             </p>
           </div>
 
@@ -614,25 +599,19 @@ export default function TrainingPage() {
               'rounded-xl border px-4 py-3 text-xs',
               showIdentityError
                 ? 'border-red-200 bg-red-50 text-red-700'
-                : replacedVoice
-                  ? 'border-amber-200 bg-amber-50 text-amber-800'
-                  : 'border-slate-200 bg-slate-50 text-slate-600'
+                : 'border-slate-200 bg-slate-50 text-slate-600'
             )}
             role={showIdentityError ? 'alert' : undefined}
           >
             {showIdentityError ? (
               voiceIdentity.error
-            ) : voiceIdentity.valid ? (
+            ) : previewVoiceName ? (
               <>
-                Saving as <span className="font-semibold">{voiceIdentity.voiceName}</span>.
-                {replacedVoice ? (
-                  <>
-                    {' '}This replaces the voice you trained
-                    {replacedVoice.trainedAt ? ` on ${formatTrainedAt(replacedVoice.trainedAt)}` : ''}.
-                    {' '}Add a label to keep both.
-                  </>
+                This run will be saved as <span className="font-semibold">{previewVoiceName}</span>.
+                {ownedVoiceNames.length > 0 ? (
+                  <> You already have {ownedVoiceNames.length === 1 ? '1 voice' : `${ownedVoiceNames.length} voices`}; none of them are replaced.</>
                 ) : (
-                  ' This creates a new voice.'
+                  ' It will be your first voice.'
                 )}
               </>
             ) : (

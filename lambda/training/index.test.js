@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHandler, handler } from './index.js';
 
+// Every run creates a new voice, so what the handler does depends on which
+// voices already exist. A stub keeps that explicit per test.
+function handlerWithVoices(takenNames = []) {
+  return createHandler({ listTrainedVoiceNames: async () => takenNames });
+}
+
 test('training handler names the run after the NTU email and forwards nested config', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
@@ -15,7 +21,7 @@ test('training handler names the run after the NTU email and forwards nested con
   };
 
   try {
-    const response = await handler({
+    const response = await handlerWithVoices()({
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
       body: JSON.stringify({
@@ -56,7 +62,7 @@ test('training handler forwards training metadata inputs to the GPU worker confi
   };
 
   try {
-    await handler({
+    await handlerWithVoices()({
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
       body: JSON.stringify({
@@ -103,7 +109,7 @@ test('training handler refuses to start a run without a usable NTU email', async
 
   try {
     for (const body of [{}, { email: 'user@test.com' }, { email: 'nope' }]) {
-      const response = await handler({
+      const response = await handlerWithVoices()({
         requestContext: { http: { method: 'POST' } },
         rawPath: '/api/train',
         body: JSON.stringify(body),
@@ -117,30 +123,6 @@ test('training handler refuses to start a run without a usable NTU email', async
   }
 });
 
-test('training handler ignores a client-supplied expName and uses the email-derived one', async () => {
-  const calls = [];
-  const previousFetch = globalThis.fetch;
-  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
-  globalThis.fetch = async (url, options = {}) => {
-    calls.push({ url, options });
-    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-
-  try {
-    await handler({
-      requestContext: { http: { method: 'POST' } },
-      rawPath: '/api/train',
-      body: JSON.stringify({ expName: 'DeanVoice', email: 'alice.tan@ntu.edu.sg' }),
-    });
-
-    assert.equal(JSON.parse(calls[0].options.body).expName, 'alice-tan');
-  } finally {
-    globalThis.fetch = previousFetch;
-  }
-});
 
 test('training handler routes the dean to his already-deployed DeanVoice run', async () => {
   const calls = [];
@@ -155,7 +137,7 @@ test('training handler routes the dean to his already-deployed DeanVoice run', a
   };
 
   try {
-    await handler({
+    await handlerWithVoices()({
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
       body: JSON.stringify({ email: 'josephsung@ntu.edu.sg' }),
@@ -250,7 +232,36 @@ test('training metadata returns 404 when no run metadata exists', async () => {
   assert.match(JSON.parse(response.body).error, /metadata not found/u);
 });
 
-test('training handler suffixes the run with the requested label so one lecturer keeps several voices', async () => {
+test('train/next-name allocates the base name first, then the next free number', async () => {
+  const first = await handlerWithVoices([])({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/train/next-name',
+    body: JSON.stringify({ email: 'josephsung@ntu.edu.sg' }),
+  });
+  assert.equal(first.statusCode, 200);
+  assert.equal(JSON.parse(first.body).expName, 'DeanVoice');
+
+  const second = await handlerWithVoices(['DeanVoice', 'Obama'])({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/train/next-name',
+    body: JSON.stringify({ email: 'josephsung@ntu.edu.sg' }),
+  });
+  const allocated = JSON.parse(second.body);
+  assert.equal(allocated.expName, 'DeanVoice_2');
+  assert.equal(allocated.baseVoiceName, 'DeanVoice');
+  assert.deepEqual(allocated.existingVoiceNames, ['DeanVoice'], 'another lecturer\'s voice is not listed');
+});
+
+test('train/next-name refuses a non-NTU address', async () => {
+  const response = await handlerWithVoices([])({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/train/next-name',
+    body: JSON.stringify({ email: 'someone@gmail.com' }),
+  });
+  assert.equal(response.statusCode, 400);
+});
+
+test('training never replaces a voice: an existing name is refused, not obeyed', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
@@ -263,26 +274,21 @@ test('training handler suffixes the run with the requested label so one lecturer
   };
 
   try {
-    await handler({
+    const response = await handlerWithVoices(['DeanVoice'])({
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
-      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg', label: '2' }),
+      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg', expName: 'DeanVoice' }),
     });
-    assert.equal(JSON.parse(calls[0].options.body).expName, 'DeanVoice_2');
 
-    const rejected = await handler({
-      requestContext: { http: { method: 'POST' } },
-      rawPath: '/api/train',
-      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg', label: '///' }),
-    });
-    assert.equal(rejected.statusCode, 400);
-    assert.equal(calls.length, 1);
+    assert.equal(response.statusCode, 409);
+    assert.match(JSON.parse(response.body).error, /already exists/u);
+    assert.equal(calls.length, 0, 'no run may reach the worker under an existing name');
   } finally {
     globalThis.fetch = previousFetch;
   }
 });
 
-test('a label cannot be used to escape into another lecturer’s voice', async () => {
+test('training refuses a name the lecturer does not own, whatever the client proposes', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
@@ -295,14 +301,39 @@ test('a label cannot be used to escape into another lecturer’s voice', async (
   };
 
   try {
-    await handler({
+    for (const expName of ['DeanVoice', 'alice-tan', 'alice2', 'alice_1']) {
+      const response = await handlerWithVoices([])({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/train',
+        body: JSON.stringify({ email: 'alice@ntu.edu.sg', expName }),
+      });
+      assert.equal(response.statusCode, 403, `${expName} should not be trainable by alice@`);
+    }
+    assert.equal(calls.length, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('a client that proposes no name still gets the next free one', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  process.env.GPU_WORKER_URL = 'http://gpu-worker.local:3001';
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ sessionId: 'worker-session', steps: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await handlerWithVoices(['DeanVoice', 'DeanVoice_2'])({
       requestContext: { http: { method: 'POST' } },
       rawPath: '/api/train',
-      body: JSON.stringify({ email: 'alice@ntu.edu.sg', label: 'tan' }),
+      body: JSON.stringify({ email: 'josephsung@ntu.edu.sg' }),
     });
-
-    // alice-tan belongs to alice.tan@ntu.edu.sg; alice@ can only reach alice_tan.
-    assert.equal(JSON.parse(calls[0].options.body).expName, 'alice_tan');
+    assert.equal(JSON.parse(calls[0].options.body).expName, 'DeanVoice_3');
   } finally {
     globalThis.fetch = previousFetch;
   }
