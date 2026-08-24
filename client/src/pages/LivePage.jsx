@@ -3380,6 +3380,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
     if (loadingActiveVoiceProfile) return;
     if (availableProfiles.some((p) => p.key === selectedPersonKey)) return;
+    // Faculty defaults to the signed-in lecturer's own voice, not to whatever
+    // the build pins or the backend happens to have active. Waiting for the
+    // ownership answer first matters: picking a fallback now and correcting it
+    // afterwards would load one voice onto the shared GPU just to replace it.
+    if (canEditInstructions) {
+      if (myVoicesLoading) return;
+      const ownVoice = myVoices.find((voice) => voice.isMine !== false);
+      const ownMatch = ownVoice
+        ? availableProfiles.find((p) => p.key === normalizeVoiceKey(ownVoice.displayName))
+        : null;
+      if (ownMatch) {
+        setSelectedPersonKey(ownMatch.key);
+        autoLoadAttemptKeyRef.current = '';
+        return;
+      }
+    }
     const activeMatchKey = findSavedVoiceProfileKey(availableProfiles, activeVoiceProfile?.voiceProfileId || '');
     setSelectedPersonKey(activeMatchKey || availableProfiles[0].key);
   }, [
@@ -3390,6 +3406,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     loadedSoVITSPath,
     loadingActiveVoiceProfile,
     activeVoiceProfile,
+    canEditInstructions,
+    myVoices,
+    myVoicesLoading,
   ]);
 
   useEffect(() => {
