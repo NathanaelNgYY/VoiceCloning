@@ -36,6 +36,12 @@ VITE_GI_VIDEO_POSITION=true
 # and /videos to PROXY_TARGET, keeping /videos same-origin so the video player
 # and the thumbnail canvas don't taint.
 VITE_API_BASE_URL=
+VITE_GI_AUTH_ENABLED=true
+VITE_AUTH_MODE=msal
+VITE_ENTRA_CLIENT_ID=9b5c52c0-5f02-4dbf-83ac-c68d246abc68
+VITE_ENTRA_TENANT_AUTHORITY=https://login.microsoftonline.com/common
+VITE_ENTRA_ALLOWED_EMAIL_DOMAINS=staff.main.ntu.edu.sg,student.main.ntu.edu.sg,assoc.main.ntu.edu.sg
+VITE_API_AUTH_MODE=entra-id
 VITE_GPU_WORKER_URL=
 VITE_LIVE_GATEWAY_URL=
 

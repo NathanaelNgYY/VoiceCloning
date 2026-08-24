@@ -31,6 +31,12 @@ function inferenceWorkerUrl() {
   return (process.env.INFERENCE_WORKER_URL || '').replace(/\/+$/u, '');
 }
 
+function statusReadinessTarget() {
+  return String(process.env.GPU_STATUS_READINESS_TARGET || '').trim().toLowerCase() === 'inference'
+    ? 'inference'
+    : 'worker';
+}
+
 function idleStopMinutes() {
   const value = Number.parseFloat(process.env.GPU_IDLE_STOP_MINUTES || '0');
   return Number.isFinite(value) && value > 0 ? value : 0;
@@ -146,13 +152,17 @@ async function describeInstance(ec2, id) {
 }
 
 async function checkWorkerReady() {
-  const baseUrl = workerUrl();
+  const target = statusReadinessTarget();
+  const baseUrl = target === 'inference' ? inferenceWorkerUrl() : workerUrl();
   if (!baseUrl) return false;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
   try {
-    const response = await fetch(`${baseUrl}/healthz`, { signal: controller.signal });
+    const response = await fetch(
+      `${baseUrl}${target === 'inference' ? '/models' : '/healthz'}`,
+      { signal: controller.signal },
+    );
     return response.ok;
   } catch {
     return false;

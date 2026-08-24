@@ -24,7 +24,7 @@ test('the lecture engine refreshes the deployed config when a chat ends', () => 
   );
   assert.match(
     source,
-    /\[lessonContext, deployedPromptVersion\]/,
+    /\[[^\]]*deployedPromptVersion[^\]]*\]/,
     'the prompt memo depends on the deployed-config version, or deploys are ignored',
   );
 });

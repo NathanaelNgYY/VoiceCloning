@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createHandler, handler } from './index.js';
+import { createHandler, handler, liveAuthRequired } from './index.js';
 
 test('live tts handler resolves voiceProfileId to a saved full profile before synthesis', async () => {
   const calls = [];
@@ -305,6 +305,29 @@ test('an unauthenticated synthesis request is refused before any GPU work', asyn
 
   assert.equal(response.statusCode, 401);
   assert.deepEqual(calls, [], 'no synthesis may be requested for an unauthorized caller');
+});
+
+test('dev demo-only auth protects tagged GI requests and leaves other dev clients public', async () => {
+  const env = { LIVE_AUTH_DEMO_ONLY: 'true' };
+  assert.equal(liveAuthRequired({ headers: { 'x-demo-request': 'true' } }, env), true);
+  assert.equal(liveAuthRequired({ headers: {} }, env), false);
+  assert.equal(liveAuthRequired({ headers: {} }, { LIVE_AUTH_DEMO_ONLY: 'false' }), true);
+
+  let authorized = false;
+  const publicHandler = createHandler({
+    authRequired: () => false,
+    authGuard: { authorize: async () => { authorized = true; throw new Error('missing token'); } },
+    resolveSynthesisBody: async (body) => ({ ...body, ref_audio_path: 'ref.wav' }),
+    postBinary: async () => ({ buffer: Buffer.from('RIFFdemo'), contentType: 'audio/wav' }),
+  });
+  const response = await publicHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    headers: {},
+    body: JSON.stringify({ text: 'Public dev TTS.' }),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(authorized, false);
 });
 
 test('an authorized synthesis request proceeds as normal', async () => {

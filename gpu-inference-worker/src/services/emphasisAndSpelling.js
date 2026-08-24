@@ -13,10 +13,17 @@ export function renderEmphasis(word) {
   return `, ${String(word).toLowerCase()},`;
 }
 
-export function classifyWord(word, { acronyms = ACRONYM_OVERRIDES, isRealWord = defaultIsRealWord } = {}) {
+export function classifyWord(word, {
+  acronyms = ACRONYM_OVERRIDES,
+  isRealWord = defaultIsRealWord,
+  protectedWords = new Set(),
+} = {}) {
   if (!word || word.length < 2) return 'plain';
   if (!/^[A-Z]+$/u.test(word)) return 'plain';      // must be bare ALL-CAPS letters (no digits)
   const upper = word.toUpperCase();
+  // An explicit admin ARPAbet entry outranks automatic acronym/emphasis guessing.
+  // Preserve the original token so GPT-SoVITS can match it in engdict-hot.rep.
+  if (protectedWords.has(upper)) return 'plain';
   if (acronyms.has(upper)) return 'spellout';
   if (!isRealWord(word)) return 'spellout';
   return 'emphasis';

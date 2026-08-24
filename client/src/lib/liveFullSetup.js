@@ -49,6 +49,34 @@ export function filterLiveFastConfigs(configs = []) {
   return Array.from(configs || []).filter((config) => !isLiveFullConfig(config));
 }
 
+export function referencePathBelongsToExperiment(referencePath = '', expName = '') {
+  const expected = String(expName || '').trim().toLowerCase();
+  if (!expected) return true;
+  return String(referencePath || '')
+    .replace(/\\/gu, '/')
+    .split('/')
+    .filter(Boolean)
+    .some((segment) => segment.toLowerCase() === expected);
+}
+
+export function configHasForeignReferencePaths(config = {}, expName = '') {
+  const reference = config?.referenceMetadata || {};
+  const primary = String(reference.selectedPaths?.primary || reference.primary?.path || '').trim();
+  const aux = Array.isArray(reference.selectedPaths?.aux)
+    ? reference.selectedPaths.aux
+    : Array.isArray(reference.aux)
+      ? reference.aux.map((item) => item?.path)
+      : [];
+  const paths = [primary, ...aux].map((item) => String(item || '').trim()).filter(Boolean);
+  return paths.length > 0 && paths.some((item) => !referencePathBelongsToExperiment(item, expName));
+}
+
+export function isAutoManagedLiveFastConfig(config = {}, expName = '') {
+  if (isLiveFullConfig(config) || String(config.configId || '').trim() !== 'default') return false;
+  const mode = String(config.referenceMetadata?.mode || '').trim().toLowerCase();
+  return mode === 'auto' || configHasForeignReferencePaths(config, expName);
+}
+
 export function buildLiveFullRefParams({
   primaryPath = '',
   promptText = '',

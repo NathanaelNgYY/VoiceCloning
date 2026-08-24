@@ -9,6 +9,15 @@ import { AppProviders } from '@/AppProviders.jsx';
 import { initializeMsal, isMsalAuthEnabled } from '@/auth/msalClient';
 import { config } from '@/config';
 
+// Chrome may restore an already-rendered document from its back/forward cache
+// without asking CloudFront for the now-current SPA shell. Reload only that
+// restored snapshot; ordinary first loads and refreshes are untouched.
+export function reloadRestoredDocument(event) {
+  if (event?.persisted) window.location.reload();
+}
+
+window.addEventListener('pageshow', reloadRestoredDocument);
+
 // Any build can opt into the shared Microsoft gate. Public builds still render
 // without an auth context, MSAL bootstrap, or asynchronous startup delay.
 async function bootstrap() {

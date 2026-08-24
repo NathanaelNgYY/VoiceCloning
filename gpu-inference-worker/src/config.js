@@ -64,9 +64,9 @@ export const COMMA_PAUSE_MS = Math.max(0, parseIntegerEnv(readEnv('COMMA_PAUSE_M
 // hard medical word from sitting deep in a long sentence where the AR decoder is
 // likeliest to rush/clip it, and make a failed re-roll cost less text; too short loses
 // the context that steadies pronunciation and adds chunk seams.
-// 170 remains the hard default quality boundary. Sentence grouping and the
-// short-context exception may not exceed it. Tune via FULL_MAX_CHUNK_LENGTH.
-export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 170));
+// Keep the shared default aligned with the fixed Dev GPU. A lower per-host
+// fallback made identical Full requests split differently across environments.
+export const FULL_MAX_CHUNK_LENGTH = Math.max(80, parseIntegerEnv(readEnv('FULL_MAX_CHUNK_LENGTH'), 240));
 
 // ASR (Whisper) verification of synthesized chunks. GPT-SoVITS occasionally
 // skips or cuts off words; transcribing each chunk and checking the intended
@@ -88,12 +88,11 @@ export const LIVE_TRANSCRIPTION_VERIFY_ENABLED = parseBooleanEnv(readEnv('LIVE_T
 // The sidecar is shared, so Live Fast benefits too; there is no per-path regression, only
 // better detection. Drop back to 'small' via env if VRAM/latency on the box demands it.
 export const TRANSCRIPTION_MODEL = readEnv('TRANSCRIPTION_MODEL') || 'medium';
-// Heavier model used ONLY for the Live Full / Queue verification passes
-// (finalWordTailCheck paths). Those paths already accept extra latency for stricter
-// gates, and large-v3's word timings/confidence catch cut words medium still misses.
-// Lazy-loaded in the sidecar on first Live Full request, so Live Fast / chatbot
-// verification latency is untouched. Set equal to TRANSCRIPTION_MODEL to disable.
-export const TRANSCRIPTION_MODEL_ACCURATE = readEnv('TRANSCRIPTION_MODEL_ACCURATE') || 'large-v3';
+// Full / Queue retain their stricter beam, timing, clipped-word, and tail checks, but
+// reuse the already-warm verifier model by default. Lazily loading large-v3 on the first
+// Full request exceeded the 60s verification deadline and manufactured retry storms.
+// Operators can still opt into a separately pre-warmed model explicitly.
+export const TRANSCRIPTION_MODEL_ACCURATE = readEnv('TRANSCRIPTION_MODEL_ACCURATE') || TRANSCRIPTION_MODEL;
 // Minimum fraction of a chunk's expected words that must appear in the transcript
 // for the read to be accepted. Below this, the chunk is treated as having dropped
 // words and is retried.

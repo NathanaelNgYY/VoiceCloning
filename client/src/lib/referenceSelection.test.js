@@ -207,3 +207,38 @@ test('chooseBestReferenceSet transcript guard avoids an empty-transcript primary
 
   assert.equal(result.primary.filename, 'good_text_0_160000.wav');
 });
+
+test('chooseBestReferenceSet rejects clips failed by measured acoustic gates', () => {
+  const result = chooseBestReferenceSet([
+    {
+      filename: 'loud_clipped_0_160000.wav',
+      path: 'd/loud_clipped_0_160000.wav',
+      transcript: 'This sentence looks suitable but the waveform is clipped.',
+      lang: 'en',
+      qualityScore: 99,
+      qualityMetrics: { score: 99, eligible: false, rejection_reasons: ['clipping_above_0.1pct'] },
+    },
+    {
+      filename: 'clean_160000_320000.wav',
+      path: 'd/clean_160000_320000.wav',
+      transcript: 'A clean measured sentence remains eligible for cloning.',
+      lang: 'en',
+      qualityScore: 72,
+      qualityMetrics: { score: 72, eligible: true },
+    },
+  ]);
+
+  assert.equal(result.primary.filename, 'clean_160000_320000.wav');
+  assert.match(result.rejected[0].reasons.join(' '), /clipping_above_0.1pct/);
+});
+
+test('auxiliary selection favors transcript coverage over a near-duplicate second rank', () => {
+  const result = chooseBestReferenceSet([
+    { filename: 'primary_0_160000.wav', path: 'd/primary_0_160000.wav', transcript: 'The patient has severe hypertension today.', lang: 'en', qualityScore: 95 },
+    { filename: 'duplicate_160000_320000.wav', path: 'd/duplicate_160000_320000.wav', transcript: 'The patient has hypertension today.', lang: 'en', qualityScore: 94 },
+    { filename: 'diverse_960000_1120000.wav', path: 'd/diverse_960000_1120000.wav', transcript: 'Bright questions require careful vocal rhythm.', lang: 'en', qualityScore: 82 },
+  ], { maxAux: 1 });
+
+  assert.equal(result.primary.filename, 'primary_0_160000.wav');
+  assert.deepEqual(result.aux.map((file) => file.filename), ['diverse_960000_1120000.wav']);
+});

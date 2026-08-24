@@ -112,7 +112,7 @@ test('Live Full speaks larger subscripts and numeric group counts without changi
   assert.match(result, /\bXx2\b/u);
 });
 
-test('shared normalization keeps compact formulas unchanged for Live Fast', () => {
+test('base normalization leaves compact formulas for the formula-aware wrapper', () => {
   const result = prepareTextForSynthesis('C6H12O6 and (CH2O)n');
 
   assert.equal(result, 'C6H12O6 and (CH2O)n');

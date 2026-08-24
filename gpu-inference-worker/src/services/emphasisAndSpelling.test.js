@@ -31,6 +31,14 @@ test('bare caps in the override list are spelled out', () => {
   assert.equal(result, 'the W H O recommends');
 });
 
+test('an admin ARPAbet word outranks acronym and emphasis classification', () => {
+  const protectedOpts = { ...opts, protectedWords: new Set(['WHO', 'STEREOCHEMISTRY']) };
+
+  assert.equal(applyEmphasisAndSpelling('WHO', protectedOpts), 'WHO');
+  assert.equal(applyEmphasisAndSpelling('STEREOCHEMISTRY', protectedOpts), 'STEREOCHEMISTRY');
+  assert.equal(classifyWord('WHO', protectedOpts), 'plain');
+});
+
 test('bare caps that are not real words are spelled out', () => {
   const result = applyEmphasisAndSpelling('order an ECG now', opts);
   assert.equal(result, 'order an E C G now');

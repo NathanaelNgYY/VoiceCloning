@@ -1562,6 +1562,21 @@ async function synthesizeChunkWithRetry(chunkText, baseParams, options = {}) {
       if (!analysis.ok) {
         throw new Error(analysis.reason);
       }
+      // A different synthesis take cannot repair an unavailable ASR sidecar. Retrying
+      // here previously spent up to five GPU generations, each followed by the same
+      // verifier timeout, before returning best effort anyway. Keep the first
+      // acoustically usable take and surface that verification was unavailable.
+      if (verification?.verificationUnavailable) {
+        return {
+          audioBuffer: withCommaPauses(audioBuffer, chunkText, verification, options),
+          analysis,
+          verification,
+          paramsUsed: params,
+          attempts: attempt + 1,
+          fallback: true,
+          fallbackReason: 'Transcription verification unavailable; kept the strongest usable take.',
+        };
+      }
       if (verification && !verification.ok) {
         const missing = verification.missingWords.slice(0, 6).join(', ');
         const clipped = (verification.suspectWords || []).slice(0, 6).join(', ');
@@ -1706,7 +1721,13 @@ async function synthesizeChunkResilient(chunkText, baseParams, options = {}, { o
   // Pass 1: rank three whole-chunk takes; spend takes four and five only if needed.
   try {
     const result = await synthesizeChunkWithRetry(cleanText, { ...baseParams, text: cleanText }, escalate);
-    return { audioBuffer: result.audioBuffer, attempts: result.attempts, analysis: result.analysis };
+    return {
+      audioBuffer: result.audioBuffer,
+      attempts: result.attempts,
+      analysis: result.analysis,
+      fallback: result.fallback,
+      fallbackReason: result.fallbackReason,
+    };
   } catch (err) {
     lastError = err;
     wholeBestCandidate = err.bestCandidate || null;
@@ -2220,6 +2241,9 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
   if (chunks.length === 0) {
     inferenceState.setError('No text to synthesize');
     sseManager.send(sessionId, 'error', { message: 'No text to synthesize' });
+    // The terminal event is durable in S3. Release local prepared-state so a
+    // later reconnect uses shared replay instead of attaching to an empty buffer.
+    sseManager.clearSession(sessionId);
     return;
   }
 
@@ -2352,6 +2376,11 @@ export async function synthesizeLongTextStreaming(sessionId, params, options = {
     sseManager.send(sessionId, 'error', { message: err.message });
   } finally {
     activeSessions.delete(sessionId);
+    // `prepareSession` keeps an event sequence even after the original browser
+    // disconnects. Leaving it behind makes a post-completion reconnect look local,
+    // so addClient opens an empty stream and never replays the S3 terminal event.
+    // Once generation is terminal, every reconnect must use durable shared replay.
+    sseManager.clearSession(sessionId);
   }
 }
 

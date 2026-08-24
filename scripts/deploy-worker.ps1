@@ -10,10 +10,29 @@ $relaySetup = if ($Env -eq 'staging') {
 } else {
   'sudo rm -f /etc/systemd/system/gpu-inference-worker.service.d/relay-health.conf; sudo systemctl daemon-reload;'
 }
-$gatewayEnvSetup = if ($Env -eq 'staging') {
-  'node scripts/merge-env-file.mjs live-gateway/.env.livegateway.deployment.staging live-gateway/.env CORS_ORIGIN LIVE_AUTH_ENABLED ENTRA_TENANT_ID ENTRA_AUDIENCE ENTRA_ALLOWED_EMAIL_DOMAINS FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS LIVE_AUTH_LOADTEST_SECRET LIVE_AUTH_EXEMPT_ORIGINS TRANSCRIPT_TABLE_NAME LECTURER_TABLE_NAME TRANSCRIPT_TABLE_REGION TRANSCRIPT_TTL_DAYS TRANSCRIPT_STORE_SYNTHETIC TRANSCRIPT_STORE_ASSISTANT;'
-} else { '' }
-$remote = "set -e; cd /home/ubuntu/VoiceCloning; git fetch origin; git checkout $($cfg.branch); git pull --ff-only; npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $gatewayEnvSetup $relaySetup sudo systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 8; curl -sf localhost:3001/healthz; curl -sf localhost:3003/healthz; curl -sf localhost:3002/readyz"
+$gatewayEnvTemplate = if ($Env -eq 'dev') {
+  'live-gateway/.env.livegateway.deployment'
+} else {
+  'live-gateway/.env.livegateway.deployment.staging'
+}
+$gatewayEnvKeys = @(
+  'CORS_ORIGIN',
+  'LIVE_AUTH_ENABLED',
+  'ENTRA_TENANT_ID',
+  'ENTRA_AUDIENCE',
+  'ENTRA_ALLOWED_EMAIL_DOMAINS',
+  'LIVE_AUTH_LOADTEST_SECRET',
+  'TRANSCRIPT_TABLE_NAME',
+  'TRANSCRIPT_TABLE_REGION',
+  'TRANSCRIPT_TTL_DAYS',
+  'TRANSCRIPT_STORE_SYNTHETIC',
+  'TRANSCRIPT_STORE_ASSISTANT'
+)
+if ($Env -eq 'staging') {
+  $gatewayEnvKeys += @('FACULTY_ENTRA_ALLOWED_EMAIL_DOMAINS', 'LIVE_AUTH_EXEMPT_ORIGINS', 'LECTURER_TABLE_NAME')
+}
+$gatewayEnvSetup = "node scripts/merge-env-file.mjs $gatewayEnvTemplate live-gateway/.env $($gatewayEnvKeys -join ' ');"
+$remote = "set -e; cd /home/ubuntu/VoiceCloning; git -c safe.directory=/home/ubuntu/VoiceCloning fetch origin; git -c safe.directory=/home/ubuntu/VoiceCloning checkout $($cfg.branch); git -c safe.directory=/home/ubuntu/VoiceCloning pull --ff-only; npm --prefix gpu-worker ci --omit=dev; npm --prefix gpu-inference-worker ci --omit=dev; npm --prefix live-gateway ci --omit=dev; $gatewayEnvSetup $relaySetup sudo systemctl restart gpu-worker gpu-inference-worker voice-live-gateway; sleep 8; curl -sf localhost:3001/healthz; curl -sf localhost:3003/healthz; curl -sf localhost:3002/readyz"
 
 if ($DryRun) { Write-Host "[dry-run] $($cfg.workerAccess) to $($cfg.instanceId): $remote"; exit 0 }
 
@@ -22,7 +41,13 @@ if ($cfg.workerAccess -eq 'ssm') {
   if ($LASTEXITCODE -ne 0) { throw "ssm send-command failed" }
   Write-Host "SSM command $cmdId sent; waiting..."
   aws ssm wait command-executed --region $cfg.region --command-id $cmdId --instance-id $cfg.instanceId
-  aws ssm get-command-invocation --region $cfg.region --command-id $cmdId --instance-id $cfg.instanceId --query "{Status:Status,Out:StandardOutputContent,Err:StandardErrorContent}" --output json
+  $invocation = aws ssm get-command-invocation --region $cfg.region --command-id $cmdId --instance-id $cfg.instanceId --output json | ConvertFrom-Json
+  [pscustomobject]@{
+    Status = $invocation.Status
+    Out = $invocation.StandardOutputContent
+    Err = $invocation.StandardErrorContent
+  } | ConvertTo-Json
+  if ($invocation.Status -ne 'Success') { throw "remote worker deploy failed: $($invocation.Status)" }
 } else {
   # staging: public IP rotates on stop/start — always look it up
   $ip = aws ec2 describe-instances --region $cfg.region --instance-ids $cfg.instanceId --query "Reservations[0].Instances[0].PublicIpAddress" --output text

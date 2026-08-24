@@ -69,6 +69,7 @@ import {
   buildLiveFullRefParams,
   filterLiveFastConfigs,
   filterLiveFullConfigs,
+  isAutoManagedLiveFastConfig,
   normalizeLiveFullSettings,
 } from '@/lib/liveFullSetup';
 import {
@@ -76,6 +77,7 @@ import {
   extractModelSelectWarmedReferenceSelection,
   isSelectedModelLoaded,
   resolveInferenceStatusState,
+  resolveWarmedReferencePrompt,
   sameLoadedWeights,
   shouldHoldReadyDuringTransientStatus,
   shouldLoadSelectedProfile,
@@ -93,6 +95,11 @@ import {
 import { concatWavBlobs } from '@/lib/wavConcat';
 import { waitForPlayableAudioSource } from '@/lib/audioReadiness';
 import { generateLiveFastQueuedTts } from '@/lib/liveFastQueuedTts';
+import {
+  clearPendingFullTts,
+  loadPendingFullTts,
+  savePendingFullTts,
+} from '@/lib/pendingFullTts';
 import { fetchDatamuseArpabet } from '@/lib/arpabet';
 import {
   parsePronunciationCsv,
@@ -187,7 +194,10 @@ const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 
 // Advanced settings are still fully wired up (state + auto-applied defaults);
 // this just hides the collapsible UI so it doesn't confuse end users. Flip to
 // true to expose the panel again.
-const SHOW_ADVANCED_SETTINGS = false;
+// Keep Dev and staging on identical application code. Visibility is an explicit
+// deployment concern: Dev exposes tuning controls, while staging applies the
+// saved settings without exposing the panel.
+const SHOW_ADVANCED_SETTINGS = import.meta.env.VITE_SHOW_ADVANCED_SETTINGS !== 'false';
 
 function buildConfigId(seed = '') {
   const slug = String(seed || 'config')
@@ -335,6 +345,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [activeVoiceProfileError, setActiveVoiceProfileError] = useState('');
   const [voiceConfigs, setVoiceConfigs] = useState([]);
   const [loadingVoiceConfigs, setLoadingVoiceConfigs] = useState(false);
+  const [loadedVoiceConfigsProfileId, setLoadedVoiceConfigsProfileId] = useState('');
   const [voiceConfigError, setVoiceConfigError] = useState('');
   const [loadedConfigId, setLoadedConfigId] = useState('');
   const [trainingRunMetadata, setTrainingRunMetadata] = useState(null);
@@ -434,6 +445,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const previewRequestRef = useRef(0);
   const configSampleUrlsRef = useRef({});
   const voiceConfigsRef = useRef([]);
+  const voiceConfigLoadRequestRef = useRef(0);
+  const selectedExpNameRef = useRef('');
   const autoDefaultConfigKeyRef = useRef('');
   const autoLoadedLiveFastConfigProfileRef = useRef('');
   const liveFullDefaultKeyRef = useRef('');
@@ -454,6 +467,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const pronunciationImportInputRef = useRef(null);
   const ttsInference = useInferenceSSE();
   const pendingFullTtsRef = useRef(null);
+  const fullTtsSubmissionRef = useRef(false);
+  const restoredFullTtsRef = useRef(false);
   const completingFullTtsSessionRef = useRef('');
   // Tracks which Full Inference chunks have already been pulled for queued playback.
   const fullQueuedFetchRef = useRef({ sessionId: '', fetched: 0, busy: false });
@@ -467,6 +482,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedGPT = selectedProfile?.gptModel?.path || '';
   const selectedSoVITS = selectedProfile?.sovitsModel?.path || '';
   const selectedExpName = selectedProfile?.expName || '';
+  selectedExpNameRef.current = selectedExpName;
   const selectedVoiceProfileId = selectedProfile ? buildVoiceProfileId(selectedProfile.displayName) : '';
   const canRestoreActiveVoiceProfile = matchesSavedVoiceProfileSelection({
     profile: activeVoiceProfile,
@@ -792,21 +808,26 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   async function loadVoiceConfigs(voiceProfileId = selectedVoiceProfileId) {
+    const requestId = ++voiceConfigLoadRequestRef.current;
     if (!voiceProfileId) {
       setVoiceConfigs([]);
       setLiveFullConfigs([]);
+      setLoadedVoiceConfigsProfileId('');
       setVoiceConfigError('');
       return;
     }
+    setLoadedVoiceConfigsProfileId('');
     setLoadingVoiceConfigs(true);
     try {
       const res = await getVoiceProfileConfigs(voiceProfileId);
+      if (voiceConfigLoadRequestRef.current !== requestId) return;
       const configs = res.data.configs || [];
       const liveFastConfigs = filterLiveFastConfigs(configs);
       const nextLiveFullConfigs = filterLiveFullConfigs(configs);
       voiceConfigsRef.current = liveFastConfigs;
       setVoiceConfigs(liveFastConfigs);
       setLiveFullConfigs(nextLiveFullConfigs);
+      setLoadedVoiceConfigsProfileId(voiceProfileId);
       console.info('[voice-configs] loaded configs', {
         voiceProfileId,
         count: configs.length,
@@ -823,18 +844,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           sample: config.sample || null,
         })),
       });
-      if (liveFastConfigs[0] && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId) {
+      if (
+        liveFastConfigs[0]
+        && !isAutoManagedLiveFastConfig(liveFastConfigs[0], selectedExpName)
+        && autoLoadedLiveFastConfigProfileRef.current !== voiceProfileId
+      ) {
         autoLoadedLiveFastConfigProfileRef.current = voiceProfileId;
         applyVoiceConfig(liveFastConfigs[0], { silent: true });
         await syncRankOneConfigToVoiceProfile(liveFastConfigs[0], { context: 'startup rank #1 config' });
       }
       setVoiceConfigError('');
     } catch (err) {
+      if (voiceConfigLoadRequestRef.current !== requestId) return;
       setVoiceConfigs([]);
       setLiveFullConfigs([]);
       setVoiceConfigError(err.response?.data?.error || err.message || 'Could not load saved configs.');
     } finally {
-      setLoadingVoiceConfigs(false);
+      if (voiceConfigLoadRequestRef.current === requestId) {
+        setLoadingVoiceConfigs(false);
+      }
     }
   }
 
@@ -1231,20 +1259,17 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         lang: '',
       }
     ));
+    const resolvedPrompt = resolveWarmedReferencePrompt(
+      selection,
+      primaryFile,
+      selectedActiveProfile,
+    );
 
     pendingAutoSyncFingerprintRef.current = '';
     autoSyncRequestFingerprintRef.current = '';
     setRefAudioPath(primaryPath);
-    setPromptText(
-      selectedActiveProfile
-        ? String(selectedActiveProfile.prompt_text || '')
-        : String(primaryFile?.transcript || ''),
-    );
-    setPromptLang(
-      selectedActiveProfile
-        ? normalizeReferenceLanguage(selectedActiveProfile.prompt_lang)
-        : normalizeReferenceLanguage(primaryFile?.lang),
-    );
+    setPromptText(resolvedPrompt.promptText);
+    setPromptLang(normalizeReferenceLanguage(resolvedPrompt.promptLang));
     setAuxRefAudios(auxMatches);
     setPreviewReference({ path: '', url: null, filename: '', role: '' });
 
@@ -1253,6 +1278,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         current ? {
           ...current,
           ref_audio_path: primaryPath,
+          prompt_text: resolvedPrompt.promptText,
+          prompt_lang: normalizeReferenceLanguage(resolvedPrompt.promptLang),
           aux_ref_audio_paths: selection.auxRefAudioPaths,
         } : current
       ));
@@ -1265,27 +1292,36 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   async function loadSelectedModel(attempt = 0, requestVersion = null) {
-    if (!selectedProfile || isConversationActive) return;
+    // Rank #1 is the source of truth for references. Never race model warming
+    // against the config request, because that can fall back to stale profile refs.
+    if (
+      !selectedProfile
+      || isConversationActive
+      || loadedVoiceConfigsProfileId !== selectedVoiceProfileId
+    ) return;
     const activeRequestVersion = requestVersion ?? (modelLoadVersionRef.current + 1);
     if (requestVersion == null) modelLoadVersionRef.current = activeRequestVersion;
     const selectionChanged = () => activeRequestVersion !== modelLoadVersionRef.current;
     setLoadingModel(true); setModelError('');
     try {
       const rankOneConfig = voiceConfigsRef.current[0] || null;
+      const rankOneIsAutoManaged = isAutoManagedLiveFastConfig(rankOneConfig, selectedExpName);
       const rankOneReferences = getConfigReferencePaths(rankOneConfig);
       const response = await selectModels(selectedGPT, selectedSoVITS, buildModelSelectWarmPayload({
         voiceProfileId: selectedVoiceProfileId,
-        refAudioPath: rankOneReferences.primaryPath,
-        auxRefAudioPaths: rankOneReferences.auxPaths,
+        refAudioPath: rankOneIsAutoManaged ? '' : rankOneReferences.primaryPath,
+        auxRefAudioPaths: rankOneIsAutoManaged ? [] : rankOneReferences.auxPaths,
+        refreshAutoReferences: rankOneIsAutoManaged,
       }));
       if (selectionChanged()) {
         return;
       }
       const latestRankOneConfig = voiceConfigsRef.current[0] || rankOneConfig;
-      const syncedSelection = latestRankOneConfig
+      const latestRankOneIsAutoManaged = isAutoManagedLiveFastConfig(latestRankOneConfig, selectedExpName);
+      const syncedSelection = latestRankOneConfig && !latestRankOneIsAutoManaged
         ? null
         : syncLoadedModelReferenceSelection(response.data || {});
-      if (latestRankOneConfig) {
+      if (latestRankOneConfig && !latestRankOneIsAutoManaged) {
         applyVoiceConfig(latestRankOneConfig, { silent: true });
         await syncRankOneConfigToVoiceProfile(latestRankOneConfig, { context: 'model-load rank #1 config' });
         if (selectionChanged()) {
@@ -1299,7 +1335,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         loadedSoVITSPath: selectedSoVITS,
       });
       setReferenceMessage(
-        latestRankOneConfig
+        latestRankOneConfig && !latestRankOneIsAutoManaged
           ? `Loaded rank #1 config ${latestRankOneConfig.configName || latestRankOneConfig.configId} after model load.`
           : syncedSelection
           ? `${syncedSelection.primaryFilename} loaded with ${syncedSelection.auxRefAudioPaths.length} auxiliary clip${syncedSelection.auxRefAudioPaths.length === 1 ? '' : 's'}.`
@@ -1393,6 +1429,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       }),
       rank: rankOneConfig.rank || 1,
       sample: rankOneConfig.sample || {},
+      referenceMetadata: {
+        ...currentReferenceMetadata,
+        ...(isAutoManagedLiveFastConfig(rankOneConfig, selectedExpName) ? { mode: 'auto' } : {}),
+      },
     };
     const res = await saveVoiceProfileConfig(selectedVoiceProfileId, rankOneConfig.configId, payload);
     const saved = res.data.config;
@@ -1426,7 +1466,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
   }
 
-  async function saveCurrentVoiceConfig(existingConfig = null, { applySaved = true } = {}) {
+  async function saveCurrentVoiceConfig(existingConfig = null, { applySaved = true, referenceMode = '' } = {}) {
     if (!selectedVoiceProfileId || !refAudioPath) return;
     const configId = existingConfig?.configId || buildConfigId(selectedProfile?.displayName || selectedVoiceProfileId);
     setSavingConfigId(configId);
@@ -1440,6 +1480,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         }),
         rank: existingConfig?.rank || voiceConfigs.length + 1,
         sample: existingConfig?.sample || {},
+        ...(referenceMode ? {
+          referenceMetadata: { ...currentReferenceMetadata, mode: referenceMode },
+        } : {}),
       };
       const res = await saveVoiceProfileConfig(selectedVoiceProfileId, configId, payload);
       const saved = res.data.config;
@@ -1697,11 +1740,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     setVoiceConfigError('');
     try {
       applyVoiceConfig(config);
-      if (Number(config.rank || 0) === 1) {
-        await syncRankOneConfigToVoiceProfile(config, { required: true, context: 'loaded rank #1 config' });
-      } else {
-        applyConfigAsActiveLiveFastProfile(config);
-      }
+      // Load is session/pipeline-only. Rank #1 persistence happens when a config
+      // is saved, updated, reordered, or selected during model load; previewing a
+      // config must not rewrite the persistent voice profile.
+      applyConfigAsActiveLiveFastProfile(config);
       setReferenceMessage(`Loaded config ${config.configName || config.configId} into inference.`);
       console.info('[voice-configs] loaded config into inference', {
         voiceProfileId: selectedVoiceProfileId,
@@ -2077,6 +2119,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
       return;
     }
+    if (fullTtsSubmissionRef.current) {
+      setTtsWarning('A Full Inference request is already active. Reusing it prevents duplicate GPU work.');
+      return;
+    }
+    fullTtsSubmissionRef.current = true;
     // Maximum-quality Full preflight: automatically surface words that would fall
     // through to neural pronunciation guessing. Stop once so the user can add an
     // override; a deliberate second click acknowledges the warning and proceeds.
@@ -2095,6 +2142,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setOovScanError('');
       const warningKey = `${text}\n${flagged.join('|').toLowerCase()}`;
       if (scanState.dictionaryLoaded && flagged.length > 0 && fullOovAcknowledgedKey !== warningKey) {
+        fullTtsSubmissionRef.current = false;
         setFullOovAcknowledgedKey(warningKey);
         setTtsWarning(
           `Review ${flagged.length} pronunciation ${flagged.length === 1 ? 'word' : 'words'} below before Full synthesis. `
@@ -2121,10 +2169,21 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     try {
       const res = await startGeneration({ ...baseParams, ...liveFullRefParams });
       const { sessionId } = res.data;
-      pendingFullTtsRef.current = { sessionId, text, voiceName, languageLabel, route };
+      const pending = {
+        sessionId,
+        text,
+        voiceName,
+        languageLabel,
+        route,
+        savedAt: Date.now(),
+      };
+      pendingFullTtsRef.current = pending;
+      savePendingFullTts(pending);
       ttsInference.connect(sessionId, { initialStatus: 'waiting' });
     } catch (err) {
+      fullTtsSubmissionRef.current = false;
       pendingFullTtsRef.current = null;
+      clearPendingFullTts();
       setTtsError(friendlyTtsError(err, 'Could not generate text to speech audio.'));
       setStreamingRoute(null);
       if (route === 'fullQueued') stopQueuedTtsPlayback();
@@ -2228,6 +2287,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       if (pendingFullTtsRef.current?.sessionId === sessionId) {
         pendingFullTtsRef.current = null;
       }
+      fullTtsSubmissionRef.current = false;
+      clearPendingFullTts();
       completingFullTtsSessionRef.current = '';
       // Server is done producing chunks; let queue end-detection finish naturally.
       queueProducingRef.current = false;
@@ -2815,6 +2876,63 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }
 
   useEffect(() => {
+    if (restoredFullTtsRef.current) return;
+    restoredFullTtsRef.current = true;
+    const pending = loadPendingFullTts();
+    if (!pending) return;
+
+    pendingFullTtsRef.current = pending;
+    fullTtsSubmissionRef.current = true;
+    setTtsText(pending.text);
+    setStreamingRoute(pending.route);
+    setTtsWarning('Reconnected to the Full Inference request that was active before refresh. No new GPU request was started.');
+    if (pending.route === 'fullQueued') {
+      queuedTtsRef.current = { clips: [], playingIndex: -1, active: true, paused: false };
+      fullQueuedFetchRef.current = { sessionId: pending.sessionId, fetched: 0, busy: false };
+      queueProducingRef.current = true;
+      setQueuePlayback({ active: true, paused: false });
+    }
+    ttsInference.connect(pending.sessionId, {
+      initialStatus: 'waiting',
+      initialTotalChunks: pending.totalChunks,
+      initialCompletedChunks: pending.completedChunks,
+      initialChunks: pending.chunks,
+      initialCurrentChunkText: pending.currentChunkText,
+    });
+  }, [ttsInference.connect]);
+
+  useEffect(() => {
+    if (!streamingRoute) return undefined;
+    const warnBeforeLeaving = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [streamingRoute]);
+
+  useEffect(() => {
+    const pending = pendingFullTtsRef.current;
+    if (!streamingRoute || !pending) return;
+    const updated = {
+      ...pending,
+      totalChunks: ttsInference.totalChunks,
+      completedChunks: ttsInference.completedChunks,
+      chunks: ttsInference.chunks,
+      currentChunkText: ttsInference.currentChunkText,
+      savedAt: Date.now(),
+    };
+    pendingFullTtsRef.current = updated;
+    savePendingFullTts(updated);
+  }, [
+    streamingRoute,
+    ttsInference.totalChunks,
+    ttsInference.completedChunks,
+    ttsInference.chunks,
+    ttsInference.currentChunkText,
+  ]);
+
+  useEffect(() => {
     const pending = pendingFullTtsRef.current;
     if (!pending) return;
 
@@ -2823,6 +2941,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     } else if (ttsInference.status === 'error' || ttsInference.status === 'cancelled') {
       setTtsError(ttsInference.error || 'Could not generate text to speech audio.');
       pendingFullTtsRef.current = null;
+      fullTtsSubmissionRef.current = false;
+      clearPendingFullTts();
       setStreamingRoute(null);
       if (pending.route === 'fullQueued') stopQueuedTtsPlayback();
       ttsInference.reset();
@@ -2845,6 +2965,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         } else if (state.status === 'error' || state.status === 'cancelled') {
           setTtsError(state.error || 'Could not generate text to speech audio.');
           pendingFullTtsRef.current = null;
+          fullTtsSubmissionRef.current = false;
+          clearPendingFullTts();
           setStreamingRoute(null);
           if (pending.route === 'fullQueued') stopQueuedTtsPlayback();
           ttsInference.reset();
@@ -3216,12 +3338,22 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   ]);
 
   useEffect(() => {
+    if (loadedVoiceConfigsProfileId !== selectedVoiceProfileId) return;
     if (!shouldLoadSelectedProfile({ serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel })) return;
     const loadKey = `${selectedProfile.gptModel.path}::${selectedProfile.sovitsModel.path}`;
     if (autoLoadAttemptKeyRef.current === loadKey) return;
     autoLoadAttemptKeyRef.current = loadKey;
     loadSelectedModel();
-  }, [serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel]);
+  }, [
+    serverReady,
+    selectedProfile,
+    selectedVoiceProfileId,
+    loadedVoiceConfigsProfileId,
+    loadedGPTPath,
+    loadedSoVITSPath,
+    isConversationActive,
+    loadingModel,
+  ]);
 
   useEffect(() => {
     if (!selectedExpName) {
@@ -3273,7 +3405,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // When a saved config #1 / restorable profile governs the reference, the
     // auto-select isn't running, so there's nothing to upgrade — don't poll and
     // don't nag about training audio quality.
-    if (canRestoreActiveVoiceProfile && voiceConfigs.length > 0) return undefined;
+    if (
+      canRestoreActiveVoiceProfile
+      && voiceConfigs.length > 0
+      && !isAutoManagedLiveFastConfig(voiceConfigs[0], selectedExpName)
+    ) return undefined;
     let ignore = false;
     let attempts = 0;
     const MAX_ATTEMPTS = 10; // ~60s at the 6s cadence below
@@ -3348,7 +3484,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       configName: `${selectedProfile.displayName} default`,
       rank: 1,
       sample: {},
-    });
+    }, { referenceMode: 'auto' });
   }, [
     loadingVoiceConfigs,
     voiceConfigs.length,
@@ -3510,7 +3646,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
 
   useEffect(() => {
     if (loadingActiveVoiceProfile || loadingVoiceConfigs) return;
-    if (canRestoreActiveVoiceProfile && voiceConfigs.length > 0) return;
+    if (
+      canRestoreActiveVoiceProfile
+      && voiceConfigs.length > 0
+      && !isAutoManagedLiveFastConfig(voiceConfigs[0], selectedExpName)
+    ) return;
 
     if (!shouldAutoApplyBestReferenceSet({
       selectedSourceKey: selectedExpName,
@@ -3585,7 +3725,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       // it to the profile *before* re-fetching - otherwise the restore effect would
       // blindly re-apply the broken set and silently revert the saved config.
       const rankOneConfig = voiceConfigsRef.current[0] || null;
-      if (rankOneConfig) {
+      if (rankOneConfig && !isAutoManagedLiveFastConfig(rankOneConfig, selectedExpNameRef.current)) {
         try {
           await syncRankOneConfigToVoiceProfile(rankOneConfig, { context: 'gpu-ready rank #1 config' });
         } catch {
@@ -4071,8 +4211,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             {streamingRoute && (
               <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm text-sky-700">
                 {ttsInference.totalChunks > 0
-                  ? `Evaluating up to five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
-                  : 'Preparing maximum-quality synthesis…'}
+                  ? `Full Inference: evaluating up to five takes for chunk ${Math.min(ttsInference.completedChunks + 1, ttsInference.totalChunks)} of ${ttsInference.totalChunks}…`
+                  : 'Preparing Full Inference maximum-quality synthesis…'}
               </p>
             )}
             <audio ref={queuedTtsAudioRef} className="hidden" onEnded={handleQueuedTtsEnded} />
@@ -4313,7 +4453,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       { label: 'Top K', display: String(liveFullTopK), min: 1, max: 50, step: 1, val: liveFullTopK, set: setLiveFullTopK },
                       { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                       { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
-                      { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
+                      { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 240 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
                       { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                     ].map(({ label, display, min, max, step, val, set }) => (
                       <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
@@ -4344,7 +4484,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                       top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)}
                     </p>
                     <p className="mt-1 truncate">
-                      chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
+                      chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (240 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
                     </p>
                   </div>
 
@@ -5249,9 +5389,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <p className="text-sm font-semibold text-slate-800">Inference controls</p>
               <div className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-slate-800">Current config</p>
-                    <p className="mt-0.5 text-xs text-slate-500">
+                    <p className="mt-0.5 truncate text-xs text-slate-500" title={`${currentLiveFastMetadata.configName} · ${currentReferenceMetadata.primary ? fallbackName(currentReferenceMetadata.selectedPaths.primary) : 'no reference'}`}>
                       {currentLiveFastMetadata.configName} · {currentReferenceMetadata.primary ? fallbackName(currentReferenceMetadata.selectedPaths.primary) : 'no reference'}
                     </p>
                   </div>
@@ -5261,7 +5401,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     size="sm"
                     onClick={() => saveCurrentVoiceConfig()}
                     disabled={!selectedProfile || !selectedGPT || !selectedSoVITS || !refAudioPath || isConversationActive || loadingModel || Boolean(savingConfigId)}
-                    className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
+                    className="h-8 shrink-0 whitespace-nowrap rounded-xl border-slate-200 bg-white shadow-none"
                   >
                     {savingConfigId && !voiceConfigs.some((item) => item.configId === savingConfigId)
                       ? <Loader2 size={13} className="animate-spin" />
@@ -5688,7 +5828,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     { label: 'Top P', display: liveFullTopP.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTopP, set: setLiveFullTopP },
                     { label: 'Temperature', display: liveFullTemperature.toFixed(2), min: 0, max: 1, step: 0.05, val: liveFullTemperature, set: setLiveFullTemperature },
                     { label: 'Saved output gain', display: `${liveFullOutputGainDb > 0 ? '+' : ''}${liveFullOutputGainDb.toFixed(1)} dB`, min: -6, max: 6, step: 0.5, val: liveFullOutputGainDb, set: setLiveFullOutputGainDb },
-                    { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 170 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
+                    { label: 'Max chunk words', display: liveFullMaxChunkWords === 0 ? 'Auto · 240 chars' : String(liveFullMaxChunkWords), min: 0, max: 100, step: 10, val: liveFullMaxChunkWords, set: setLiveFullMaxChunkWords },
                     { label: 'Max sentences / chunk', display: String(liveFullMaxSentences), min: 1, max: 5, step: 1, val: liveFullMaxSentences, set: setLiveFullMaxSentences },
                   ].map(({ label, display, min, max, step, val, set }) => (
                     <div key={label} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
@@ -5719,7 +5859,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                     top k {liveFullSettings.topK} · top p {liveFullSettings.topP.toFixed(2)} · rep {liveFullSettings.repPenalty.toFixed(2)} · gain {liveFullSettings.outputGainDb > 0 ? '+' : ''}{liveFullSettings.outputGainDb.toFixed(1)} dB
                   </p>
                   <p className="mt-1 truncate">
-                    chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (170 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
+                    chunks {liveFullSettings.maxChunkWords > 0 ? `${liveFullSettings.maxChunkWords} words` : 'auto (240 chars)'} · max {liveFullSettings.maxSentencesPerChunk} sentence{liveFullSettings.maxSentencesPerChunk === 1 ? '' : 's'}
                   </p>
                 </div>
 

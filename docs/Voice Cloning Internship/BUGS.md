@@ -7,6 +7,35 @@
 
 ## Active
 
+- 2026-08-21 fixed: identical Full text split into one chunk on Dev and two on staging because
+  Dev set `FULL_MAX_CHUNK_LENGTH=240` and staging used the 170 fallback. The shared fallback is
+  now 240, and staging's saved Dean profile/default/Live Full settings match Dev without changing
+  any reference path. A same-text browser timing comparison after deployment remains pending.
+
+- 2026-08-21 fixed in code: staging Full generation had an extreme retry tail. A later durable
+  event record proved five first-chunk takes consumed 310.66 seconds specifically because
+  transcription verification was unavailable. Full lazily loaded `large-v3`, exceeded the 60s
+  request deadline, then regenerated even though new audio cannot restore ASR. Full now reuses
+  warm medium with its stricter beam/tail gates and stops after one usable take on ASR outage.
+  The formerly problematic text completed directly on staging in 18 seconds with five takes;
+  equivalent end-to-end browser timing remains pending.
+
+- 2026-08-21 fixed: completed staging Full audio could show “still being finalized” after a
+  refresh because staging origins were absent from S3 CORS and an originating worker retained
+  terminal session locality instead of using durable replay. CORS and terminal cleanup are
+  live; a new browser refresh reproduction remains pending.
+
+- 2026-08-21: Dev `/api/transcribe` returns 500 because the fixed GPU lacks
+  `tools/asr/transcribe_single.py`. This is separate from synthesis and did not create the
+  stale reference prompt, but it prevents using that endpoint for an independent reference
+  transcript audit.
+
+- 2026-08-21: a user listening comparison found Dev more prone to mispronunciation and
+  gibberish than staging. The outcome is credible, but the comparison did not isolate the
+  new selector/verifier/training gates: Dev served `dea-voice-version2-v1` and staging served
+  `deanvoice-v1`, with different weights/references. Treat the quality changes as unvalidated
+  despite their later explicit promotion to staging, and run controlled same-model component A/Bs.
+
 - 2026-08-14 fixed: Live Fast defaulted to three normal takes and could add four
   catastrophic-babble reseeds; it now uses two normal takes plus at most two escape
   takes. Fallback ranking also received repeated phrases but not ASR `duplicatedWords`,
@@ -81,6 +110,18 @@
   decide whether to remove the public 30-second timeout exposure.
 
 ## Recently Fixed
+
+- 2026-08-21: refreshing during Full/Full Queue generation discarded the in-memory client
+  session, so submitting again created another independent GPU job. Pending session identity,
+  text, chunks, and progress now survive per-tab refresh; the client reconnects the existing
+  SSE stream, warns before navigation, and locks duplicate clicks. Cross-tab/device dedupe is
+  still outside this client-only fix.
+
+- 2026-08-21: Dev auto-selection changed the primary reference path but preserved the old
+  profile's `prompt_text`, pairing `...340800...464000.wav` with unrelated COVID-19 text.
+  Model warming now transports primary transcript/language, same-path comparisons include
+  them, and the client refuses a stale active-profile prompt from another primary. The live
+  active profile and auto rank-1 config now match the training manifest; staging was unchanged.
 
 - 2026-08-07: GI's replacement authenticated startup profile GET could race client token availability,
   falsely claiming a signed-in user was unsigned and leaving voice readiness empty. GI now makes no

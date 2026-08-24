@@ -10,10 +10,22 @@ test('router eagerly prepares the latency-sensitive Live handler', async () => {
   assert.equal(await getRouteHandler(route), liveHandler);
 });
 
-test('router resolves anonymous lesson analytics ingest', () => {
+test('router resolves authenticated lesson analytics ingest', () => {
   const route = findRoute('POST', '/api/analytics/events');
   assert.equal(route.name, 'AnalyticsFunction');
   assert.equal(route.modulePath, './analytics/index.js');
+});
+
+test('router resolves learner and supervisor analytics reads', () => {
+  assert.equal(findRoute('GET', '/api/learner/me')?.name, 'LearnersFunction');
+  assert.equal(findRoute('GET', '/api/supervisor/users')?.name, 'LearnersFunction');
+  assert.equal(findRoute('GET', '/api/supervisor/users/user-1')?.name, 'LearnersFunction');
+  assert.equal(findRoute('GET', '/api/supervisor/users/user-1/events')?.name, 'LearnersFunction');
+  assert.equal(findRoute('GET', '/api/supervisor/concepts')?.name, 'LearnersFunction');
+  assert.equal(
+    findRoute('DELETE', '/api/supervisor/users/user-1/lessons/gi-bleeding/concepts/endoscopy')?.name,
+    'LearnersFunction',
+  );
 });
 
 test('router resolves voice profile activation and active-summary routes', () => {

@@ -15,10 +15,52 @@ Primary router: `lambda/router.js`
 ### Lesson analytics
 
 - `POST /api/analytics/events`
-  - Accepts schema version 1 with 1-50 allowlisted anonymous lesson events.
-  - Client identity fields and unknown properties are discarded/rejected.
-  - Stores one gzip NDJSON batch in hourly S3 partitions under
-    `analytics/events/date=YYYY-MM-DD/hour=HH/` relative to `S3_PREFIX`.
+  - Accepts schema version 1 with 1-50 allowlisted lesson events and requires a verified
+    Entra token in dev. Immutable gzip NDJSON batches use verified-subject per-user/date/hour
+    S3 partitions. The older global archive is retained but is no longer written or scanned.
+  - Maintains a 30-day per-concept window with a 14-day evidence half-life and logarithmic
+    diminishing returns per signal type. Scores have no hard cap; up to 20 events per signal are
+    retained. Long pauses/transcript scrolling do not affect support state; IDs are idempotent.
+  - Derived support rules:
+
+    | Qualifying signal | Base weight | Retention | Condition |
+    |---|---:|---:|---|
+    | Rewatched segment | `0.5` | 20 | A backward seek assigned to the authored concept |
+    | Clarification request | `1` | 20 | A delayed repeated/simplification request matched to the same concept |
+    | Long pause | `0` | Not counted | Raw engagement analytics only |
+    | Transcript scroll | `0` | Not counted | Raw engagement analytics only |
+
+    Fresh score below `0.75` is `no_support_inference`; `0.75-1.54` is `possible_support`;
+    and `1.55+` is `support_recommended`. One rewind alone is insufficient; two fresh rewinds
+    or one clarification produce possible support, and two fresh clarifications produce
+    support recommended. Scores then decay and repeated events add progressively less.
+  - Every authenticated non-repeated question adds `concept_question` evidence at
+    weight `0.5`. A repeated question receives only the independent weight-`1.0` clarification signal;
+    its `question_asked` record remains available for history but is scoring-neutral. Question text is
+    bounded to 500 characters in the per-user lake for analytics. The Admin Questions tab reads only
+    retained DynamoDB conversation turns; S3 is not queried or merged for that list.
+  - The first question establishes the comparison topic and adds no clarification evidence.
+    Follow-up clarification detection requires at least eight seconds and the same mounted
+    lesson page; refreshing starts a new browser-side comparison sequence. Wait at least ten
+    seconds after the final action for the queued batch.
+- `GET /api/learner/me?lesson=<slug>`
+  - Recalculates and returns only the authenticated user's current rolling summary.
+- `GET /api/supervisor/users`
+- `GET /api/supervisor/concepts?lesson=<slug>`
+  - Supervisor-only cohort ranking. Counts distinct identified learners reaching the maximum
+    support threshold per concept and returns the denominator and percentage. Ranking data is
+    never included in learner chatbot guidance.
+  - Primary rank is distinct learners at score `3`. Learners at `2-3`, then `1-1.99`, are
+    tie-breakers only. One learner can contribute at most once to each concept cohort count;
+    event totals and summed uncapped scores do not determine rank.
+- `GET /api/supervisor/users/<oid>`
+  - Require the configured Entra supervisor app role; return profile and summary data.
+- `DELETE /api/supervisor/users/<oid>/lessons/<slug>/concepts/<conceptId>`
+  - Supervisor-only destructive reset for one learner concept; rebuilds or removes its
+    lesson summary.
+  - A reset removes derived concept support, not the profile, raw S3 analytics, or stored
+    conversation/session rows. The concept row and `LESSON#<slug>#SUMMARY` row are separate
+    expected records, not duplicate test results.
 
 ### Training library
 
@@ -87,6 +129,18 @@ Notes:
 - `POST /api/instance/start`
 - `GET /api/instance/idle-check`
 - `POST /api/instance/idle-check`
+
+### Learner and admin analytics (dev only)
+
+- `POST /api/analytics/events` — authenticated lesson event ingestion; writes one verified-subject
+  per-user S3 batch, then updates qualifying DynamoDB support evidence.
+- `GET /api/learner/me?lesson=:slug` — current learner's rule-based support summary.
+- `GET /api/supervisor/concepts?lesson=:slug` — admin cohort counts for every authored concept.
+- `GET /api/supervisor/users` and `GET /api/supervisor/users/:oid` — admin learner list/detail.
+- `GET /api/supervisor/users/:oid/events` — newest stored lesson actions for one learner; max 500
+  events / 250 batches, with `truncated=true` when bounded. Never scans the retained global archive.
+- `DELETE /api/supervisor/users/:oid/lessons/:slug/concepts/:conceptId` — reset evidence.
+- All `/api/supervisor/*` routes require the configured Entra app role or OID allowlist.
 
 ## Streaming / Socket Paths
 

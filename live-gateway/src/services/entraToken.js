@@ -201,6 +201,9 @@ export function createEntraVerifier({
       email,
       name: typeof payload.name === 'string' ? payload.name : email,
       tenantId: payload.tid,
+      roles: Array.isArray(payload.roles)
+        ? payload.roles.filter((role) => typeof role === 'string').slice(0, 20)
+        : [],
     };
   }
 

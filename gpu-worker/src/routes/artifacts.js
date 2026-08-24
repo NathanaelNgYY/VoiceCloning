@@ -58,20 +58,20 @@ function readTranscriptMap(asrDir) {
   return transcriptMap;
 }
 
-function readClipScores(dataDir) {
-  const scores = new Map();
+function readClipMetrics(dataDir) {
+  const metrics = new Map();
   const scoresPath = path.join(dataDir, 'clip-scores.json');
-  if (!fs.existsSync(scoresPath)) return scores;
+  if (!fs.existsSync(scoresPath)) return metrics;
   try {
     const parsed = JSON.parse(fs.readFileSync(scoresPath, 'utf-8'));
     for (const [filename, entry] of Object.entries(parsed)) {
       const score = Number(entry?.score);
-      if (Number.isFinite(score)) scores.set(filename, score);
+      if (Number.isFinite(score)) metrics.set(filename, { ...entry, score });
     }
   } catch {
     // Corrupt/unreadable cache → no scores → heuristic fallback downstream.
   }
-  return scores;
+  return metrics;
 }
 
 function listTrainingAudio(expName) {
@@ -82,7 +82,7 @@ function listTrainingAudio(expName) {
     if (!fs.existsSync(denoisedDir)) continue;
 
     const transcriptMap = readTranscriptMap(path.join(dataDir, 'asr'));
-    const clipScores = readClipScores(dataDir);
+    const clipMetrics = readClipMetrics(dataDir);
     for (const filename of fs.readdirSync(denoisedDir).sort()) {
       const filePath = path.join(denoisedDir, filename);
       const ext = path.extname(filename).toLowerCase();
@@ -90,13 +90,15 @@ function listTrainingAudio(expName) {
       if (files.has(filename)) continue;
 
       const transcript = transcriptMap.get(filename) || {};
+      const qualityMetrics = clipMetrics.get(filename);
       files.set(filename, {
         filename,
         key: filePath,
         path: filePath,
         transcript: transcript.transcript || '',
         lang: transcript.lang || '',
-        qualityScore: clipScores.get(filename),
+        qualityScore: qualityMetrics?.score,
+        qualityMetrics,
         source: 'gpu-worker',
       });
     }

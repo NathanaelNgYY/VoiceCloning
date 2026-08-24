@@ -56,3 +56,43 @@ test('failed blob metadata is revoked before retrying', async () => {
   assert.equal(result, 'blob:attempt-2');
   assert.deepEqual(revoked, ['blob:attempt-1']);
 });
+
+test('hidden tabs accept a downloaded audio blob without waiting for throttled media events', async () => {
+  let metadataCalls = 0;
+  const wav = new Uint8Array(100);
+  wav.set([82, 73, 70, 70], 0); // RIFF
+  wav.set([87, 65, 86, 69], 8); // WAVE
+  const result = await waitForPlayableAudioSource('/audio.wav', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob([wav]),
+    }),
+    createObjectURL: () => 'blob:hidden-audio',
+    isDocumentHidden: () => true,
+    waitForMetadata: async () => {
+      metadataCalls += 1;
+      throw new Error('background media event was throttled');
+    },
+  });
+
+  assert.equal(result, 'blob:hidden-audio');
+  assert.equal(metadataCalls, 0);
+});
+
+test('hidden tabs do not bypass metadata validation for an unrecognised blob', async () => {
+  let metadataCalls = 0;
+  const result = await waitForPlayableAudioSource('/audio.wav', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob([new Uint8Array(100)]),
+    }),
+    createObjectURL: () => 'blob:unknown-content',
+    isDocumentHidden: () => true,
+    waitForMetadata: async () => { metadataCalls += 1; },
+  });
+
+  assert.equal(result, 'blob:unknown-content');
+  assert.equal(metadataCalls, 1);
+});

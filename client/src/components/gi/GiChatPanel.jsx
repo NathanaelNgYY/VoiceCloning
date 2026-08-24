@@ -24,10 +24,18 @@ const EMPTY_HINT = 'Start a conversation — click the mic, or type your questio
 export function GiChatPanel({
   emptyHint = EMPTY_HINT,
   lessonContext = '',
+  lessonSlug = 'gi-bleeding',
   category,
   getVideoPosition = null,
+  onUserQuestion = null,
 }) {
-  const chat = useGiChatEngine({ lessonContext, getVideoPosition, category });
+  const chat = useGiChatEngine({
+    lessonContext,
+    lessonSlug,
+    category,
+    getVideoPosition,
+    onUserQuestion,
+  });
   const audioProps = useGiReplyAudio(chat);
 
   // The panel is short inside the lesson page, so a reply that streams in while

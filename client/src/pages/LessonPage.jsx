@@ -138,7 +138,7 @@ export function LessonPage() {
   const DESCRIPTION_CLAMP_CHARS = 140;
   const isDescriptionLong = (course?.description ?? "").length > DESCRIPTION_CLAMP_CHARS;
   const topicThumbnails = useVideoTopicThumbnails(course?.videoUrl ?? "", topics);
-  const { trackNavigation, getBehaviorContext } = useLessonAnalytics({
+  const { trackNavigation, getBehaviorContext, recordQuestion } = useLessonAnalytics({
     slug,
     videoRef,
     transcriptScrollRef,
@@ -657,6 +657,7 @@ export function LessonPage() {
                   </div>
 
                   <GiChatPanel
+                    lessonSlug={slug}
                     emptyHint="Ask about this lesson — click the mic to start"
                     lessonContext={lessonContext}
                     // This lesson's slug is its assistant's category, so the
@@ -664,6 +665,7 @@ export function LessonPage() {
                     // run here.
                     category={slug}
                     getVideoPosition={videoPositionEnabled ? getVideoPosition : null}
+                    onUserQuestion={recordQuestion}
                   />
                 </div>
               </>

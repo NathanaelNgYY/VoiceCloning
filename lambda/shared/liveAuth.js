@@ -51,6 +51,9 @@ export function isAuthExemptOrigin(event, env = process.env) {
 
 export function readBearerToken(event) {
   const headers = event?.headers || {};
+  const entraKey = Object.keys(headers).find((name) => name.toLowerCase() === 'x-vcs-entra-token');
+  const entraToken = entraKey ? String(headers[entraKey] || '').trim() : '';
+  if (entraToken) return entraToken;
   const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization');
   const raw = key ? String(headers[key] || '').trim() : '';
   return /^Bearer\s+/iu.test(raw) ? raw.replace(/^Bearer\s+/iu, '').trim() : '';

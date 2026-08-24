@@ -22,7 +22,7 @@ async function post(body) {
 
     if (shouldAttachApiToken()) {
         const token = await acquireApiToken();
-        headers.Authorization = `Bearer ${token}`;
+        headers['X-VCS-Entra-Token'] = token;
     }
 
     let response;

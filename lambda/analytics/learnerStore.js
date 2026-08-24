@@ -1,0 +1,296 @@
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
+
+import { buildLearnerSummary, evidenceFromEvent, statusForEvidence } from './concepts.js';
+
+const SECONDS_PER_DAY = 86_400;
+export const EVIDENCE_WINDOW_DAYS = 30;
+// Cohort "strong support" is its own reporting threshold, not the score cap.
+// Reusing the cap counted only learners at the exact maximum, so a single
+// expired event silently removed them from the supervisor ranking. Set just
+// below the old linear maximum so the strong band stays reachable under the
+// decayed, diminishing-returns score.
+export const STRONG_SUPPORT_SCORE = 2.3;
+// Evidence loses half its weight every this many days, so a concept fades
+// instead of dropping from full strength to nothing at the window edge.
+export const EVIDENCE_HALF_LIFE_DAYS = 14;
+// Legacy aggregate records came from the former 0-3 scale. Keep only that
+// migration contribution bounded; newly recorded evidence itself is uncapped.
+const LEGACY_SCORE_CAP = 3;
+// How many events per signal are kept on the item. This bounds the stored
+// record only; unlike the caps it replaced it does not bound the score, so
+// repeated behaviour keeps counting rather than saturating at two events.
+export const SIGNAL_EVENT_RETENTION = Object.freeze({
+  concept_question: 20,
+  rewatched_segment: 20,
+  repeated_question: 20,
+});
+
+function asSignalArray(value) {
+  if (value instanceof Set) return [...value];
+  return Array.isArray(value) ? value : [];
+}
+
+function validEvidenceEvent(value, cutoffMs) {
+  const occurredAtMs = Date.parse(value?.occurredAt);
+  return value
+    && SIGNAL_EVENT_RETENTION[value.signal]
+    && Number.isFinite(Number(value.weight))
+    && Number(value.weight) > 0
+    && Number.isFinite(occurredAtMs)
+    && occurredAtMs >= cutoffMs;
+}
+
+function decayedWeight(event, atMs) {
+  const ageMs = Math.max(0, atMs - Date.parse(event.occurredAt));
+  const halfLives = ageMs / (EVIDENCE_HALF_LIFE_DAYS * SECONDS_PER_DAY * 1000);
+  return Number(event.weight) * (0.5 ** halfLives);
+}
+
+// Diminishing returns per signal type: each rank receives the next increment
+// of log2(1 + n). Applying decay to each increment keeps old evidence from
+// lowering newer evidence merely because it remains in the retained count.
+function signalScore(events, atMs) {
+  if (events.length === 0) return 0;
+  return events.reduce((sum, event, index) => (
+    sum + decayedWeight(event, atMs) * Math.log2((index + 2) / (index + 1))
+  ), 0);
+}
+
+export function buildRollingEvidenceState(item = {}, incomingEvents = [], at = new Date()) {
+  const cutoffMs = at.getTime() - EVIDENCE_WINDOW_DAYS * SECONDS_PER_DAY * 1000;
+  const combined = [...(Array.isArray(item.evidenceEvents) ? item.evidenceEvents : []), ...incomingEvents]
+    .filter((event) => validEvidenceEvent(event, cutoffMs))
+    .sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt));
+  const counts = new Map();
+  const seen = new Set();
+  const evidenceEvents = [];
+  for (const event of combined) {
+    const identity = event.eventId || `${event.signal}:${event.occurredAt}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const count = counts.get(event.signal) || 0;
+    if (count >= SIGNAL_EVENT_RETENTION[event.signal]) continue;
+    counts.set(event.signal, count + 1);
+    evidenceEvents.push(event);
+  }
+
+  const legacyUpdatedAtMs = Date.parse(item.updatedAt);
+  const implicitLegacy = !Array.isArray(item.evidenceEvents) && Number(item.evidenceScore) > 0;
+  const legacyExpiresAt = implicitLegacy
+    ? new Date(legacyUpdatedAtMs + EVIDENCE_WINDOW_DAYS * SECONDS_PER_DAY * 1000).toISOString()
+    : item.legacyEvidenceExpiresAt;
+  const legacyActive = Number.isFinite(Date.parse(legacyExpiresAt)) && Date.parse(legacyExpiresAt) >= at.getTime();
+  const legacyScore = legacyActive
+    ? Math.min(LEGACY_SCORE_CAP, Number(implicitLegacy ? item.evidenceScore : item.legacyEvidenceScore) || 0)
+    : 0;
+  const legacyCount = legacyActive
+    ? Math.min(
+      Object.values(SIGNAL_EVENT_RETENTION).reduce((sum, value) => sum + value, 0),
+      Number(implicitLegacy ? item.evidenceCount : item.legacyEvidenceCount) || 0,
+    )
+    : 0;
+  const bySignal = new Map();
+  for (const event of evidenceEvents) {
+    bySignal.set(event.signal, [...(bySignal.get(event.signal) || []), event]);
+  }
+  const eventScore = [...bySignal.values()]
+    .reduce((sum, events) => sum + signalScore(events, at.getTime()), 0);
+  const evidenceCountCap = Object.values(SIGNAL_EVENT_RETENTION).reduce((sum, value) => sum + value, 0);
+  const signals = new Set(evidenceEvents.map((event) => event.signal));
+  const legacySignals = legacyActive
+    ? asSignalArray(implicitLegacy ? item.signals : item.legacyEvidenceSignals)
+    : [];
+  legacySignals.forEach((signal) => signals.add(signal));
+
+  return {
+    evidenceEvents,
+    evidenceScore: Math.round((legacyScore + eventScore) * 100) / 100,
+    evidenceCount: Math.min(evidenceCountCap, legacyCount + evidenceEvents.length),
+    signals,
+    windowStartedAt: new Date(cutoffMs).toISOString(),
+    legacyEvidenceScore: legacyScore,
+    legacyEvidenceCount: legacyCount,
+    legacyEvidenceSignals: legacySignals,
+    legacyEvidenceExpiresAt: legacyActive ? legacyExpiresAt : null,
+  };
+}
+
+// Order-independent comparison, because a summary rebuilt in memory and the
+// same summary read back from DynamoDB need not agree on key order.
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+// `updatedAt`/`ttl` move on every batch, so they are not evidence of a change.
+function summaryContentEqual(left, right) {
+  if (!left || !right) return false;
+  const content = ({ updatedAt, ttl, ...rest }) => rest;
+  return stableJson(content(left)) === stableJson(content(right));
+}
+
+// Stored evidence is only pruned when a concept is written, so any read must
+// re-derive the rolling window before the score is used or summarised.
+export function currentConceptState(item, at) {
+  const state = buildRollingEvidenceState(item, [], at);
+  return {
+    ...item,
+    ...state,
+    signals: state.signals,
+    status: statusForEvidence(state.evidenceScore),
+  };
+}
+
+export function createLearnerStore({
+  tableName = process.env.LEARNER_TABLE_NAME || '',
+  region = process.env.LEARNER_TABLE_REGION || 'ap-northeast-2',
+  ttlDays = Number.parseInt(process.env.LEARNER_TTL_DAYS || '90', 10),
+  client = null,
+  now = () => new Date(),
+} = {}) {
+  if (!tableName) return null;
+  const documentClient = client || DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+
+  function ttl(at) {
+    return ttlDays > 0
+      ? Math.floor(at.getTime() / 1000) + ttlDays * SECONDS_PER_DAY
+      : undefined;
+  }
+
+  async function recordBatch(identity, events) {
+    if (!identity?.oid || identity.synthetic) return { recorded: 0, summaries: [] };
+    const grouped = new Map();
+    for (const event of events) {
+      const evidence = evidenceFromEvent(event);
+      if (!evidence) continue;
+      const key = `${event.lessonSlug}:${evidence.concept.id}`;
+      const current = grouped.get(key) || {
+        lessonSlug: event.lessonSlug,
+        concept: evidence.concept,
+        events: [],
+      };
+      current.events.push({
+        eventId: String(event.eventId || ''),
+        signal: evidence.signal,
+        weight: evidence.weight,
+        occurredAt: event.occurredAt || now().toISOString(),
+      });
+      grouped.set(key, current);
+    }
+
+    const at = now();
+    const expiresAt = ttl(at);
+    for (const entry of grouped.values()) {
+      const key = {
+        PK: `USER#${identity.oid}`,
+        SK: `LESSON#${entry.lessonSlug}#CONCEPT#${entry.concept.id}`,
+      };
+      let written = false;
+      for (let attempt = 0; attempt < 4 && !written; attempt += 1) {
+        const existing = await documentClient.send(new GetCommand({ TableName: tableName, Key: key }));
+        const state = buildRollingEvidenceState(existing.Item, entry.events, at);
+        const expectedRevision = Number(existing.Item?.evidenceRevision) || 0;
+        const values = {
+        ':score': state.evidenceScore,
+        ':count': state.evidenceCount,
+        ':lesson': entry.lessonSlug,
+        ':conceptId': entry.concept.id,
+        ':conceptLabel': entry.concept.label,
+        ':updatedAt': at.toISOString(),
+        ':signals': state.signals,
+        ':events': state.evidenceEvents,
+        ':windowStartedAt': state.windowStartedAt,
+        ':legacyScore': state.legacyEvidenceScore,
+        ':legacyCount': state.legacyEvidenceCount,
+        ':legacySignals': state.legacyEvidenceSignals,
+        ':legacyExpiresAt': state.legacyEvidenceExpiresAt,
+          ':nextRevision': expectedRevision + 1,
+        };
+        if (expectedRevision > 0) values[':expectedRevision'] = expectedRevision;
+        let update = 'SET evidenceScore = :score, evidenceCount = :count, signals = :signals, evidenceEvents = :events, windowStartedAt = :windowStartedAt, legacyEvidenceScore = :legacyScore, legacyEvidenceCount = :legacyCount, legacyEvidenceSignals = :legacySignals, legacyEvidenceExpiresAt = :legacyExpiresAt, evidenceRevision = :nextRevision, lessonSlug = :lesson, conceptId = :conceptId, conceptLabel = :conceptLabel, updatedAt = :updatedAt';
+        if (expiresAt !== undefined) {
+          values[':ttl'] = expiresAt;
+          update += ', #ttl = :ttl';
+        }
+        try {
+          await documentClient.send(new UpdateCommand({
+            TableName: tableName,
+            Key: key,
+            UpdateExpression: update,
+            ConditionExpression: expectedRevision === 0
+              ? 'attribute_not_exists(evidenceRevision)'
+              : 'evidenceRevision = :expectedRevision',
+            ExpressionAttributeNames: expiresAt === undefined ? undefined : { '#ttl': 'ttl' },
+            ExpressionAttributeValues: values,
+          }));
+          written = true;
+        } catch (error) {
+          if (error?.name !== 'ConditionalCheckFailedException' || attempt === 3) throw error;
+        }
+      }
+    }
+
+    const lessons = [...new Set([...grouped.values()].map((entry) => entry.lessonSlug))];
+    const summaries = [];
+    for (const lessonSlug of lessons) {
+      const response = await documentClient.send(new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `USER#${identity.oid}`,
+          // Widened from the CONCEPT prefix so the stored summary arrives in the
+          // same query and an unchanged one can be recognised without an extra read.
+          ':prefix': `LESSON#${lessonSlug}#`,
+        },
+      }));
+      const summaryKey = `LESSON#${lessonSlug}#SUMMARY`;
+      const items = response.Items || [];
+      const storedSummary = items.find((entry) => entry.SK === summaryKey);
+      const states = items
+        .filter((entry) => entry.SK !== summaryKey)
+        .map((entry) => currentConceptState(entry, at));
+      const item = {
+        PK: `USER#${identity.oid}`,
+        SK: summaryKey,
+        lessonSlug,
+        ...buildLearnerSummary(states),
+        source: 'rules',
+        concepts: states.map((state) => ({
+          conceptId: state.conceptId,
+          conceptLabel: state.conceptLabel,
+          status: state.status,
+          evidenceScore: state.evidenceScore,
+          evidenceCount: state.evidenceCount,
+          signals: [...(state.signals || [])],
+        })),
+        updatedAt: at.toISOString(),
+        ...(expiresAt === undefined ? {} : { ttl: expiresAt }),
+      };
+      // Most batches nudge a concept without moving the lesson summary, so skip
+      // the write when nothing changed. The TTL still has to be refreshed before
+      // it runs down, or the summary would expire while its concepts live on.
+      const ttlIsFresh = expiresAt === undefined
+        || Number(storedSummary?.ttl) >= expiresAt - (ttlDays * SECONDS_PER_DAY) / 2;
+      if (summaryContentEqual(storedSummary, item) && ttlIsFresh) {
+        summaries.push(storedSummary);
+        continue;
+      }
+      await documentClient.send(new PutCommand({ TableName: tableName, Item: item }));
+      summaries.push(item);
+    }
+
+    return { recorded: grouped.size, summaries };
+  }
+
+  return { recordBatch };
+}

@@ -442,9 +442,9 @@ export function prepareTextForSynthesis(text) {
   return splitCompoundWords(result).trim();
 }
 
-// Live Full accepts the extra preprocessing cost in exchange for deterministic
-// scientific narration. Live Fast intentionally keeps using prepareTextForSynthesis
-// directly, so formula handling cannot change its latency or established output.
+// Synthesis routes use this conservative formula-aware wrapper for deterministic
+// scientific narration. It is an in-process text rewrite and does not add a model
+// call, verification pass, or synthesis retry.
 export function prepareTextForFullSynthesis(text) {
   return prepareTextForSynthesis(expandChemicalFormulas(text));
 }

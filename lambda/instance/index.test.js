@@ -65,6 +65,96 @@ test('GPU instance mock env is ignored without a real EC2 id', async () => {
   });
 });
 
+test('instance status keeps the fixed worker health probe by default', async () => {
+  const previousFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  globalThis.__voiceCloningEc2Client = {
+    async send() {
+      return {
+        Reservations: [{ Instances: [{ State: { Name: 'running' } }] }],
+      };
+    },
+  };
+  const { handler } = await import(`./index.js?fixedReadiness=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-dev-fixed',
+      GPU_WORKER_URL: 'http://fixed-worker.test',
+      INFERENCE_WORKER_URL: 'http://inference-fleet.test',
+      GPU_STATUS_READINESS_TARGET: '',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'GET' } },
+        rawPath: '/api/instance/status',
+      });
+
+      assert.equal(JSON.parse(response.body).workerReady, true);
+      assert.deepEqual(urls, ['http://fixed-worker.test/healthz']);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
+test('instance status can require the inference fleet endpoint to be reachable', async () => {
+  const previousFetch = globalThis.fetch;
+  const urls = [];
+  let inferenceStatus = 200;
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({ gpt: [], sovits: [] }), {
+      status: inferenceStatus,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  globalThis.__voiceCloningEc2Client = {
+    async send() {
+      return {
+        Reservations: [{ Instances: [{ State: { Name: 'running' } }] }],
+      };
+    },
+  };
+  const { handler } = await import(`./index.js?inferenceReadiness=${Date.now()}`);
+
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-staging-fixed',
+      GPU_WORKER_URL: 'http://fixed-worker.test',
+      INFERENCE_WORKER_URL: 'http://inference-fleet.test',
+      GPU_STATUS_READINESS_TARGET: 'inference',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'GET' } },
+        rawPath: '/api/instance/status',
+      });
+
+      assert.equal(JSON.parse(response.body).workerReady, true);
+      inferenceStatus = 503;
+      const unavailableResponse = await handler({
+        requestContext: { http: { method: 'GET' } },
+        rawPath: '/api/instance/status',
+      });
+      assert.equal(JSON.parse(unavailableResponse.body).workerReady, false);
+      assert.deepEqual(urls, [
+        'http://inference-fleet.test/models',
+        'http://inference-fleet.test/models',
+      ]);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
 test('instance start only calls EC2 start when the user-triggered request finds a stopped instance', async () => {
   const calls = [];
   const fakeEc2 = {

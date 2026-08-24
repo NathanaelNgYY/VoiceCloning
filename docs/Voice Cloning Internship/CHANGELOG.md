@@ -1,5 +1,159 @@
 # Changelog
 
+## 2026-08-21
+
+- Root-caused staging Full's abnormal latency from durable SSE events and verifier code. Session
+  `e163e730-aef7-4720-b763-f51fdc0681f1` spent 310.66 seconds on five first-chunk takes because
+  lazy `large-v3` verification exceeded its deadline and returned unavailable; chunk two then
+  spent 179.14 seconds on five more takes. Full now retains strict beam/timing/tail gates using
+  the already-warm medium model by default, and an unavailable verifier keeps the first
+  acoustically usable best-effort take instead of regenerating audio that cannot repair ASR.
+  Deployed the exact fix to Dev and all five staging workers. The formerly problematic text
+  completed directly on staging in 18 seconds with five takes, versus 490.19 seconds before.
+- Diagnosed the claimed Dev/staging Full mismatch from live S3 manifests and worker process
+  environments. The same passage used one 240-character chunk on Dev but two 170-character
+  chunks on staging because Dev explicitly set `FULL_MAX_CHUNK_LENGTH=240` while staging fell
+  back to 170. Changed the shared fallback and UI label to 240. Normalized staging DeanVoice's
+  profile, rank-1 default, and rank-1 Live Full defaults to Dev values while preserving the exact
+  primary and five auxiliary references; bucket versioning and an explicit backup retain rollback.
+- Deployed unified commit `2807e1c` to both environment Lambdas; Dev Training/TTS/GI;
+  staging Training/TTS/GI; and the staging-only faculty client. Public assets are Dev
+  `index-Cc6cF0sB.js`, `index-CvBWG-Iy.js`, `index-B9gUM8Zv.js`; staging
+  `index-BkPu5fIc.js`, `index-MsbyZc5S.js`, `index-B9gUM8Zv.js`; faculty
+  `index-CdSgyAB-.js`. Every SPA shell returned HTTP 200 with no-store cache headers.
+- Deployed the same inference, training-quality, and gateway source to both fixed hosts. Dev
+  remains outside any ASG and alone configures `vcs-dev-transcripts`; staging alone retains
+  inference-fleet readiness and faculty staff/associate policy with `vcs-staging-lecturers`.
+  Dev alone shows advanced controls; deployed-bundle inspection proved staging compiled them out.
+- Rolled unified inference quality/pronunciation/retry code across all five staging ASG workers
+  under temporary EC2 health, then restored ELB health. All five matched source hashes, reported
+  DeanVoice, phoneme and speaker verifiers ready, and were healthy targets. Direct staging worker
+  TTS returned HTTP 200 RIFF in 2.28 seconds; Dev public TTS returned RIFF in 8.95 seconds after
+  its restart/model load. This short smoke does not prove the prior Full latency tail is fixed.
+- Baked AMI `ami-0fdeab564c09be219` with inference fix `331586a` and promoted launch template
+  v30. AWS readback proves the AMI is available, v30 is latest/default, and the ASG follows
+  `$Default`; a fresh v30 boot remains pending the next natural scale-out. GitHub push remains blocked.
+- Unified the local Dev and staging branch tips at merge commit `c18691d`. Advanced TTS controls
+  are now one shared implementation gated by `VITE_SHOW_ADVANCED_SETTINGS=true` on Dev and
+  `false` on staging. Verified the other intended boundaries: only Dev configures
+  `LEARNER_TABLE_NAME`; only staging configures `GPU_STATUS_READINESS_TARGET=inference`.
+  Client 412/412, Lambda 200/200, and inference-worker 253/253 passed. Training-worker tests
+  remained at the documented 21/22 because its email mock requires absent mail configuration.
+  Both Live Fast builds and the Lambda ZIP were prepared, but nothing from this merge was deployed:
+  `VCS_AWS_*` expired before rollout. Forty uncached staging current-session probes found no active
+  Full request to cancel; the sole observed session was complete.
+- Diagnosed screenshot session `8509fed4-c1cc-449c-9965-d8bbdcb9530d`: inference completed
+  a valid 929,324-byte WAV in 460.03 seconds. Chunk 0 took 451.95 seconds and six attempts
+  after whole-chunk failure triggered sentence fallback; chunk 1 took 7.68 seconds. Existing
+  events do not identify which internal verifier/model stage dominated the first chunk.
+- Fixed the post-refresh finalization failure at two layers. Added all four staging origins
+  to the shared audio bucket CORS and verified the exact result returns HTTP 200, RIFF/WAVE,
+  and the staging `Access-Control-Allow-Origin`. Terminal inference now clears worker-local
+  SSE prepared state, forcing later reconnects through durable S3 replay. Worker tests passed
+  253/253; the focused cleanup test passed on Dev and all five then-live staging workers.
+- Rolling staging restarts initially caused two ASG replacements because ELB health remained
+  authoritative during cold model loading. Recovery temporarily used EC2 health, patched and
+  readied the replacement workers, then restored ELB health; five targets were healthy. Baked
+  AMI `ami-0b843a377ac5c8412` and promoted launch template v28 as default. The healthy fleet
+  was not recycled, so a fresh boot from v28 remains unverified.
+- Investigated an exact staging Full request from the user's screenshot. Session
+  `878ab6b4-ee76-48a7-8f23-46fb0204334b` took 429.11 seconds; chunk 0 used all five attempts
+  and 312.86 seconds. Refresh created identical session
+  `33adc6fc-61be-4da6-be55-768057873031`, which took 401.63 seconds and repeated a
+  312.21-second first chunk. The observed ASG scale-out began about 34 minutes earlier under
+  the baseline occupancy alarm, so this refresh did not trigger that scaling activity.
+- Full and Full Queue generation now persists the accepted session per browser tab, restores
+  text/chunks/progress after refresh, reconnects the same SSE stream without a second POST,
+  warns before navigation, and synchronously blocks duplicate clicks. Progress explicitly
+  names Full Inference. This does not provide cross-tab/device backend idempotency.
+- Deployed Live Fast to staging as `index-DOi5z7E_.js` (invalidation
+  `ICJUWF1RCYM56MU1GHVCW3VHP3`) and Dev as `index-BG18849o.js` (invalidation
+  `I434CDARPHT2W7SJU573U68KIU`). Both invalidations completed and public bundle readback found
+  the reconnect and progress copy. Tests: client 411/411 and Live Fast build. The browser
+  runtime failed to initialize, so an actual mid-generation refresh remains unverified.
+- Fixed a Dev reference-audio data-integrity regression. Auto selection could update the
+  primary path while retaining a stale `prompt_text`; the live selected WAV's manifest said
+  “a lot of technology that involves patients' data,” but the profile/UI showed unrelated
+  COVID-19 text. Lambda now carries transcript/language with warmed references, persists them
+  to the saved and active profile plus rank-1 default config, and treats same paths with stale
+  prompt metadata as needing repair. The client uses the warmed/manifest prompt and accepts an
+  active-profile fallback only when its primary path matches.
+- Deployed Dev Lambda and Live Fast asset `index-Dg8e9UEi.js`; invalidation
+  `I3UEHK4GOA8D0MNIN8BHX8SWWW` completed. Repaired live `dea-voice-version2-v1` and its
+  auto-managed `default` rank-1 config. Public readback proved profile/config/manifest prompt
+  equality, the same primary and five auxiliaries in exact order, and same-experiment paths.
+  Staging remained on `index-hWSTVBvH.js`. Tests: client 408/408, Lambda 200/200, Live Fast
+  build. Audible quality and fresh-browser preview remain unverified.
+- Fixed two staging Live Fast UI failures. The shared GPU badge now uses an explicit
+  staging-only inference-fleet `/models` liveness probe; Dev still checks its fixed
+  worker `/healthz`. A first attempt to gate on loaded-model readiness was rejected
+  during live verification because it would block the profile-driven model loader.
+  Full output finalization now accepts a fully downloaded RIFF/WAVE blob while the
+  tab is hidden instead of waiting for browser media events that Chrome may throttle.
+  Deployed staging Lambda and Live Fast asset `index-hWSTVBvH.js`; invalidation
+  `I6DAN0EKKBNFANJ5NI8ARCJN7M` completed. Live readback: badge ready, `/api/models`
+  200 with 207 entries, inference ready, and Dev asset unchanged. Tests: staging
+  client 367/367, Lambda 150/150, Live Fast build; background-tab browser repro pending.
+- A user listening comparison reported worse Dev pronunciation/gibberish than staging.
+  This is valid outcome evidence but not an isolated algorithm A/B: live staging used
+  `deanvoice-v1`, while Dev used `dea-voice-version2-v1`. Do not promote the uncalibrated
+  Dev selector/training/verifier work to staging; isolate weights, references, settings,
+  and retry policy before deciding which change to revert.
+- Fixed three dev client regressions: long current-config filenames no longer push Save new
+  outside its card; public background model discovery/loading no longer depends on an
+  interactive Entra token refresh (protected calls remain authenticated); and a document
+  restored from browser history is reloaded instead of showing the obsolete faculty login.
+  Repeated `/api/models/select` probes through Dev GI/Live Fast returned 200; the model Lambda
+  itself cannot emit 403. Client tests passed 405/405 and the GI production build passed.
+- Redeployed all three Dev clients only. Invalidations completed; HTTP readback returned
+  Training `index-DSP9b2By.js`, Live Fast `index-DKYckGK7.js`, and GI `index-Bii-ZJZj.js`
+  with `no-store, must-revalidate, no-cache`. The live GI bundle contains D25, `pageshow`,
+  and optional model-auth code. No Lambda, GPU, staging, or faculty deployment changed.
+- Fixed rank-1 reference lifecycle on dev. Model loading now waits for the selected
+  profile's configs; curated/user-reordered rank 1 remains authoritative, while untouched
+  auto defaults are recalculated only from the experiment derived from the selected model
+  pair. Legacy default configs carrying another experiment's paths are migrated through the
+  same safe auto path. Added client and Lambda model/reference ownership guards. The Load
+  button changes only the current inference pipeline and no longer activates a profile.
+- Repaired live `dea-voice-version2-v1`: its default/profile previously contained six
+  `leehseinlongnew` paths. A deployed model-select refresh chose one primary and five aux
+  under `dea-voice-version2`; S3 readback proved the profile/config sets are identical,
+  all six paths belong to that experiment, rank is 1, and mode is `auto`.
+- Client deployment now uploads `index.html` with `no-store, must-revalidate, no-cache`,
+  preventing a first navigation from running the deleted faculty-style GI bundle before a
+  refresh. Dev Lambda and all three clients were redeployed; invalidations completed and
+  public readback returned HTTP 200 with assets `index-DfO-Y2BR.js`, `index-DeMzT9k8.js`,
+  and `index-DzQsGqe4.js`. Tests: client 402/402; Lambda 197/197; diff check passed.
+- Restored the dev GI login to the centered D25 staging presentation while keeping the
+  faculty split-panel presentation explicit and separate. Added a regression test for
+  that routing boundary and deployed only dev GI (`assets/index-B8cRtBnz.js`); CloudFront
+  invalidation `IBVI7EWNF2UUHAOKXCIC9BE35Y` completed. The public bundle contains the
+  D25 copy and dev analytics. Client tests passed 398/398 and the GI production build
+  passed; screenshot-level browser verification remains pending because the local
+  in-app browser connection failed.
+
+## 2026-08-20
+
+- Merged staging application source into dev while preserving learner analytics and
+  explicitly keeping dev schedule/ASG activation off. Commit `5aeb30f` was deployed to
+  the fixed dev GPU by Git bundle because GitHub credentials are unavailable locally;
+  readback proved the exact SHA, no tracked drift, all services active, and all three
+  health endpoints ready. Dev Lambda and training/Live Fast/GI clients were deployed;
+  all CloudFront invalidations completed and each public site plus `/api/config` returned 200.
+- Added pre-feature training quality gates with SNR, clipping, spectrum, silence, level,
+  DC-offset, duration, transcript-density/repetition, duplicate-transcript, and conservative
+  dataset-consistency evidence. The retained manifest and rejection report are uploaded.
+- Passed full acoustic metadata into frontend/backend reference selection. Failed clips are
+  ineligible; the primary remains quality-ranked and auxiliaries now balance quality with
+  transcript/source-region diversity. Existing rank-1 config and profile persistence flow
+  remains unchanged.
+- Added monotonic CTC per-phone alignment evidence, a conservative weakest-phone pass floor,
+  and a labeled-data threshold calibration utility. This is deployed only on dev. No real
+  training or listening/calibration dataset was run, so audible improvement remains unverified.
+- Tests: client 397/397; Lambda 194/194 plus model-selection checks; gateway 180/180;
+  inference 252/252 and Python 7/7; training-quality/pipeline 5/5; Python compilation and GI
+  production build passed. The unrelated existing gpu-worker SMTP-vs-SES email mock still fails.
+
 ## 2026-08-18
 
 - Deployed faculty-only Microsoft SSO to staging. `faculty.lkcmedicine.org` now requires
@@ -33,6 +187,33 @@
   tests 26/26, and Lambda auth tests 11/11. Deployment is blocked because the assumed
   internship role is denied `dynamodb:CreateTable`; the table and Entra faculty SPA
   redirect URI remain unverified and no AWS runtime resource was changed.
+- Restored live staging GPU availability to 07:00-19:00 Singapore without deploying
+  dev or rebuilding code/images. The staging Lambda now reads `enabled=true`, start
+  `7`, end `19`, timezone `Asia/Singapore`; ASG recurring actions now set min/desired
+  `1/1` at 07:00 and `0/0` at 19:00, max 192. Readback succeeded in account
+  `329599637774`; current in-window ASG capacity remained min 1/desired 2/2 instances.
+  `GPU_INFERENCE_ASG_NAME` remains unset on Lambda, so the fixed GPU and ASG schedules
+  remain independent. No dev AWS resource was changed.
+- Corrected pronunciation precedence across Live Fast, Live Full, regeneration, and
+  inserted Full chunks: synthesis aliases still apply first; otherwise an admin
+  ARPAbet word now bypasses automatic ALL-CAPS acronym/emphasis rewriting and remains
+  one token for GPT-SoVITS hot-dictionary lookup. Without an admin entry, existing
+  acronym behavior is unchanged. Centralized the route preprocessing order and added
+  regressions for alias-first `STEREOCHEMISTRY`, ARPAbet-only `WHO`, and ordinary
+  `WHO`. Full inference-worker suite: 245/245. Not tested: real GPT-SoVITS dictionary
+  reload, GPU audio, browser flow, or deployment. Multiword aliases continue to use
+  their alias tokens for synthesis and the original full ARPAbet sequence for optional
+  full-span verification; automatic per-alias-token phoneme splitting is unsupported.
+- Live Fast now applies the existing conservative chemical-formula rewrite before
+  synthesis, matching Live Full for inputs such as `C6H12O6`, `(CH2O)n`, `NaCl`,
+  and `COOH` without adding a network, model, verification, or retry step. Also
+  closed the compact-formula route test correctly so the following test is no longer
+  nested. Code: `gpu-inference-worker/src/routes/inference.js`,
+  `gpu-inference-worker/src/services/textPronunciation.js`, and their tests. Tests:
+  focused worker tests 85/85 and full inference-worker suite 243/243. A local
+  100,000-call benchmark measured about 125 microseconds of incremental preprocessing
+  per roughly 240-character input. Not tested: real GPU audio, browser flow, deployment,
+  and production multi-user latency.
 
 ## 2026-08-14
 

@@ -50,13 +50,24 @@ export function waitForAudioMetadata(url, {
   });
 }
 
+async function hasWavHeader(blob) {
+  if (!blob || typeof blob.slice !== 'function') return false;
+  const bytes = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  if (bytes.length < 12) return false;
+  return String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF'
+    && String.fromCharCode(...bytes.slice(8, 12)) === 'WAVE';
+}
+
 async function fetchPlayableBlob(url, { fetchImpl, createObjectURL }) {
   if (typeof fetchImpl !== 'function' || typeof createObjectURL !== 'function') return null;
   const response = await fetchImpl(url, { cache: 'no-store' });
   if (!response.ok) throw new Error(`Generated audio returned HTTP ${response.status}.`);
   const blob = await response.blob();
   if (!blob || blob.size <= 44) throw new Error('Generated audio file is incomplete.');
-  return createObjectURL(blob);
+  return {
+    url: createObjectURL(blob),
+    verifiedAudio: String(blob.type || '').toLowerCase().startsWith('audio/') || await hasWavHeader(blob),
+  };
 }
 
 export async function waitForPlayableAudioSource(url, {
@@ -66,6 +77,7 @@ export async function waitForPlayableAudioSource(url, {
   createObjectURL = globalThis.URL?.createObjectURL?.bind(globalThis.URL),
   revokeObjectURL = globalThis.URL?.revokeObjectURL?.bind(globalThis.URL),
   waitForMetadata = waitForAudioMetadata,
+  isDocumentHidden = () => globalThis.document?.visibilityState === 'hidden',
   sleep = (ms) => new Promise((resolve) => globalThis.setTimeout(resolve, ms)),
   now = Date.now,
 } = {}) {
@@ -76,8 +88,14 @@ export async function waitForPlayableAudioSource(url, {
     try {
       // Fetching the completed WAV into a blob removes the race between an <audio>
       // metadata range request and a just-written/just-uploaded final artifact.
-      blobUrl = await fetchPlayableBlob(candidateUrl, { fetchImpl, createObjectURL });
+      const fetchedBlob = await fetchPlayableBlob(candidateUrl, { fetchImpl, createObjectURL });
+      blobUrl = fetchedBlob?.url || null;
       const playableUrl = blobUrl || candidateUrl;
+      // Browsers may suspend media metadata events in a background tab. A fully
+      // downloaded non-empty blob is already durable enough to add to history;
+      // requiring an Audio event while hidden turns successful generation into a
+      // false “still being finalized” error when the user returns to the tab.
+      if (blobUrl && fetchedBlob.verifiedAudio && isDocumentHidden()) return blobUrl;
       await waitForMetadata(playableUrl);
       return playableUrl;
     } catch (error) {
