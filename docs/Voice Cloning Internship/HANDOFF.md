@@ -49,8 +49,8 @@ Last updated: 2026-08-24
 
 ## Current Staging State
 
-- Fixed in code, not deployed: deep warm and request-time enforcement now share one canonical
-  model-cache path and production snapshot; deployment and first/second-turn timing remain.
+- Deep warm and request-time enforcement share one canonical hashed model-cache path and the
+  same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
   staging alone sets `GPU_STATUS_READINESS_TARGET=inference`; Dev shows advanced TTS controls and
   staging hides them through `VITE_SHOW_ADVANCED_SETTINGS`. No quality/retry fork remains locally.
@@ -73,9 +73,9 @@ Last updated: 2026-08-24
   A real staff sign-in and lecturer-table write are still unverified.
 - Staging Live Fast uses two normal takes and at most two catastrophic-babble reseeds.
   All five staging workers now run the unified quality/pronunciation/retry code, match hashes,
-  and are healthy with DeanVoice plus both verifiers active. A direct worker TTS returned a valid
-  WAV in 2.28 seconds. AMI `ami-0fdeab564c09be219` is available and staging launch template
-  v30 is latest/default; the ASG follows `$Default`. A fresh v30 scale-out boot remains unverified.
+  and are healthy with DeanVoice plus both verifiers active. AMI `ami-09603b8ca5f8a228b` is
+  available and launch template v31 is latest/default; a fresh v31 node completed production-shaped
+  deep warm before becoming healthy. Authenticated first/second-turn timing remains pending.
 - Staging inference ASG `vcs-staging-gpu-inference` has live min 1/max 192; desired 5 was
   observed after the 2026-08-21 baseline occupancy alarm scaled it from 1 to 5.
   The 07:00/19:00 Singapore actions preserve min 1 without forcing desired. The fixed GPU
@@ -114,5 +114,5 @@ Last updated: 2026-08-24
 7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
    the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
    and model stages; do not change the 3→5 policy without a controlled quality comparison.
-8. Verify the next natural staging scale-out boots LT v30 / AMI `ami-0fdeab564c09be219`, loads
-   DeanVoice and both verifiers, and carries the merged inference file hashes.
+8. Browser-time first and second staging GI/Live Fast replies after the canonical-cache rollout;
+   separate remaining OpenAI/WebSocket setup time from GPU synthesis time.

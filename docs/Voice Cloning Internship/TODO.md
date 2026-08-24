@@ -1,10 +1,8 @@
 # Active TODO
 
-- [ ] Deploy the canonical model-cache/deep-warm fix to a staging canary, verify warm and
-  request status report the same hashed Dean paths, compare first/second authenticated GI
-  turn timing, then bake and promote a replacement AMI if the penalty is removed.
-- [ ] Verify the next natural staging scale-out uses LT v30 / AMI `ami-0fdeab564c09be219`,
-  reaches DeanVoice plus phoneme/speaker readiness, and carries the merged inference hashes.
+- [ ] Browser-time first and second authenticated staging GI/Live Fast replies after the
+  canonical-cache rollout. Worker/fresh-boot evidence proves the reload mismatch is removed,
+  but public end-to-end timing is still needed to quantify OpenAI/WebSocket overhead.
 - [ ] Browser-refresh one active Full and Full Queue job on staging and Dev, record the
   session ID before/after, and prove only one new S3 session exists. Unit/build and live-bundle
   readback plus terminal-SSE tests pass, but the end-to-end browser check remains pending.

@@ -6,7 +6,13 @@
   S3 weight key. Added one key-derived hashed cache resolver shared by `/models/download`
   and request-time voice enforcement; deep route warm now also carries the complete
   production `voice_model` snapshot. Tests: 20/20 targeted inference/model/warm tests,
-  Node syntax checks, Bash syntax check, and `git diff --check`. Not deployed or timed live.
+  Node syntax checks, Bash syntax check, and `git diff --check`.
+- Rolled commit `5634303` across the five serving staging workers. Every worker passed its
+  focused cache tests, completed ten two-slot route-warm rounds, reported both services active,
+  and loaded identical hashed Dean paths; all five target-group members are healthy. Baked
+  AMI `ami-09603b8ca5f8a228b`, promoted launch template v31 as latest/default, and proved a
+  fresh v31 scale-out completed deep warm before becoming healthy. Restored desired capacity 5
+  and ELB health authority. Authenticated browser first/second-turn timing remains unmeasured.
 
 ## 2026-08-21
 
