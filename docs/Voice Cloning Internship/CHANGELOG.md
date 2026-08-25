@@ -2,6 +2,11 @@
 
 ## 2026-08-25
 
+- Completed unified runtime rollout after credential refresh. Fixed Dev and staging workers now
+  run `30234eb` with all three services healthy. Baked tagged AMI `ami-0cf96ffb91690b17c`,
+  promoted launch-template v39/default, and proved a fresh ASG boot at the exact commit with zero
+  tracked/runtime drift plus inference/gateway readiness. Restored ELB health with 1,200-second
+  grace and min/desired 1, max 192; old v38 workers entered termination.
 - Documented two future improvements: authoritative faculty lecture-to-trained-profile
   publishing through the lectures API, and per-model deficit-based batch scaling with
   expiring demand reservations, event headroom, and multi-lecture burst acceptance tests.

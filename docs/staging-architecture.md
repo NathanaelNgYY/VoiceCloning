@@ -1891,8 +1891,10 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. Current live inference state is tagged AMI `ami-0d58babf0106d7f52`, launch-template
-   v38/default, ASG min/desired 1 and max 192, and two slots per GPU. Model-aware
+7. Current live inference state is tagged AMI `ami-0cf96ffb91690b17c`, launch-template
+   v39/default, ASG min/desired 1 and max 192, and two slots per GPU. Fresh-boot
+   acceptance on instance `i-0c92f3224029284ee` proved unified commit `30234eb`, zero
+   tracked/runtime drift, and inference plus gateway readiness. Model-aware
    coordinator admission/reassignment/scale-out is authoritative; legacy ALB occupancy
    alarms are telemetry-only. Health grace is 1,200 seconds because fresh deep warm and
    public prime exceeded the former 600-second grace. See “Model-aware lecture capacity”

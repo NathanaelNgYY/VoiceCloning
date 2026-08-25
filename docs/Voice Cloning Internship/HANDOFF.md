@@ -5,9 +5,9 @@ Last updated: 2026-08-25
 ## Current Dev State
 
 - Remote branches `separate-containers-new` and `codex/staging-multi-user-scaling` both point to
-  unified commit `21596bf`. Dev/staging main Lambdas have the exact same package SHA; all Dev and
-  staging client targets were rebuilt from that commit. The Dev GPU was started, but its worker
-  update/readback is pending because the user-level AWS session expired immediately afterward.
+  unified commit `30234eb`. Dev/staging main Lambdas have the exact same package SHA; all Dev and
+  staging client targets were rebuilt from that tree. Fixed Dev GPU `i-03f258d470a2fa73f` also
+  runs `30234eb`; all three worker services and their health/readiness probes passed.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Dev remains fixed-instance/on-demand: `GPU_SCHEDULE_ENABLED=false`, no inference ASG, and fixed
   GPU `i-03f258d470a2fa73f` belongs to no ASG.
@@ -36,22 +36,21 @@ Last updated: 2026-08-25
 ## Current Staging State
 
 - The 2026-08-25 faculty deployment had overwritten staging's coordinator-aware main Lambda and
-  lecture client. Unified commit `21596bf` restores faculty publishing plus model coordination;
+  lecture client. Unified commit `30234eb` restores faculty publishing plus model coordination;
   the main Lambda now matches Dev's package SHA, the coordinator was redeployed, and public Dev/
   staging assets expose capacity, stock-voice, and crash-boundary code. Staging currently publishes
   cloned `deanvoice-v1`; Dev has no deployed category object and uses its legacy/build fallback.
-- Fixed staging GPU `i-0f0da8be59367f7a8` fast-forwarded to `21596bf`; three services restarted
-  and passed liveness. Its prior tracked changes and seven colliding untracked files are recoverable
-  in named stashes. Full post-warm readiness and the current ASG worker/AMI hash audit remain pending
-  because the AWS source session expired.
+- Fixed staging GPU `i-0f0da8be59367f7a8` runs `30234eb`; all three services restarted and passed
+  the applicable liveness/readiness checks. Prior tracked and colliding untracked files on fixed Dev,
+  fixed staging, and updated ASG workers remain recoverable in named server-side stashes.
 - Lecture-click capacity preparation and model-aware routing are live on staging: matching slot ->
   five-minute demand-idle reassignment -> per-model scale-out, with two admitted slots per GPU.
   A concurrent canary returned two RIFF WAVs, showed usable `BUSY_STARTING`, atomically raised
   desired 1->2 exactly once, deeply warmed the requested Dean pool, and scaled back to one.
-  Launch-template v38/default uses tagged AMI `ami-0d58babf0106d7f52`; a fresh v38 node registered
-  Dean before routing and passed public prime. ASG health grace is 1,200s because the verified
-  deep-warm plus public-prime path exceeded the old 600s grace. Final state: desired/min 1, one
-  healthy unprotected v38 Dean worker, two free slots. Authenticated browser UI remains unverified.
+  Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Fresh v39 instance
+  `i-0c92f3224029284ee` booted at `30234eb` with zero tracked/runtime drift and reached inference
+  plus gateway readiness. ASG health grace is 1,200s; final state is min/desired 1, max 192, ELB
+  health, and one healthy unprotected v39 worker. Authenticated browser UI remains unverified.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;

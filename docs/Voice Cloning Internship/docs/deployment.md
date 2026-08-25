@@ -90,12 +90,13 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-25): both remote pointers are `21596bf`; Dev/staging main
+Latest live read-back (2026-08-25): both remote pointers are `30234eb`; Dev/staging main
 Lambdas share one exact package SHA, while only staging has coordinator/ASG configuration.
-Staging ASG is min/desired 1, max 192, launch-template v38/default. All client targets were
+Staging ASG is min/desired 1, max 192, ELB health with 1,200-second grace, and launch-template
+v39/default backed by tagged AMI `ami-0cf96ffb91690b17c`. Fresh instance
+`i-0c92f3224029284ee` proved exact commit, zero runtime drift, and service readiness. All client targets were
 rebuilt; the Dev/staging GI bundles currently share `assets/index-BRieZIOC.js`. The fixed
-staging worker is on `21596bf`. Dev-worker and ASG-worker/AMI readback remain pending after
-the user-level AWS session expired.
+Dev and staging workers are also on `30234eb` and passed their applicable health checks.
 
 Staging chatbot serves the GI build from `codex/staging-multi-user-scaling`; its published
 `gi-bleeding` category currently selects cloned profile `deanvoice-v1`.

@@ -9,9 +9,10 @@
 
 - 2026-08-25 fixed: Dev and staging application branches had diverged, then a faculty-site
   deployment replaced staging's main Lambda/client with code that omitted coordinator calls.
-  Both branch pointers now share `21596bf`; both main Lambdas share one package SHA and all
-  clients were rebuilt. Remaining operational verification is the Dev worker and ASG/AMI runtime
-  after the user-level AWS token is refreshed; this is a verification blocker, not known code drift.
+  Both branch pointers now share `30234eb`; both main Lambdas share one package SHA and all
+  clients were rebuilt. Fixed Dev/staging workers run the unified commit. Tagged AMI
+  `ami-0cf96ffb91690b17c` and launch-template v39 were independently fresh-booted with zero
+  runtime drift and service readiness; the prior operational verification blocker is cleared.
 
 - 2026-08-24 fixed and deployed: staging deep warm cached model weights by basename while
   request-time voice isolation cached the same S3 keys under key-derived hashed names.
