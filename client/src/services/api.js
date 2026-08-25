@@ -371,6 +371,10 @@ export function getPinnedVoiceProfile(voiceProfileId) {
   return api.get(`/voice-profile/pinned/${encodeURIComponent(voiceProfileId)}`);
 }
 
+export function prepareVoiceCapacity(voiceProfileId) {
+  return api.post('/voice-profile/capacity', { voiceProfileId });
+}
+
 export function getVoiceProfileConfigs(voiceProfileId) {
   return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
 }

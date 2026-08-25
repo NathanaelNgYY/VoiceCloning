@@ -10,7 +10,11 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $name = "vcs-staging-unified-resemblyzer-$stamp"
 $ami = aws ec2 create-image --region $Region --instance-id $InstanceId `
   --name $name --description "Unified staging commit $Commit with resemblyzer 0.1.4" `
-  --no-reboot --query ImageId --output text
+  --no-reboot `
+  --tag-specifications `
+    'ResourceType=image,Tags=[{Key=CreatorId,Value=INTERNS2026},{Key=Project,Value=Interns2026},{Key=Environment,Value=staging},{Key=ManagedBy,Value=VoiceCloningRepo}]' `
+    'ResourceType=snapshot,Tags=[{Key=CreatorId,Value=INTERNS2026},{Key=Project,Value=Interns2026},{Key=Environment,Value=staging},{Key=ManagedBy,Value=VoiceCloningRepo}]' `
+  --query ImageId --output text
 if ($LASTEXITCODE -ne 0) { throw 'AMI creation failed.' }
 aws ec2 wait image-available --region $Region --image-ids $ami
 if ($LASTEXITCODE -ne 0) { throw 'AMI did not become available.' }

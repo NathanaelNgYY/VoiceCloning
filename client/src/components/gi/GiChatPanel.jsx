@@ -25,6 +25,7 @@ export function GiChatPanel({
   emptyHint = EMPTY_HINT,
   lessonContext = '',
   lessonSlug = 'gi-bleeding',
+  voiceProfileId = '',
   category,
   getVideoPosition = null,
   onUserQuestion = null,
@@ -32,6 +33,7 @@ export function GiChatPanel({
   const chat = useGiChatEngine({
     lessonContext,
     lessonSlug,
+    voiceProfileId,
     category,
     getVideoPosition,
     onUserQuestion,
@@ -93,7 +95,7 @@ export function GiChatPanel({
           </p>
         )}
 
-        {!chat.connecting && !chat.voiceReady && !chat.voiceMismatch && (
+        {!chat.connecting && !chat.voiceReady && !chat.voiceMismatch && !chat.notice && (
           <p className="px-4 pt-2 text-center text-xs text-amber-600">
             No cloned voice is set up yet. Activate a voice profile before starting a conversation.
           </p>

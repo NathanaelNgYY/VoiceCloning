@@ -34,7 +34,7 @@ test('router resolves voice profile activation and active-summary routes', () =>
     {
       name: 'VoiceProfileFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/voice-profile\/(?:activate|active|(?:internal|pinned)\/[^/]+)\/?$/u,
+      pattern: /^\/api\/voice-profile\/(?:activate|active|capacity|(?:internal|pinned)\/[^/]+)\/?$/u,
       modulePath: './voice-profile/index.js',
       lambdaPath: '/api/voice-profile/activate',
     },
@@ -45,7 +45,7 @@ test('router resolves voice profile activation and active-summary routes', () =>
     {
       name: 'VoiceProfileFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/voice-profile\/(?:activate|active|(?:internal|pinned)\/[^/]+)\/?$/u,
+      pattern: /^\/api\/voice-profile\/(?:activate|active|capacity|(?:internal|pinned)\/[^/]+)\/?$/u,
       modulePath: './voice-profile/index.js',
       lambdaPath: '/api/voice-profile/active',
     },
@@ -56,7 +56,7 @@ test('router resolves voice profile activation and active-summary routes', () =>
     {
       name: 'VoiceProfileFunction',
       methods: ['GET', 'POST'],
-      pattern: /^\/api\/voice-profile\/(?:activate|active|(?:internal|pinned)\/[^/]+)\/?$/u,
+      pattern: /^\/api\/voice-profile\/(?:activate|active|capacity|(?:internal|pinned)\/[^/]+)\/?$/u,
       modulePath: './voice-profile/index.js',
       lambdaPath: '/api/voice-profile/internal/michael-tan-v1',
     },
@@ -64,6 +64,10 @@ test('router resolves voice profile activation and active-summary routes', () =>
 
   assert.equal(
     findRoute('GET', '/api/voice-profile/pinned/deanvoice-v1')?.name,
+    'VoiceProfileFunction',
+  );
+  assert.equal(
+    findRoute('POST', '/api/voice-profile/capacity')?.name,
     'VoiceProfileFunction',
   );
 });

@@ -26,6 +26,7 @@ const GI_BLEEDING_VIDEO_URL = "/videos/gi-bleeding.mp4";
 const courses = [
     {
         slug: "gi-bleeding",
+        voiceProfileId: "deanvoice-v1",
         title: "Gastrointestinal Bleeding 101",
         description: "Clinical overview of upper and lower GI bleeding, presentation, stabilization, and core management principles.",
         matchSummary: "Exact title match",

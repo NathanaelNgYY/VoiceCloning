@@ -3,10 +3,13 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
+import { prepareCoordinatedModel } from '../shared/modelCoordinator.js';
+import { createVoiceProfileResolver } from '../shared/voiceProfileRuntime.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
 const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
 const ACTIVATE_PROFILE_PATH = /^\/api\/voice-profile\/activate\/?$/u;
+const CAPACITY_PROFILE_PATH = /^\/api\/voice-profile\/capacity\/?$/u;
 const INTERNAL_PROFILE_PATH = /^\/api\/voice-profile\/internal\/([^/]+)\/?$/u;
 const PINNED_PROFILE_PATH = /^\/api\/voice-profile\/pinned\/([^/]+)\/?$/u;
 
@@ -180,6 +183,8 @@ export function createHandler({
   internalAuthHeaderName = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME || '',
   internalAuthHeaderValue = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE || '',
   authGuard = createLiveAuthGuard(),
+  resolveCapacityBody = createVoiceProfileResolver(),
+  prepareModelCapacity = prepareCoordinatedModel,
 } = {}) {
   return async function handler(event) {
     if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -241,6 +246,30 @@ export function createHandler({
         const storedProfile = await parseStoredProfile(readObject, getProfileStorageKey(voiceProfileId));
         if (!storedProfile) return err(404, `Voice profile ${voiceProfileId} not found`, event);
         return ok(storedProfile, {}, event);
+      }
+
+      if (method === 'POST' && CAPACITY_PROFILE_PATH.test(routePath)) {
+        if (!authGuard) return err(503, 'Voice capacity authentication is not configured', event);
+        try {
+          await authGuard.authorize(event);
+        } catch {
+          return err(401, 'Sign in to prepare the lesson voice', event);
+        }
+        let body;
+        try {
+          body = parseJsonBody(event);
+        } catch {
+          return err(400, 'Invalid JSON body', event);
+        }
+        const voiceProfileId = String(body.voiceProfileId || '').trim();
+        if (!voiceProfileId || !isSafePathSegment(voiceProfileId)) {
+          return err(400, 'voiceProfileId must be a safe path segment', event);
+        }
+        const resolvedBody = await resolveCapacityBody({
+          voiceProfileId,
+          text: 'Lecture voice capacity preflight.',
+        });
+        return ok(await prepareModelCapacity(resolvedBody), {}, event);
       }
 
       if (method === 'POST' && ACTIVATE_PROFILE_PATH.test(routePath)) {

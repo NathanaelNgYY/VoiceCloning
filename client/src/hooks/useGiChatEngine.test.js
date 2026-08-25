@@ -39,11 +39,17 @@ test("configured GI voice is sent by id without a startup profile request", () =
   assert.doesNotMatch(engineSource, /getPinnedVoiceProfile/);
   assert.match(
     engineSource,
-    /if \(!backendQueryable \|\| pinnedVoiceProfileId\) return;/,
+    /if \(!backendQueryable \|\| requestedVoiceProfileId\) return;/,
   );
   assert.match(
     engineSource,
-    /voiceProfileId: pinnedVoiceProfileId \|\| activeProfile\?\.voiceProfileId \|\| ''/,
+    /voiceProfileId: requestedVoiceProfileId \|\| activeProfile\?\.voiceProfileId \|\| ''/,
   );
-  assert.match(engineSource, /if \(pinnedVoiceProfileId\) return \{\};/);
+  assert.match(engineSource, /if \(requestedVoiceProfileId\) return \{\};/);
+});
+
+test("lecture voice capacity is checked before conversation controls unlock", () => {
+  assert.match(engineSource, /prepareVoiceCapacity\(requestedVoiceProfileId\)/);
+  assert.match(engineSource, /voiceCapacityBlocksConversation\(voiceCapacity\)/);
+  assert.match(engineSource, /voiceReady = refParams !== null && !voiceMismatch && !capacityBlocksConversation/);
 });

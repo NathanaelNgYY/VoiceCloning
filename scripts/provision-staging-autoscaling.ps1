@@ -21,6 +21,7 @@ param(
   } else { -1 }),
   [string]$ModelCoordinatorFunctionName = $env:VCS_STAGING_MODEL_COORDINATOR_FUNCTION_NAME,
   [string]$ModelCoordinatorAuthToken = $env:VCS_STAGING_MODEL_COORDINATOR_AUTH_TOKEN,
+  [string]$DefaultVoiceProfileId = 'deanvoice-v1',
   [string]$PrimeAuthSecret = $env:VCS_STAGING_PRIME_SECRET,
   [switch]$Apply,
   [switch]$SwitchListener
@@ -105,8 +106,8 @@ if ($ModelCoordinatorFunctionName -and
   $ModelCoordinatorFunctionName -notmatch '^Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging-') {
   throw 'The model coordinator must use the approved staging Lambda prefix.'
 }
-if ($ModelCoordinatorAuthToken -and $ModelCoordinatorAuthToken -notmatch '^[0-9a-f]{64}$') {
-  throw 'ModelCoordinatorAuthToken must be a 64-character lowercase hexadecimal token.'
+if ($ModelCoordinatorAuthToken -and $ModelCoordinatorAuthToken -notmatch '^[A-Za-z0-9_-]{43,128}$') {
+  throw 'ModelCoordinatorAuthToken must be a 256-bit-or-stronger base64url token.'
 }
 if ([string]::IsNullOrWhiteSpace([string]$cfg.publicPrimeUrl) -or
   [string]$cfg.publicPrimeUrl -notmatch '^https://') {
@@ -168,8 +169,10 @@ function Invoke-AwsJson {
 }
 
 $publicPrimeBody = @{
-  # Omit voiceProfileId deliberately: the public prime must exercise whichever
-  # profile is active when this instance scales out, not a baked Dean constant.
+  # A pending coordinator claim selects an autoscaled worker's model. The public
+  # route prime is only a fallback-path check and must not switch a no-assignment
+  # minimum worker away from the configured default voice.
+  voiceProfileId = $DefaultVoiceProfileId
   text = [string]$cfg.publicPrimeText
 } | ConvertTo-Json -Compress
 $publicPrimeBodyB64 = [Convert]::ToBase64String(
@@ -191,6 +194,7 @@ write_files:
       Environment=MODEL_COORDINATOR_FUNCTION_NAME=__MODEL_COORDINATOR_FUNCTION_NAME__
       Environment=MODEL_COORDINATOR_REGION=__MODEL_COORDINATOR_REGION__
       Environment=MODEL_COORDINATOR_AUTH_TOKEN=__MODEL_COORDINATOR_AUTH_TOKEN__
+      Environment=VCS_DEFAULT_VOICE_PROFILE_ID=__DEFAULT_VOICE_PROFILE_ID__
       TimeoutStartSec=900
   - path: /usr/local/sbin/vcs-prime-public-route.sh
     owner: root:root
@@ -255,6 +259,7 @@ write_files:
       sleep "${settle_seconds}"
       echo 'public_prime completed with verified public RIFF responses'
 bootcmd:
+  - [sed, -i, 's|voice-profiles/active.json|voice-profiles/__DEFAULT_VOICE_PROFILE_ID__.json|', /home/ubuntu/VoiceCloning/scripts/warm-staging-deanvoice.sh]
   - [systemctl, disable, gpu-worker.service]
   - [systemctl, disable, --now, gpu-inference-worker.service]
   - [systemctl, disable, target-optimizer-inference.service]
@@ -281,6 +286,7 @@ $userData = $userData.Replace(
   '__MODEL_COORDINATOR_AUTH_TOKEN__',
   [string]$ModelCoordinatorAuthToken
 )
+$userData = $userData.Replace('__DEFAULT_VOICE_PROFILE_ID__', [string]$DefaultVoiceProfileId)
 $userData = $userData.Replace(
   '__PUBLIC_PRIME_DELAY_SECONDS__',
   [string][int]$cfg.publicPrimeDelaySeconds

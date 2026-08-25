@@ -28,3 +28,15 @@ export function chooseCapacityAction({
 
   return { type: 'scale' };
 }
+
+export function matchingFreeSlots(workers = [], requestedModelKey = '') {
+  return workers
+    .filter((worker) =>
+      worker.state === 'READY'
+      && worker.reachable !== false
+      && worker.modelKey === requestedModelKey)
+    .reduce((total, worker) => total + Math.max(
+      0,
+      Number(worker.maxSlots || 0) - Number(worker.active || 0) - Number(worker.queued || 0),
+    ), 0);
+}

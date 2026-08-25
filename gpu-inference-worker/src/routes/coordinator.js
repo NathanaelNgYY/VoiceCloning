@@ -37,6 +37,26 @@ router.get('/coordinator/status', (req, res) => {
   return res.json(statusPayload());
 });
 
+router.post('/coordinator/register', (req, res) => {
+  if (!authorized(req)) return res.status(401).json({ error: 'Coordinator authorization failed' });
+
+  const payload = req.body?.synthesisBody;
+  const requestedKey = modelResidencyKey(payload);
+  if (!payload?.ref_audio_path || !requestedKey) {
+    return res.status(400).json({ error: 'A complete synthesisBody with model weights and reference audio is required' });
+  }
+  const before = statusPayload();
+  if (!before.ready || before.active > 0 || before.queued > 0) {
+    return res.status(409).json({ error: 'Worker is not idle and ready for residency registration', status: before });
+  }
+  if (before.modelKey && before.modelKey !== requestedKey) {
+    return res.status(409).json({ error: 'Worker already has a different registered model', status: before });
+  }
+  const model = readVoiceModelSnapshot(payload);
+  coordinatorState.assign({ modelKey: requestedKey, voiceProfileId: model.voiceProfileId });
+  return res.json({ registered: true, status: statusPayload() });
+});
+
 router.post('/coordinator/assign', async (req, res) => {
   if (!authorized(req)) return res.status(401).json({ error: 'Coordinator authorization failed' });
 

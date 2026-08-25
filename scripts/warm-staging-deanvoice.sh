@@ -4,11 +4,13 @@ set -euo pipefail
 worker_url="${VCS_WORKER_URL:-http://127.0.0.1:3003}"
 route_warm_rounds="${VCS_ROUTE_WARM_ROUNDS:-10}"
 synthesis_concurrency="${SYNTHESIS_MAX_CONCURRENCY:-1}"
-# Historical filename retained because the launch-template drop-in references it.
-# The payload is intentionally resolved at boot from the active S3 voice profile.
-: "${S3_BUCKET:?S3_BUCKET is required for active-profile warm}"
-: "${S3_REGION:?S3_REGION is required for active-profile warm}"
+# A coordinator claim always wins. Only a scheduled/minimum boot with no pending
+# assignment uses this fallback, which deliberately stays on Dean rather than a
+# mutable globally active profile.
+: "${S3_BUCKET:?S3_BUCKET is required for boot warm}"
+: "${S3_REGION:?S3_REGION is required for boot warm}"
 s3_prefix="${S3_PREFIX:-}"
+default_voice_profile_id="${VCS_DEFAULT_VOICE_PROFILE_ID:-deanvoice-v1}"
 if ! [[ "${route_warm_rounds}" =~ ^[0-9]+$ ]] \
   || ((route_warm_rounds < 1 || route_warm_rounds > 20)); then
   echo 'VCS_ROUTE_WARM_ROUNDS must be an integer from 1 to 20.' >&2
@@ -70,7 +72,7 @@ if [[ -n "${coordinator_function}" ]]; then
     "${claim_path}" >/dev/null; then
     warm_body="$(jq -c '.assignment.synthesisBody // empty' "${claim_path}")"
   else
-    echo 'Coordinator boot claim was unavailable; using the active staging profile.' >&2
+    echo "Coordinator boot claim was unavailable; using ${default_voice_profile_id}." >&2
   fi
   rm -f "${claim_path}"
 fi
@@ -78,7 +80,7 @@ fi
 if [[ -z "${warm_body}" ]]; then
   active_profile="$(
     aws s3 cp \
-      "s3://${S3_BUCKET}/${s3_prefix}voice-profiles/active.json" - \
+      "s3://${S3_BUCKET}/${s3_prefix}voice-profiles/${default_voice_profile_id}.json" - \
       --region "${S3_REGION}"
   )"
   voice_profile_id="$(jq -er '.voiceProfileId | select(type == "string" and length > 0)' <<<"${active_profile}")"
@@ -227,6 +229,31 @@ done
 trap - EXIT
 finish_phase "route_level_${synthesis_concurrency}_slot_synthesis"
 
+# The direct model/ref warm endpoints do not populate the coordinator's
+# in-memory residency identity. Finalize through the authenticated registration
+# endpoint so this worker becomes routable for the exact claimed profile without
+# reloading or changing weights.
+if [[ -n "${coordinator_function}" ]]; then
+  coordinator_auth_token="${MODEL_COORDINATOR_AUTH_TOKEN:-}"
+  if [[ -z "${coordinator_auth_token}" ]]; then
+    echo 'MODEL_COORDINATOR_AUTH_TOKEN is required to register boot residency.' >&2
+    exit 1
+  fi
+  registration_body="$(jq -nc --argjson synthesis_body "${warm_body}" \
+    '{synthesisBody: $synthesis_body, requiredIdleMs: 0}')"
+  registration_result="$(curl --fail --silent --show-error \
+    --max-time 300 \
+    --header 'Content-Type: application/json' \
+    --header "X-VCS-Coordinator-Token: ${coordinator_auth_token}" \
+    --data-binary "${registration_body}" \
+    "${worker_url}/coordinator/register")"
+  if [[ "$(jq -r '.registered // false' <<<"${registration_result}")" != 'true' ]]; then
+    echo 'Boot warm completed but coordinator residency registration failed.' >&2
+    exit 1
+  fi
+  finish_phase "coordinator_residency_registration"
+fi
+
 status="$(curl --fail --silent --show-error "${worker_url}/inference/status")"
 if [[ "${status}" != *'"ready":true'* ]]; then
   echo "DeanVoice warm finished without ready status: ${status}" >&2
@@ -234,4 +261,4 @@ if [[ "${status}" != *'"ready":true'* ]]; then
 fi
 
 echo "warm_timing total_seconds=$((SECONDS - total_started_at))"
-echo "Active-profile staging warm completed for ${voice_profile_id}."
+echo "Staging boot warm completed for ${voice_profile_id}."

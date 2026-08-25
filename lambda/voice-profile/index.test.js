@@ -318,6 +318,55 @@ test('the pinned profile endpoint rejects an unsigned caller before reading stor
   assert.equal(response.statusCode, 401);
 });
 
+test('an authenticated lecture capacity preflight resolves the pinned model before coordinating', async () => {
+  const resolved = [];
+  const prepared = [];
+  const handler = createHandler({
+    authGuard: { authorize: async () => ({ oid: 'student-1' }) },
+    resolveCapacityBody: async (body) => {
+      resolved.push(body);
+      return {
+        ...body,
+        ref_audio_path: 'training/datasets/dean/ref.wav',
+        voice_model: { voiceProfileId: body.voiceProfileId, gptRef: 'g.ckpt', sovitsRef: 's.pth' },
+      };
+    },
+    prepareModelCapacity: async (body) => {
+      prepared.push(body);
+      return { state: 'STARTING', canStartConversation: false, retryAfterSeconds: 900 };
+    },
+  });
+  const response = await handler(createEvent({
+    method: 'POST',
+    path: '/api/voice-profile/capacity',
+    body: { voiceProfileId: 'deanvoice-v1' },
+  }));
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(resolved, [{
+    voiceProfileId: 'deanvoice-v1',
+    text: 'Lecture voice capacity preflight.',
+  }]);
+  assert.equal(prepared[0].voice_model.voiceProfileId, 'deanvoice-v1');
+  assert.deepEqual(JSON.parse(response.body), {
+    state: 'STARTING',
+    canStartConversation: false,
+    retryAfterSeconds: 900,
+  });
+});
+
+test('lecture capacity preflight rejects an unsigned caller before resolving a model', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('missing token'); } },
+    resolveCapacityBody: async () => { throw new Error('unauthorized requests must not resolve profiles'); },
+  });
+  const response = await handler(createEvent({
+    method: 'POST',
+    path: '/api/voice-profile/capacity',
+    body: { voiceProfileId: 'deanvoice-v1' },
+  }));
+  assert.equal(response.statusCode, 401);
+});
+
 test('voice profile active can return the full stored profile for browser restore when full=1 is requested', async () => {
   const handler = createHandler({
     readObject: async (key) => {

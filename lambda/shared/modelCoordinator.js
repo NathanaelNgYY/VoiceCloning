@@ -61,3 +61,18 @@ export async function getCoordinatedModelStatus(body = {}) {
   if (!functionName()) return null;
   return invokeCoordinator({ action: 'status', body });
 }
+
+export async function prepareCoordinatedModel(body = {}) {
+  if (!functionName()) {
+    return {
+      statusCode: 200,
+      state: 'READY',
+      canStartConversation: true,
+      capacityAction: 'none',
+      coordinatorConfigured: false,
+    };
+  }
+  const result = await invokeCoordinator({ action: 'prepare', body });
+  if (!result || Number(result.statusCode) >= 400) throwCoordinatorError(result || {});
+  return { ...result, coordinatorConfigured: true };
+}

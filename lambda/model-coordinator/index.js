@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-auto-scaling';
 import { DescribeInstancesCommand, EC2Client } from '@aws-sdk/client-ec2';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import {
   DeleteCommand,
   DynamoDBDocumentClient,
@@ -15,7 +16,10 @@ import {
   ScanCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
-import { chooseCapacityAction } from './decision.js';
+import {
+  chooseCapacityAction,
+  matchingFreeSlots,
+} from './decision.js';
 
 const region = process.env.AWS_REGION || 'ap-northeast-2';
 const tableName = process.env.MODEL_COORDINATOR_TABLE || 'vcs-staging-model-workers';
@@ -24,10 +28,15 @@ const authToken = String(process.env.MODEL_COORDINATOR_AUTH_TOKEN || '').trim();
 const reassignIdleMs = Math.max(60_000, Number(process.env.MODEL_REASSIGN_IDLE_MS) || 300_000);
 const bootEstimateSeconds = Math.max(60, Number(process.env.MODEL_BOOT_ESTIMATE_SECONDS) || 360);
 const requestTimeoutMs = Math.max(5_000, Number(process.env.MODEL_WORKER_TIMEOUT_MS) || 110_000);
+const assignmentTimeoutMs = Math.max(
+  requestTimeoutMs,
+  Number(process.env.MODEL_ASSIGNMENT_TIMEOUT_MS) || 840_000,
+);
 const pendingTtlMs = Math.max(120_000, Number(process.env.MODEL_PENDING_TTL_MS) || 600_000);
 
 const autoscaling = new AutoScalingClient({ region });
 const ec2 = new EC2Client({ region });
+const lambda = new LambdaClient({ region });
 const document = DynamoDBDocumentClient.from(new DynamoDBClient({ region }), {
   marshallOptions: { removeUndefinedValues: true },
 });
@@ -173,7 +182,7 @@ async function assignWorker(worker, synthesisBody, { ignoreIdle = false } = {}) 
         synthesisBody,
         requiredIdleMs: ignoreIdle ? 0 : reassignIdleMs,
       }),
-    });
+    }, assignmentTimeoutMs);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(data.error || `Worker assignment failed (${response.status})`);
@@ -184,6 +193,80 @@ async function assignWorker(worker, synthesisBody, { ignoreIdle = false } = {}) 
     return { ...worker, ...data.status, state: 'READY', reachable: true };
   } finally {
     await setWorkerProtection(worker.instanceId, false).catch(() => {});
+  }
+}
+
+function liveReassignment(item, now = Date.now()) {
+  return item?.entity === 'REASSIGN'
+    && Boolean(item.synthesisBody)
+    && now - Number(item.requestedAt || 0) < pendingTtlMs;
+}
+
+async function scheduleReassignment(worker, modelKey, synthesisBody, now = Date.now()) {
+  const id = `REASSIGN#${modelKey}`;
+  const existing = await document.send(new GetCommand({ TableName: tableName, Key: { id } }));
+  if (liveReassignment(existing.Item, now)) {
+    return { started: false, pending: existing.Item };
+  }
+  const pending = {
+    entity: 'REASSIGN',
+    id,
+    modelKey,
+    workerId: worker.instanceId,
+    synthesisBody,
+    requestedAt: now,
+    expiresAt: Math.floor((now + pendingTtlMs) / 1_000),
+  };
+  try {
+    await document.send(new PutCommand({
+      TableName: tableName,
+      Item: pending,
+      ConditionExpression: 'attribute_not_exists(id) OR requestedAt < :staleBefore',
+      ExpressionAttributeValues: { ':staleBefore': now - pendingTtlMs },
+    }));
+  } catch (error) {
+    if (error.name !== 'ConditionalCheckFailedException') throw error;
+    const winner = await document.send(new GetCommand({ TableName: tableName, Key: { id } }));
+    return { started: false, pending: winner.Item };
+  }
+  try {
+    await lambda.send(new InvokeCommand({
+      FunctionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+      InvocationType: 'Event',
+      Payload: Buffer.from(JSON.stringify({ action: 'reassign', id })),
+    }));
+  } catch (error) {
+    await document.send(new DeleteCommand({ TableName: tableName, Key: { id } })).catch(() => {});
+    throw error;
+  }
+  return { started: true, pending };
+}
+
+async function runReassignment(id, now = Date.now()) {
+  const result = await document.send(new GetCommand({ TableName: tableName, Key: { id } }));
+  const pending = result.Item;
+  if (!liveReassignment(pending, now)) {
+    return { statusCode: 200, assigned: false, reason: 'expired' };
+  }
+  try {
+    const existing = await scanState();
+    const { workers } = await refreshFleet(existing, now);
+    const action = chooseCapacityAction({
+      workers,
+      requestedModelKey: pending.modelKey,
+      lastDemandByModel: demandMap(existing),
+      now,
+      reassignIdleMs,
+    });
+    // Re-evaluate immediately before the destructive model switch. New work or
+    // renewed demand for the resident voice invalidates the old decision.
+    if (action.type !== 'reassign' || action.worker.instanceId !== pending.workerId) {
+      return { statusCode: 200, assigned: false, reason: 'no-longer-idle' };
+    }
+    const worker = await assignWorker(action.worker, pending.synthesisBody);
+    return { statusCode: 200, assigned: true, workerId: worker.instanceId };
+  } finally {
+    await document.send(new DeleteCommand({ TableName: tableName, Key: { id } })).catch(() => {});
   }
 }
 
@@ -266,7 +349,18 @@ async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
     requestedAt: now,
     expiresAt: Math.floor((now + pendingTtlMs) / 1_000),
   };
-  await document.send(new PutCommand({ TableName: tableName, Item: pending }));
+  try {
+    await document.send(new PutCommand({
+      TableName: tableName,
+      Item: pending,
+      ConditionExpression: 'attribute_not_exists(id) OR requestedAt < :staleBefore',
+      ExpressionAttributeValues: { ':staleBefore': now - pendingTtlMs },
+    }));
+  } catch (error) {
+    if (error.name !== 'ConditionalCheckFailedException') throw error;
+    const winner = await document.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
+    return { started: false, pending: winner.Item };
+  }
   await autoscaling.send(new UpdateAutoScalingGroupCommand({
     AutoScalingGroupName: asgName,
     DesiredCapacity: Math.min(maximum, desired + 1),
@@ -324,6 +418,145 @@ async function cancelReply(replyToken) {
   return response.json().catch(() => ({ freed: 0 }));
 }
 
+function capacityResponse({
+  state,
+  canStartConversation,
+  model,
+  availableSlots = 0,
+  matchingWorkers = 0,
+  capacityAction = 'none',
+  started = false,
+  atMaximum = false,
+} = {}) {
+  const waiting = ['STARTING', 'WARMING'].includes(state);
+  return {
+    statusCode: 200,
+    state,
+    canStartConversation,
+    availableSlots,
+    matchingWorkers,
+    capacityTight: state === 'READY' && availableSlots === 1,
+    capacityAction,
+    capacityStarted: started,
+    atMaximum,
+    retryAfterSeconds: waiting ? bootEstimateSeconds : 0,
+    voiceProfileId: clean(model?.voiceProfileId),
+  };
+}
+
+async function prepareCapacity(event) {
+  const body = event.body || {};
+  const modelKey = modelResidencyKey(body);
+  if (!modelKey) return { statusCode: 400, error: 'The request has no immutable GPT/SoVITS model pair.' };
+  const now = Date.now();
+  const model = body.voice_model || {};
+  const existing = await scanState();
+  await recordDemand(modelKey, model.voiceProfileId, now);
+  const { group, workers } = await refreshFleet(existing, now);
+  const readyMatching = workers.filter((worker) =>
+    worker.reachable && worker.state === 'READY' && worker.modelKey === modelKey);
+  const freeSlots = matchingFreeSlots(workers, modelKey);
+  const reassigning = existing.find((item) => item.id === `REASSIGN#${modelKey}` && liveReassignment(item, now));
+  const booting = existing.find((item) => item.id === `PENDING#${modelKey}` && now - item.requestedAt < pendingTtlMs);
+  if (freeSlots > 0) {
+    return capacityResponse({
+      state: reassigning ? 'READY_WARMING' : booting ? 'READY_SCALING' : 'READY',
+      canStartConversation: true,
+      model,
+      availableSlots: freeSlots,
+      matchingWorkers: readyMatching.length,
+      capacityAction: reassigning ? 'reassign' : booting ? 'scale' : 'none',
+    });
+  }
+
+  if (reassigning) {
+    return capacityResponse({
+      state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
+      canStartConversation: readyMatching.length > 0,
+      model,
+      matchingWorkers: readyMatching.length,
+      capacityAction: 'reassign',
+    });
+  }
+  if (booting) {
+    return capacityResponse({
+      state: readyMatching.length > 0 ? 'BUSY_STARTING' : 'STARTING',
+      canStartConversation: readyMatching.length > 0,
+      model,
+      matchingWorkers: readyMatching.length,
+      capacityAction: 'scale',
+    });
+  }
+
+  const action = chooseCapacityAction({
+    workers,
+    requestedModelKey: modelKey,
+    lastDemandByModel: demandMap(existing),
+    now,
+    reassignIdleMs,
+  });
+  if (action.type === 'reassign') {
+    const scheduled = await scheduleReassignment(action.worker, modelKey, body, now);
+    return capacityResponse({
+      state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
+      canStartConversation: readyMatching.length > 0,
+      model,
+      matchingWorkers: readyMatching.length,
+      capacityAction: 'reassign',
+      started: scheduled.started,
+    });
+  }
+  const scale = await requestScale(group, modelKey, body, now);
+  return capacityResponse({
+    state: scale.atMaximum
+      ? readyMatching.length > 0 ? 'BUSY_LIMIT' : 'LIMIT'
+      : readyMatching.length > 0 ? 'BUSY_STARTING' : 'STARTING',
+    canStartConversation: readyMatching.length > 0,
+    model,
+    matchingWorkers: readyMatching.length,
+    capacityAction: 'scale',
+    started: scale.started,
+    atMaximum: scale.atMaximum,
+  });
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureCapacityAfterAdmission(worker, modelKey, body) {
+  let saturated = false;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await delay(200);
+    const current = await probeWorker(worker);
+    if (current.reachable && current.active + current.queued >= current.maxSlots) {
+      saturated = true;
+      break;
+    }
+  }
+  if (!saturated) return null;
+
+  const now = Date.now();
+  const existing = await scanState();
+  const { group, workers } = await refreshFleet(existing, now);
+  // A concurrent completion or another matching GPU may already have restored
+  // capacity. Re-check after admission rather than scaling from stale counts.
+  if (matchingFreeSlots(workers, modelKey) > 0) return null;
+  const action = chooseCapacityAction({
+    workers,
+    requestedModelKey: modelKey,
+    lastDemandByModel: demandMap(existing),
+    now,
+    reassignIdleMs,
+  });
+  if (action.type === 'reassign') {
+    const reassignment = await scheduleReassignment(action.worker, modelKey, body, now);
+    return { type: 'reassign', started: reassignment.started };
+  }
+  const scale = await requestScale(group, modelKey, body, now);
+  return { type: 'scale', started: scale.started, atMaximum: scale.atMaximum === true };
+}
+
 async function synthesize(event) {
   const body = event.body || {};
   const routePath = clean(event.routePath) || '/inference/tts';
@@ -335,6 +568,7 @@ async function synthesize(event) {
   await recordDemand(modelKey, model.voiceProfileId, now);
   const { group, workers } = await refreshFleet(existing, now);
   const pending = existing.find((item) => item.id === `PENDING#${modelKey}` && now - item.requestedAt < pendingTtlMs);
+  const reassigning = existing.find((item) => item.id === `REASSIGN#${modelKey}` && liveReassignment(item, now));
   let selected;
 
   if (pending) {
@@ -367,22 +601,52 @@ async function synthesize(event) {
     });
     if (action.type === 'route') selected = action.worker;
     if (action.type === 'reassign') {
-      try {
-        selected = await assignWorker(action.worker, body);
-      } catch (error) {
-        if (![409, 503].includes(error.statusCode)) throw error;
-      }
+      const scheduled = await scheduleReassignment(action.worker, modelKey, body, now);
+      return {
+        statusCode: 503,
+        code: 'MODEL_CAPACITY_STARTING',
+        error: 'An idle GPU is switching to this lecture voice. Please wait before starting voice conversation.',
+        retryAfterSeconds: bootEstimateSeconds,
+        scaleStarted: false,
+        reassignmentStarted: scheduled.started,
+        voiceProfileId: clean(model.voiceProfileId),
+        modelKey,
+      };
     }
   }
 
   if (selected) {
     try {
-      return await forwardSynthesis(selected, routePath, body, event.headers || {});
+      const forward = forwardSynthesis(selected, routePath, body, event.headers || {});
+      // Always observe the worker after admission. Two simultaneous Lambda
+      // invocations can both have seen two free slots before either request was
+      // admitted; checking only a stale "one slot left" snapshot misses that
+      // race. This starts capacity only if the live worker is actually full and
+      // a fleet refresh confirms no matching slot remains.
+      const capacity = ensureCapacityAfterAdmission(selected, modelKey, body).catch((error) => {
+        console.error('[model-coordinator][post-admission-capacity]', error);
+        return null;
+      });
+      const [result, capacityAction] = await Promise.all([forward, capacity]);
+      return { ...result, capacityAction };
     } catch (error) {
       if (![429, 503].includes(error.statusCode)) throw error;
       // A live race consumed the final slot; fall through to scale instead of
       // queueing a third request on a nominal two-slot worker.
     }
+  }
+
+  if (reassigning) {
+    return {
+      statusCode: 503,
+      code: 'MODEL_CAPACITY_STARTING',
+      error: 'An idle GPU is switching to this lecture voice. Please wait before starting voice conversation.',
+      retryAfterSeconds: bootEstimateSeconds,
+      scaleStarted: false,
+      reassignmentStarted: false,
+      voiceProfileId: clean(model.voiceProfileId),
+      modelKey,
+    };
   }
 
   const scale = await requestScale(group, modelKey, body, now);
@@ -403,6 +667,8 @@ export async function handler(event = {}) {
   try {
     if (event.action === 'claim') return claimBootAssignment(clean(event.instanceId));
     if (event.action === 'cancel') return cancelReply(clean(event.replyToken));
+    if (event.action === 'prepare') return prepareCapacity(event);
+    if (event.action === 'reassign') return runReassignment(clean(event.id));
     if (event.action === 'status') {
       const existing = await scanState();
       const { group, workers } = await refreshFleet(existing);

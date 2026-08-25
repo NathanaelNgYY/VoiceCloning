@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseCapacityAction } from './decision.js';
+import {
+  chooseCapacityAction,
+  matchingFreeSlots,
+} from './decision.js';
 
 const now = 1_000_000;
 const worker = (overrides = {}) => ({
@@ -63,4 +66,13 @@ test('does not reassign busy or queued workers', () => {
     ],
   });
   assert.equal(result.type, 'scale');
+});
+
+test('counts only free slots on reachable ready matching workers', () => {
+  assert.equal(matchingFreeSlots([
+    worker({ modelKey: 'dean-v2', active: 1 }),
+    worker({ instanceId: 'i-v2-2', modelKey: 'dean-v2', active: 0 }),
+    worker({ instanceId: 'i-other', modelKey: 'dean' }),
+    worker({ instanceId: 'i-starting', modelKey: 'dean-v2', state: 'STARTING' }),
+  ], 'dean-v2'), 3);
 });

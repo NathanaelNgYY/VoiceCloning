@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { getFullActiveVoiceProfile } from '@/services/api.js';
+import { getFullActiveVoiceProfile, prepareVoiceCapacity } from '@/services/api.js';
 import { useLiveSpeech } from '@/hooks/useLiveSpeech.js';
 import { buildLiveFastRefParams, normalizeLiveFastSettings } from '@/lib/liveFastSetup';
 import { resolveChatbotSystemPrompt } from '@/lib/chatbotSystemPrompt';
@@ -19,6 +19,11 @@ import { isResponseBusy, isVoiceActive, toGiStatus } from './giChatStatus.js';
 import { getMyLearnerSummary } from '@/services/learnerAnalytics';
 import { buildLearnerSupportGuidance } from '@/lib/learnerGuidance';
 import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
+import {
+  normalizeVoiceCapacity,
+  voiceCapacityBlocksConversation,
+  voiceCapacityNotice,
+} from '@/lib/voiceCapacity';
 
 // Kiosk-only engine setup for the gi skin. This is the subset of
 // pages/LivePage.jsx:300-615 that a chat-only UI needs: resolve the active
@@ -33,6 +38,7 @@ import { useDeployedChatbotPrompt } from './useDeployedChatbotPrompt.js';
 export function useGiChatEngine({
   lessonContext = '',
   lessonSlug = 'gi-bleeding',
+  voiceProfileId = '',
   category,
   getVideoPosition = null,
   onUserQuestion = null,
@@ -44,6 +50,7 @@ export function useGiChatEngine({
   const [profileError, setProfileError] = useState('');
   const [clearedBeforeId, setClearedBeforeId] = useState('');
   const [learnerSummary, setLearnerSummary] = useState(null);
+  const [voiceCapacity, setVoiceCapacity] = useState(() => normalizeVoiceCapacity());
 
   const profileRequestRef = useRef(0);
   const voicePinOptions = useMemo(() => ({
@@ -54,6 +61,7 @@ export function useGiChatEngine({
     () => resolvePinnedVoiceProfileId(voicePinOptions),
     [voicePinOptions]
   );
+  const requestedVoiceProfileId = String(voiceProfileId || pinnedVoiceProfileId || '').trim();
   const pinnedVoiceKey = useMemo(
     () => resolvePinnedVoiceKey(voicePinOptions),
     [voicePinOptions]
@@ -115,22 +123,50 @@ export function useGiChatEngine({
         sanitizeBackendError(err.response?.data?.error || err.message || 'Could not load the voice profile.')
       );
     }
-  }, [pinnedVoiceProfileId]);
+  }, []);
 
   useEffect(() => {
     // A configured GI build sends its fixed voiceProfileId with every synthesis
     // request. The synthesis backend resolves that saved profile itself, so page
     // startup must not be blocked by a separate profile GET (or its auth timing).
-    if (!backendQueryable || pinnedVoiceProfileId) return;
+    if (!backendQueryable || requestedVoiceProfileId) return;
     loadActiveProfile();
-  }, [backendQueryable, loadActiveProfile, pinnedVoiceProfileId]);
+  }, [backendQueryable, loadActiveProfile, requestedVoiceProfileId]);
+
+  useEffect(() => {
+    if (!requestedVoiceProfileId) return undefined;
+    let cancelled = false;
+    let timer = null;
+    const check = async () => {
+      try {
+        const response = await prepareVoiceCapacity(requestedVoiceProfileId);
+        if (cancelled) return;
+        const next = normalizeVoiceCapacity(response?.data || {});
+        setVoiceCapacity(next);
+        if (next.state !== 'READY' || next.capacityTight) {
+          timer = window.setTimeout(check, 15_000);
+        }
+      } catch {
+        if (!cancelled) {
+          setVoiceCapacity(normalizeVoiceCapacity({ state: 'ERROR' }));
+          timer = window.setTimeout(check, 15_000);
+        }
+      }
+    };
+    setVoiceCapacity(normalizeVoiceCapacity());
+    void check();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [requestedVoiceProfileId]);
 
   // Human-readable name of the active cloned voice, for the read-only
   // indicator. getFullActiveVoiceProfile() returns the stored profile
   // payload directly (lambda/voice-profile/index.js:197), which carries
   // displayName — no separate model-list lookup needed.
-  const activeVoiceLabel = pinnedVoiceProfileId
-    ? pinnedVoiceKey
+  const activeVoiceLabel = requestedVoiceProfileId
+    ? requestedVoiceProfileId
     : String(activeProfile?.displayName || '').trim();
 
   // The cloned voice this build expects. The active profile is a single shared
@@ -138,14 +174,14 @@ export function useGiChatEngine({
   // someone else activated last.
   // Only true once a profile has actually loaded and turned out to be the wrong
   // one — a not-yet-loaded profile must not read as a mismatch.
-  const voiceMismatch = !pinnedVoiceProfileId
+  const voiceMismatch = !requestedVoiceProfileId
     && Boolean(activeProfile)
     && !matchesPinnedVoice(activeProfile, pinnedVoiceKey);
 
   const refParams = useMemo(() => {
     // An empty object is intentional: createLiveSynthesisSnapshot adds the
     // configured voiceProfileId, and Lambda resolves Dean's refs/settings.
-    if (pinnedVoiceProfileId) return {};
+    if (requestedVoiceProfileId) return {};
     if (!activeProfile) return null;
     return buildLiveFastRefParams({
       primaryPath: activeProfile.ref_audio_path || '',
@@ -154,7 +190,7 @@ export function useGiChatEngine({
       auxRefAudios: (activeProfile.aux_ref_audio_paths || []).map((path) => ({ path })),
       settings: normalizeLiveFastSettings(activeProfile.defaults || {}),
     });
-  }, [activeProfile, pinnedVoiceProfileId]);
+  }, [activeProfile, requestedVoiceProfileId]);
 
   const fastSettings = useMemo(
     () => normalizeLiveFastSettings(activeProfile?.defaults || {}),
@@ -172,7 +208,7 @@ export function useGiChatEngine({
     engine: APP_MODE_CONFIG.defaultLiveEngine,
     replyMode: 'phrases',
     language: activeProfile?.text_lang || 'en',
-    voiceProfileId: pinnedVoiceProfileId || activeProfile?.voiceProfileId || '',
+    voiceProfileId: requestedVoiceProfileId || activeProfile?.voiceProfileId || '',
     voiceModel,
     systemPrompt,
     fastMaxChunkWords: fastSettings.maxChunkWords,
@@ -229,7 +265,11 @@ export function useGiChatEngine({
   // params — gates the controls so a fresh deployment with no cloned voice
   // can't reach useLiveSpeech's "Go to the Inference page first" dead end
   // (gi mode has no Inference page to go to).
-  const voiceReady = refParams !== null && !voiceMismatch;
+  const capacityBlocksConversation = requestedVoiceProfileId
+    ? voiceCapacityBlocksConversation(voiceCapacity)
+    : false;
+  const voiceReady = refParams !== null && !voiceMismatch && !capacityBlocksConversation;
+  const capacityMessage = requestedVoiceProfileId ? voiceCapacityNotice(voiceCapacity) : '';
 
   return {
     status: toGiStatus(liveSpeech.phase, { hasError: Boolean(error) }),
@@ -237,7 +277,7 @@ export function useGiChatEngine({
     error,
     voiceActive: isVoiceActive(liveSpeech.phase),
     responseBusy: isResponseBusy(liveSpeech.phase),
-    connecting: !backendQueryable,
+    connecting: !backendQueryable || Boolean(requestedVoiceProfileId && voiceCapacity.state === 'CHECKING'),
     micMuted: !liveSpeech.isMicInputEnabled,
     toggleMute,
     startConversation: liveSpeech.start,
@@ -262,7 +302,7 @@ export function useGiChatEngine({
     // amber advisory channel instead of the red error channel.
     notice: voiceMismatch
       ? `This build is pinned to the "${pinnedVoiceKey}" cloned voice, but "${activeVoiceLabel}" is currently active on the backend. Activate the pinned voice profile to continue.`
-      : liveSpeech.notice,
+      : capacityMessage || liveSpeech.notice,
     speechApiAvailable: liveSpeech.speechApiAvailable,
     // Playback plumbing — GiChatPage drives a hidden <audio> element from these.
     phase: liveSpeech.phase,

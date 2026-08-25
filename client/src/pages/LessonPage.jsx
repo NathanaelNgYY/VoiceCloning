@@ -650,6 +650,7 @@ export function LessonPage() {
 
                   <GiChatPanel
                     lessonSlug={slug}
+                    voiceProfileId={course.voiceProfileId || ''}
                     emptyHint="Ask about this lesson — click the mic to start"
                     lessonContext={lessonContext}
                     // This lesson's slug is its assistant's category, so the
