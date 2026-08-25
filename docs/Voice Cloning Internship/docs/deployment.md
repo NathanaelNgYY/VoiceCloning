@@ -90,7 +90,8 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-25): both remote pointers are `30234eb`; Dev/staging main
+Latest live read-back (2026-08-25): both remote pointers share the same head and unified
+application commit `30234eb`; Dev/staging main
 Lambdas share one exact package SHA, while only staging has coordinator/ASG configuration.
 Staging ASG is min/desired 1, max 192, ELB health with 1,200-second grace, and launch-template
 v39/default backed by tagged AMI `ami-0cf96ffb91690b17c`. Fresh instance

@@ -4,8 +4,8 @@ Last updated: 2026-08-25
 
 ## Current Dev State
 
-- Remote branches `separate-containers-new` and `codex/staging-multi-user-scaling` both point to
-  unified commit `30234eb`. Dev/staging main Lambdas have the exact same package SHA; all Dev and
+- Remote branches `separate-containers-new` and `codex/staging-multi-user-scaling` share the same
+  head and unified application commit `30234eb`. Dev/staging main Lambdas have the exact same package SHA; all Dev and
   staging client targets were rebuilt from that tree. Fixed Dev GPU `i-03f258d470a2fa73f` also
   runs `30234eb`; all three worker services and their health/readiness probes passed.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
