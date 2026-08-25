@@ -1,12 +1,11 @@
 # Active TODO
 
-- [ ] Add faculty lecture-voice publishing: let faculty select a completed trained
-  profile, persist its validated `voiceProfileId` (and an explicit revision if historical
-  reproducibility is required) on the authoritative lecture/course record, return the
-  binding from the lectures API, and replace the bundled `gi-bleeding` mapping. Resolve
-  that binding to immutable GPT/SoVITS weights before calling the coordinator; do not
-  trust a browser-only mapping or silently fall back to the wrong lecturer's voice.
-- [ ] Add per-model burst planning after the authoritative lecture binding exists. Use
+- [ ] Verify faculty lecture-voice publishing with at least two real lecture categories and
+  two different trained profiles: each signed-in lecturer must see only authorized completed
+  voices, publishing must update only that category, lectures must load the published binding,
+  standard voices must bypass GPU capacity, and cloned voices must reach the correct immutable
+  GPT/SoVITS pair. Add explicit profile revisions only if historical reproducibility is required.
+- [ ] Add per-model burst planning on top of the implemented lecture binding. Use
   confirmed conversations, admitted/queued work, and expiring reservations to calculate
   each model's slot deficit and batch-launch the required two-slot GPUs with headroom,
   limits, cooldown, and scale-down hysteresis. Keep scheduled per-voice event prewarming
@@ -85,10 +84,6 @@
 - [ ] Bake `resemblyzer` into a canary staging inference AMI, verify the speaker gate
   becomes active, benchmark its latency/quality cost, then promote through a reviewed
   launch-template version. Do not hand-patch ephemeral ASG instances.
-- [ ] Repair the email mock that fails without configured mail environment values.
-- [ ] Repair the worker test suites: the compact-formula inference test leaves a
-  nested subtest unfinished, and the email mock fails without configured mail env.
-
 - [ ] Future: evaluate a versioned alias plus scheduled provisioned concurrency only
   if eager 512 MB initialization is still insufficient. Current reruns passed 100/100
   and 150/150. It will not fix GPU admission retries or network/transit outliers.

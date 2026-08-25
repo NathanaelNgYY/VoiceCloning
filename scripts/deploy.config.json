@@ -11,10 +11,10 @@
     "workerAccess": "ssm",
     "autoscaling": {
       "targetGroupName": "vcs-stg-opt-3103",
-      "sourceAmiId": "ami-0591726e79645b0cc",
+      "sourceAmiId": "ami-0d58babf0106d7f52",
       "launchTemplateName": "vcs-staging-gpu-inference",
       "launchTemplateId": "lt-07728350a25e691a4",
-      "launchTemplateVersion": 34,
+      "launchTemplateVersion": 38,
       "autoScalingGroupName": "vcs-staging-gpu-inference",
       "serviceLinkedRoleReady": true,
       "created": true,
@@ -30,7 +30,7 @@
       "dailyScheduleTimeZone": "Asia/Singapore",
       "offHoursMinCapacity": 1,
       "fixedInstanceStateCouplingEnabled": false,
-      "currentInstanceId": "i-09c6ab3cdf769470b",
+      "currentInstanceId": "i-0b7782d54a09e973b",
       "listenerCutover": true
     },
     "distributions": { "training": "EC2SYT1OKGW9Q", "live-fast": "E3DE2SRSU9JAEG", "chatbot": "E3MLIO4CZFOPEO", "chatbot-text": "E38A3666CJ7FVJ" },

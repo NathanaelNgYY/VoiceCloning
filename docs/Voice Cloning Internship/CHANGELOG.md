@@ -27,6 +27,19 @@
   PowerShell syntax, staging GI build, deployed bundle/401 readback, live idle reassignment,
   concurrent saturation, atomic scale-out, fresh-AMI registration, public prime, scale-down, and
   final RIFF synthesis. Authenticated browser rendering of capacity notices remains unverified.
+- Unified faculty voice publishing, ElevenLabs stock-voice support, coordinator routing, learner
+  analytics, and crash handling in merge commit `21596bf`; both Dev and staging remote branches
+  now point to it. Faculty-published voice is authoritative, stock voices bypass GPU capacity,
+  and cloned voices use immutable-profile coordinator routing.
+- Repaired staging deployment drift where a later faculty deploy had replaced the main Lambda and
+  lecture bundle without the coordinator integration. Dev/staging main Lambdas now share one exact
+  package SHA; all seven client targets were rebuilt, the coordinator was redeployed, and fixed
+  staging worker services were updated from a recoverable server-side stash. AWS credentials expired
+  after starting Dev, so Dev-worker deployment, fixed-worker full readiness, and ASG/AMI readback remain.
+- Tests: client 436/436, Lambda 275/275, GPU worker 23/23, inference worker 258/258, live gateway
+  180/180, four client builds, later crash/declaration tests 15/15, package inspection, public SPA/
+  bundle readback, open category GET, and unauthenticated capacity POST 401. No authenticated browser
+  or multi-lecture/two-profile end-to-end test was possible.
 
 ## 2026-08-24
 

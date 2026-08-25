@@ -4,9 +4,10 @@ Last updated: 2026-08-25
 
 ## Current Dev State
 
-- Local branches `separate-containers-new` and `codex/staging-multi-user-scaling` share the
-  unified application history. Application commit `2807e1c` is deployed to both Lambdas and
-  clients; inference latency fix `331586a` is deployed to Dev and every staging GPU worker.
+- Remote branches `separate-containers-new` and `codex/staging-multi-user-scaling` both point to
+  unified commit `21596bf`. Dev/staging main Lambdas have the exact same package SHA; all Dev and
+  staging client targets were rebuilt from that commit. The Dev GPU was started, but its worker
+  update/readback is pending because the user-level AWS session expired immediately afterward.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Dev remains fixed-instance/on-demand: `GPU_SCHEDULE_ENABLED=false`, no inference ASG, and fixed
   GPU `i-03f258d470a2fa73f` belongs to no ASG.
@@ -17,15 +18,6 @@ Last updated: 2026-08-25
   authoritative. Untouched or legacy cross-model `default` rank 1 runs scored `Use best`
   only on the experiment derived from the selected weights, then stores the same references
   in default config and voice profile. The Load button is inference-session-only.
-- `dea-voice-version2-v1` was repaired live: its old `leehseinlongnew` references were
-  replaced by one primary and five auxiliary `dea-voice-version2` clips. S3 readback proved
-  profile/config equality, six same-experiment paths, rank 1, and mode `auto`.
-- Dev model selection now carries the selected primary clip's transcript/language through
-  reference warming and repairs stale prompt metadata even when the paths did not change.
-  Live `dea-voice-version2-v1` previously paired its selected `...340800...464000.wav` with
-  “Good evening...COVID-19”; its manifest actually says “a lot of technology that involves
-  patients' data.” The active profile and auto-managed rank-1 default config are repaired and
-  match the manifest while retaining the same primary, five auxiliaries, and exact aux order.
 - Training now filters acoustically bad or implausibly transcribed clips before features.
   Reference selection uses measured metrics and diversity. The shadow phoneme verifier has
   monotonic per-phone CTC evidence and a weakest-phone floor. Real listening comparison and
@@ -37,11 +29,21 @@ Last updated: 2026-08-25
   Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
   progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
   This is not cross-tab/device backend idempotency.
-- Final automated evidence: client 411/411 and Lambda 200/200. Browser verification with a
-  real allowlisted Microsoft account remains pending.
+- Final automated evidence for the unified tree: client 436/436, Lambda 275/275, GPU worker
+  23/23, inference worker 258/258, live gateway 180/180, four client builds, plus 15/15 tests
+  for the later white-screen merge. Real authenticated browser verification remains pending.
 
 ## Current Staging State
 
+- The 2026-08-25 faculty deployment had overwritten staging's coordinator-aware main Lambda and
+  lecture client. Unified commit `21596bf` restores faculty publishing plus model coordination;
+  the main Lambda now matches Dev's package SHA, the coordinator was redeployed, and public Dev/
+  staging assets expose capacity, stock-voice, and crash-boundary code. Staging currently publishes
+  cloned `deanvoice-v1`; Dev has no deployed category object and uses its legacy/build fallback.
+- Fixed staging GPU `i-0f0da8be59367f7a8` fast-forwarded to `21596bf`; three services restarted
+  and passed liveness. Its prior tracked changes and seven colliding untracked files are recoverable
+  in named stashes. Full post-warm readiness and the current ASG worker/AMI hash audit remain pending
+  because the AWS source session expired.
 - Lecture-click capacity preparation and model-aware routing are live on staging: matching slot ->
   five-minute demand-idle reassignment -> per-model scale-out, with two admitted slots per GPU.
   A concurrent canary returned two RIFF WAVs, showed usable `BUSY_STARTING`, atomically raised
@@ -72,11 +74,6 @@ Last updated: 2026-08-25
 - Faculty SSO is deployed at `faculty.lkcmedicine.org`: Microsoft sign-in admits only
   staff/associate domains and writes to `vcs-staging-lecturers`. Lectures remains separate.
   A real staff sign-in and lecturer-table write are still unverified.
-- Staging Live Fast uses two normal takes and at most two catastrophic-babble reseeds.
-  All five staging workers now run the unified quality/pronunciation/retry code, match hashes,
-  and are healthy with DeanVoice plus both verifiers active. AMI `ami-09603b8ca5f8a228b` is
-  available and launch template v31 is latest/default; a fresh v31 node completed production-shaped
-  deep warm before becoming healthy. Authenticated first/second-turn timing remains pending.
 - Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192 and two slots per GPU.
   Legacy ALB occupancy actions are telemetry-only; scale-in uses coordinator Lambda invocation
   idleness. Alarm/action readback and a controlled protected scale-down passed; a full untouched
@@ -88,7 +85,9 @@ Last updated: 2026-08-25
   profile and rank-1 defaults match Dev settings and retain identical references.
 ## Operating Rules
 
-- Code repo/branch: `VoiceCloning` / `separate-containers-new`.
+- Code repo branches: Dev `separate-containers-new`; staging
+  `codex/staging-multi-user-scaling`. Keep both pointers on the same reviewed commit; activate
+  environment differences through deployment configuration, not divergent application trees.
 - AWS account/role: `329599637774` / `Liu_Teng_Yu_Intern2026`. Read user-level
   `VCS_AWS_*`, map them to process `AWS_*`, assume the role, and verify identity before writes.
   Never print or persist credentials or private URLs.
@@ -96,12 +95,13 @@ Last updated: 2026-08-25
   variables; snapshot/read live configuration before any configuration update.
 - Project memory is mirrored between the primary Obsidian folder and
   `docs/Voice Cloning Internship`; keep edited files byte-identical.
-- GitHub push is blocked on this workstation by missing GitHub credentials.
+- GitHub pushes work with the configured credential manager override; both active remote pointers
+  were read back at `21596bf` before the AWS credential expiry.
 
 ## Next Session
 
-1. Run a controlled Dev quality comparison using identical weights, reference set, inference
-   settings, text, and seeds; vary selector/verifier behavior separately before reverting.
+1. Refresh user-level `VCS_AWS_*`; deploy/read back the running Dev worker, require fixed staging
+   inference readiness, and compare the active ASG worker/launch-image runtime to `21596bf`.
 2. Open Dev GI in a new tab with an allowlisted account and confirm the first render (without
    refresh) is D25, then verify sign-in, Dean text/audio, `/admin`, and mobile layout.
 3. Exercise the new voice config lifecycle: untouched default reselects only same-model clips;
@@ -116,5 +116,3 @@ Last updated: 2026-08-25
 7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
    the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
    and model stages; do not change the 3→5 policy without a controlled quality comparison.
-8. Browser-time first and second staging GI/Live Fast replies after the canonical-cache rollout;
-   separate remaining OpenAI/WebSocket setup time from GPU synthesis time.

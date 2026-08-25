@@ -1,15 +1,18 @@
 # Staging Environment — Complete Architecture Reference
 
-As of 2026-08-25, staging GI reads `voiceProfileId` from the selected course object. The only
-current course, `gi-bleeding`, still declares fixed ID `deanvoice-v1` in
-`client/src/api/mockCourseData.js`; faculty selection is not implemented yet. The browser sends the
-ID to the authenticated capacity preflight and every synthesis request. Lambda resolves the saved
-profile into an immutable GPT/SoVITS/reference snapshot, and the model coordinator routes by the
-exact GPT+SoVITS weight pair rather than by display name or shared `active.json`.
+As of 2026-08-25, faculty publishing stores a validated `voiceProfileId` with each deployed
+lecture category, and staging GI reads that published binding from
+`GET /api/chatbot/system-prompt?category=<lecture>`. The published value is authoritative; the
+course object's legacy value and the build-time pin are fallbacks for unpublished/standalone
+lectures only. A published `elevenlabs:<id>` uses standard synthesis without GPU capacity
+preflight. A cloned profile is resolved by Lambda into an immutable GPT/SoVITS/reference snapshot,
+then the coordinator routes by the exact GPT+SoVITS weight pair rather than display name or shared
+`active.json`. The current `gi-bleeding` staging category publishes cloned profile
+`deanvoice-v1`.
 
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
 **Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
-**Last control-plane inventory:** 2026-07-29 · **Last public-path check:** 2026-07-29
+**Last control-plane inventory:** 2026-08-25 · **Last public-path check:** 2026-08-25
 
 > **Keep this file up to date.** Any change to staging infra (console, CLI, or script) must be reflected here in the same PR/commit. Every ID below was read from AWS on the date above — an AI session can diff this file against `aws describe-*` output to detect drift.
 >
@@ -69,15 +72,15 @@ telemetry-only. Scale-in uses coordinator inactivity and removes capacity after 
 15-minute idle window; controlled scale-down passed, but an untouched full 15-minute timing canary
 remains pending.
 
-### Future faculty-selected lecture voice (not implemented)
+### Faculty-selected lecture voice (implemented; multi-lecture verification pending)
 
-`faculty.lkcmedicine.org` should persist a validated `voiceProfileId` on the authoritative lecture or
-course record when faculty publish their selection. The lectures API/course payload should return
-that field, replacing the current mock-data constant; the existing `LessonPage -> GiChatPanel ->
-useGiChatEngine` path can then preflight and synthesize without coordinator changes. Do not treat an
-arbitrary browser-provided ID as the authoritative lecture mapping: the publish API must verify
-faculty authorization, that the profile exists and is complete, and that the ID is a safe path
-segment.
+`faculty.lkcmedicine.org` lists the signed-in lecturer's completed trained profiles plus approved
+stock voices. Publishing writes the selected ID into the authenticated deployed category record;
+the lecture client loads it with the prompt/documents. The publish handler validates authorization
+and the selection instead of trusting a browser-only mapping. `LessonPage -> GiChatPanel ->
+useGiChatEngine` gives that published binding precedence over the legacy course/build fallback.
+The current site has only one real lecture/category, so cross-lecture ownership and two simultaneous
+cloned profiles are not yet proven end to end in authenticated browsers.
 
 Current resolution follows the latest saved profile for that ID at request/conversation start, then
 uses the resulting immutable snapshot for in-flight work. If faculty require reproducible historical
@@ -101,8 +104,8 @@ reservations prevent abandoned lecture clicks from holding capacity. This must b
 at least two real lectures and two trained profiles, both as an immediate burst and a ramp, before it
 replaces scheduled event prewarming.
 
-The end-to-end ownership chain should remain: faculty publishes lecture -> authoritative lecture
-record stores profile ID/revision -> lectures API returns the binding -> lecture backend resolves the
+The end-to-end ownership chain is: faculty publishes lecture category -> authoritative deployed
+category stores profile ID -> lectures API returns the binding -> lecture backend resolves the
 saved profile into exact trained GPT/SoVITS weights -> coordinator routes or prepares that immutable
 model pair. The coordinator should not duplicate lecture metadata or independently guess which voice
 belongs to a lecture. Missing, deleted, incomplete, or unauthorized profile bindings must fail
@@ -324,10 +327,16 @@ rebuild it, or you take down other projects' distributions.
 
 | Branch | Deploys to | Notes |
 |---|---|---|
-| `separate-containers-new` | dev (all three clients, Lambda, and fixed GPU) | canonical active-development branch |
-| `staging` | staging general worker path | configured `branch`; promotion target, not the dev source |
-| `codex/staging-multi-user-scaling` | staging chatbot/current scaling path | configured `chatbotBranch`; verify `scripts/deploy.config.json` before deployment |
+| `separate-containers-new` | dev (all three clients, Lambda, and fixed GPU) | Dev deployment pointer |
+| `codex/staging-multi-user-scaling` | staging clients, Lambda, fixed worker and inference fleet | Staging deployment pointer |
 | `chatbot-live-full` | none | legacy branch; its dev chatbot work is merged into `separate-containers-new` |
+
+Both active environment branches point to the same unified application commit after promotion.
+Environment files and AWS resources create the differences: Dev stays fixed-instance/on-demand with
+no ASG/coordinator variables; staging enables the model coordinator, inference ASG, two-slot
+admission, reassignment, and scale-out. Never merge code by deploying the other environment's branch
+in place; first unify and test one commit, fast-forward both pointers, then deploy with `-Env dev` or
+`-Env staging`.
 
 Dev parity rollout (2026-08-03): `separate-containers-new` and the fixed
 `VoiClo-GPU-Seoul` host application source are at `070a99a`. The three dev distributions now
@@ -404,12 +413,13 @@ the WebSocket; omitting it caused the 2026-08-07 signed-in voice 401.
 
 Deploy tooling: `scripts/deploy-client.ps1 -Env staging|dev -Mode training|live-fast|chatbot`, `deploy-lambda.ps1`, `deploy-worker.ps1`, driven by `scripts/deploy.config.json` (holds instance IDs, distro IDs, S3 targets; both workers use **SSM**). Client env vars per environment: `client/env/{staging,dev}/*.env`.
 
-### ⚠️ Do not use `deploy-worker.ps1` on staging as written
+### Staging worker deployment guard
 
-It runs `git checkout $($cfg.branch)`, and `deploy.config.json` sets staging's `branch` to
-`"staging"` — but the box is checked out on **`codex/staging-multi-user-scaling`**, which is
-where the gateway/SSO/transcript work lives. The script would silently move staging onto a
-branch without any of it. Deploy the gateway by hand until the config is fixed.
+`deploy-worker.ps1` and `deploy.config.json` now use
+`codex/staging-multi-user-scaling`. Before running it, verify that both active remote branches point
+to the intended unified commit and inspect the remote worker's dirty tree. Preserve tracked
+deployment-time edits in a named stash and handle only untracked files that collide with the
+fast-forward; do not force-reset the worker.
 
 Two more things that cost an hour if you meet them cold:
 

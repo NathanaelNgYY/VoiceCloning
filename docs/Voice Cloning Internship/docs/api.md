@@ -107,13 +107,13 @@ Notes:
 
 #### Lecture voice binding
 
-- Current staging course data supplies `voiceProfileId`; `gi-bleeding` is bundled as
-  `deanvoice-v1`. The value flows through `LessonPage`, `GiChatPanel`, and
-  `useGiChatEngine` into capacity and synthesis requests.
-- Future faculty selection is not implemented. Its publish API must store a validated
-  `voiceProfileId` on the authoritative lecture/course record, and the lectures API
-  must return that field. The backend record—not an arbitrary browser value—should own
-  the lecture-to-profile mapping.
+- `GET /api/chatbot/system-prompt?category=<lecture>` returns the deployed prompt,
+  documents, and authoritative published `voiceProfileId`. Authenticated faculty `PUT`
+  validates and stores the selected completed trained profile or approved stock voice.
+- The published value flows through `LessonPage`, `GiChatPanel`, and `useGiChatEngine` and
+  overrides the legacy course/build pin. A cloned profile calls the capacity endpoint and
+  coordinator; an `elevenlabs:<id>` stock voice bypasses GPU capacity and uses standard
+  synthesis. Unpublished standalone lectures retain the legacy/build fallback.
 - Profile resolution currently follows the latest saved profile at request/conversation
   start and creates an immutable in-flight snapshot. Persist a profile revision too if
   published lectures must retain a historical voice definition.

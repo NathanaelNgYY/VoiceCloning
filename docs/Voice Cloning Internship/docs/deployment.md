@@ -80,26 +80,25 @@ role belongs to the staging ASG path only.
 
 | Ownership | dev | staging |
 |---|---|---|
-| Branch | `separate-containers-new` for all components | `staging` general worker path; `codex/staging-multi-user-scaling` configured chatbot/current scaling path |
+| Branch | `separate-containers-new` for all components | `codex/staging-multi-user-scaling` for all components |
 | Fixed GPU instance | `i-03f258d470a2fa73f` | `i-0f0da8be59367f7a8` |
 | Capacity management | fixed GPU; activity start + five-minute idle-check; no schedule, ASG, scaling alarms, or ASG actions | fixed GPU 07:00-19:00 Singapore schedule plus `vcs-staging-gpu-inference`, recurring ASG actions, reactive policies, and event actions |
 | Worker access | SSM | SSM |
 
-There is no dev `-dev` Lambda, `echolect-dev/` prefix, dev ASG, or separate dev
-chatbot branch. The old repo `docs/dev-environment-duplication-guide.md` proposal was
-replaced with a current-state guide. Always verify `scripts/deploy.config.json` and
-live AWS before mutation.
+There is no dev `-dev` Lambda, `echolect-dev/` prefix, dev ASG, or separate dev chatbot
+branch. The two active branches are deployment pointers to the same reviewed commit;
+environment files and AWS configuration own the differences. Always verify both remote
+pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-03 11:36 SGT): dev and staging fixed GPUs were
-running with the documented `VoiClo_GPU` profile; both Lambdas used the documented
-execution role; dev schedule mode was false with no ASG name, while staging schedule
-mode was true. Staging ASG was min 50 / desired 56 during today's event window;
-`vcs-staging-scale-down` remains scheduled for 17:00 today. This is transient state,
-not a new baseline. The separate August 4 13:30/16:00 actions remain scheduled.
+Latest live read-back (2026-08-25): both remote pointers are `21596bf`; Dev/staging main
+Lambdas share one exact package SHA, while only staging has coordinator/ASG configuration.
+Staging ASG is min/desired 1, max 192, launch-template v38/default. All client targets were
+rebuilt; the Dev/staging GI bundles currently share `assets/index-BRieZIOC.js`. The fixed
+staging worker is on `21596bf`. Dev-worker and ASG-worker/AMI readback remain pending after
+the user-level AWS session expired.
 
-As of 2026-07-31, staging chatbot serves the GI build from
-`codex/staging-multi-user-scaling`; deployed code is `b44e4d2` and the bundle is
-`assets/index-DENtXOAd.js`, with fixed profile `deanvoice-v1`.
+Staging chatbot serves the GI build from `codex/staging-multi-user-scaling`; its published
+`gi-bleeding` category currently selects cloned profile `deanvoice-v1`.
 Staging Live Fast starts multi-sentence voice after the first confirmed completed
 streamed sentence. The staging Lambda exposes profile-resolution, worker-round-trip,
 capacity-retry, cold-environment, and total timing headers; memory is 512 MB.
