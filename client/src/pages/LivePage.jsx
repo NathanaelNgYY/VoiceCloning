@@ -47,7 +47,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
@@ -194,6 +194,11 @@ function normalizeReferenceLanguage(lang) {
 
 const PRONUNCIATION_CATEGORIES = ['general', 'biology', 'chemistry', 'medical', 'names', 'acronyms', 'math'];
 
+// Picked from the lecture menu to reveal the add field. Safe as a sentinel
+// because normalizeChatbotCategory only ever yields lowercase letters, numbers
+// and hyphens, so no real lecture id can look like this.
+const ADD_CHATBOT_CATEGORY = '__add-lecture__';
+
 // Advanced settings are still fully wired up (state + auto-applied defaults);
 // this just hides the collapsible UI so it doesn't confuse end users. Flip to
 // true to expose the panel again.
@@ -310,6 +315,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [chatbotCategory, setChatbotCategory] = useState(DEFAULT_CHATBOT_CATEGORY);
   const [chatbotCategories, setChatbotCategories] = useState([]);
   const [newChatbotCategory, setNewChatbotCategory] = useState('');
+  // The add-a-lecture field is a rare action, so it stays out of the panel until
+  // it is asked for from the foot of the lecture menu.
+  const [addingChatbotCategory, setAddingChatbotCategory] = useState(false);
+  const newChatbotCategoryRef = useRef(null);
+  // Radix hands focus back to the trigger when the menu closes, which would land
+  // the lecturer on the select they just used instead of the field they asked
+  // for. Set while the close is in flight so that handoff can be redirected.
+  const focusNewChatbotCategoryRef = useRef(false);
   const [chatbotSystemPrompt, setChatbotSystemPrompt] = useState(() => (kiosk ? resolveChatbotSystemPrompt() : ''));
   const [chatbotDocuments, setChatbotDocuments] = useState(() => (kiosk ? resolveChatbotDocuments() : []));
   const [chatbotDocError, setChatbotDocError] = useState('');
@@ -4057,6 +4070,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     }
     setChatbotCategory(next);
     setNewChatbotCategory('');
+    setAddingChatbotCategory(false);
     setChatbotDeployState({ status: 'idle', message: '' });
     setChatbotDocError('');
     setChatbotSystemPrompt(
@@ -5263,45 +5277,68 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             onScopeChange={setMyVoicesScope}
             onRetry={() => setMyVoicesReloadToken((token) => token + 1)}
           />
-          <div className="border-b border-slate-100 px-4 py-3">
+          {/* Pairs with the voice row above it: one bordered block, two rows. */}
+          <div className="border-b border-slate-100 px-4 pb-3 pt-2">
             <div className="flex items-center gap-2">
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+              <span className="w-16 shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
                 Lecture
               </span>
               <Select
                 value={chatbotCategory}
-                onValueChange={handleSelectChatbotCategory}
+                onValueChange={(value) => {
+                  if (value === ADD_CHATBOT_CATEGORY) {
+                    setAddingChatbotCategory(true);
+                    focusNewChatbotCategoryRef.current = true;
+                    return;
+                  }
+                  handleSelectChatbotCategory(value);
+                }}
                 disabled={isConversationActive}
               >
                 <SelectTrigger className="h-8 flex-1 rounded-lg border-slate-200 bg-white text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent
+                  onCloseAutoFocus={(event) => {
+                    if (!focusNewChatbotCategoryRef.current) return;
+                    focusNewChatbotCategoryRef.current = false;
+                    event.preventDefault();
+                    requestAnimationFrame(() => newChatbotCategoryRef.current?.focus());
+                  }}
+                >
                   {chatbotCategoryOptions.map((category) => (
-                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                    <SelectItem key={category} value={category} className="text-xs">{category}</SelectItem>
                   ))}
+                  <SelectSeparator className="bg-slate-200" />
+                  <SelectItem value={ADD_CHATBOT_CATEGORY} className="text-xs text-slate-500">
+                    + New lecture…
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <form
-              className="mt-2 flex items-center gap-2"
-              onSubmit={(e) => { e.preventDefault(); handleSelectChatbotCategory(newChatbotCategory); }}
-            >
-              <Input
-                value={newChatbotCategory}
-                onChange={(e) => setNewChatbotCategory(e.target.value)}
-                disabled={isConversationActive}
-                placeholder="Add a lecture, e.g. gi-bleeding"
-                className="h-8 flex-1 rounded-lg border-slate-200 text-xs"
-              />
-              <button
-                type="submit"
-                disabled={isConversationActive || !newChatbotCategory.trim()}
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-40"
+            {addingChatbotCategory && (
+              <form
+                className="mt-2 flex items-center gap-2"
+                onSubmit={(e) => { e.preventDefault(); handleSelectChatbotCategory(newChatbotCategory); }}
               >
-                Add
-              </button>
-            </form>
+                <Input
+                  ref={newChatbotCategoryRef}
+                  value={newChatbotCategory}
+                  onChange={(e) => setNewChatbotCategory(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setAddingChatbotCategory(false); }}
+                  disabled={isConversationActive}
+                  placeholder="e.g. gi-bleeding"
+                  className="h-8 flex-1 rounded-lg border-slate-200 text-xs"
+                />
+                <button
+                  type="submit"
+                  disabled={isConversationActive || !newChatbotCategory.trim()}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </form>
+            )}
             <p className="mt-2 text-[11px] leading-4 text-slate-400">
               {chatbotCategory === DEFAULT_CHATBOT_CATEGORY
                 ? 'The fallback assistant, used wherever no lecture of its own is set up.'
