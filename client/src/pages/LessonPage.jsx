@@ -123,8 +123,16 @@ export function LessonPage() {
     void auth.signOut();
   };
 
-  const topics = course?.topics ?? [];
-  const transcriptSegments = course?.transcriptSegments ?? [];
+  // Memoised because `topics` is a dependency of useVideoTopicThumbnails, whose
+  // effect sets state every time it runs. A bare `course?.topics ?? []` hands it
+  // a brand-new array on every render while `course` is still null — which is
+  // the whole time the lesson is loading, and forever if the fetch fails — so
+  // the effect re-runs, sets state, re-renders, and never stops. React kills the
+  // tree at the update-depth limit, and with no error boundary the student gets
+  // a blank page. It rendered fine whenever the fetch won the race, which is why
+  // it looked intermittent.
+  const topics = useMemo(() => course?.topics ?? [], [course]);
+  const transcriptSegments = useMemo(() => course?.transcriptSegments ?? [], [course]);
   // Two clamped lines is roughly this many characters — below it the toggle
   // would expand nothing, so it is not offered.
   const DESCRIPTION_CLAMP_CHARS = 140;

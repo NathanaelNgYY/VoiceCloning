@@ -4,7 +4,9 @@ import FloatingNotice from '../components/FloatingNotice.jsx';
 import TrainingLibraryPanel from '../components/TrainingLibraryPanel.jsx';
 import {
   deleteTrainingLibraryFile,
+  allocateTrainingVoiceName,
   getCurrentTraining,
+  getModels,
   getTrainingLibraryFiles,
   replaceTrainingLibraryFile,
   snapshotTrainingLibraryFiles,
@@ -15,6 +17,8 @@ import {
 } from '../services/api.js';
 import { useSSE } from '../hooks/useSSE.js';
 import { validateTrainingStart } from '@/lib/trainingValidation';
+import { describeVoiceIdentity, nextVoiceName, ownsVoiceName } from '@/lib/voiceIdentity';
+import { buildVoiceProfiles } from '@/lib/voiceProfiles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -37,8 +41,9 @@ function formatSize(bytes) {
 }
 
 export default function TrainingPage() {
-  const [expName, setExpName] = useState('');
   const [email, setEmail] = useState('');
+  const [runningExpName, setRunningExpName] = useState('');
+  const [existingVoiceNames, setExistingVoiceNames] = useState([]);
   const [files, setFiles] = useState([]);
   const [batchSize, setBatchSize] = useState(2);
   const [sovitsEpochs, setSovitsEpochs] = useState(20);
@@ -68,6 +73,18 @@ export default function TrainingPage() {
   const canvasRef = useRef(null);
 
   const isRunning = pipelineStatus === 'running' || pipelineStatus === 'waiting';
+  // The voice is named after the lecturer's email so the faculty app can find
+  // it from their sign-in alone, and every run adds another one. This is only
+  // the preview — the name that is actually used is allocated by the server at
+  // start, so an out-of-date model list here can never overwrite a voice.
+  const voiceIdentity = describeVoiceIdentity(email);
+  const showIdentityError = Boolean(email.trim()) && !voiceIdentity.valid;
+  const previewVoiceName = voiceIdentity.valid
+    ? nextVoiceName(voiceIdentity.email, existingVoiceNames)
+    : '';
+  const ownedVoiceNames = voiceIdentity.valid
+    ? existingVoiceNames.filter((name) => ownsVoiceName(voiceIdentity.email, name))
+    : [];
   const trainingSource = resolveTrainingSource({
     directFiles: files,
     selectedLibraryIds,
@@ -120,6 +137,27 @@ export default function TrainingPage() {
   useEffect(() => {
     let ignore = false;
 
+    // Only feeds the name preview, so a failure here is silent — it must never
+    // stop someone training.
+    async function loadExistingVoices() {
+      try {
+        const res = await getModels();
+        if (ignore) return;
+        setExistingVoiceNames(buildVoiceProfiles(res.data?.gpt || [], res.data?.sovits || [])
+          .map((profile) => profile.expName)
+          .filter(Boolean));
+      } catch {
+        if (!ignore) setExistingVoiceNames([]);
+      }
+    }
+
+    loadExistingVoices();
+    return () => { ignore = true; };
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
     async function restoreTrainingState() {
       try {
         const res = await getCurrentTraining();
@@ -127,7 +165,7 @@ export default function TrainingPage() {
         if (ignore || !current?.sessionId) return;
 
         setSessionId(current.sessionId);
-        setExpName(current.expName || '');
+        setRunningExpName(current.expName || '');
 
         if (current.sessionId === restoredSessionRef.current) return;
 
@@ -426,7 +464,6 @@ export default function TrainingPage() {
 
   async function handleStart() {
     const validation = validateTrainingStart({
-      expName,
       email,
       source: trainingSource,
       files,
@@ -445,9 +482,19 @@ export default function TrainingPage() {
       return;
     }
 
+    const { email: notifyEmail } = validation;
     setUploadError(null);
     setUploading(true);
     try {
+      // Ask the server for the name before uploading anything: the audio lands
+      // under training/datasets/<expName>/raw/, so guessing here is what would
+      // let a stale model list write into an existing voice.
+      const allocation = await allocateTrainingVoiceName(notifyEmail);
+      const expName = String(allocation.data?.expName || '').trim();
+      if (!expName) throw new Error('The server did not return a name for this voice.');
+      setExistingVoiceNames((names) => (names.includes(expName) ? names : [...names, expName]));
+      setRunningExpName(expName);
+
       if (trainingSource === 'library') {
         await snapshotTrainingLibraryFiles(expName, selectedLibraryIds);
       } else {
@@ -455,7 +502,7 @@ export default function TrainingPage() {
       }
       const res = await startTraining({
         expName,
-        email,
+        email: notifyEmail,
         batchSize,
         sovitsEpochs,
         gptEpochs,
@@ -472,7 +519,7 @@ export default function TrainingPage() {
       restoredSessionRef.current = res.data.sessionId;
       connect(res.data.sessionId, { initialStatus: 'waiting' });
       showNotice({
-        title: 'Training started',
+        title: `Training ${expName}`,
         message: "Training has started and we'll email you when it's done.",
         tone: 'success',
       });
@@ -518,7 +565,7 @@ export default function TrainingPage() {
             Train a voice
           </span>
         </h1>
-        <p className="mt-2 text-base text-slate-500">Upload audio clips, name the run, and start.</p>
+        <p className="mt-2 text-base text-slate-500">Enter your NTU email, upload audio clips, and start.</p>
       </div>
 
       {/* Two-column form */}
@@ -527,29 +574,49 @@ export default function TrainingPage() {
         <div className="space-y-7">
           <div className="space-y-2">
             <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              Experiment Name
-            </Label>
-            <Input
-              className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
-              placeholder="e.g. voice-run-01"
-              value={expName}
-              onChange={(e) => setExpName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-              disabled={isRunning}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-              Notify Email
+              NTU Email
             </Label>
             <Input
               type="email"
-              className="h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1"
-              placeholder="you@example.com"
+              className={cn(
+                'h-12 rounded-xl border-slate-200 bg-white text-sm shadow-none focus-visible:ring-1',
+                showIdentityError && 'border-red-300 focus-visible:ring-red-300'
+              )}
+              placeholder="you@ntu.edu.sg"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={isRunning}
+              aria-invalid={showIdentityError || undefined}
+              aria-describedby="training-voice-name"
             />
+            <p id="training-voice-name" className="text-xs text-slate-500">
+              Every run creates another voice named after this address. We email you here when it finishes.
+            </p>
+          </div>
+
+          <div
+            className={cn(
+              'rounded-xl border px-4 py-3 text-xs',
+              showIdentityError
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-slate-200 bg-slate-50 text-slate-600'
+            )}
+            role={showIdentityError ? 'alert' : undefined}
+          >
+            {showIdentityError ? (
+              voiceIdentity.error
+            ) : previewVoiceName ? (
+              <>
+                This run will be saved as <span className="font-semibold">{previewVoiceName}</span>.
+                {ownedVoiceNames.length > 0 ? (
+                  <> You already have {ownedVoiceNames.length === 1 ? '1 voice' : `${ownedVoiceNames.length} voices`}; none of them are replaced.</>
+                ) : (
+                  ' It will be your first voice.'
+                )}
+              </>
+            ) : (
+              'Enter your NTU email to see what this voice will be called.'
+            )}
           </div>
         </div>
 
@@ -644,6 +711,9 @@ export default function TrainingPage() {
             'bg-slate-300'
           )} />
           {selectionSummary} - {statusLabel}
+          {runningExpName && isRunning ? (
+            <span className="text-slate-400">({runningExpName})</span>
+          ) : null}
         </span>
 
         {(error || uploadError) && (

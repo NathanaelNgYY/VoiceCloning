@@ -1,17 +1,46 @@
-import { uploadBuffer, getObject, headObject } from '../shared/s3.js';
+import { uploadBuffer, getObject, headObject, listObjects } from '../shared/s3.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { prepareCoordinatedModel } from '../shared/modelCoordinator.js';
 import { createVoiceProfileResolver } from '../shared/voiceProfileRuntime.js';
+import { buildVoiceProfileId, isNtuEmail, normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
+import { bestModelsForVoice, listTrainedVoiceNames } from '../shared/trainedVoices.js';
+import { listElevenLabsVoices } from '../shared/elevenLabs.js';
+import {
+  persistSavedProfileReferenceSelection,
+  resolveSavedProfileReferenceSelection,
+} from '../shared/modelSelection.js';
 
 const ACTIVE_PROFILE_KEY = 'voice-profiles/active.json';
+const PROFILE_PREFIX = 'voice-profiles/';
+const MY_PROFILES_PATH = /^\/api\/voice-profile\/mine\/?$/u;
+const ENSURE_PROFILE_PATH = /^\/api\/voice-profile\/ensure\/?$/u;
 const ACTIVE_PROFILE_PATH = /^\/api\/voice-profile\/active\/?$/u;
 const ACTIVATE_PROFILE_PATH = /^\/api\/voice-profile\/activate\/?$/u;
 const CAPACITY_PROFILE_PATH = /^\/api\/voice-profile\/capacity\/?$/u;
 const INTERNAL_PROFILE_PATH = /^\/api\/voice-profile\/internal\/([^/]+)\/?$/u;
 const PINNED_PROFILE_PATH = /^\/api\/voice-profile\/pinned\/([^/]+)\/?$/u;
+
+// Same rule as the supervisor analytics routes: an app role, or an explicit
+// object-id allowlist. Deliberately not a second admin mechanism.
+function isAdminIdentity(identity, env = process.env) {
+  const requiredRole = env.SUPERVISOR_APP_ROLE || 'Supervisor';
+  const allowedOids = new Set(
+    String(env.SUPERVISOR_OIDS || '').split(',').map((value) => value.trim()).filter(Boolean),
+  );
+  return Boolean(identity?.roles?.includes(requiredRole) || allowedOids.has(identity?.oid));
+}
+
+// Profiles saved before ownerEmail existed carry no owner, so ownership falls
+// back to the naming rule — DeanVoice belongs to josephsung@ whether or not the
+// record says so.
+export function profileBelongsTo(profile, email) {
+  const owner = normalizeEmail(profile?.ownerEmail);
+  if (owner) return owner === normalizeEmail(email);
+  return ownsVoiceName(email, profile?.displayName);
+}
 
 function getProfileStorageKey(voiceProfileId) {
   return `voice-profiles/${voiceProfileId}.json`;
@@ -57,6 +86,18 @@ function normalizeMetadata(metadata = {}) {
   return Object.keys(normalized).length > 0 ? normalized : {};
 }
 
+// A lecturer owns several voices, so ownership cannot be read back out of a
+// name. It is stored on the record instead, falling back to the owner the
+// training run recorded so profiles saved from the TTS page inherit it without
+// the browser having to pass it.
+function resolveOwnerEmail(body) {
+  for (const candidate of [body.ownerEmail, body.metadata?.training?.ownerEmail]) {
+    const email = normalizeEmail(candidate);
+    if (email && isNtuEmail(email)) return email;
+  }
+  return '';
+}
+
 function createVoiceProfileRecord(body, now) {
   const voiceProfileId = String(body.voiceProfileId || '').trim();
   const displayName = String(body.displayName || '').trim();
@@ -69,6 +110,7 @@ function createVoiceProfileRecord(body, now) {
   const promptLang = normalizeLanguage(body.prompt_lang, 'en');
   const textLang = normalizeLanguage(body.text_lang, promptLang);
   const preferredRoute = normalizePreferredRoute(body.preferredRoute);
+  const ownerEmail = resolveOwnerEmail(body);
 
   if (!voiceProfileId) {
     throw new Error('voiceProfileId is required');
@@ -92,6 +134,7 @@ function createVoiceProfileRecord(body, now) {
   return {
     voiceProfileId,
     displayName,
+    ...(ownerEmail ? { ownerEmail } : {}),
     ...(gptKey ? { gptKey } : {}),
     ...(gptPath ? { gptPath } : {}),
     ...(sovitsKey ? { sovitsKey } : {}),
@@ -120,7 +163,22 @@ export function buildVoiceProfileSummary(profile) {
   return {
     voiceProfileId: profile.voiceProfileId,
     displayName: profile.displayName,
+    ...(profile.ownerEmail ? { ownerEmail: profile.ownerEmail } : {}),
     ...(profile.activatedAt ? { activatedAt: profile.activatedAt } : {}),
+  };
+}
+
+function buildOwnedVoiceSummary({ voiceName, profile = null, email }) {
+  return {
+    voiceProfileId: profile?.voiceProfileId || buildVoiceProfileId(voiceName),
+    displayName: voiceName,
+    // A trained voice with no saved profile is still the lecturer's voice; it
+    // just has no reference clip or synthesis settings chosen yet.
+    hasSavedProfile: Boolean(profile),
+    ...(profile?.ownerEmail ? { ownerEmail: profile.ownerEmail } : {}),
+    ...(profile?.updatedAt ? { updatedAt: profile.updatedAt } : {}),
+    ...(profile?.activatedAt ? { activatedAt: profile.activatedAt } : {}),
+    isMine: profile ? profileBelongsTo(profile, email) : ownsVoiceName(email, voiceName),
   };
 }
 
@@ -174,11 +232,17 @@ function wantsFullActiveProfile(event) {
 
 export function createHandler({
   readObject = defaultReadObject,
+  listProfileObjects = () => listObjects(PROFILE_PREFIX),
+  listVoiceNames = listTrainedVoiceNames,
+  findBestModels = bestModelsForVoice,
+  resolveReferences = resolveSavedProfileReferenceSelection,
+  persistProfile = persistSavedProfileReferenceSelection,
   writeObject = uploadBuffer,
   warmReferenceAudio = async (profile) => inferencePost('/ref-audio/warm', {
     ref_audio_path: profile.ref_audio_path,
     aux_ref_audio_paths: profile.aux_ref_audio_paths || [],
   }),
+  listStandardVoices = listElevenLabsVoices,
   now = () => new Date().toISOString(),
   internalAuthHeaderName = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME || '',
   internalAuthHeaderValue = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE || '',
@@ -207,6 +271,141 @@ export function createHandler({
           {},
           event,
         );
+      }
+
+      // A lecturer sees the voices they own; an admin can ask for all of them.
+      // Ownership is never taken from the request — only from the signed-in
+      // identity — so ?scope=all is inert without the admin role.
+      if (method === 'GET' && MY_PROFILES_PATH.test(routePath)) {
+        if (!authGuard) return err(503, 'Voice profile authentication is not configured', event);
+        let identity;
+        try {
+          identity = await authGuard.authorize(event);
+        } catch {
+          return err(401, 'Sign in to see your voices', event);
+        }
+
+        const isAdmin = isAdminIdentity(identity);
+        const wantsAll = String(event?.queryStringParameters?.scope || '').trim().toLowerCase() === 'all';
+        const scope = wantsAll && isAdmin ? 'all' : 'mine';
+        const email = identity?.email;
+
+        // Trained models are the source of truth for which voices exist; saved
+        // profiles only add reference audio and settings on top. Reading only
+        // the profiles would hide every voice that has been trained but never
+        // opened in the TTS page — which is every freshly trained voice.
+        const trainedNames = await listVoiceNames();
+        const profilesByName = new Map();
+        const objects = await listProfileObjects();
+        for (const object of objects || []) {
+          const key = String(object?.key || '');
+          if (!key.endsWith('.json') || key === ACTIVE_PROFILE_KEY) continue;
+          let profile;
+          try {
+            profile = await parseStoredProfile(readObject, key);
+          } catch {
+            // One unreadable record must not hide every other voice.
+            continue;
+          }
+          const name = String(profile?.displayName || '').trim();
+          if (name) profilesByName.set(name, profile);
+        }
+
+        const names = new Set([...trainedNames, ...profilesByName.keys()]);
+        const voices = [];
+        for (const voiceName of names) {
+          const summary = buildOwnedVoiceSummary({
+            voiceName,
+            profile: profilesByName.get(voiceName) || null,
+            email,
+          });
+          if (scope === 'all' || summary.isMine) voices.push(summary);
+        }
+
+        voices.sort((left, right) => String(left.displayName || '').localeCompare(String(right.displayName || '')));
+
+        // Stock voices are appended after the sort, not merged into it: they are
+        // owned by nobody, so the isMine filter above would drop them from the
+        // 'mine' scope — which is the scope every lecturer actually sees. They
+        // are offered to everyone alike, in both scopes.
+        const standardVoices = await listStandardVoices();
+        return ok({
+          email: normalizeEmail(email),
+          isAdmin,
+          scope,
+          voices,
+          standardVoices,
+        }, {}, event);
+      }
+
+      // Synthesis resolves a voice per request by id, which is the only thing
+      // that works when more than one GPU instance sits behind the load
+      // balancer. That resolution reads voice-profiles/<id>.json, and training
+      // never writes one — so a freshly trained voice needs its record created
+      // before it can be spoken. This does exactly that, once, on demand.
+      if (method === 'POST' && ENSURE_PROFILE_PATH.test(routePath)) {
+        if (!authGuard) return err(503, 'Voice profile authentication is not configured', event);
+        let identity;
+        try {
+          identity = await authGuard.authorize(event);
+        } catch {
+          return err(401, 'Sign in to set up your voice', event);
+        }
+
+        let body;
+        try {
+          body = parseJsonBody(event);
+        } catch {
+          return err(400, 'Invalid JSON body', event);
+        }
+
+        const voiceName = String(body.voiceName || '').trim();
+        if (!voiceName || !isSafePathSegment(voiceName)) {
+          return err(400, 'voiceName must be a safe path segment', event);
+        }
+        // A lecturer may only ever create a record for a voice they own.
+        if (!ownsVoiceName(identity?.email, voiceName)) {
+          return err(403, `${normalizeEmail(identity?.email)} does not own a voice called ${voiceName}`, event);
+        }
+
+        const voiceProfileId = buildVoiceProfileId(voiceName);
+        const existing = await parseStoredProfile(readObject, getProfileStorageKey(voiceProfileId));
+        if (existing) {
+          return ok({ voiceProfileId, displayName: existing.displayName, created: false }, {}, event);
+        }
+
+        const models = await findBestModels(voiceName);
+        if (!models) {
+          return err(404, `${voiceName} has no trained models to build a voice from`, event);
+        }
+
+        const draft = {
+          voiceProfileId,
+          displayName: voiceName,
+          ownerEmail: normalizeEmail(identity?.email),
+          gptKey: models.gptKey,
+          sovitsKey: models.sovitsKey,
+          prompt_lang: 'en',
+          text_lang: 'en',
+          preferredRoute: 'sentence',
+          aux_ref_audio_paths: [],
+          defaults: {},
+        };
+
+        // Reference clips are chosen from the run's own training audio. Without
+        // them there is nothing to speak from, so this is a hard failure rather
+        // than a half-built record.
+        const selection = await resolveReferences(draft);
+        if (!selection?.ref_audio_path) {
+          return err(
+            409,
+            `${voiceName} has no usable reference audio yet. Open it in the TTS page and pick a reference clip.`,
+            event,
+          );
+        }
+
+        await persistProfile({ ...draft, ...selection }, selection);
+        return ok({ voiceProfileId, displayName: voiceName, created: true }, {}, event);
       }
 
       if (method === 'GET' && internalMatch) {

@@ -5,6 +5,7 @@ import { processManager } from '../services/processManager.js';
 import { runPipelineWithS3, STEPS } from '../services/pipeline.js';
 import { trainingState } from '../services/trainingState.js';
 import { activityState } from '../services/activityState.js';
+import { describeVoiceIdentity, ownsVoiceName } from '../services/voiceIdentity.js';
 
 const router = Router();
 const sessions = new Map();
@@ -55,9 +56,19 @@ router.post('/train', (req, res) => {
   if (!expName) {
     return res.status(400).json({ error: 'expName is required' });
   }
-  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
-  if (email && !EMAIL_RE.test(email)) {
-    return res.status(400).json({ error: 'Invalid email address' });
+  // The worker is reachable without going through the Lambda router, so the
+  // ownership rule is re-checked here: the run may only be named after the
+  // voice the supplied NTU email owns.
+  const identity = describeVoiceIdentity(email);
+  if (!identity.valid) {
+    return res.status(400).json({ error: identity.error });
+  }
+  // A lecturer owns several voices, so the check is "is this one of yours",
+  // not "is this your one voice".
+  if (!ownsVoiceName(identity.email, expName)) {
+    return res.status(403).json({
+      error: `${identity.email} does not own a voice called ${expName}`,
+    });
   }
   if (pendingSessions.length >= maxTrainingQueueDepth) {
     return res.status(429).json({
@@ -72,12 +83,13 @@ router.post('/train', (req, res) => {
   const queuedAt = Date.now();
   sessions.set(sessionId, {
     expName,
-    email,
+    email: identity.email,
     queuedAt,
     status: 'queued',
     pipeline: {
       expName,
-      email,
+      email: identity.email,
+      ownerEmail: identity.email,
       s3Prefix,
       batchSize: config.batchSize,
       sovitsEpochs: config.sovitsEpochs,

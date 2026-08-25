@@ -14,6 +14,9 @@ import {
 
 const DEFAULT_KEY = categoryKey(DEFAULT_CATEGORY);
 
+/** Publishing is authenticated; most tests are about what it stores, not who. */
+const ALLOW_AUTH = { authorize: async () => ({ email: 'lecturer@ntu.edu.sg' }) };
+
 function event(method, body, { category, path = '/api/chatbot/system-prompt' } = {}) {
   return {
     requestContext: { http: { method } },
@@ -39,6 +42,7 @@ function readerFor(objects) {
 
 test('GET returns an empty prompt when nothing is deployed yet', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: async () => { throw missingKeyError(); },
   });
 
@@ -46,12 +50,13 @@ test('GET returns an empty prompt when nothing is deployed yet', async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(JSON.parse(response.body), {
-    category: DEFAULT_CATEGORY, prompt: '', documents: [], updatedAt: '', updatedBy: '',
+    category: DEFAULT_CATEGORY, prompt: '', documents: [], voiceProfileId: '', updatedAt: '', updatedBy: '',
   });
 });
 
 test('GET returns the deployed prompt and documents', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: readerFor({
       [DEFAULT_KEY]: {
         schemaVersion: 3,
@@ -70,6 +75,7 @@ test('GET returns the deployed prompt and documents', async () => {
     category: DEFAULT_CATEGORY,
     prompt: 'Deployed instructions',
     documents: [{ name: 'paper.pdf', text: 'Findings.' }],
+    voiceProfileId: '',
     updatedAt: '2026-08-13T00:00:00.000Z',
     updatedBy: 'editor@example.com',
   });
@@ -77,6 +83,7 @@ test('GET returns the deployed prompt and documents', async () => {
 
 test('GET reads a schemaVersion 1 record as a prompt with no documents', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: readerFor({
       [DEFAULT_KEY]: {
         schemaVersion: 1,
@@ -92,6 +99,7 @@ test('GET reads a schemaVersion 1 record as a prompt with no documents', async (
     category: DEFAULT_CATEGORY,
     prompt: 'Older deploy',
     documents: [],
+    voiceProfileId: '',
     updatedAt: '2026-08-01T00:00:00.000Z',
     updatedBy: '',
   });
@@ -99,6 +107,7 @@ test('GET reads a schemaVersion 1 record as a prompt with no documents', async (
 
 test('GET reads the category asked for', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: readerFor({
       [categoryKey('gi-bleeding')]: { schemaVersion: 3, prompt: 'GI instructions', documents: [] },
       [categoryKey('cardiology')]: { schemaVersion: 3, prompt: 'Cardiology instructions', documents: [] },
@@ -118,6 +127,7 @@ test('GET falls back to the pre-category object for a category never deployed to
   // rollout. Answering those with an empty prompt would drop every student back
   // to the bundled default — a silent downgrade of a working assistant.
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: readerFor({
       [SYSTEM_PROMPT_KEY]: {
         schemaVersion: 2,
@@ -137,6 +147,7 @@ test('GET falls back to the pre-category object for a category never deployed to
 
 test("GET prefers a category's own object over the pre-category fallback", async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: readerFor({
       [categoryKey('gi-bleeding')]: { schemaVersion: 3, prompt: 'Its own prompt', documents: [] },
       [SYSTEM_PROMPT_KEY]: { schemaVersion: 2, prompt: 'The old shared prompt', documents: [] },
@@ -152,6 +163,7 @@ test('a category id that could escape the prefix is rejected', async () => {
   // The id lands in an S3 key, so this is a path-safety boundary, not just a
   // naming rule.
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     readObject: async () => { throw new Error('should not read'); },
     writeObject: async () => { throw new Error('should not write'); },
   });
@@ -178,6 +190,7 @@ test('a blank category means the default, and case is not a second category', as
   // never route to — slugs are lowercase.
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key) => { writes.push(key); },
     now: () => '2026-08-19T01:00:00.000Z',
   });
@@ -188,9 +201,10 @@ test('a blank category means the default, and case is not a second category', as
   assert.deepEqual(writes, [DEFAULT_KEY, categoryKey('gi-bleeding')]);
 });
 
-test('PUT stores the prompt without requiring a signed-in caller', async () => {
+test('PUT stores the prompt for a signed-in caller', async () => {
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key, buffer, contentType) => { writes.push({ key, buffer, contentType }); },
     now: () => '2026-08-13T01:00:00.000Z',
   });
@@ -202,10 +216,11 @@ test('PUT stores the prompt without requiring a signed-in caller', async () => {
   assert.equal(writes[0].key, DEFAULT_KEY);
   assert.equal(writes[0].contentType, 'application/json');
   assert.deepEqual(JSON.parse(writes[0].buffer.toString('utf-8')), {
-    schemaVersion: 3,
+    schemaVersion: 4,
     category: DEFAULT_CATEGORY,
     prompt: 'New instructions',
     documents: [],
+    voiceProfileId: '',
     updatedAt: '2026-08-13T01:00:00.000Z',
   });
 });
@@ -215,6 +230,7 @@ test('PUT writes each category to its own key', async () => {
   // categories are different objects, so there is nothing to race over.
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
     now: () => '2026-08-19T01:00:00.000Z',
   });
@@ -233,6 +249,7 @@ test('PUT never overwrites the pre-category object', async () => {
   // It stays as the fallback for frontends deployed before categories existed.
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key) => { writes.push(key); },
     now: () => '2026-08-19T01:00:00.000Z',
   });
@@ -246,6 +263,7 @@ test('PUT never overwrites the pre-category object', async () => {
 test('PUT stores uploaded documents alongside the prompt', async () => {
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
     now: () => '2026-08-13T01:00:00.000Z',
   });
@@ -261,13 +279,14 @@ test('PUT stores uploaded documents alongside the prompt', async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(JSON.parse(writes[0].buffer.toString('utf-8')), {
-    schemaVersion: 3,
+    schemaVersion: 4,
     category: DEFAULT_CATEGORY,
     prompt: 'Use the attached papers',
     documents: [
       { name: 'a.pdf', text: 'Alpha.' },
       { name: 'b.pdf', text: 'Beta.' },
     ],
+    voiceProfileId: '',
     updatedAt: '2026-08-13T01:00:00.000Z',
   });
 });
@@ -278,6 +297,7 @@ test('PUT without documents publishes an empty set rather than preserving the ol
   // silently dropping them.
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
     now: () => '2026-08-13T01:00:00.000Z',
   });
@@ -290,6 +310,7 @@ test('PUT without documents publishes an empty set rather than preserving the ol
 test('PUT drops malformed document entries', async () => {
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
     now: () => '2026-08-13T01:00:00.000Z',
   });
@@ -307,6 +328,7 @@ test('PUT drops malformed document entries', async () => {
 
 test('PUT rejects too many or oversized documents', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async () => { throw new Error('should not write'); },
   });
 
@@ -327,6 +349,7 @@ test('PUT rejects too many or oversized documents', async () => {
 
 test('PUT rejects an empty or oversized prompt', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async () => { throw new Error('should not write'); },
   });
 
@@ -343,6 +366,7 @@ test('PUT accepts documents with no typed instructions', async () => {
   // instructions first; the frontends supply their neutral built-in prompt.
   const writes = [];
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
     now: () => '2026-08-17T02:00:00.000Z',
   });
@@ -362,6 +386,7 @@ test('PUT accepts documents with no typed instructions', async () => {
 
 test('PUT rejects a deploy carrying neither half', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     writeObject: async () => { throw new Error('should not write'); },
   });
 
@@ -375,6 +400,7 @@ test('PUT rejects a deploy carrying neither half', async () => {
 
 test('GET /categories lists what has been deployed', async () => {
   const handler = createHandler({
+    authGuard: ALLOW_AUTH,
     listStoredObjects: async (prefix) => {
       assert.equal(prefix, 'chatbot-config/system-prompt/');
       return [
@@ -407,10 +433,83 @@ test('the pre-category object is not itself a category', () => {
 });
 
 test('unsupported methods are rejected', async () => {
-  const handler = createHandler({});
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,});
   assert.equal((await handler(event('DELETE'))).statusCode, 405);
   assert.equal(
     (await handler(event('PUT', {}, { path: '/api/chatbot/system-prompt/categories' }))).statusCode,
     405,
   );
+});
+
+test('PUT refuses an unauthenticated caller before writing anything', async () => {
+  const writes = [];
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('no token'); } },
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+  });
+
+  const response = await handler(event('PUT', { prompt: 'Rewritten by a stranger' }));
+
+  assert.equal(response.statusCode, 401);
+  // The point of authenticating: nothing reached S3.
+  assert.equal(writes.length, 0);
+});
+
+test('GET stays open — the lecture site must not need a token to read its assistant', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('no token'); } },
+    readObject: readerFor({
+      [DEFAULT_KEY]: { schemaVersion: 4, prompt: 'Deployed', documents: [], voiceProfileId: 'elevenlabs:v1' },
+    }),
+  });
+
+  const response = await handler(event('GET'));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).voiceProfileId, 'elevenlabs:v1');
+});
+
+test('PUT publishes the voice the lecture should speak in', async () => {
+  const writes = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+    now: () => '2026-08-25T02:00:00.000Z',
+  });
+
+  for (const voiceProfileId of ['elevenlabs:Xb7hH8MSUJpSbSDYk0k2', 'deanvoice-v1']) {
+    writes.length = 0;
+    const response = await handler(event('PUT', { prompt: 'Instructions', voiceProfileId }));
+    assert.equal(response.statusCode, 200);
+    assert.equal(JSON.parse(writes[0].buffer.toString('utf-8')).voiceProfileId, voiceProfileId);
+  }
+});
+
+test('a malformed voice is rejected, not silently dropped', async () => {
+  const writes = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+  });
+
+  // A path escape would land the resolver outside voice-profiles/.
+  const response = await handler(event('PUT', { prompt: 'x', voiceProfileId: '../../etc/passwd' }));
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(writes.length, 0);
+});
+
+test('omitting the voice publishes a lecture that keeps the build-time pin', async () => {
+  const writes = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+    now: () => '2026-08-25T02:00:00.000Z',
+  });
+
+  const response = await handler(event('PUT', { prompt: 'No voice named' }));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(writes[0].buffer.toString('utf-8')).voiceProfileId, '');
 });

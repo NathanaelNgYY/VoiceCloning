@@ -113,3 +113,15 @@ test('buildTrainingRunMetadata records reproducible engine, training, reference,
     },
   );
 });
+
+test('buildTrainingRunMetadata records the lecturer who owns the voice, and omits it when unknown', () => {
+  const owned = buildTrainingRunMetadata({
+    sessionId: 'session-1',
+    expName: 'alice-tan',
+    ownerEmail: 'alice.tan@ntu.edu.sg',
+  });
+  assert.equal(owned.ownerEmail, 'alice.tan@ntu.edu.sg');
+
+  const legacy = buildTrainingRunMetadata({ sessionId: 'session-2', expName: 'demo' });
+  assert.equal('ownerEmail' in legacy, false);
+});

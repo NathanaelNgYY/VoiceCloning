@@ -1,7 +1,9 @@
 import { gpuPost, gpuGet } from '../shared/gpuWorker.js';
 import { isSafePathSegment } from '../shared/paths.js';
+import { describeVoiceIdentity, nextVoiceName, ownsVoiceName } from '../shared/voiceIdentity.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { getObject, headObject } from '../shared/s3.js';
+import { listTrainedVoiceNames as listTrainedVoices } from '../shared/trainedVoices.js';
 
 function isWorkerUnavailableError(error) {
   const message = error?.message || '';
@@ -25,6 +27,7 @@ function decodeSegment(value) {
 
 export function createHandler({
   readObject = defaultReadObject,
+  listTrainedVoiceNames = listTrainedVoices,
 } = {}) {
   return async function trainingHandler(event) {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -49,9 +52,30 @@ export function createHandler({
       return ok(await gpuPost('/train/stop', { sessionId }));
     }
 
+    // The client must know the run's name before it uploads, because the audio
+    // goes to training/datasets/<expName>/raw/. Allocating it here rather than
+    // letting the browser guess is what stops a stale client from uploading
+    // into a voice that already exists.
+    if (method === 'POST' && routePath.endsWith('/train/next-name')) {
+      const identity = describeVoiceIdentity(body.email);
+      if (!identity.valid) return err(400, identity.error);
+
+      const takenNames = await listTrainedVoiceNames();
+      const expName = nextVoiceName(identity.email, takenNames);
+      if (!expName) {
+        return err(409, `${identity.email} has too many voices; delete one before training again`);
+      }
+      return ok({
+        expName,
+        baseVoiceName: identity.baseVoiceName,
+        email: identity.email,
+        existingVoiceNames: takenNames.filter((name) => ownsVoiceName(identity.email, name)).sort(),
+      });
+    }
+
     if (method === 'POST' && routePath.endsWith('/train')) {
       const {
-        expName,
+        expName: requestedExpName,
         email,
         batchSize,
         sovitsEpochs,
@@ -64,14 +88,32 @@ export function createHandler({
         selectedReferences,
         sourceDatasetStats,
       } = body;
-      if (!expName) return err(400, 'expName is required');
+      const identity = describeVoiceIdentity(email);
+      if (!identity.valid) return err(400, identity.error);
+
+      const takenNames = await listTrainedVoiceNames();
+      // Falling back to a freshly allocated name keeps a client that never
+      // called /train/next-name working, rather than failing it.
+      const expName = String(requestedExpName || '').trim() || nextVoiceName(identity.email, takenNames);
+      if (!expName) {
+        return err(409, `${identity.email} has too many voices; delete one before training again`);
+      }
       if (!isSafePathSegment(expName)) {
         return err(400, 'expName may only contain letters, numbers, dots, dashes, and underscores');
+      }
+      // Two separate guarantees: the name belongs to this lecturer, and it is
+      // not a voice that already exists. Training never replaces a voice, so a
+      // client that proposed a stale name must be told, not obeyed.
+      if (!ownsVoiceName(identity.email, expName)) {
+        return err(403, `${identity.email} does not own a voice called ${expName}`);
+      }
+      if (takenNames.includes(expName)) {
+        return err(409, `${expName} already exists; training would replace it`);
       }
 
       return ok(await gpuPost('/train', {
         expName,
-        ...(email !== undefined ? { email } : {}),
+        email: identity.email,
         config: {
           ...(batchSize !== undefined ? { batchSize } : {}),
           ...(sovitsEpochs !== undefined ? { sovitsEpochs } : {}),

@@ -10,6 +10,7 @@ import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
+  describePinnedVoice,
   matchesPinnedVoice,
   resolvePinnedVoiceKey,
   resolvePinnedVoiceProfileId,
@@ -35,6 +36,9 @@ import {
 // optional poll for where that video is right now, so the assistant can resolve
 // "what does she mean here?". The standalone kiosk has no video and passes
 // neither.
+//
+// `category` names which deployed assistant to load — the lesson slug on the
+// lecture site, omitted on the kiosk so it falls back to the default category.
 export function useGiChatEngine({
   lessonContext = '',
   lessonSlug = 'gi-bleeding',
@@ -53,19 +57,36 @@ export function useGiChatEngine({
   const [voiceCapacity, setVoiceCapacity] = useState(() => normalizeVoiceCapacity());
 
   const profileRequestRef = useRef(0);
+  const {
+    version: deployedPromptVersion,
+    voiceProfileId: publishedVoiceProfileId,
+    refresh: refreshDeployedPrompt,
+  } = useDeployedChatbotPrompt({ category });
   const voicePinOptions = useMemo(() => ({
     search: typeof window === 'undefined' ? '' : window.location.search,
     env: import.meta.env,
   }), []);
-  const pinnedVoiceProfileId = useMemo(
+  const buildPinnedVoiceProfileId = useMemo(
     () => resolvePinnedVoiceProfileId(voicePinOptions),
     [voicePinOptions]
   );
-  const requestedVoiceProfileId = String(voiceProfileId || pinnedVoiceProfileId || '').trim();
-  const pinnedVoiceKey = useMemo(
+  const buildPinnedVoiceKey = useMemo(
     () => resolvePinnedVoiceKey(voicePinOptions),
     [voicePinOptions]
   );
+
+  // The faculty-published lecture binding is authoritative. The course prop is
+  // the legacy bundled mapping, and the build pin remains the final fallback for
+  // old lectures and standalone kiosks. Every downstream capacity and synthesis
+  // request uses this one resolved id.
+  const requestedVoiceProfileId = String(
+    publishedVoiceProfileId || voiceProfileId || buildPinnedVoiceProfileId || ''
+  ).trim();
+  const usesStandardVoice = requestedVoiceProfileId.toLowerCase().startsWith('elevenlabs:');
+  const backendReadyForVoice = usesStandardVoice || backendQueryable;
+  const pinnedVoiceKey = requestedVoiceProfileId
+    ? describePinnedVoice(requestedVoiceProfileId)
+    : buildPinnedVoiceKey;
 
   // System prompt + uploaded documents come from the deployed config, refreshed
   // at mount and again whenever a conversation ends; the lecture skin has no
@@ -81,10 +102,6 @@ export function useGiChatEngine({
   // deployed, so a custom assistant answered normally on faculty and then refused
   // on lectures with "I can only help with GI bleeding education and this lesson
   // video." Both sites now call the same function; keep it that way.
-  const {
-    version: deployedPromptVersion,
-    refresh: refreshDeployedPrompt,
-  } = useDeployedChatbotPrompt({ category });
   const systemPrompt = useMemo(() => {
     // No editor on this skin, so a local copy could only be stale — the deployed
     // prompt and documents (or the bundled default) are the source of truth here.
@@ -134,7 +151,9 @@ export function useGiChatEngine({
   }, [backendQueryable, loadActiveProfile, requestedVoiceProfileId]);
 
   useEffect(() => {
-    if (!requestedVoiceProfileId) return undefined;
+    // Stock voices do not use a GPU model pool and must never start or wait for
+    // coordinator capacity.
+    if (!requestedVoiceProfileId || usesStandardVoice) return undefined;
     let cancelled = false;
     let timer = null;
     const check = async () => {
@@ -159,7 +178,7 @@ export function useGiChatEngine({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [requestedVoiceProfileId]);
+  }, [requestedVoiceProfileId, usesStandardVoice]);
 
   // Human-readable name of the active cloned voice, for the read-only
   // indicator. getFullActiveVoiceProfile() returns the stored profile
@@ -265,11 +284,13 @@ export function useGiChatEngine({
   // params — gates the controls so a fresh deployment with no cloned voice
   // can't reach useLiveSpeech's "Go to the Inference page first" dead end
   // (gi mode has no Inference page to go to).
-  const capacityBlocksConversation = requestedVoiceProfileId
+  const capacityBlocksConversation = requestedVoiceProfileId && !usesStandardVoice
     ? voiceCapacityBlocksConversation(voiceCapacity)
     : false;
   const voiceReady = refParams !== null && !voiceMismatch && !capacityBlocksConversation;
-  const capacityMessage = requestedVoiceProfileId ? voiceCapacityNotice(voiceCapacity) : '';
+  const capacityMessage = requestedVoiceProfileId && !usesStandardVoice
+    ? voiceCapacityNotice(voiceCapacity)
+    : '';
 
   return {
     status: toGiStatus(liveSpeech.phase, { hasError: Boolean(error) }),
@@ -277,7 +298,9 @@ export function useGiChatEngine({
     error,
     voiceActive: isVoiceActive(liveSpeech.phase),
     responseBusy: isResponseBusy(liveSpeech.phase),
-    connecting: !backendQueryable || Boolean(requestedVoiceProfileId && voiceCapacity.state === 'CHECKING'),
+    connecting: !backendReadyForVoice || Boolean(
+      requestedVoiceProfileId && !usesStandardVoice && voiceCapacity.state === 'CHECKING'
+    ),
     micMuted: !liveSpeech.isMicInputEnabled,
     toggleMute,
     startConversation: liveSpeech.start,
@@ -290,7 +313,7 @@ export function useGiChatEngine({
     sendText: liveSpeech.sendTextMessage,
     canSendText:
       voiceReady
-      && backendQueryable
+      && backendReadyForVoice
       && !['connecting', 'thinking', 'stopping'].includes(liveSpeech.phase),
     activeVoiceLabel,
     voiceReady,

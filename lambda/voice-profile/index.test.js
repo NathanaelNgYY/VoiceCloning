@@ -534,3 +534,361 @@ test('voice profile internal rejects requests with missing or wrong shared secre
   assert.equal(response.statusCode, 403);
   assert.match(JSON.parse(response.body).error, /Forbidden/u);
 });
+
+test('a saved voice profile records the lecturer who owns it, inheriting it from the training run', async () => {
+  const written = new Map();
+  const handler = createHandler({
+    readObject: async () => null,
+    writeObject: async (key, body) => { written.set(key, JSON.parse(body.toString('utf-8'))); },
+    warmReferenceAudio: async () => {},
+    now: () => '2026-08-24T00:00:00.000Z',
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/voice-profile/activate',
+    body: JSON.stringify({
+      voiceProfileId: 'alice-tan_calm-v1',
+      displayName: 'alice-tan_calm',
+      gptKey: 'models/user-models/gpt/alice-tan_calm-e15.ckpt',
+      sovitsKey: 'models/user-models/sovits/alice-tan_calm_e20_s260.pth',
+      ref_audio_path: 'training/datasets/alice-tan_calm/denoised/ref.wav',
+      metadata: { training: { ownerEmail: 'Alice.Tan@NTU.edu.sg' } },
+    }),
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).ownerEmail, 'alice.tan@ntu.edu.sg');
+  assert.equal(written.get('voice-profiles/alice-tan_calm-v1.json').ownerEmail, 'alice.tan@ntu.edu.sg');
+});
+
+test('a non-NTU owner is not recorded, so ownership can never point outside the university', async () => {
+  const written = new Map();
+  const handler = createHandler({
+    readObject: async () => null,
+    writeObject: async (key, body) => { written.set(key, JSON.parse(body.toString('utf-8'))); },
+    warmReferenceAudio: async () => {},
+    now: () => '2026-08-24T00:00:00.000Z',
+  });
+
+  await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/voice-profile/activate',
+    body: JSON.stringify({
+      voiceProfileId: 'demo-v1',
+      displayName: 'demo',
+      gptKey: 'g.ckpt',
+      sovitsKey: 's.pth',
+      ref_audio_path: 'ref.wav',
+      ownerEmail: 'someone@gmail.com',
+    }),
+  });
+
+  assert.equal('ownerEmail' in written.get('voice-profiles/demo-v1.json'), false);
+});
+
+// --- GET /api/voice-profile/mine -------------------------------------------
+
+// What the model files say exists. cs-nathanael-ng is trained but has no saved
+// profile — the case that shipped broken.
+const TRAINED_VOICES = ['alice-tan', 'alice-tan_2', 'DeanVoice', 'Obama', 'cs-nathanael-ng'];
+
+const STORED_PROFILES = {
+  // Saved after ownerEmail existed.
+  'voice-profiles/alice-tan-v1.json': {
+    voiceProfileId: 'alice-tan-v1', displayName: 'alice-tan',
+    ownerEmail: 'alice.tan@ntu.edu.sg', updatedAt: '2026-08-20T00:00:00.000Z',
+  },
+  'voice-profiles/alice-tan_2-v1.json': {
+    voiceProfileId: 'alice-tan_2-v1', displayName: 'alice-tan_2',
+    ownerEmail: 'alice.tan@ntu.edu.sg', updatedAt: '2026-08-21T00:00:00.000Z',
+  },
+  // Legacy: no ownerEmail at all, ownership must fall back to the name rule.
+  'voice-profiles/deanvoice-v1.json': {
+    voiceProfileId: 'deanvoice-v1', displayName: 'DeanVoice',
+    updatedAt: '2026-06-24T00:00:00.000Z',
+  },
+  'voice-profiles/obama-v1.json': {
+    voiceProfileId: 'obama-v1', displayName: 'Obama', updatedAt: '2026-05-01T00:00:00.000Z',
+  },
+};
+
+function mineHandler(identity, { env = {}, trained = TRAINED_VOICES } = {}) {
+  return createHandler({
+    authGuard: { authorize: async () => identity },
+    listVoiceNames: async () => trained,
+    listProfileObjects: async () => [
+      ...Object.keys(STORED_PROFILES).map((key) => ({ key })),
+      // The shared active pointer lives in the same prefix and is not a voice.
+      { key: 'voice-profiles/active.json' },
+    ],
+    readObject: async (key) => (STORED_PROFILES[key]
+      ? Buffer.from(JSON.stringify(STORED_PROFILES[key]), 'utf-8')
+      : null),
+    ...env,
+  });
+}
+
+function mineEvent(query = {}) {
+  return {
+    requestContext: { http: { method: 'GET' } },
+    rawPath: '/api/voice-profile/mine',
+    queryStringParameters: query,
+  };
+}
+
+test('a lecturer sees only the voices they own', async () => {
+  const response = await mineHandler({ email: 'Alice.Tan@ntu.edu.sg', oid: 'oid-alice' })(mineEvent());
+  assert.equal(response.statusCode, 200);
+  const body = JSON.parse(response.body);
+
+  assert.deepEqual(body.voices.map((voice) => voice.voiceProfileId), ['alice-tan-v1', 'alice-tan_2-v1']);
+  assert.equal(body.voices.every((voice) => voice.hasSavedProfile), true);
+  assert.equal(body.scope, 'mine');
+  assert.equal(body.isAdmin, false);
+  assert.equal(body.email, 'alice.tan@ntu.edu.sg');
+});
+
+test('a legacy profile with no ownerEmail is matched by its name', async () => {
+  const response = await mineHandler({ email: 'josephsung@ntu.edu.sg', oid: 'oid-dean' })(mineEvent());
+  const body = JSON.parse(response.body);
+
+  assert.deepEqual(body.voices.map((voice) => voice.displayName), ['DeanVoice']);
+  assert.equal(body.voices[0].isMine, true);
+});
+
+test('a lecturer with no voices gets an empty list, not an error', async () => {
+  const response = await mineHandler({ email: 'newcomer@ntu.edu.sg', oid: 'oid-new' })(mineEvent());
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).voices, []);
+});
+
+test('a freshly trained voice is listed even though no profile has been saved for it', async () => {
+  // Training writes models and nothing else. Listing only voice-profiles/ hid
+  // every new voice until the lecturer opened the TTS page — the bug this covers.
+  const response = await mineHandler({
+    email: 'CS-NATHANAEL.NG@assoc.main.ntu.edu.sg', oid: 'oid-nat',
+  })(mineEvent());
+
+  const voices = JSON.parse(response.body).voices;
+  assert.deepEqual(voices.map((voice) => voice.displayName), ['cs-nathanael-ng']);
+  assert.equal(voices[0].hasSavedProfile, false);
+  assert.equal(voices[0].voiceProfileId, 'cs-nathanael-ng-v1', 'id is derived when no profile exists');
+  assert.equal(voices[0].isMine, true);
+});
+
+test('a saved profile and its models are one voice, not two', async () => {
+  const response = await mineHandler({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' })(mineEvent());
+  const names = JSON.parse(response.body).voices.map((voice) => voice.displayName);
+  assert.deepEqual(names, ['alice-tan', 'alice-tan_2']);
+});
+
+test('a saved profile whose models are gone is still listed', async () => {
+  const response = await mineHandler(
+    { email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' },
+    { trained: [] },
+  )(mineEvent());
+  assert.deepEqual(
+    JSON.parse(response.body).voices.map((voice) => voice.displayName),
+    ['alice-tan', 'alice-tan_2'],
+  );
+});
+
+test('scope=all is inert for a lecturer and honoured for an admin', async () => {
+  const lecturer = await mineHandler({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' })(
+    mineEvent({ scope: 'all' }),
+  );
+  const lecturerBody = JSON.parse(lecturer.body);
+  assert.equal(lecturerBody.scope, 'mine', 'asking for all must not grant it');
+  assert.equal(lecturerBody.voices.length, 2);
+
+  const admin = await mineHandler({ email: 'dev@ntu.edu.sg', oid: 'oid-dev', roles: ['Supervisor'] })(
+    mineEvent({ scope: 'all' }),
+  );
+  const adminBody = JSON.parse(admin.body);
+  assert.equal(adminBody.isAdmin, true);
+  assert.equal(adminBody.scope, 'all');
+  assert.deepEqual(
+    adminBody.voices.map((voice) => voice.voiceProfileId).sort(),
+    ['alice-tan-v1', 'alice-tan_2-v1', 'cs-nathanael-ng-v1', 'deanvoice-v1', 'obama-v1'],
+  );
+  assert.equal(adminBody.voices.every((voice) => voice.isMine === false), true, 'none are the admin own');
+});
+
+test('an admin still defaults to their own voices until they ask for all', async () => {
+  const response = await mineHandler({ email: 'dev@ntu.edu.sg', oid: 'oid-dev', roles: ['Supervisor'] })(mineEvent());
+  const body = JSON.parse(response.body);
+  assert.equal(body.isAdmin, true);
+  assert.equal(body.scope, 'mine');
+  assert.deepEqual(body.voices, []);
+});
+
+test('the shared active.json pointer is not listed as a voice', async () => {
+  const response = await mineHandler({ email: 'dev@ntu.edu.sg', oid: 'oid-dev', roles: ['Supervisor'] })(
+    mineEvent({ scope: 'all' }),
+  );
+  const ids = JSON.parse(response.body).voices.map((voice) => voice.voiceProfileId);
+  assert.equal(ids.includes(undefined), false);
+  assert.equal(ids.includes('active-v1'), false, 'the shared pointer is not a voice');
+  assert.equal(ids.length, 5);
+});
+
+test('an unreadable record does not hide the rest', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => ({ email: 'alice.tan@ntu.edu.sg', oid: 'oid-alice' }) },
+    listVoiceNames: async () => [],
+    listProfileObjects: async () => [
+      { key: 'voice-profiles/broken.json' },
+      { key: 'voice-profiles/alice-tan-v1.json' },
+    ],
+    readObject: async (key) => (key === 'voice-profiles/broken.json'
+      ? Buffer.from('{not json', 'utf-8')
+      : Buffer.from(JSON.stringify(STORED_PROFILES['voice-profiles/alice-tan-v1.json']), 'utf-8')),
+  });
+
+  const response = await handler(mineEvent());
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).voices.map((voice) => voice.displayName), ['alice-tan']);
+});
+
+test('an unauthenticated caller is refused before any storage is read', async () => {
+  let listed = false;
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('no token'); } },
+    listVoiceNames: async () => { listed = true; return []; },
+    listProfileObjects: async () => { listed = true; return []; },
+    readObject: async () => null,
+  });
+
+  const response = await handler(mineEvent());
+  assert.equal(response.statusCode, 401);
+  assert.equal(listed, false);
+});
+
+// --- POST /api/voice-profile/ensure ----------------------------------------
+
+const SELECTION = {
+  ref_audio_path: 'training/datasets/cs-nathanael-ng/denoised/clip.wav',
+  aux_ref_audio_paths: ['training/datasets/cs-nathanael-ng/denoised/aux.wav'],
+  prompt_text: 'a lot of technology.',
+};
+
+function ensureHandler(identity, overrides = {}) {
+  return createHandler({
+    authGuard: { authorize: async () => identity },
+    readObject: async () => null,
+    findBestModels: async () => ({
+      gptKey: 'models/user-models/gpt/cs-nathanael-ng-e25.ckpt',
+      sovitsKey: 'models/user-models/sovits/cs-nathanael-ng_e20_s2220.pth',
+    }),
+    resolveReferences: async () => SELECTION,
+    persistProfile: async () => true,
+    ...overrides,
+  });
+}
+
+function ensureEvent(body) {
+  return {
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/voice-profile/ensure',
+    body: JSON.stringify(body),
+  };
+}
+
+const NAT = { email: 'CS-NATHANAEL.NG@assoc.main.ntu.edu.sg', oid: 'oid-nat' };
+
+test('ensure builds a saved profile for a trained voice that has none', async () => {
+  const written = [];
+  const handler = ensureHandler(NAT, {
+    persistProfile: async (profile, selection) => { written.push({ profile, selection }); return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    voiceProfileId: 'cs-nathanael-ng-v1',
+    displayName: 'cs-nathanael-ng',
+    created: true,
+  });
+
+  assert.equal(written.length, 1);
+  const { profile } = written[0];
+  assert.equal(profile.voiceProfileId, 'cs-nathanael-ng-v1');
+  assert.equal(profile.ownerEmail, 'cs-nathanael.ng@assoc.main.ntu.edu.sg', 'the owner is recorded');
+  assert.equal(profile.gptKey, 'models/user-models/gpt/cs-nathanael-ng-e25.ckpt');
+  assert.equal(profile.ref_audio_path, SELECTION.ref_audio_path);
+});
+
+test('ensure is idempotent — an existing profile is returned, not rebuilt', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, {
+    readObject: async () => Buffer.from(JSON.stringify({
+      voiceProfileId: 'cs-nathanael-ng-v1', displayName: 'cs-nathanael-ng',
+    }), 'utf-8'),
+    persistProfile: async () => { persisted += 1; return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).created, false);
+  assert.equal(persisted, 0, 'an existing profile must not be overwritten');
+});
+
+test('ensure refuses a voice the caller does not own', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, { persistProfile: async () => { persisted += 1; return true; } });
+
+  for (const voiceName of ['DeanVoice', 'alice-tan', 'cs-nathanael-ng2']) {
+    const response = await handler(ensureEvent({ voiceName }));
+    assert.equal(response.statusCode, 403, `${voiceName} must be refused`);
+  }
+  assert.equal(persisted, 0);
+});
+
+test('ensure refuses a numbered copy the naming rule cannot produce', async () => {
+  const handler = ensureHandler(NAT);
+  // copies start at _2; _1 is never a name this email can own
+  assert.equal((await handler(ensureEvent({ voiceName: 'cs-nathanael-ng_1' }))).statusCode, 403);
+  assert.equal((await handler(ensureEvent({ voiceName: 'cs-nathanael-ng_2' }))).statusCode, 200);
+});
+
+test('ensure rejects an unsafe voice name before doing anything', async () => {
+  const handler = ensureHandler(NAT);
+  for (const voiceName of ['', '../escape', 'has space']) {
+    const response = await handler(ensureEvent({ voiceName }));
+    assert.equal(response.statusCode, 400, `${voiceName} must be rejected`);
+  }
+});
+
+test('ensure reports a voice with no trained models rather than writing a stub', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, {
+    findBestModels: async () => null,
+    persistProfile: async () => { persisted += 1; return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 404);
+  assert.equal(persisted, 0);
+});
+
+test('ensure refuses to write a profile with no reference audio', async () => {
+  let persisted = 0;
+  const handler = ensureHandler(NAT, {
+    resolveReferences: async () => ({}),
+    persistProfile: async () => { persisted += 1; return true; },
+  });
+
+  const response = await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }));
+  assert.equal(response.statusCode, 409);
+  assert.match(JSON.parse(response.body).error, /reference clip/u);
+  assert.equal(persisted, 0, 'a voice with nothing to speak from must not be half-created');
+});
+
+test('ensure refuses an unauthenticated caller', async () => {
+  const handler = createHandler({
+    authGuard: { authorize: async () => { throw new Error('no token'); } },
+    persistProfile: async () => { throw new Error('must not be reached'); },
+  });
+  assert.equal((await handler(ensureEvent({ voiceName: 'cs-nathanael-ng' }))).statusCode, 401);
+});

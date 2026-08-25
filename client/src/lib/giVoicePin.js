@@ -39,3 +39,18 @@ export function matchesPinnedVoice(profile, pinnedKey) {
     (candidate) => normalizeVoiceKey(candidate) === pinnedKey
   );
 }
+
+/**
+ * A human-readable name for whichever voice is in force.
+ *
+ * A stock voice's id is an opaque ElevenLabs handle, so normalising it the way a
+ * cloned voice's name is normalised produces gibberish
+ * ("elevenlabsxb7hh8msujpsbsdyk0k2"). The lecture site has no voice catalogue to
+ * look the real name up in, so it says what the voice *is* instead.
+ */
+export function describePinnedVoice(voiceProfileId) {
+  const id = String(voiceProfileId || '').trim();
+  if (!id) return '';
+  if (id.toLowerCase().startsWith('elevenlabs:')) return 'standard voice';
+  return normalizeVoiceKey(id);
+}

@@ -266,6 +266,13 @@ export function startTraining(params) {
   return api.post('/train', params);
 }
 
+// The run's name is allocated by the server, not guessed here: the audio is
+// uploaded to training/datasets/<expName>/raw/ before training starts, so the
+// name has to be settled first and must never land on an existing voice.
+export function allocateTrainingVoiceName(email) {
+  return api.post('/train/next-name', { email });
+}
+
 export function stopTraining(sessionId) {
   return api.post('/train/stop', { sessionId });
 }
@@ -375,6 +382,20 @@ export function prepareVoiceCapacity(voiceProfileId) {
   return api.post('/voice-profile/capacity', { voiceProfileId });
 }
 
+// The voices the signed-in lecturer owns. The server resolves ownership from
+// the token's email — never from anything the browser sends — and only honours
+// scope=all for an admin.
+export function getMyVoiceProfiles(scope = 'mine') {
+  return api.get('/voice-profile/mine', { params: scope === 'all' ? { scope: 'all' } : {} });
+}
+
+// Creates the saved profile record for a trained voice that has none. Synthesis
+// resolves a voice per request by id and reads that record, so without it a
+// freshly trained voice cannot be spoken at all.
+export function ensureVoiceProfile(voiceName) {
+  return api.post('/voice-profile/ensure', { voiceName });
+}
+
 export function getVoiceProfileConfigs(voiceProfileId) {
   return api.get(`/voice-profile/configs/${encodeURIComponent(voiceProfileId)}`);
 }
@@ -459,8 +480,10 @@ export async function synthesizeSentence(params, { replyToken = '' } = {}) {
     throw responseError(message || `Request failed with status ${res.status}`, res.status);
   }
 
+  // A standard (ElevenLabs) voice returns mp3, the GPU returns wav. Assuming wav
+  // here made the mp3 clips silently unplayable in some browsers.
   return {
-    blob: new Blob([res.data], { type: 'audio/wav' }),
+    blob: new Blob([res.data], { type: res.headers?.['content-type'] || 'audio/wav' }),
   };
 }
 

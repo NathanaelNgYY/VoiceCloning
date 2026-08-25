@@ -106,6 +106,17 @@ function buildInitialState(videoUrl, topics, size) {
   }, {});
 }
 
+/** Same keys, same status and src for each — i.e. nothing worth re-rendering for. */
+function sameThumbnails(a, b) {
+  const keys = Object.keys(b);
+  if (Object.keys(a).length !== keys.length) return false;
+  return keys.every((key) => {
+    const left = a[key];
+    const right = b[key];
+    return Boolean(left) && left.status === right.status && left.src === right.src;
+  });
+}
+
 export function useVideoTopicThumbnails(
   videoUrl,
   topics,
@@ -118,7 +129,13 @@ export function useVideoTopicThumbnails(
 
   useEffect(() => {
     const initialState = buildInitialState(videoUrl, topics, { width, height });
-    setThumbnails(initialState);
+    // Only publish a genuinely different map. `topics` is an array the caller
+    // owns, so a caller that rebuilds it each render (`course?.topics ?? []` is
+    // the easy way to do that by accident) re-runs this effect every render; an
+    // unconditional set would then re-render and loop until React tears the tree
+    // down. Bailing on an equal state makes that a wasted render instead of a
+    // blank page.
+    setThumbnails((current) => (sameThumbnails(current, initialState) ? current : initialState));
 
     if (!videoUrl || topics.length === 0) {
       return undefined;

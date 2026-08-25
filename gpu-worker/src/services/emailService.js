@@ -23,17 +23,18 @@ function createTransport() {
   });
 }
 
-export async function sendTrainingCompleteEmail(email, expName) {
-  const transport = createTransport();
-  const from = process.env.EMAIL_FROM || process.env.EMAIL_USER;
+export async function sendTrainingCompleteEmail(email, expName, {
+  transport = createTransport(),
+  fromEmail = process.env.EMAIL_FROM || process.env.EMAIL_USER,
+} = {}) {
 
-  if (!transport || !from) {
+  if (!transport || !fromEmail) {
     console.warn('[gpu-worker] EMAIL_USER/EMAIL_PASS not configured — skipping training complete email');
     return;
   }
 
   await transport.sendMail({
-    from,
+    from: fromEmail,
     to: email,
     subject: `Your voice model is ready: ${expName}`,
     text: [

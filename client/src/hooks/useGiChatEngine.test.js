@@ -53,3 +53,13 @@ test("lecture voice capacity is checked before conversation controls unlock", ()
   assert.match(engineSource, /voiceCapacityBlocksConversation\(voiceCapacity\)/);
   assert.match(engineSource, /voiceReady = refParams !== null && !voiceMismatch && !capacityBlocksConversation/);
 });
+
+test("faculty-published voice wins and a stock voice bypasses GPU capacity", () => {
+  assert.match(
+    engineSource,
+    /publishedVoiceProfileId \|\| voiceProfileId \|\| buildPinnedVoiceProfileId/,
+  );
+  assert.match(engineSource, /startsWith\('elevenlabs:'\)/);
+  assert.match(engineSource, /if \(!requestedVoiceProfileId \|\| usesStandardVoice\) return undefined;/);
+  assert.match(engineSource, /backendReadyForVoice = usesStandardVoice \|\| backendQueryable/);
+});

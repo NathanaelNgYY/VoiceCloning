@@ -124,6 +124,7 @@ function isPlainObject(value) {
 export function buildTrainingRunMetadata({
   sessionId = '',
   expName = '',
+  ownerEmail = '',
   startedAt = '',
   completedAt = '',
   config = {},
@@ -134,6 +135,9 @@ export function buildTrainingRunMetadata({
     schemaVersion: 1,
     sessionId,
     expName,
+    // The lecturer this voice belongs to. Carried into the saved voice profile
+    // so a signed-in lecturer can be matched to their voice.
+    ...(ownerEmail ? { ownerEmail } : {}),
     engineVersion: 'v2ProPlus',
     startedAt,
     completedAt,
@@ -155,6 +159,7 @@ export function buildTrainingRunMetadata({
 export async function runPipelineWithS3(sessionId, {
   expName,
   email = '',
+  ownerEmail = '',
   s3Prefix: rawAudioPrefix,
   batchSize = 2,
   sovitsEpochs = 8,
@@ -465,6 +470,7 @@ export async function runPipelineWithS3(sessionId, {
     fs.writeFileSync(metadataPath, JSON.stringify(buildTrainingRunMetadata({
       sessionId,
       expName,
+      ownerEmail,
       startedAt,
       completedAt: new Date().toISOString(),
       config: {

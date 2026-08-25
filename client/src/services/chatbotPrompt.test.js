@@ -65,6 +65,25 @@ test('a lesson runs the assistant deployed for its own slug', () => {
   assert.match(source, /category=\{slug\}/);
 });
 
+test("the engine takes the lesson's category as a parameter", () => {
+  const source = readFileSync(join(SRC_DIR, 'hooks', 'useGiChatEngine.js'), 'utf-8');
+
+  // The category has to be declared, not just used: forwarding an undeclared
+  // `category` to useDeployedChatbotPrompt throws a ReferenceError on render and
+  // takes the whole lecture page down with it, which is how the shipped bundle
+  // rendered nothing at all.
+  assert.match(
+    source,
+    /export function useGiChatEngine\(\{[^}]*category[^}]*\} = \{\}\)/,
+  );
+  assert.match(source, /useDeployedChatbotPrompt\(\{ category \}\)/);
+
+  // And the panel between the lesson page and the engine has to pass it along.
+  const panel = readFileSync(join(SRC_DIR, 'components', 'gi', 'GiChatPanel.jsx'), 'utf-8');
+  assert.match(panel, /export function GiChatPanel\(\{[^}]*category[^}]*\}\)/);
+  assert.match(panel, /useGiChatEngine\(\{[^}]*category[^}]*\}\)/);
+});
+
 test('the editor scopes its browser-local draft to the lecture being edited', () => {
   const source = readFileSync(join(SRC_DIR, 'pages', 'LivePage.jsx'), 'utf-8');
 
@@ -82,6 +101,12 @@ test('the editor scopes its browser-local draft to the lecture being edited', ()
   }
 
   // And the deploy publishes to the selected lecture, not to whatever was last
-  // loaded.
-  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,200}category: chatbotCategory,/);
+  // loaded. The window is generous because the call also carries the published
+  // voice and the comment explaining it.
+  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,600}category: chatbotCategory,/);
+
+  // The lecturer's selected voice is published with the lecture; without this
+  // the lecture site keeps whatever its build pinned, so the lecturer would hear
+  // one voice while approving a lecture that speaks in another.
+  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,600}voiceProfileId: speakingVoiceProfileId,/);
 });

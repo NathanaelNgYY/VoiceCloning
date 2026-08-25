@@ -21,6 +21,9 @@
 // recoverable history of the one before it.
 import { uploadBuffer, getObject, listObjects } from '../shared/s3.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
+import { createLiveAuthGuard } from '../shared/liveAuth.js';
+import { isSafePathSegment } from '../shared/paths.js';
+import { parseElevenLabsVoiceId } from '../shared/elevenLabs.js';
 
 // The pre-category object: one global prompt for every frontend. Still read as
 // the fallback below, so the apps deployed before categories existed keep
@@ -100,10 +103,21 @@ export function categoryFromKey(key) {
   return isValidCategory(id) ? id : '';
 }
 
+// The voice a published lecture speaks in. Two shapes only: a stock voice
+// (`elevenlabs:<id>`), or a trained voice's saved-profile id, which lands in an
+// S3 key on resolution and so is held to the same path-safety rule as a category.
+export function normalizePublishedVoiceProfileId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (parseElevenLabsVoiceId(raw)) return raw;
+  return isSafePathSegment(raw) ? raw : null;
+}
+
 export function createHandler({
   readObject = getObject,
   writeObject = uploadBuffer,
   listStoredObjects = listObjects,
+  authGuard = createLiveAuthGuard(),
   now = () => new Date().toISOString(),
 } = {}) {
   return async function handler(event) {
@@ -156,7 +170,7 @@ export function createHandler({
 
       if (!stored) {
         // Nothing deployed yet — the frontend falls back to its built-in default.
-        return ok({ category, prompt: '', documents: [], updatedAt: '', updatedBy: '' }, {}, event);
+        return ok({ category, prompt: '', documents: [], voiceProfileId: '', updatedAt: '', updatedBy: '' }, {}, event);
       }
 
       return ok({
@@ -165,6 +179,10 @@ export function createHandler({
         // schemaVersion 1 records predate uploaded documents and have no such
         // field; they read back as a prompt with no reference material.
         documents: normalizeDocuments(stored.documents),
+        // schemaVersion 4 adds the voice. Older records have none, and read back
+        // as '' — the lecture site then keeps its build-time pin, which is
+        // exactly the behaviour it had before lectures could carry a voice.
+        voiceProfileId: typeof stored.voiceProfileId === 'string' ? stored.voiceProfileId : '',
         updatedAt: stored.updatedAt || '',
         updatedBy: stored.updatedBy || '',
       }, {}, event);
@@ -174,15 +192,23 @@ export function createHandler({
       return err(405, 'Method not allowed', event);
     }
 
-    // Deliberately unauthenticated, unchanged from before categories. The editor
-    // lives only on the text-chat kiosk build, and the operator's decision is
-    // that anyone who can reach that page may change the instructions.
+    // Authenticated as of the moment a publish could carry a voice. It was
+    // deliberately open before — the editor lived only on a kiosk build with no
+    // sign-in — but a published voice can name a stock voice that bills per
+    // character, so an open endpoint stopped being only a content-integrity
+    // question and became a billing one. The faculty site signs in with Entra,
+    // so the token is already there to send.
     //
-    // Categories raise the stakes of that decision rather than settling it: a
-    // deploy can now overwrite a *different* lecturer's assistant, not just the
-    // single shared one. The faculty site does sign in now (Entra, faculty email
-    // domains) and `../shared/liveAuth.js` can verify that token here — wire it
-    // up before this leaves staging.
+    // GET stays open: the lecture site reads its assistant at startup, and
+    // putting an auth dependency in front of that would trade a real risk for a
+    // startup failure mode.
+    if (!authGuard) return err(503, 'Publishing is not configured', event);
+    try {
+      await authGuard.authorize(event);
+    } catch {
+      return err(401, 'Sign in to publish.', event);
+    }
+
     let body;
     try {
       body = parseJsonBody(event);
@@ -217,9 +243,18 @@ export function createHandler({
       return err(400, 'prompt or documents is required', event);
     }
 
-    // schemaVersion 3 adds `category`. It is stored as well as keyed on so a raw
-    // object is self-describing when read out of the bucket.
-    const record = { schemaVersion: 3, category, prompt, documents, updatedAt: now() };
+    // Absent means "this lecture pins no voice", which is a real choice: the
+    // lecture site then falls back to its build-time pin. Rejected rather than
+    // ignored when malformed, so a typo cannot silently publish a lecture that
+    // speaks in the wrong voice.
+    const voiceProfileId = normalizePublishedVoiceProfileId(body?.voiceProfileId);
+    if (voiceProfileId === null) {
+      return err(400, 'voiceProfileId must be a saved profile id or elevenlabs:<voiceId>', event);
+    }
+
+    // schemaVersion 4 adds `voiceProfileId`; 3 added `category`. Stored as well
+    // as keyed on so a raw object is self-describing when read out of the bucket.
+    const record = { schemaVersion: 4, category, prompt, documents, voiceProfileId, updatedAt: now() };
     try {
       await writeObject(
         categoryKey(category),
