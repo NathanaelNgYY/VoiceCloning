@@ -5,6 +5,7 @@ import { inferencePost } from '../shared/gpuWorker.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { buildVoiceProfileId, isNtuEmail, normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
 import { bestModelsForVoice, listTrainedVoiceNames } from '../shared/trainedVoices.js';
+import { listElevenLabsVoices } from '../shared/elevenLabs.js';
 import {
   persistSavedProfileReferenceSelection,
   resolveSavedProfileReferenceSelection,
@@ -238,6 +239,7 @@ export function createHandler({
     ref_audio_path: profile.ref_audio_path,
     aux_ref_audio_paths: profile.aux_ref_audio_paths || [],
   }),
+  listStandardVoices = listElevenLabsVoices,
   now = () => new Date().toISOString(),
   internalAuthHeaderName = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_NAME || '',
   internalAuthHeaderValue = process.env.VOICE_PROFILE_INTERNAL_AUTH_HEADER_VALUE || '',
@@ -316,7 +318,19 @@ export function createHandler({
         }
 
         voices.sort((left, right) => String(left.displayName || '').localeCompare(String(right.displayName || '')));
-        return ok({ email: normalizeEmail(email), isAdmin, scope, voices }, {}, event);
+
+        // Stock voices are appended after the sort, not merged into it: they are
+        // owned by nobody, so the isMine filter above would drop them from the
+        // 'mine' scope — which is the scope every lecturer actually sees. They
+        // are offered to everyone alike, in both scopes.
+        const standardVoices = await listStandardVoices();
+        return ok({
+          email: normalizeEmail(email),
+          isAdmin,
+          scope,
+          voices,
+          standardVoices,
+        }, {}, event);
       }
 
       // Synthesis resolves a voice per request by id, which is the only thing

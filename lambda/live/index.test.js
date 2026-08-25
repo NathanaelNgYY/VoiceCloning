@@ -380,3 +380,79 @@ test('a barge-in cancel is authenticated too', async () => {
   assert.equal(response.statusCode, 401);
   assert.deepEqual(calls, []);
 });
+
+test('a standard voice synthesizes without touching the GPU or resolving a profile', async () => {
+  const calls = [];
+  const handler = createHandler({
+    now: () => 0,
+    resolveSynthesisBody: async () => {
+      throw new Error('voice profile resolution must not run for a standard voice');
+    },
+    postBinary: async () => {
+      throw new Error('the GPU worker must not be called for a standard voice');
+    },
+    synthesizeStandardVoice: async (body) => {
+      calls.push(body);
+      return { buffer: Buffer.from('ID3'), contentType: 'audio/mpeg', characterCount: 6 };
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    body: JSON.stringify({ text: 'Hello.', voiceProfileId: 'elevenlabs:v1' }),
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers['Content-Type'], 'audio/mpeg');
+  assert.equal(response.headers['X-VCS-Voice-Provider'], 'elevenlabs');
+  assert.equal(response.headers['X-VCS-Voice-Characters'], '6');
+  assert.equal(Buffer.from(response.body, 'base64').toString(), 'ID3');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].voiceProfileId, 'elevenlabs:v1');
+});
+
+test('a standard-voice failure keeps its upstream status instead of becoming a 500', async () => {
+  const handler = createHandler({
+    now: () => 0,
+    resolveSynthesisBody: async () => { throw new Error('must not run'); },
+    postBinary: async () => { throw new Error('must not run'); },
+    synthesizeStandardVoice: async () => {
+      const error = new Error('Standard voice quota reached. Try again later.');
+      error.statusCode = 429;
+      throw error;
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    body: JSON.stringify({ text: 'Hello.', voiceProfileId: 'elevenlabs:v1' }),
+  });
+
+  assert.equal(response.statusCode, 429);
+});
+
+test('a cloned voice still goes to the GPU worker', async () => {
+  let gpuCalls = 0;
+  const handler = createHandler({
+    now: () => 0,
+    resolveSynthesisBody: async (body) => ({ ...body, ref_audio_path: 'ref.wav' }),
+    postBinary: async () => {
+      gpuCalls += 1;
+      return { buffer: Buffer.from('RIFF'), contentType: 'audio/wav' };
+    },
+    synthesizeStandardVoice: async () => {
+      throw new Error('a cloned voice must not go to ElevenLabs');
+    },
+  });
+
+  const response = await handler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/live/tts-sentence',
+    body: JSON.stringify({ text: 'Hello.', voiceProfileId: 'deanvoice-v1' }),
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(gpuCalls, 1);
+});

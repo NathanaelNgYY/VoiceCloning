@@ -466,8 +466,10 @@ export async function synthesizeSentence(params, { replyToken = '' } = {}) {
     throw responseError(message || `Request failed with status ${res.status}`, res.status);
   }
 
+  // A standard (ElevenLabs) voice returns mp3, the GPU returns wav. Assuming wav
+  // here made the mp3 clips silently unplayable in some browsers.
   return {
-    blob: new Blob([res.data], { type: 'audio/wav' }),
+    blob: new Blob([res.data], { type: res.headers?.['content-type'] || 'audio/wav' }),
   };
 }
 

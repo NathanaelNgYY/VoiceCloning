@@ -293,6 +293,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // their signed-in email. `scope` is a request, not a permission — the server
   // downgrades it to 'mine' for anyone who is not an admin.
   const [myVoices, setMyVoices] = useState([]);
+  // Stock ElevenLabs voices, offered to every lecturer alongside their own. They
+  // are tracked separately from `selectedPersonKey` on purpose: that key must
+  // name a real pair of GPT-SoVITS weights, and a stock voice has none.
+  const [standardVoices, setStandardVoices] = useState([]);
+  const [selectedStandardVoiceId, setSelectedStandardVoiceId] = useState('');
   const [myVoicesScope, setMyVoicesScope] = useState('mine');
   const [myVoicesAdmin, setMyVoicesAdmin] = useState(false);
   const [myVoicesLoading, setMyVoicesLoading] = useState(false);
@@ -517,6 +522,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // whichever GPU instance serves the call — references included. Waiting for
   // one instance's status poll to report it loaded is meaningless behind a load
   // balancer, and never converges once the group holds more than one instance.
+  // Declared ahead of the speaking-voice label below, which has to name a stock
+  // voice when one is picked.
+  const standardVoice = useMemo(
+    () => standardVoices.find((voice) => voice.voiceProfileId === selectedStandardVoiceId) || null,
+    [standardVoices, selectedStandardVoiceId],
+  );
+  const usingStandardVoice = Boolean(standardVoice);
+
   const selectedVoiceResolvesPerRequest = canEditInstructions
     && Boolean(selectedVoiceProfileId)
     && myVoices.some((voice) => (
@@ -526,9 +539,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // loaded-model report describes some arbitrary instance rather than this
   // chat, so naming that voice would be actively wrong; elsewhere the loaded
   // model is still the honest answer and the label is unchanged.
-  const speakingProfile = selectedVoiceResolvesPerRequest
-    ? (selectedProfile || loadedProfile)
-    : (loadedProfile || selectedProfile);
+  const speakingProfile = usingStandardVoice
+    ? standardVoice
+    : selectedVoiceResolvesPerRequest
+      ? (selectedProfile || loadedProfile)
+      : (loadedProfile || selectedProfile);
 
   const liveLanguage = normalizeLiveLanguage(selectedLanguage);
   const liveLanguageConfig = getLiveLanguageConfig(liveLanguage);
@@ -581,6 +596,18 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     activeVoiceProfile?.updatedAt,
     selectedProfile?.updatedAt,
   ]);
+
+  // A stock voice is addressed purely by id — no reference clip, no weights.
+  // The empty ref params keep the snapshot shape the conversation hook expects,
+  // and the null voice model is deliberate: `selectedGPT`/`selectedSoVITS` still
+  // hold whatever cloned voice was selected before, and passing those along
+  // would pin the wrong model onto an ElevenLabs request.
+  const standardVoiceRefParams = useMemo(() => ({}), []);
+  const speakingVoiceProfileId = usingStandardVoice
+    ? standardVoice.voiceProfileId
+    : selectedVoiceProfileId;
+  const speakingRefParams = usingStandardVoice ? standardVoiceRefParams : liveRefParams;
+  const speakingVoiceModel = usingStandardVoice ? null : liveVoiceModel;
   const currentAutoSyncFingerprint = useMemo(() => createAutoVoiceProfileSyncFingerprint({
     sourceKey: selectedExpName,
     selectedGPT,
@@ -690,13 +717,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   }), [selectedProfile, liveLanguage, topK, topP, temperature, repPenalty, speed, liveFastOutputGainDb, liveFastMaxChunkWords, liveFastMaxSentences]);
 
   const liveSpeech = useLiveSpeech({
-    refParams: liveRefParams,
-    fullRefParams: liveFullRefParams,
+    refParams: speakingRefParams,
+    fullRefParams: usingStandardVoice ? standardVoiceRefParams : liveFullRefParams,
     engine: liveEngine,
     replyMode,
     language: liveLanguage,
-    voiceProfileId: selectedVoiceProfileId,
-    voiceModel: liveVoiceModel,
+    voiceProfileId: speakingVoiceProfileId,
+    voiceModel: speakingVoiceModel,
     systemPrompt: kiosk ? chatbotCombinedSystemPrompt : '',
     fastMaxChunkWords: liveFastSettings.maxChunkWords,
     fastMaxSentencesPerChunk: liveFastSettings.maxSentencesPerChunk,
@@ -2341,6 +2368,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // The panel speaks in saved-profile terms; the page selects by the key derived
   // from the model filenames, which is the display name normalised.
   async function handleSelectMyVoice(voice) {
+    // A stock voice has no trained model to look up and nothing to load — the
+    // id alone is the whole selection.
+    if (voice?.provider === 'elevenlabs') {
+      setMyVoicesError('');
+      setSelectedStandardVoiceId(voice.voiceProfileId);
+      return;
+    }
+
     const key = normalizeVoiceKey(voice?.displayName);
     const match = availableProfiles.find((profile) => profile.key === key);
     if (!match) {
@@ -2348,6 +2383,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       return;
     }
     setMyVoicesError('');
+    // Picking a cloned voice leaves the stock selection behind.
+    setSelectedStandardVoiceId('');
     handleVoiceSelection(match.key);
     // Synthesis resolves the voice per request by id, which needs a saved
     // profile record; training never writes one. Create it on first use rather
@@ -3314,6 +3351,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       .then((res) => {
         if (ignore) return;
         setMyVoices(Array.isArray(res.data?.voices) ? res.data.voices : []);
+        setStandardVoices(Array.isArray(res.data?.standardVoices) ? res.data.standardVoices : []);
         setMyVoicesAdmin(res.data?.isAdmin === true);
         // The server decides the scope it actually served; trust that, not the request.
         setMyVoicesScope(res.data?.scope === 'all' ? 'all' : 'mine');
@@ -3321,6 +3359,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       .catch((err) => {
         if (ignore) return;
         setMyVoices([]);
+        setStandardVoices([]);
         setMyVoicesError(
           err?.response?.status === 401
             ? 'Sign in to see your voices.'
@@ -3439,6 +3478,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         }
         return;
       }
+      // No voice of their own: select nothing. The old fallback landed on the
+      // pinned/active profile, which meant a lecturer who had never trained got
+      // a kiosk that spoke in another lecturer's cloned voice. Better to stay
+      // silent until they pick — their own voice, or a standard one.
+      return;
     }
     const activeMatchKey = findSavedVoiceProfileKey(availableProfiles, activeVoiceProfile?.voiceProfileId || '');
     setSelectedPersonKey(activeMatchKey || availableProfiles[0].key);
@@ -3456,6 +3500,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   ]);
 
   useEffect(() => {
+    // A stock voice speaks without the GPU, so loading weights for whatever
+    // cloned voice happens to still be selected would occupy the shared GPU for
+    // a model this session is not going to use.
+    if (usingStandardVoice) return;
     if (loadedVoiceConfigsProfileId !== selectedVoiceProfileId) return;
     if (!shouldLoadSelectedProfile({ serverReady, selectedProfile, loadedGPTPath, loadedSoVITSPath, isConversationActive, loadingModel })) return;
     const loadKey = `${selectedProfile.gptModel.path}::${selectedProfile.sovitsModel.path}`;
@@ -3471,6 +3519,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     loadedSoVITSPath,
     isConversationActive,
     loadingModel,
+    usingStandardVoice,
   ]);
 
   useEffect(() => {
@@ -3903,8 +3952,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedModelLoaded = isSelectedModelLoaded({
     serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
   });
-  const isReady = (selectedModelLoaded && Boolean(liveRefParams))
+  // A stock voice needs no weights on the GPU and no reference clip, so it is
+  // ready the moment it is picked — which is also why it keeps the kiosk usable
+  // while the GPU is cold or the inference group is still scaling up.
+  const isReady = usingStandardVoice
+    || (selectedModelLoaded && Boolean(liveRefParams))
     || (serverReady && selectedVoiceResolvesPerRequest);
+  // Scoped to the cloned-voice pipeline: the TTS panel's reference picking,
+  // per-chunk regeneration and pronunciation dictionary are all GPT-SoVITS
+  // machinery with no ElevenLabs equivalent.
+  const ttsReady = isReady && !usingStandardVoice;
   // Last line of defence against a raw CloudFront/nginx 503/404 page ever rendering
   // as an error banner — strip HTML and swallow bare gateway errors.
   const displayModelError = useMemo(() => sanitizeBackendError(modelError), [modelError]);
@@ -4221,7 +4278,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 variant="outline"
                 size="sm"
                 onClick={saveSelectedVoiceProfile}
-                disabled={!isReady || isConversationActive || loadingModel || savingProfile}
+                disabled={!ttsReady || isConversationActive || loadingModel || savingProfile}
                 className="h-8 rounded-xl border-slate-200 bg-white shadow-none"
               >
                 {savingProfile ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
@@ -4305,8 +4362,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 setFullOovAcknowledgedKey('');
                 setTtsWarning('');
               }}
-              disabled={!isReady || ttsFastGenerating || streamingRoute !== null}
-              placeholder={isReady ? 'Type the text to synthesize.' : 'Load a voice profile first.'}
+              disabled={!ttsReady || ttsFastGenerating || streamingRoute !== null}
+              placeholder={
+                ttsReady
+                  ? 'Type the text to synthesize.'
+                  : usingStandardVoice
+                    ? 'Text to Speech needs a trained voice — standard voices work in the chat only.'
+                    : 'Load a voice profile first.'
+              }
               className="mt-4 min-h-[220px] rounded-xl border-slate-200 bg-white text-sm leading-6 shadow-none"
             />
             {ttsError && (
@@ -4360,7 +4423,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               <Button
                 type="button"
                 onClick={() => generateTextToSpeech('fast')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                disabled={!ttsReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
                 className="h-10 rounded-xl"
               >
                 {(ttsFastGenerating || streamingRoute === 'fast') ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
@@ -4370,7 +4433,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('fastQueued')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
+                disabled={!ttsReady || !ttsText.trim() || ttsFastGenerating || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
                 {ttsFastGenerating ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
@@ -4380,7 +4443,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('full')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
+                disabled={!ttsReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
                 {(oovScanning || streamingRoute === 'full') ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
@@ -4390,7 +4453,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 type="button"
                 variant="outline"
                 onClick={() => generateTextToSpeech('fullQueued')}
-                disabled={!isReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
+                disabled={!ttsReady || !ttsText.trim() || ttsFastGenerating || oovScanning || streamingRoute !== null}
                 className="h-10 rounded-xl border-slate-200 bg-white shadow-none"
               >
                 {(oovScanning || streamingRoute === 'fullQueued') ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
@@ -4747,7 +4810,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                   size="sm"
                   variant="outline"
                   onClick={() => testPronunciation()}
-                  disabled={pronunciationBusy || pronunciationGenerating || Boolean(pronunciationTestingWord) || !isReady}
+                  disabled={pronunciationBusy || pronunciationGenerating || Boolean(pronunciationTestingWord) || !ttsReady}
                   className="h-8 rounded-lg border-slate-200 bg-white"
                 >
                   {pronunciationTestingWord === pronunciationWord.trim() ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
@@ -4808,7 +4871,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                         )}
                       </button>
                       <div className="flex items-center gap-1">
-                        <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !isReady} className="h-7 w-7 rounded-lg text-blue-500">
+                        <Button type="button" size="icon" variant="ghost" onClick={() => testPronunciation(entry)} disabled={pronunciationBusy || Boolean(pronunciationTestingWord) || !ttsReady} className="h-7 w-7 rounded-lg text-blue-500">
                           {pronunciationTestingWord === entry.word ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
                         </Button>
                         <Button type="button" size="icon" variant="ghost" onClick={() => editPronunciation(entry)} disabled={pronunciationBusy} className="h-7 w-7 rounded-lg text-slate-500">
@@ -5178,11 +5241,13 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           </div>
           <MyVoicesPanel
             voices={myVoices}
+            standardVoices={standardVoices}
             isAdmin={myVoicesAdmin}
             scope={myVoicesScope}
             loading={myVoicesLoading}
             error={myVoicesError}
-            selectedVoiceName={selectedProfile?.displayName || ''}
+            selectedVoiceName={usingStandardVoice ? '' : (selectedProfile?.displayName || '')}
+            selectedVoiceProfileId={selectedStandardVoiceId}
             disabled={isConversationActive}
             trainingUrl={TRAINING_APP_URL}
             onSelectVoice={handleSelectMyVoice}

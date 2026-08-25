@@ -1,6 +1,7 @@
 import { corsHeaders, err, ok, preflight, parseJsonBody } from '../shared/cors.js';
 import { inferencePost, inferencePostBinary } from '../shared/gpuWorker.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
+import { isElevenLabsRequest, synthesizeElevenLabsSpeech } from '../shared/elevenLabs.js';
 import { demoHeaders, isDemoEvent } from '../shared/demoOrigin.js';
 import { createLiveAuthGuard, isAuthExemptOrigin } from '../shared/liveAuth.js';
 import { randomUUID } from 'node:crypto';
@@ -30,6 +31,8 @@ export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
   postBinary = inferencePostBinary,
   post = inferencePost,
+  synthesizeStandardVoice = synthesizeElevenLabsSpeech,
+  isStandardVoiceRequest = isElevenLabsRequest,
   now = () => performance.now(),
   invocationState = { cold: true, environmentId: randomUUID() },
   authGuard = createLiveAuthGuard(),
@@ -79,6 +82,45 @@ export function createHandler({
 
     if (!body.text?.trim()) {
       return err(400, 'text is required');
+    }
+
+    // A stock voice never touches the GPU, so it skips voice-profile resolution
+    // (there is no saved record to read), the model-selection snapshot, and the
+    // synthesis queue entirely. That is also why it still works while the GPU is
+    // cold or scaling.
+    if (isStandardVoiceRequest(body)) {
+      try {
+        const { buffer, contentType, characterCount } = await synthesizeStandardVoice(body);
+        const elapsedMs = Math.max(0, now() - requestStartedAt);
+        const timingHeaders = {
+          'X-VCS-Voice-Provider': 'elevenlabs',
+          'X-VCS-Lambda-Total-Ms': elapsedMs.toFixed(1),
+          'X-VCS-Lambda-Cold-Start': coldStart ? '1' : '0',
+          'X-VCS-Lambda-Environment-Id': invocationState.environmentId,
+          // Billing is per character, so the one number worth surfacing.
+          ...(characterCount != null ? { 'X-VCS-Voice-Characters': String(characterCount) } : {}),
+          ...(context.awsRequestId
+            ? { 'X-VCS-Lambda-Request-Id': String(context.awsRequestId) }
+            : {}),
+        };
+        return {
+          statusCode: 200,
+          isBase64Encoded: true,
+          headers: {
+            'Content-Type': contentType || 'audio/mpeg',
+            'Content-Length': String(buffer.length),
+            'Access-Control-Expose-Headers': Object.keys(timingHeaders).join(', '),
+            ...timingHeaders,
+            ...corsHeaders,
+          },
+          body: buffer.toString('base64'),
+        };
+      } catch (error) {
+        if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599) {
+          return err(error.statusCode, error.message, event);
+        }
+        return err(500, error.message, event);
+      }
     }
 
     const replyToken = readReplyToken(event);

@@ -7,16 +7,60 @@ import Spinner from './Spinner.jsx';
  * email. A lecturer never sees anyone else's voice; an admin can switch the
  * list to every voice, which the server allows only for the Supervisor role.
  *
+ * Below those sit the standard voices — stock ElevenLabs voices offered to
+ * everyone alike. They belong to nobody, need no training, and speak without
+ * touching the GPU, so they are listed separately rather than mixed in with a
+ * lecturer's own cloned voices.
+ *
  * Presentational: it renders what it is given and reports clicks. Fetching and
  * selection live with the page that owns the voice state.
  */
+function VoiceButton({ voice, isSelected, disabled, subtitle, onSelect }) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(voice)}
+        disabled={disabled}
+        aria-pressed={isSelected}
+        className={cn(
+          'flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-40',
+          isSelected
+            ? 'border-primary/40 bg-primary/5'
+            : 'border-slate-200 bg-white hover:bg-slate-50',
+        )}
+      >
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-semibold text-slate-800">
+            {voice.displayName}
+          </span>
+          {subtitle ? (
+            <span className="block truncate text-[11px] text-slate-400">{subtitle}</span>
+          ) : null}
+        </span>
+        {isSelected && (
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary">
+            In use
+          </span>
+        )}
+      </button>
+    </li>
+  );
+}
+
+function describeStandardVoice(voice) {
+  return [voice.gender, voice.accent].filter(Boolean).join(' · ');
+}
+
 export default function MyVoicesPanel({
   voices = [],
+  standardVoices = [],
   isAdmin = false,
   scope = 'mine',
   loading = false,
   error = '',
   selectedVoiceName = '',
+  selectedVoiceProfileId = '',
   disabled = false,
   trainingUrl = '',
   onSelectVoice = () => {},
@@ -84,53 +128,56 @@ export default function MyVoicesPanel({
               ) : (
                 '.'
               )}
+              {standardVoices.length > 0 && ' Until then you can pick a standard voice below.'}
             </>
           )}
         </div>
       ) : (
         <ul className="mt-2 space-y-1">
-          {voices.map((voice) => {
-            const isSelected = voice.displayName === selectedVoiceName;
-            return (
-              <li key={voice.voiceProfileId}>
-                <button
-                  type="button"
-                  onClick={() => onSelectVoice(voice)}
-                  disabled={disabled}
-                  aria-pressed={isSelected}
-                  className={cn(
-                    'flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-40',
-                    isSelected
-                      ? 'border-primary/40 bg-primary/5'
-                      : 'border-slate-200 bg-white hover:bg-slate-50',
-                  )}
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-semibold text-slate-800">
-                      {voice.displayName}
-                    </span>
-                    {showingAll ? (
-                      <span className="block truncate text-[11px] text-slate-400">
-                        {voice.ownerEmail || 'no owner recorded'}
-                      </span>
-                    ) : voice.hasSavedProfile === false ? (
-                      // Trained, but nobody has picked a reference clip or
-                      // synthesis settings for it yet in the TTS page.
-                      <span className="block truncate text-[11px] text-slate-400">
-                        trained · no saved settings yet
-                      </span>
-                    ) : null}
-                  </span>
-                  {isSelected && (
-                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                      In use
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
+          {voices.map((voice) => (
+            <VoiceButton
+              key={voice.voiceProfileId}
+              voice={voice}
+              isSelected={voice.displayName === selectedVoiceName}
+              disabled={disabled}
+              onSelect={onSelectVoice}
+              subtitle={
+                showingAll
+                  ? voice.ownerEmail || 'no owner recorded'
+                  // Trained, but nobody has picked a reference clip or synthesis
+                  // settings for it yet in the TTS page.
+                  : voice.hasSavedProfile === false
+                    ? 'trained · no saved settings yet'
+                    : ''
+              }
+            />
+          ))}
         </ul>
+      )}
+
+      {!loading && !error && standardVoices.length > 0 && (
+        <div className="mt-3">
+          <span className="block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+            Standard voices
+          </span>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Ready-made voices — no training needed.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {standardVoices.map((voice) => (
+              <VoiceButton
+                key={voice.voiceProfileId}
+                voice={voice}
+                // Matched by id, not display name: a stock voice's name is not
+                // unique against a lecturer's own voice names.
+                isSelected={voice.voiceProfileId === selectedVoiceProfileId}
+                disabled={disabled}
+                onSelect={onSelectVoice}
+                subtitle={describeStandardVoice(voice)}
+              />
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
