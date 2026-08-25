@@ -6,6 +6,7 @@ import './globals.css';
 import { APP_BASENAME } from '@/lib/runtimeConfig';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import { AppProviders } from '@/AppProviders.jsx';
+import { AppErrorBoundary } from '@/components/AppErrorBoundary.jsx';
 import { initializeMsal, isMsalAuthEnabled } from '@/auth/msalClient';
 import { config } from '@/config';
 
@@ -34,17 +35,23 @@ async function bootstrap() {
 
   const app = <App />;
 
+  // Outside the router and the providers, so a crash in either is caught too —
+  // and because anything React throws while rendering unmounts the whole tree.
+  // Without this the user gets a white page and no clue, which is how the same
+  // failure reached students twice; see AppErrorBoundary for both.
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-      <BrowserRouter basename={APP_BASENAME}>
-        {config.authEnabled ? (
-          <AppProviders bootstrapError={bootstrapError} msalInstance={msalInstance}>
-            {app}
-          </AppProviders>
-        ) : (
-          app
-        )}
-      </BrowserRouter>
+      <AppErrorBoundary>
+        <BrowserRouter basename={APP_BASENAME}>
+          {config.authEnabled ? (
+            <AppProviders bootstrapError={bootstrapError} msalInstance={msalInstance}>
+              {app}
+            </AppProviders>
+          ) : (
+            app
+          )}
+        </BrowserRouter>
+      </AppErrorBoundary>
     </React.StrictMode>
   );
 }
