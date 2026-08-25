@@ -87,7 +87,6 @@ export function useGiChatEngine({
   const pinnedVoiceKey = requestedVoiceProfileId
     ? describePinnedVoice(requestedVoiceProfileId)
     : buildPinnedVoiceKey;
-
   // System prompt + uploaded documents come from the deployed config, refreshed
   // at mount and again whenever a conversation ends; the lecture skin has no
   // editor for them (the faculty site owns that UI). The lesson context is the
