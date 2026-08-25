@@ -1,5 +1,9 @@
 # Active TODO
 
+- [ ] Add faculty lecture-voice publishing: persist an authorized, validated
+  `voiceProfileId` (and an explicit revision if historical reproducibility is required)
+  on the authoritative lecture/course record, return it from the lectures API, and
+  replace the bundled `gi-bleeding` mapping. Do not trust a browser-only mapping.
 - [ ] In an authenticated lectures browser, verify the deployed lecture-click capacity notices:
   absent voice blocks with the up-to-15-minute alternative, busy resident voice remains usable
   with `BUSY_STARTING`, and the warning clears after capacity is ready. Direct coordinator canaries,

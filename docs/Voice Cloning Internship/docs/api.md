@@ -90,6 +90,33 @@ Notes:
 - `POST /api/models/select`
 - `POST /api/voice-profile/activate`
 - `GET /api/voice-profile/active`
+- `POST /api/voice-profile/capacity` — authenticated lecture-voice preflight.
+  - Request: `{ "voiceProfileId": "<safe saved profile ID>" }`. Lambda loads the
+    saved profile and sends its immutable GPT/SoVITS snapshot to the staging model
+    coordinator.
+  - `READY`, `READY_SCALING`, and `READY_WARMING` allow conversation. A READY response
+    with `capacityTight=true` has one matching slot left; click preflight alone does
+    not scale it.
+  - `BUSY_STARTING`/`BUSY_WARMING` mean the resident voice is currently full, capacity
+    preparation is running, and existing capacity remains usable. `STARTING`/`WARMING`
+    mean no resident matching voice is usable yet and block voice conversation.
+    `LIMIT`/`BUSY_LIMIT` report the ASG maximum case.
+  - Common fields: `canStartConversation`, `availableSlots`, `matchingWorkers`,
+    `capacityAction` (`none`, `reassign`, or `scale`), `capacityStarted`,
+    `retryAfterSeconds`, and `voiceProfileId`.
+
+#### Lecture voice binding
+
+- Current staging course data supplies `voiceProfileId`; `gi-bleeding` is bundled as
+  `deanvoice-v1`. The value flows through `LessonPage`, `GiChatPanel`, and
+  `useGiChatEngine` into capacity and synthesis requests.
+- Future faculty selection is not implemented. Its publish API must store a validated
+  `voiceProfileId` on the authoritative lecture/course record, and the lectures API
+  must return that field. The backend record—not an arbitrary browser value—should own
+  the lecture-to-profile mapping.
+- Profile resolution currently follows the latest saved profile at request/conversation
+  start and creates an immutable in-flight snapshot. Persist a profile revision too if
+  published lectures must retain a historical voice definition.
 
 ### Inference and live TTS
 

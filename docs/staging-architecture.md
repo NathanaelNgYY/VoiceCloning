@@ -1,10 +1,11 @@
 # Staging Environment — Complete Architecture Reference
 
-As of 2026-08-07, staging GI becomes voice-ready from fixed ID `deanvoice-v1` without a startup
-profile GET and sends that ID with every synthesis request. The staging synthesis backend resolves
-its saved model/reference profile without reading or writing shared `active.json`, so other tools may
-change their active voice independently. Live GI bundle: `assets/index-Cklj8mCD.js`. The final rollout
-was client-only; ASG, gateway, TTS, and training resources were not changed.
+As of 2026-08-25, staging GI reads `voiceProfileId` from the selected course object. The only
+current course, `gi-bleeding`, still declares fixed ID `deanvoice-v1` in
+`client/src/api/mockCourseData.js`; faculty selection is not implemented yet. The browser sends the
+ID to the authenticated capacity preflight and every synthesis request. Lambda resolves the saved
+profile into an immutable GPT/SoVITS/reference snapshot, and the model coordinator routes by the
+exact GPT+SoVITS weight pair rather than by display name or shared `active.json`.
 
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
 **Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
@@ -38,6 +39,52 @@ that availability with a continuous minimum floor of 1. Its retained recurring 0
 and 19:00 Singapore actions set min 1 and max 192 but leave desired capacity unset,
 so neither action resets a busy autoscaled fleet. The 19:00 action keeps its historical
 `daily-stop` name but no longer scales the ASG to zero or one.
+
+### Model-aware lecture capacity (current staging rule)
+
+Each ready `g6.xlarge` worker advertises two synthesis slots and one resident model pair. For a
+requested lecture voice, the coordinator applies this order:
+
+1. Route to a reachable READY worker with the same immutable GPT+SoVITS pair and a free slot.
+2. If none is free, reassign a different-model worker only when it has zero active and zero queued
+   requests and both its worker activity and resident-model demand have been idle for at least five
+   minutes. Reassignment drains, loads the requested pair, warms references, and performs real TTS
+   before the worker registers READY.
+3. If no worker is safely reassignable, atomically increase ASG desired capacity by one (up to max
+   192) and record the requested model as pending. The new GPU claims the oldest pending model and
+   deep-warms that model on boot. A boot with no pending claim falls back to `deanvoice-v1`.
+
+Lecture-click preflight does not scale merely because one matching slot remains. With a free slot it
+allows conversation and reports tight/background capacity where applicable. With a resident voice
+but no free slot it begins reassignment or scale-out in the background and leaves conversation
+usable. With no resident matching voice it reports WARMING/STARTING, blocks voice conversation, and
+offers the up-to-15-minute/other-lecture message. After an actual synthesis is admitted, the
+coordinator polls the selected worker; only if it is truly full and a fresh fleet read finds no
+matching free slot does it reassign an idle GPU or scale out. Conditional DynamoDB ownership prevents
+duplicate scale/reassignment starts.
+
+There is no minimum GPU per voice. The ASG has one global minimum GPU; scheduled actions preserve
+that floor without pinning voice pools. Legacy Target Optimizer occupancy scale-out alarms are
+telemetry-only. Scale-in uses coordinator inactivity and removes capacity after the configured
+15-minute idle window; controlled scale-down passed, but an untouched full 15-minute timing canary
+remains pending.
+
+### Future faculty-selected lecture voice (not implemented)
+
+`faculty.lkcmedicine.org` should persist a validated `voiceProfileId` on the authoritative lecture or
+course record when faculty publish their selection. The lectures API/course payload should return
+that field, replacing the current mock-data constant; the existing `LessonPage -> GiChatPanel ->
+useGiChatEngine` path can then preflight and synthesize without coordinator changes. Do not treat an
+arbitrary browser-provided ID as the authoritative lecture mapping: the publish API must verify
+faculty authorization, that the profile exists and is complete, and that the ID is a safe path
+segment.
+
+Current resolution follows the latest saved profile for that ID at request/conversation start, then
+uses the resulting immutable snapshot for in-flight work. If faculty require reproducible historical
+lectures, add and persist an explicit profile revision; otherwise edits to the saved profile will
+change future conversations while already-started conversations retain their snapshot. Profiles that
+reference the same exact GPT+SoVITS weights intentionally share one resident GPU pool even if their
+IDs, reference audio, or synthesis settings differ.
 
 ## 2. CloudFront distributions
 
@@ -1788,14 +1835,12 @@ aws events put-targets --region ap-northeast-2 --rule vcs-staging-gpu-idle-stop 
 4. Rotate the OpenAI API key (it lived in the dev box's unit file; staging keeps it in `live-gateway/.env`).
 5. Optional: scoped `vcs-lambda-staging` exec role instead of the shared one.
 6. Ask admin whether NAT gateways get auto-cleaned — whitelist `nat-0dadc68ca781b8df9` (see §5 history).
-7. Current live inference state is AMI `ami-021aeb72894b8c79b`, launch-template v20,
-   ASG min/desired 1 and max 192, and two slots per GPU. ALB rule 3 routes
-   `/models*`, `/ref-audio*`, and `/inference*` to the optimized target. Occupancy
-   scale-out is tiered: below five healthy GPUs, a 70% one-minute sample sets exact
-   capacity five; at five or more it adds ten. The rejection alarm is telemetry-only.
-   Paired actions launch 50 GPUs at 13:30 SGT and restore one at 16:00 SGT on
-   2026-08-04. Because launch-to-prime has taken several minutes, 13:30 must not also
-   be treated as the user-admission time.
+7. Current live inference state is tagged AMI `ami-0d58babf0106d7f52`, launch-template
+   v38/default, ASG min/desired 1 and max 192, and two slots per GPU. Model-aware
+   coordinator admission/reassignment/scale-out is authoritative; legacy ALB occupancy
+   alarms are telemetry-only. Health grace is 1,200 seconds because fresh deep warm and
+   public prime exceeded the former 600-second grace. See “Model-aware lecture capacity”
+   above for the current decision rule.
 8. Validation instance `i-015de451bff24a73b` is stopped but remains registered as an
    unused target because this role is denied deregistration and termination. An
    administrator should deregister it from `vcs-stg-opt-3103` and terminate it; attempts

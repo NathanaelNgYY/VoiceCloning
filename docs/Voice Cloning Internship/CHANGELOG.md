@@ -2,6 +2,10 @@
 
 ## 2026-08-25
 
+- Corrected staging architecture, API, and decision docs to describe coordinator-owned
+  per-model admission/reassignment/scale-out instead of the retired 70% ALB policy.
+  Documented the current bundled lecture `voiceProfileId` source and the unimplemented
+  authoritative faculty publish/API contract, including optional revision pinning.
 - Deployed staging lecture-click voice capacity preparation, truthful ready/warming/busy UI,
   five-minute demand-idle model reassignment, and post-admission per-model scale-out. Concurrent
   live canary returned two valid RIFF WAVs, showed usable `BUSY_STARTING`, and atomically raised

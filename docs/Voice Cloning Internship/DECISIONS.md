@@ -98,30 +98,32 @@
 - Full-inference session state, events, chunks, cancellation, and final artifacts use
   S3 as shared state so any horizontally-routed target can continue the session.
 - Training remains a separate serial queued service on the fixed training target.
-- Staging scales the existing EC2 inference service with ALB Target Optimizer and an
-  ASG. SageMaker training jobs are not an inference-serving replacement; a SageMaker
-  endpoint migration is deferred beyond the 2026-08-03 deadline.
-- Scale-out uses occupied synthesis slots divided by tested fleet capacity
-  (`HealthyHostCount * 2`), including the baseline GPU, at a 70% threshold. Below
-  five healthy GPUs, a qualifying one-minute sample sets capacity to five; at five
-  or more, it adds ten and re-evaluates later samples. The former rejection alarm is
-  telemetry-only. A true roughly 30-second reaction requires a custom fleet-wide
-  high-resolution metric; changing the existing alarm period alone is insufficient.
-  Idle scale-in removes one instance after fifteen no-traffic minutes.
+- Staging scales one shared EC2 inference ASG through the model coordinator. There is
+  no ASG or minimum GPU per voice. Legacy ALB occupancy scale-out alarms are telemetry
+  only; SageMaker endpoint migration remains deferred.
+- Capacity choice is ordered: matching READY free slot; otherwise a different-model
+  worker with zero active/queued work and at least five minutes of both worker and
+  resident-model demand idleness; otherwise ASG desired +1, capped at 192. DynamoDB
+  conditional ownership deduplicates reassignment and scale requests. New instances
+  claim the oldest pending model and deep-warm it; unclaimed baseline boots use Dean.
+- Lecture click prepares capacity but does not scale while any matching slot is free.
+  After real synthesis admission, the coordinator scales or reassigns only when a
+  worker is live-saturated and a fresh fleet read confirms no matching free slot.
+  Idle scale-in removes capacity after the configured fifteen-minute inactivity window.
 - Treat capacity admission and network transit as separate latency domains. The final
   150-user first-turn p95 was dominated by retry backoff, while two later maxima were
   mostly outside Lambda. Scale on high-resolution capacity pressure; use client and
   edge timing to investigate transit. Provisioned concurrency addresses neither.
-- The next scaling experiment publishes occupied slots, total slots, no-capacity
-  responses, and pending admissions every 10 seconds. No-capacity/pending demand must
-  participate in scale-out rather than relying only on averaged occupancy. Compare
-  short jittered retries with a centralized fair queue. A known simultaneous 150-user
-  event must prewarm additional capacity and be tested both as an immediate burst and
-  with arrivals spread across 30-60 seconds.
-- Retry priority is intentionally local, not global. ALB/Target Optimizer chooses a
-  target without knowing retry priority. Once an admitted request reaches a worker,
-  `X-VCS-Capacity-Retry` places it ahead of normal local queued work while preserving
-  FIFO within each lane. Do not claim end-to-end retry priority.
+- Lecture voice binding currently comes from the course object's `voiceProfileId`;
+  `gi-bleeding` is hardcoded to `deanvoice-v1`. Future faculty selection must persist
+  that ID on an authoritative lecture/course record and return it in the lectures API,
+  with faculty authorization and saved-profile validation. The browser must not be the
+  authority for the mapping.
+- The saved profile is resolved at request/conversation start into an immutable model,
+  reference, and settings snapshot. Existing conversations keep that snapshot; future
+  conversations follow the latest saved profile unless the faculty feature explicitly
+  persists a profile revision. Different profile IDs with the same exact GPT+SoVITS
+  weights share a resident model pool.
 - The GI student client must not load/warm the shared voice when every student enters.
   Each ASG node owns preparation and exposes Target Optimizer only after loading the
   model, caching the primary plus auxiliary references, running throwaway synthesis,
