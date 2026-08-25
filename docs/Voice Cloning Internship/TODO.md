@@ -1,9 +1,9 @@
 # Active TODO
 
-- [ ] Refresh user-level `VCS_AWS_*`, deploy/read back the coordinator-metric scale-alarm fix,
-  wait for a genuine 15-minute idle scale-in to desired 1, then request DeanV2 in an authenticated
-  lectures browser and confirm audio plus the model-starting UI. Direct live tests already pass
-  idle reassignment, fresh pending-model boot, exact 2/2 saturation, and third-request scale-out.
+- [ ] In an authenticated lectures browser, verify the deployed lecture-click capacity notices:
+  absent voice blocks with the up-to-15-minute alternative, busy resident voice remains usable
+  with `BUSY_STARTING`, and the warning clears after capacity is ready. Direct coordinator canaries,
+  client tests, deployed bundle readback, scale-out, fresh-v38 boot, and scale-down all pass.
 - [ ] Browser-time first and second authenticated staging GI/Live Fast replies after the
   canonical-cache rollout. Worker/fresh-boot evidence proves the reload mismatch is removed,
   but public end-to-end timing is still needed to quantify OpenAI/WebSocket overhead.

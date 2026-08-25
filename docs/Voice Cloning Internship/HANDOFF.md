@@ -1,6 +1,6 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 ## Current Dev State
 
@@ -42,11 +42,14 @@ Last updated: 2026-08-24
 
 ## Current Staging State
 
-- Model-aware coordination is live on staging: matching free slot -> demand-idle reassignment ->
-  per-model scale-out, with two admitted slots per GPU. Live tests passed resident routing,
-  Nathanael->Dean idle reassignment, pending DeanV2 scale-out/claim/deep warm, and exact 2/2
-  saturation with no hidden queue; the third request truthfully returned capacity-starting and
-  raised desired 1->2. Authenticated browser audio remains unverified.
+- Lecture-click capacity preparation and model-aware routing are live on staging: matching slot ->
+  five-minute demand-idle reassignment -> per-model scale-out, with two admitted slots per GPU.
+  A concurrent canary returned two RIFF WAVs, showed usable `BUSY_STARTING`, atomically raised
+  desired 1->2 exactly once, deeply warmed the requested Dean pool, and scaled back to one.
+  Launch-template v38/default uses tagged AMI `ami-0d58babf0106d7f52`; a fresh v38 node registered
+  Dean before routing and passed public prime. ASG health grace is 1,200s because the verified
+  deep-warm plus public-prime path exceeded the old 600s grace. Final state: desired/min 1, one
+  healthy unprotected v38 Dean worker, two free slots. Authenticated browser UI remains unverified.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
@@ -74,12 +77,11 @@ Last updated: 2026-08-24
   and are healthy with DeanVoice plus both verifiers active. AMI `ami-09603b8ca5f8a228b` is
   available and launch template v31 is latest/default; a fresh v31 node completed production-shaped
   deep warm before becoming healthy. Authenticated first/second-turn timing remains pending.
-- Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192. Last observed after the
-  saturation test: desired 2, one ready DeanV2 worker and one newly starting DeanV2 claim.
-  Testing exposed that legacy scale alarms still use bypassed Target Optimizer metrics. The
-  provisioner now locally disables those global scale-out actions and uses coordinator Lambda
-  invocations for 15-minute scale-in, but expired `VCS_AWS_*` blocked deployment/readback.
-  The 07:00/19:00 Singapore actions preserve min 1 without forcing desired.
+- Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192 and two slots per GPU.
+  Legacy ALB occupancy actions are telemetry-only; scale-in uses coordinator Lambda invocation
+  idleness. Alarm/action readback and a controlled protected scale-down passed; a full untouched
+  15-minute alarm-trigger timing canary remains pending. Final desired is 1. The 07:00/19:00
+  Singapore actions preserve min 1 without a per-voice minimum.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
 - Full chunking is aligned at 240 characters. Full reuses warm medium ASR with strict beam/tail
   gates and no longer regenerates five times when ASR itself is unavailable. Staging's Dean

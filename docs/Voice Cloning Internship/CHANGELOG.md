@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-25
+
+- Deployed staging lecture-click voice capacity preparation, truthful ready/warming/busy UI,
+  five-minute demand-idle model reassignment, and post-admission per-model scale-out. Concurrent
+  live canary returned two valid RIFF WAVs, showed usable `BUSY_STARTING`, and atomically raised
+  desired 1->2 exactly once. A final one-worker canary returned a 226,604-byte RIFF without scale.
+- Fixed simultaneous-admission and duplicate-scale races with live post-admission saturation
+  checks and conditional DynamoDB ownership. Rotated the exposed coordinator token without
+  printing its replacement, restored missing public-prime auth, and pinned no-assignment boot and
+  public prime to Dean while preserving coordinator-assigned autoscale voices.
+- Fixed fresh workers warming successfully but remaining unroutable by adding authenticated
+  residency registration after boot warm. Promoted tagged AMI `ami-0d58babf0106d7f52` as launch
+  template v38/default. Fresh v38 readback proved Dean registration and public prime. Increased
+  ASG health grace 600->1,200s after live evidence showed the old grace killed workers before
+  the >10-minute deep-warm/prime path completed. Final ASG: min/desired 1, max 192, one healthy
+  unprotected v38 Dean worker with two free slots.
+- Tests: focused Lambda/coordinator 37/37, worker 32/32 plus earlier 35/35, client 8/8, Node/Bash/
+  PowerShell syntax, staging GI build, deployed bundle/401 readback, live idle reassignment,
+  concurrent saturation, atomic scale-out, fresh-AMI registration, public prime, scale-down, and
+  final RIFF synthesis. Authenticated browser rendering of capacity notices remains unverified.
+
 ## 2026-08-24
 
 - Live-tested the staging coordinator flow. A demand-idle Nathanael GPU reassigned to Dean and
