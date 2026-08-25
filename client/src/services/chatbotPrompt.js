@@ -12,9 +12,12 @@
 // one without the other produced a lecture site confidently citing material it
 // had never been given.
 //
-// The deploy is unauthenticated by design: the editor ships only on the text-chat
-// kiosk build, which has no sign-in, and anyone who can open that page may change
-// the instructions. Staging only.
+// Publishing is authenticated. It was open while a publish only carried text —
+// the editor lived on a kiosk build with no sign-in — but a published voice can
+// name a stock voice that bills per character, so the endpoint stopped being
+// only a content-integrity question. Reading stays open, so the lecture site's
+// startup does not depend on a token.
+import { acquireApiToken } from '@/auth/msalClient';
 import { resolveApiPath } from '@/lib/runtimeConfig';
 import { normalizeChatbotDocuments } from '@/lib/chatbotDocuments';
 import { DEFAULT_CHATBOT_CATEGORY, normalizeChatbotCategory } from '@/lib/chatbotCategory';
@@ -40,7 +43,13 @@ export async function fetchDeployedChatbotSystemPrompt(
   { category = DEFAULT_CHATBOT_CATEGORY } = {},
   fetchImpl = fetch,
 ) {
-  const empty = { category: normalizeChatbotCategory(category), prompt: '', documents: [], updatedAt: '' };
+  const empty = {
+    category: normalizeChatbotCategory(category),
+    prompt: '',
+    documents: [],
+    voiceProfileId: '',
+    updatedAt: '',
+  };
   try {
     const response = await fetchImpl(promptUrl(category), { cache: 'no-store' });
     if (!response.ok) return empty;
@@ -49,6 +58,10 @@ export async function fetchDeployedChatbotSystemPrompt(
       category: data?.category || empty.category,
       prompt: typeof data?.prompt === 'string' ? data.prompt : '',
       documents: normalizeChatbotDocuments(data?.documents),
+      // '' means this lecture pins no voice, and the caller keeps whatever its
+      // build pinned — which is what every lecture published before voices
+      // existed reads back as.
+      voiceProfileId: typeof data?.voiceProfileId === 'string' ? data.voiceProfileId : '',
       updatedAt: data?.updatedAt || '',
     };
   } catch {
@@ -79,12 +92,13 @@ export async function fetchChatbotPromptCategories(fetchImpl = fetch) {
 }
 
 /**
- * Publishes the instructions and their reference documents as what every chatbot
- * frontend loads. Throws on failure.
+ * Publishes the instructions, their reference documents, and the voice the
+ * lecture speaks in, as what every chatbot frontend loads. Throws on failure.
  */
 export async function deployChatbotSystemPrompt(
-  { prompt, documents = [], category = DEFAULT_CHATBOT_CATEGORY } = {},
+  { prompt, documents = [], voiceProfileId = '', category = DEFAULT_CHATBOT_CATEGORY } = {},
   fetchImpl = fetch,
+  getToken = acquireApiToken,
 ) {
   const body = String(prompt ?? '');
   const docs = normalizeChatbotDocuments(documents);
@@ -96,11 +110,29 @@ export async function deployChatbotSystemPrompt(
     throw new Error('Add instructions or at least one reference document.');
   }
 
+  // Fail here rather than at the server: "sign in again" is a better message
+  // than a bare 401 after the lecturer has already written everything.
+  let token = '';
+  try {
+    token = await getToken();
+  } catch {
+    token = '';
+  }
+  if (!token) {
+    throw new Error('Your session has expired. Sign in again to publish.');
+  }
+
   const response = await fetchImpl(promptUrl(category), {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-VCS-Entra-Token': token },
     credentials: 'same-origin',
-    body: JSON.stringify({ prompt: body, documents: docs }),
+    body: JSON.stringify({
+      prompt: body,
+      documents: docs,
+      // The voice this lecture speaks in. Empty means "no opinion" — the lecture
+      // site then keeps its build-time pin.
+      voiceProfileId: String(voiceProfileId || '').trim(),
+    }),
   });
 
   if (!response.ok) {

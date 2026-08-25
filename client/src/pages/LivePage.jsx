@@ -4102,6 +4102,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       const result = await deployChatbotSystemPrompt({
         prompt: chatbotSystemPrompt,
         documents: chatbotDocuments,
+        // The voice the lecturer is listening to is the voice students get.
+        // Publishing the prompt without it would leave the lecture site on
+        // whatever its build pinned — the lecturer would hear one voice while
+        // approving a lecture that speaks in another.
+        voiceProfileId: speakingVoiceProfileId,
         category: chatbotCategory,
       });
       // The panel's contents are now the shared default, so a "Reset to default"
@@ -5216,7 +5221,11 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
                 disabled={isConversationActive
                   || chatbotDeployState.status === 'deploying'
                   || (!chatbotSystemPrompt.trim() && chatbotDocuments.length === 0)}
-                title="Publish these instructions and reference documents to every chatbot frontend"
+                title={
+                  speakingProfile?.displayName
+                    ? `Publish these instructions, reference documents, and the ${speakingProfile.displayName} voice to every chatbot frontend`
+                    : 'Publish these instructions and reference documents to every chatbot frontend'
+                }
                 className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-40"
               >
                 {chatbotDeployState.status === 'deploying' ? 'Publishing…' : 'Publish'}

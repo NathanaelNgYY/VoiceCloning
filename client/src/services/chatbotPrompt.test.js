@@ -101,6 +101,12 @@ test('the editor scopes its browser-local draft to the lecture being edited', ()
   }
 
   // And the deploy publishes to the selected lecture, not to whatever was last
-  // loaded.
-  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,200}category: chatbotCategory,/);
+  // loaded. The window is generous because the call also carries the published
+  // voice and the comment explaining it.
+  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,600}category: chatbotCategory,/);
+
+  // The lecturer's selected voice is published with the lecture; without this
+  // the lecture site keeps whatever its build pinned, so the lecturer would hear
+  // one voice while approving a lecture that speaks in another.
+  assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,600}voiceProfileId: speakingVoiceProfileId,/);
 });

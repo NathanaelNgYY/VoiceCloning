@@ -11,14 +11,18 @@ import { fetchDeployedChatbotSystemPrompt } from '@/services/chatbotPrompt';
 import { DEFAULT_CHATBOT_CATEGORY, normalizeChatbotCategory } from '@/lib/chatbotCategory';
 
 /** Cheap identity for a deployed config, so an unchanged poll causes no re-render. */
-function fingerprint(category, prompt, documents) {
-  return `${category}:${prompt.length}:${documents.map((d) => `${d.name}@${d.text.length}`).join('|')}`;
+function fingerprint(category, prompt, documents, voiceProfileId = '') {
+  const docs = documents.map((d) => `${d.name}@${d.text.length}`).join('|');
+  // The voice is part of the identity: republishing a lecture with only the
+  // voice changed must still count as a change, or a kiosk left open would keep
+  // speaking in the old one.
+  return `${category}:${prompt.length}:${docs}:${voiceProfileId}`;
 }
 
 /**
  * Loads the deployed assistant instructions and reference documents.
  *
- * Returns `{ version, refresh }`. `version` increments whenever the deployed
+ * Returns `{ version, voiceProfileId, refresh }`. `version` increments whenever the deployed
  * config actually changes; callers that resolve the prompt inside a useMemo must
  * list it as a dependency, or the memo keeps the bundled default forever — which
  * is exactly how the GI build ignored every deploy.
@@ -35,6 +39,9 @@ function fingerprint(category, prompt, documents) {
 export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY } = {}) {
   const resolvedCategory = normalizeChatbotCategory(category) || DEFAULT_CHATBOT_CATEGORY;
   const [version, setVersion] = useState(0);
+  // The voice this lecture was published with. '' means the lecture names no
+  // voice, and the caller keeps its build-time pin.
+  const [voiceProfileId, setVoiceProfileId] = useState('');
   const inFlightRef = useRef(false);
   const fingerprintRef = useRef(null);
 
@@ -42,7 +49,7 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const { prompt, documents } = await fetchDeployedChatbotSystemPrompt({
+      const { prompt, documents, voiceProfileId: publishedVoice } = await fetchDeployedChatbotSystemPrompt({
         category: resolvedCategory,
       });
       // The service reports a failed fetch as empty values. Treating that as a
@@ -53,12 +60,13 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
       // happens when nothing has ever been deployed at all.
       if (!prompt.trim() && documents.length === 0) return;
 
-      const next = fingerprint(resolvedCategory, prompt, documents);
+      const next = fingerprint(resolvedCategory, prompt, documents, publishedVoice);
       if (next === fingerprintRef.current) return;
       fingerprintRef.current = next;
 
       setDeployedChatbotSystemPrompt(prompt);
       setDeployedChatbotDocuments(documents);
+      setVoiceProfileId(publishedVoice || '');
       setVersion((count) => count + 1);
     } finally {
       inFlightRef.current = false;
@@ -80,5 +88,5 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
     refresh();
   }, [refresh, resolvedCategory]);
 
-  return { version, refresh };
+  return { version, voiceProfileId, refresh };
 }

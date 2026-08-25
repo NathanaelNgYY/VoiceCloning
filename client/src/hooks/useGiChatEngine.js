@@ -10,6 +10,7 @@ import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
+  describePinnedVoice,
   matchesPinnedVoice,
   resolvePinnedVoiceKey,
   resolvePinnedVoiceProfileId,
@@ -53,14 +54,24 @@ export function useGiChatEngine({
     search: typeof window === 'undefined' ? '' : window.location.search,
     env: import.meta.env,
   }), []);
-  const pinnedVoiceProfileId = useMemo(
+  const buildPinnedVoiceProfileId = useMemo(
     () => resolvePinnedVoiceProfileId(voicePinOptions),
     [voicePinOptions]
   );
-  const pinnedVoiceKey = useMemo(
+  const buildPinnedVoiceKey = useMemo(
     () => resolvePinnedVoiceKey(voicePinOptions),
     [voicePinOptions]
   );
+
+  // A lecture's published voice beats the build-time pin. Publish is how the
+  // lecturer chose which voice speaks their lecture, so a value baked in at
+  // build time must not silently override it. The pin stays the fallback for
+  // lectures published before voices existed and for the standalone kiosks,
+  // which is why nothing changes for them.
+  const pinnedVoiceProfileId = publishedVoiceProfileId || buildPinnedVoiceProfileId;
+  const pinnedVoiceKey = publishedVoiceProfileId
+    ? describePinnedVoice(publishedVoiceProfileId)
+    : buildPinnedVoiceKey;
 
   // System prompt + uploaded documents come from the deployed config, refreshed
   // at mount and again whenever a conversation ends; the lecture skin has no
@@ -78,6 +89,7 @@ export function useGiChatEngine({
   // video." Both sites now call the same function; keep it that way.
   const {
     version: deployedPromptVersion,
+    voiceProfileId: publishedVoiceProfileId,
     refresh: refreshDeployedPrompt,
   } = useDeployedChatbotPrompt({ category });
   const systemPrompt = useMemo(() => {
