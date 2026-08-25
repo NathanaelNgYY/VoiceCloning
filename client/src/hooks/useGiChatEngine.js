@@ -63,16 +63,6 @@ export function useGiChatEngine({
     [voicePinOptions]
   );
 
-  // A lecture's published voice beats the build-time pin. Publish is how the
-  // lecturer chose which voice speaks their lecture, so a value baked in at
-  // build time must not silently override it. The pin stays the fallback for
-  // lectures published before voices existed and for the standalone kiosks,
-  // which is why nothing changes for them.
-  const pinnedVoiceProfileId = publishedVoiceProfileId || buildPinnedVoiceProfileId;
-  const pinnedVoiceKey = publishedVoiceProfileId
-    ? describePinnedVoice(publishedVoiceProfileId)
-    : buildPinnedVoiceKey;
-
   // System prompt + uploaded documents come from the deployed config, refreshed
   // at mount and again whenever a conversation ends; the lecture skin has no
   // editor for them (the faculty site owns that UI). The lesson context is the
@@ -92,6 +82,17 @@ export function useGiChatEngine({
     voiceProfileId: publishedVoiceProfileId,
     refresh: refreshDeployedPrompt,
   } = useDeployedChatbotPrompt({ category });
+
+  // A lecture's published voice beats the build-time pin. Publish is how the
+  // lecturer chose which voice speaks their lecture, so a value baked in at
+  // build time must not silently override it. The pin stays the fallback for
+  // lectures published before voices existed and for the standalone kiosks,
+  // which is why nothing changes for them.
+  const pinnedVoiceProfileId = publishedVoiceProfileId || buildPinnedVoiceProfileId;
+  const pinnedVoiceKey = publishedVoiceProfileId
+    ? describePinnedVoice(publishedVoiceProfileId)
+    : buildPinnedVoiceKey;
+
   const systemPrompt = useMemo(() => {
     // No editor on this skin, so a local copy could only be stale — the deployed
     // prompt and documents (or the bundled default) are the source of truth here.
