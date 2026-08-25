@@ -86,6 +86,28 @@ change future conversations while already-started conversations retain their sna
 reference the same exact GPT+SoVITS weights intentionally share one resident GPU pool even if their
 IDs, reference audio, or synthesis settings differ.
 
+### Future per-model burst planning (not implemented)
+
+The current one-GPU-at-a-time reactive path is suitable for gradual traffic but is not sufficient
+by itself for a large cold burst because launch and deep warm take several minutes. Event operation
+should pre-assign and deep-warm expected GPU capacity per model before learners enter, with a modest
+warm-slot headroom. Reactive scaling should remain as overflow protection.
+
+A later coordinator improvement should calculate a per-model slot deficit from confirmed active
+conversations, admitted/queued synthesis, and short-lived conversation reservations rather than raw
+lecture page views. It can then launch the required batch (`ceil(deficit / 2)` for the current
+two-slot workers), subject to ASG/cost limits, cooldown, and scale-down hysteresis. Expiring
+reservations prevent abandoned lecture clicks from holding capacity. This must be load-tested with
+at least two real lectures and two trained profiles, both as an immediate burst and a ramp, before it
+replaces scheduled event prewarming.
+
+The end-to-end ownership chain should remain: faculty publishes lecture -> authoritative lecture
+record stores profile ID/revision -> lectures API returns the binding -> lecture backend resolves the
+saved profile into exact trained GPT/SoVITS weights -> coordinator routes or prepares that immutable
+model pair. The coordinator should not duplicate lecture metadata or independently guess which voice
+belongs to a lecture. Missing, deleted, incomplete, or unauthorized profile bindings must fail
+clearly and must never silently fall back to a different lecturer's voice.
+
 ## 2. CloudFront distributions
 
 | App | Domain | Distribution ID | Static origin (S3) |

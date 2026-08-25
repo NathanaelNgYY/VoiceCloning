@@ -1,9 +1,16 @@
 # Active TODO
 
-- [ ] Add faculty lecture-voice publishing: persist an authorized, validated
-  `voiceProfileId` (and an explicit revision if historical reproducibility is required)
-  on the authoritative lecture/course record, return it from the lectures API, and
-  replace the bundled `gi-bleeding` mapping. Do not trust a browser-only mapping.
+- [ ] Add faculty lecture-voice publishing: let faculty select a completed trained
+  profile, persist its validated `voiceProfileId` (and an explicit revision if historical
+  reproducibility is required) on the authoritative lecture/course record, return the
+  binding from the lectures API, and replace the bundled `gi-bleeding` mapping. Resolve
+  that binding to immutable GPT/SoVITS weights before calling the coordinator; do not
+  trust a browser-only mapping or silently fall back to the wrong lecturer's voice.
+- [ ] Add per-model burst planning after the authoritative lecture binding exists. Use
+  confirmed conversations, admitted/queued work, and expiring reservations to calculate
+  each model's slot deficit and batch-launch the required two-slot GPUs with headroom,
+  limits, cooldown, and scale-down hysteresis. Keep scheduled per-voice event prewarming
+  until immediate-burst and ramp tests pass with at least two real lectures/profiles.
 - [ ] In an authenticated lectures browser, verify the deployed lecture-click capacity notices:
   absent voice blocks with the up-to-15-minute alternative, busy resident voice remains usable
   with `BUSY_STARTING`, and the warning clears after capacity is ready. Direct coordinator canaries,

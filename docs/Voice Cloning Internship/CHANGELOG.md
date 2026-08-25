@@ -2,6 +2,9 @@
 
 ## 2026-08-25
 
+- Documented two future improvements: authoritative faculty lecture-to-trained-profile
+  publishing through the lectures API, and per-model deficit-based batch scaling with
+  expiring demand reservations, event headroom, and multi-lecture burst acceptance tests.
 - Corrected staging architecture, API, and decision docs to describe coordinator-owned
   per-model admission/reassignment/scale-out instead of the retired 70% ALB policy.
   Documented the current bundled lecture `voiceProfileId` source and the unimplemented
