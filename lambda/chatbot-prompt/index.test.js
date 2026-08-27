@@ -10,6 +10,7 @@ import {
   MAX_PROMPT_CHARS,
   MAX_DOCUMENTS_CHARS,
   MAX_DOCUMENTS,
+  publishedVoiceArtifactKeys,
 } from './index.js';
 
 const DEFAULT_KEY = categoryKey(DEFAULT_CATEGORY);
@@ -566,4 +567,119 @@ test('omitting the voice publishes a lecture that keeps the build-time pin', asy
 
   assert.equal(response.statusCode, 200);
   assert.equal(JSON.parse(writes[0].buffer.toString('utf-8')).voiceProfileId, '');
+});
+
+test('a cloned voice publish mirrors its exact model, references, profile and category to Dev', async () => {
+  const profile = {
+    voiceProfileId: 'deanvoice-v2',
+    displayName: 'DeanVoice',
+    ownerEmail: 'lecturer@ntu.edu.sg',
+    gptKey: 'models/user-models/gpt/DeanVoice-e50.ckpt',
+    sovitsKey: 'models/user-models/sovits/DeanVoice_e40_s4520.pth',
+    ref_audio_path: 'training/datasets/DeanVoice/denoised/ref.wav',
+    aux_ref_audio_paths: [
+      'training/datasets/DeanVoice/denoised/aux-1.wav',
+      'training/datasets/DeanVoice/denoised/aux-2.wav',
+    ],
+  };
+  const sourceWrites = [];
+  const artifactCopies = [];
+  const mirrorWrites = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({ 'voice-profiles/deanvoice-v2.json': profile }),
+    writeObject: async (key, buffer) => { sourceWrites.push({ key, buffer }); },
+    mirrorPrefix: 'echolect',
+    mirrorArtifact: async (key, prefix) => { artifactCopies.push({ key, prefix }); },
+    writeMirrorObject: async (key, buffer, contentType, prefix) => {
+      mirrorWrites.push({ key, buffer, contentType, prefix });
+    },
+    now: () => '2026-08-27T01:00:00.000Z',
+  });
+
+  const response = await handler(event('PUT', {
+    prompt: 'GI instructions',
+    voiceProfileId: 'deanvoice-v2',
+  }, { category: 'gi-bleeding' }));
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(artifactCopies, publishedVoiceArtifactKeys(profile, 'deanvoice-v2').map((key) => ({
+    key,
+    prefix: 'echolect',
+  })));
+  assert.equal(sourceWrites.length, 1);
+  assert.equal(mirrorWrites.length, 1);
+  assert.equal(mirrorWrites[0].key, categoryKey('gi-bleeding'));
+  assert.equal(mirrorWrites[0].prefix, 'echolect');
+  assert.equal(mirrorWrites[0].contentType, 'application/json');
+  assert.deepEqual(
+    JSON.parse(mirrorWrites[0].buffer.toString('utf-8')),
+    JSON.parse(sourceWrites[0].buffer.toString('utf-8')),
+  );
+});
+
+test('unsafe or incomplete cloned-voice artifacts are rejected before either category changes', async () => {
+  assert.deepEqual(publishedVoiceArtifactKeys({
+    gptKey: '../private.ckpt',
+    sovitsKey: 'models/safe.pth',
+    ref_audio_path: 'training/ref.wav',
+  }, 'voice-v1'), []);
+
+  const sourceWrites = [];
+  const mirrorWrites = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      'voice-profiles/voice-v1.json': {
+        voiceProfileId: 'voice-v1',
+        ownerEmail: 'lecturer@ntu.edu.sg',
+        gptKey: 'models/model.ckpt',
+        sovitsKey: '',
+        ref_audio_path: 'training/ref.wav',
+      },
+    }),
+    writeObject: async (...args) => { sourceWrites.push(args); },
+    mirrorPrefix: 'echolect',
+    mirrorArtifact: async () => { throw new Error('should not copy'); },
+    writeMirrorObject: async (...args) => { mirrorWrites.push(args); },
+  });
+
+  const response = await handler(event('PUT', {
+    prompt: 'GI instructions',
+    voiceProfileId: 'voice-v1',
+  }, { category: 'gi-bleeding' }));
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(sourceWrites.length, 0);
+  assert.equal(mirrorWrites.length, 0);
+});
+
+test('a failed artifact mirror leaves both category records unchanged', async () => {
+  const sourceWrites = [];
+  const mirrorWrites = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      'voice-profiles/voice-v1.json': {
+        voiceProfileId: 'voice-v1',
+        ownerEmail: 'lecturer@ntu.edu.sg',
+        gptKey: 'models/model.ckpt',
+        sovitsKey: 'models/model.pth',
+        ref_audio_path: 'training/ref.wav',
+      },
+    }),
+    writeObject: async (...args) => { sourceWrites.push(args); },
+    mirrorPrefix: 'echolect',
+    mirrorArtifact: async () => { throw new Error('S3 copy failed'); },
+    writeMirrorObject: async (...args) => { mirrorWrites.push(args); },
+  });
+
+  const response = await handler(event('PUT', {
+    prompt: 'GI instructions',
+    voiceProfileId: 'voice-v1',
+  }, { category: 'gi-bleeding' }));
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(sourceWrites.length, 0);
+  assert.equal(mirrorWrites.length, 0);
 });

@@ -74,6 +74,7 @@ test("Dev and staging use one LivePage with environment-specific advanced contro
   assert.match(livePageSource, /import\.meta\.env\.VITE_SHOW_ADVANCED_SETTINGS/);
   assert.match(devLiveFastEnv, /^VITE_SHOW_ADVANCED_SETTINGS=true$/m);
   assert.match(stagingLiveFastEnv, /^VITE_SHOW_ADVANCED_SETTINGS=false$/m);
+  assert.match(stagingFacultyEnv, /^VITE_SHOW_ADVANCED_SETTINGS=false$/m);
 });
 
 test("the staging GI build gates the lesson site behind NTU Microsoft sign-in", () => {

@@ -5,6 +5,7 @@ import {
   ListObjectsV2Command,
   HeadObjectCommand,
   DeleteObjectCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -21,9 +22,13 @@ function getClient() {
   return client;
 }
 
-function fullKey(key) {
-  const prefix = S3_PREFIX ? S3_PREFIX.replace(/\/+$/u, '') + '/' : '';
+function fullKeyForPrefix(key, storagePrefix = S3_PREFIX) {
+  const prefix = storagePrefix ? String(storagePrefix).replace(/\/+$/u, '') + '/' : '';
   return prefix + key;
+}
+
+function fullKey(key) {
+  return fullKeyForPrefix(key);
 }
 
 function stripPrefix(key) {
@@ -65,6 +70,32 @@ export async function uploadBuffer(key, buffer, contentType) {
     Key: fullKey(key),
     Body: buffer,
     ContentType: contentType,
+  }));
+}
+
+/** Write an object into another application prefix in the same project bucket. */
+export async function uploadBufferToPrefix(key, buffer, contentType, destinationPrefix) {
+  const bucket = requireBucket();
+  await getClient().send(new PutObjectCommand({
+    Bucket: bucket,
+    Key: fullKeyForPrefix(key, destinationPrefix),
+    Body: buffer,
+    ContentType: contentType,
+  }));
+}
+
+/**
+ * Server-side copy from this deployment's prefix into another environment prefix.
+ * Used for immutable trained-voice artifacts; model files never pass through Lambda memory.
+ */
+export async function copyObjectToPrefix(key, destinationPrefix) {
+  const bucket = requireBucket();
+  const sourceKey = fullKey(key);
+  const encodedSource = sourceKey.split('/').map(encodeURIComponent).join('/');
+  await getClient().send(new CopyObjectCommand({
+    Bucket: bucket,
+    CopySource: `${bucket}/${encodedSource}`,
+    Key: fullKeyForPrefix(key, destinationPrefix),
   }));
 }
 

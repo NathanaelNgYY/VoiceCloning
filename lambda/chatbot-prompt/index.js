@@ -19,7 +19,13 @@
 // of prompt plus 200k of documents), which does not fit DynamoDB's 400 KB item
 // limit, and the bucket is versioned — so every deploy already keeps a
 // recoverable history of the one before it.
-import { uploadBuffer, getObject, listObjects } from '../shared/s3.js';
+import {
+  uploadBuffer,
+  uploadBufferToPrefix,
+  copyObjectToPrefix,
+  getObject,
+  listObjects,
+} from '../shared/s3.js';
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { isSafePathSegment } from '../shared/paths.js';
@@ -128,10 +134,44 @@ function profileBelongsTo(profile, email) {
   return ownsVoiceName(email, profile?.displayName);
 }
 
+function normalizeArtifactKey(value) {
+  const key = String(value || '').trim();
+  if (!key || key.startsWith('/') || key.includes('\\') || /^[a-z][a-z0-9+.-]*:\/\//iu.test(key)) {
+    return '';
+  }
+  const segments = key.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return '';
+  return key;
+}
+
+/** Exact S3 objects Dev needs to resolve and synthesize a staging-published cloned voice. */
+export function publishedVoiceArtifactKeys(profile, voiceProfileId) {
+  const profileId = String(voiceProfileId || '').trim();
+  const required = [
+    profile?.gptKey || profile?.gptPath,
+    profile?.sovitsKey || profile?.sovitsPath,
+    profile?.ref_audio_path,
+  ].map(normalizeArtifactKey);
+  if (!profileId || required.some((key) => !key)) return [];
+
+  const auxiliaries = Array.isArray(profile?.aux_ref_audio_paths)
+    ? profile.aux_ref_audio_paths.map(normalizeArtifactKey)
+    : [];
+  if (auxiliaries.some((key) => !key)) return [];
+  return [...new Set([
+    `voice-profiles/${profileId}.json`,
+    ...required,
+    ...auxiliaries,
+  ])];
+}
+
 export function createHandler({
   readObject = getObject,
   writeObject = uploadBuffer,
   listStoredObjects = listObjects,
+  mirrorPrefix = String(process.env.CHATBOT_PUBLISH_MIRROR_PREFIX || '').trim(),
+  mirrorArtifact = copyObjectToPrefix,
+  writeMirrorObject = uploadBufferToPrefix,
   authGuard = createLiveAuthGuard(),
   now = () => new Date().toISOString(),
 } = {}) {
@@ -267,6 +307,7 @@ export function createHandler({
     if (voiceProfileId === null) {
       return err(400, 'voiceProfileId must be a saved profile id or elevenlabs:<voiceId>', event);
     }
+    let clonedVoiceProfile = null;
     if (voiceProfileId && !parseElevenLabsVoiceId(voiceProfileId)) {
       let profile;
       try {
@@ -281,20 +322,49 @@ export function createHandler({
       if (!isAdminIdentity(identity) && !profileBelongsTo(profile, identity?.email)) {
         return err(403, 'You can only publish a voice that belongs to you.', event);
       }
+      clonedVoiceProfile = profile;
+    }
+
+    // Staging faculty is the one authoring surface. When configured, copy the
+    // selected immutable voice artifacts into Dev before exposing the category
+    // there. CopyObject keeps large model weights inside S3 instead of streaming
+    // them through Lambda. Repeating a publish is intentionally idempotent.
+    if (mirrorPrefix && clonedVoiceProfile) {
+      const artifactKeys = publishedVoiceArtifactKeys(clonedVoiceProfile, voiceProfileId);
+      if (artifactKeys.length === 0) {
+        return err(400, 'The selected voice has incomplete or unsafe stored artifact paths.', event);
+      }
+      try {
+        for (const key of artifactKeys) {
+          await mirrorArtifact(key, mirrorPrefix);
+        }
+      } catch (error) {
+        console.error('[chatbot-prompt] voice mirror failed', error);
+        return err(500, 'Could not prepare the selected voice for the Dev lecture.', event);
+      }
     }
 
     // schemaVersion 4 adds `voiceProfileId`; 3 added `category`. Stored as well
     // as keyed on so a raw object is self-describing when read out of the bucket.
     const record = { schemaVersion: 4, category, prompt, documents, voiceProfileId, updatedAt: now() };
+    const recordBuffer = Buffer.from(JSON.stringify(record), 'utf-8');
     try {
       await writeObject(
         categoryKey(category),
-        Buffer.from(JSON.stringify(record), 'utf-8'),
+        recordBuffer,
         'application/json',
       );
     } catch (error) {
       console.error('[chatbot-prompt] write failed', error);
       return err(500, 'Could not deploy the instructions.', event);
+    }
+    if (mirrorPrefix) {
+      try {
+        await writeMirrorObject(categoryKey(category), recordBuffer, 'application/json', mirrorPrefix);
+      } catch (error) {
+        console.error('[chatbot-prompt] category mirror failed', error);
+        return err(500, 'Staging was updated, but Dev could not be synchronized. Retry publish.', event);
+      }
     }
 
     return ok({ category, updatedAt: record.updatedAt }, {}, event);
