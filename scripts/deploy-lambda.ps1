@@ -13,23 +13,32 @@ npm run package:function-url
 $rc = $LASTEXITCODE
 Pop-Location
 if ($rc -ne 0) { throw "package failed" }
-$deploymentEnvName = if ($Env -eq 'dev') { '.env.deployment' } else { ".env.deployment.$Env" }
-$deploymentEnv = Join-Path $repo "lambda\$deploymentEnvName"
-if (Test-Path $deploymentEnv) {
+# Merge an env file over the function's LIVE configuration instead of replacing
+# it. update-function-configuration overwrites the whole variable map, and the
+# console-set secrets (API keys) exist only there — the .env.deployment files are
+# git-tracked, so keys are deliberately absent from them.
+function Sync-LambdaEnvironment {
+  param(
+    [Parameter(Mandatory)][string]$FunctionName,
+    [Parameter(Mandatory)][string]$EnvFile,
+    [Parameter(Mandatory)][string]$Region,
+    [string]$SupervisorOid
+  )
+
   $currentConfig = aws lambda get-function-configuration `
-    --region $cfg.region `
-    --function-name $cfg.lambdaFunction `
+    --region $Region `
+    --function-name $FunctionName `
     --output json | ConvertFrom-Json
-  if ($LASTEXITCODE -ne 0) { throw "get-function-configuration failed" }
+  if ($LASTEXITCODE -ne 0) { throw "get-function-configuration failed for $FunctionName" }
 
   $variables = @{}
   foreach ($property in $currentConfig.Environment.Variables.PSObject.Properties) {
     $variables[$property.Name] = [string]$property.Value
   }
-  foreach ($line in Get-Content $deploymentEnv) {
+  foreach ($line in Get-Content $EnvFile) {
     if ($line -match '^\s*(?:#|$)') { continue }
     if ($line -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
-      throw "Invalid deployment environment line in $deploymentEnv"
+      throw "Invalid deployment environment line in $EnvFile"
     }
     $variables[$Matches[1]] = $Matches[2]
   }
@@ -48,7 +57,8 @@ if (Test-Path $deploymentEnv) {
     $variables['SUPERVISOR_OIDS'] = $supervisorOids -join ','
   }
 
-  $environmentPath = Join-Path $env:TEMP "voice-cloning-lambda-$Env-environment.json"
+  $safeName = $FunctionName -replace '[^A-Za-z0-9]', '-'
+  $environmentPath = Join-Path $env:TEMP "voice-cloning-lambda-$safeName-environment.json"
   $environmentJson = @{ Variables = $variables } | ConvertTo-Json -Depth 4 -Compress
   [IO.File]::WriteAllText(
     $environmentPath,
@@ -57,20 +67,38 @@ if (Test-Path $deploymentEnv) {
   )
   try {
     aws lambda update-function-configuration `
-      --region $cfg.region `
-      --function-name $cfg.lambdaFunction `
+      --region $Region `
+      --function-name $FunctionName `
       --environment "file://$environmentPath" `
       --query '{FunctionName:FunctionName,LastModified:LastModified}' `
       --output json
-    if ($LASTEXITCODE -ne 0) { throw "update-function-configuration failed" }
+    if ($LASTEXITCODE -ne 0) { throw "update-function-configuration failed for $FunctionName" }
     aws lambda wait function-updated-v2 `
-      --region $cfg.region `
-      --function-name $cfg.lambdaFunction
-    if ($LASTEXITCODE -ne 0) { throw "waiting for function configuration failed" }
+      --region $Region `
+      --function-name $FunctionName
+    if ($LASTEXITCODE -ne 0) { throw "waiting for function configuration failed for $FunctionName" }
   } finally {
     Remove-Item -LiteralPath $environmentPath -Force -ErrorAction SilentlyContinue
   }
 }
+
+$deploymentEnvName = if ($Env -eq 'dev') { '.env.deployment' } else { ".env.deployment.$Env" }
+$deploymentEnv = Join-Path $repo "lambda\$deploymentEnvName"
+if (Test-Path $deploymentEnv) {
+  Sync-LambdaEnvironment -FunctionName $cfg.lambdaFunction -EnvFile $deploymentEnv `
+    -Region $cfg.region -SupervisorOid $SupervisorOid
+}
+
+# The model coordinator is a SEPARATE function with its own settings. Nothing
+# here configured it before, so anything set on it lived only in the console and
+# reverted to the code default on a fresh provision — silently, since the default
+# is a plausible-looking number rather than an error.
+$coordinatorEnv = Join-Path $repo "lambda\.env.deployment.coordinator.$Env"
+if ($cfg.coordinatorFunction -and (Test-Path $coordinatorEnv)) {
+  Sync-LambdaEnvironment -FunctionName $cfg.coordinatorFunction -EnvFile $coordinatorEnv `
+    -Region $cfg.region
+}
+
 if ($cfg.lambdaMemoryMb) {
   $currentMemory = aws lambda get-function-configuration `
     --region $cfg.region `

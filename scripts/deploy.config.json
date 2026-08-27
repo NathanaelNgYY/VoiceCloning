@@ -1,6 +1,7 @@
 {
   "staging": {
     "lambdaFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging",
+    "coordinatorFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-staging-coordinator",
     "lambdaMemoryMb": 512,
     "region": "ap-northeast-2",
     "s3Region": "ap-southeast-1",
