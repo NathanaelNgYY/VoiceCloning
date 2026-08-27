@@ -294,8 +294,17 @@ export default function GiChatPage() {
               </div>
 
               <div ref={footerRef} className="shrink-0 bg-white/40">
+                {/* A capacity wait is an advisory, not an interruption, so it
+                    goes out amber and on the polite 'status' channel — 'alert'
+                    cuts across whatever a student's screen reader is saying. */}
                 {chat.error && (
-                  <p className="px-4 pb-2 text-center text-xs text-red-600" role="alert">
+                  <p
+                    className={cn(
+                      'px-4 pb-2 text-center text-xs',
+                      chat.errorTone === 'waiting' ? 'text-amber-600' : 'text-red-600',
+                    )}
+                    role={chat.errorTone === 'waiting' ? 'status' : 'alert'}
+                  >
                     {chat.error}
                   </p>
                 )}

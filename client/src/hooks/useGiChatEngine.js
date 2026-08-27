@@ -278,6 +278,11 @@ export function useGiChatEngine({
   }, [liveSpeech.isMicInputEnabled, liveSpeech.disableMicInput, liveSpeech.enableMicInput]);
 
   const error = liveSpeech.error || profileError;
+  // A capacity wait ("a GPU is switching to this voice") arrives on the error
+  // channel but is not a failure, so the kiosk must not paint it red — same rule
+  // as pages/LivePage.jsx. A profile-load failure has no tone of its own and
+  // stays red.
+  const errorTone = liveSpeech.error ? liveSpeech.errorTone : 'error';
 
   // True only once an activated voice profile has produced usable reference
   // params — gates the controls so a fresh deployment with no cloned voice
@@ -295,6 +300,7 @@ export function useGiChatEngine({
     status: toGiStatus(liveSpeech.phase, { hasError: Boolean(error) }),
     messages: visibleMessages,
     error,
+    errorTone,
     voiceActive: isVoiceActive(liveSpeech.phase),
     responseBusy: isResponseBusy(liveSpeech.phase),
     connecting: !backendReadyForVoice || Boolean(
