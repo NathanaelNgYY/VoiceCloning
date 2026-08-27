@@ -13,6 +13,8 @@ import { acquireApiToken, shouldAttachApiToken } from '../auth/msalClient.js';
 export const LIVE_SESSION_READY_TIMEOUT_MS = 15_000;
 import { connectInferenceSSE } from '../services/sse.js';
 import {
+  capacityWaitMessage,
+  isCapacityWaitError,
   isRetryableSynthesisError,
   sanitizeBackendError,
   synthesisRetryDelayMs,
@@ -161,7 +163,20 @@ export function useLiveSpeech({
   const [interimTranscript, setInterimTranscript] = useState('');
   const [messages, setMessages] = useState([]);
   const [selectedReplyId, setSelectedReplyIdState] = useState('');
-  const [error, setError] = useState(null);
+  // The banner needs to say more than "something went wrong": a GPU switching to
+  // this voice is a wait, not a breakage. Tone rides along with the text so the
+  // UI never has to guess intent from wording.
+  const [errorState, setErrorState] = useState(null);
+  const error = errorState?.text ?? null;
+  const errorTone = errorState?.tone ?? 'error';
+
+  function setError(value, tone = 'error') {
+    if (value == null) {
+      setErrorState(null);
+      return;
+    }
+    setErrorState({ text: String(value), tone });
+  }
   const [audioLevel, setAudioLevel] = useState(0);
   const [micInputEnabled, setMicInputEnabledState] = useState(false);
   const [bargeInArmed, setBargeInArmedState] = useState(false);
@@ -550,6 +565,27 @@ export function useLiveSpeech({
     throw lastError;
   }
 
+  // A capacity wait and a real failure reach the UI by the same four paths; only
+  // the tone and the wording differ, so build both in one place.
+  function reportSynthesisFailure(err, patchTarget) {
+    const waitMessage = capacityWaitMessage(err);
+    const tone = isCapacityWaitError(err) ? 'waiting' : 'error';
+    patchTarget({
+      status: 'error',
+      error: waitMessage || err.message || 'Voice generation failed',
+      errorTone: tone,
+    });
+    return { tone, waitMessage };
+  }
+
+  function setSynthesisBanner(err, { tone, waitMessage }) {
+    if (tone === 'waiting') {
+      setError(waitMessage, 'waiting');
+      return;
+    }
+    setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }), 'error');
+  }
+
   function synthesizeWithRetry(params) {
     return withSynthesisRetry(() => synthesize(params));
   }
@@ -626,12 +662,9 @@ export function useLiveSpeech({
     } catch (err) {
       if (isCancelledRef.current || runId !== runIdRef.current) return;
 
-      patchMessage(messageId, {
-        status: 'error',
-        error: err.message || 'Voice generation failed',
-      });
+      const outcome = reportSynthesisFailure(err, (patch) => patchMessage(messageId, patch));
       if (!isVoiceStoppedMessage(messageId)) {
-        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSynthesisBanner(err, outcome);
         const nextPhase = socketRef.current ? 'listening' : 'idle';
         setPhase(nextPhase);
         syncOpenAiInputWithMic(nextPhase);
@@ -738,14 +771,11 @@ export function useLiveSpeech({
         return;
       }
 
-      patchMessage(messageId, {
-        status: 'error',
-        error: err.message || 'Voice generation failed',
-      });
+      const outcome = reportSynthesisFailure(err, (patch) => patchMessage(messageId, patch));
       // A voice-stopped reply fails quietly in the background — tearing down
       // the phase/selection here would cut off a newer reply mid-playback.
       if (!isVoiceStoppedMessage(messageId)) {
-        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSynthesisBanner(err, outcome);
         setSelectedReplyId('');
         const nextPhase = socketRef.current ? 'listening' : 'idle';
         setPhase(nextPhase);
@@ -769,12 +799,9 @@ export function useLiveSpeech({
   function failStreamedFastReply(state, err) {
     if (state.failed || streamedFastReplyIsStale(state)) return;
     state.failed = true;
-    patchMessage(state.messageId, {
-      status: 'error',
-      error: err.message || 'Voice generation failed',
-    });
+    const outcome = reportSynthesisFailure(err, (patch) => patchMessage(state.messageId, patch));
     if (!isVoiceStoppedMessage(state.messageId)) {
-      setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+      setSynthesisBanner(err, outcome);
       setSelectedReplyId('');
       const nextPhase = socketRef.current ? 'listening' : 'idle';
       setPhase(nextPhase);
@@ -961,12 +988,9 @@ export function useLiveSpeech({
     } catch (err) {
       if (isCancelledRef.current || runId !== runIdRef.current) return;
 
-      patchMessage(messageId, {
-        status: 'error',
-        error: err.message || 'Voice generation failed',
-      });
+      const outcome = reportSynthesisFailure(err, (patch) => patchMessage(messageId, patch));
       if (!isVoiceStoppedMessage(messageId)) {
-        setError(friendlyLiveError(err.message, { prefix: 'Voice reply failed: ' }));
+        setSynthesisBanner(err, outcome);
         setSelectedReplyId('');
         const nextPhase = socketRef.current ? 'listening' : 'idle';
         setPhase(nextPhase);
@@ -1957,6 +1981,7 @@ export function useLiveSpeech({
     selectedReplyId,
     audioSrc,
     error,
+    errorTone,
     speechApiAvailable,
     audioLevel,
     isMicInputEnabled: micInputEnabled,

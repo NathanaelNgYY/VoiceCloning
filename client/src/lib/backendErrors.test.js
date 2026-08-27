@@ -2,11 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  capacityWaitMessage,
+  formatWaitEstimate,
+  isCapacityWaitError,
   isRetryableSynthesisError,
   isTransientBackendError,
   sanitizeBackendError,
   synthesisRetryDelayMs,
 } from './backendErrors.js';
+
+function capacityErr(seconds = 360, code = 'MODEL_CAPACITY_STARTING') {
+  const err = new Error('An idle GPU is switching to this lecture voice. Please wait before starting voice conversation.');
+  err.code = code;
+  err.status = 503;
+  err.retryAfterSeconds = seconds;
+  return err;
+}
 
 // The regression this guards: services/api.js rewrites every 502/503/504 body to
 // GPU_OFFLINE_MESSAGE, so a predicate that reads the message text sees no "503"
@@ -88,4 +99,56 @@ test('blanks bare gateway text but keeps a real message', () => {
     sanitizeBackendError('The voice engine is still starting up — please try again in a moment.'),
     'The voice engine is still starting up — please try again in a moment.',
   );
+});
+
+// A red banner reading "Voice reply failed" for a GPU that is merely switching
+// voices tells the user something broke when nothing did.
+test('separates a capacity wait from a genuine failure', () => {
+  assert.equal(isCapacityWaitError(capacityErr()), true);
+  assert.equal(isCapacityWaitError(capacityErr(30, 'MODEL_CAPACITY_LIMIT')), true);
+
+  const offline = new Error('GPU not started');
+  offline.code = 'GPU_OFFLINE';
+  assert.equal(isCapacityWaitError(offline), false);
+  assert.equal(isCapacityWaitError(new Error('nope')), false);
+});
+
+test('reads the wait estimate in whichever unit is legible', () => {
+  assert.equal(formatWaitEstimate(30), 'about 30 seconds');
+  assert.equal(formatWaitEstimate(89), 'about 89 seconds');
+  assert.equal(formatWaitEstimate(360), 'about 6 minutes');
+  assert.equal(formatWaitEstimate(600), 'about 10 minutes');
+});
+
+test('never promises a zero-length wait', () => {
+  assert.equal(formatWaitEstimate(0), '');
+  assert.equal(formatWaitEstimate(undefined), '');
+  assert.equal(formatWaitEstimate(-5), '');
+  // Rounding must not turn a real wait into "about 0 minutes".
+  assert.equal(formatWaitEstimate(95), 'about 2 minutes');
+});
+
+// The estimate comes from the coordinator (MODEL_BOOT_ESTIMATE_SECONDS), so the
+// promise tracks the fleet's config rather than a number frozen into the bundle.
+test('quotes the coordinator’s own estimate back to the user', () => {
+  const message = capacityWaitMessage(capacityErr(360));
+
+  assert.match(message, /switching to this lecture voice/);
+  assert.match(message, /about 6 minutes/);
+  assert.match(message, /try again then/);
+});
+
+test('tracks a re-configured estimate without a client change', () => {
+  assert.match(capacityWaitMessage(capacityErr(600)), /about 10 minutes/);
+});
+
+test('drops the timing clause when the backend sends no estimate', () => {
+  const message = capacityWaitMessage(capacityErr(0));
+
+  assert.match(message, /switching to this lecture voice/);
+  assert.doesNotMatch(message, /usually takes/);
+});
+
+test('returns nothing for an error that is not a capacity wait', () => {
+  assert.equal(capacityWaitMessage(new Error('ref_audio_path is required')), '');
 });

@@ -1,3 +1,5 @@
+import { CAPACITY_CODES } from './synthesisResponse.js';
+
 // Transient errors we see while the shared GPU is waking up or a model is mid-load:
 // CloudFront/nginx 5xx pages, 404s from an endpoint that isn't warmed yet, and
 // plain network drops. These should be retried and never surfaced as a raw banner
@@ -48,4 +50,34 @@ export function sanitizeBackendError(raw) {
     return '';
   }
   return stripped;
+}
+
+
+// A capacity answer is the fleet doing its job — bringing a GPU to this voice, or
+// telling us it has none spare — not a fault. The same request succeeds once the
+// switch finishes, so the UI must not dress it in the red it uses for breakage.
+// Classified by `code`, never by message text, for the same reason
+// isRetryableSynthesisError is.
+export function isCapacityWaitError(err) {
+  return CAPACITY_CODES.has(err?.code);
+}
+
+// The coordinator sends its own estimate (MODEL_BOOT_ESTIMATE_SECONDS), so the
+// wait we promise tracks the fleet's configuration instead of a number baked into
+// the client and left to rot.
+export function formatWaitEstimate(seconds) {
+  const total = Math.round(Number(seconds) || 0);
+  if (total <= 0) return '';
+  if (total < 90) return `about ${total} seconds`;
+  return `about ${Math.max(1, Math.round(total / 60))} minutes`;
+}
+
+// The full "you are waiting, here is how long" line. Returns '' for anything that
+// is not a capacity wait, so callers can use it as the branch itself.
+export function capacityWaitMessage(err) {
+  if (!isCapacityWaitError(err)) return '';
+  const base = sanitizeBackendError(err?.message) || 'A GPU is switching to this lecture voice.';
+  const estimate = formatWaitEstimate(err?.retryAfterSeconds);
+  if (!estimate) return base;
+  return `${base} This usually takes ${estimate} — you can leave this page open and try again then.`;
 }
