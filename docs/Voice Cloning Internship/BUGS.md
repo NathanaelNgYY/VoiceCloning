@@ -7,6 +7,15 @@
 
 ## Active
 
+- 2026-08-27 fixed and deployed: staging faculty publishing updated only the staging category;
+  Dev could point at an absent profile/model if it was copied manually. Publish now mirrors the
+  exact cloned profile, both weights, and selected references before writing Dev's category.
+  Current GI data was backfilled and verified; a real authenticated faculty publish is still pending.
+
+- 2026-08-27 fixed operationally: the old staging 19:00 scheduled action still set min/desired
+  to zero despite the tracked one-GPU baseline. Both daily actions now preserve min 1, leave
+  desired unset, and retain max 192. Dev's idle stop is disabled so its test GPU is manual-only.
+
 - 2026-08-27: the deployed faculty bundle renders the correct idle `Select a voice to begin.`
   state, but the existing signed-in Chrome session received 401 from session-signin/profile API
   calls and showed `Sign in to see your voices.` A retry did not recover. The AWS base session

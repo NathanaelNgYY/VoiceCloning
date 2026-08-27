@@ -221,6 +221,13 @@
   configuration decide what is active: Dev uses its fixed on-demand GPU and learner table;
   staging enables the coordinator, shared inference ASG, faculty site, and staging-only auth/
   origin settings. Code presence does not imply a feature is enabled in both environments.
+- Staging faculty is the sole lecture-authoring surface. A publish mirrors only the category and
+  exact selected cloned-voice artifacts into Dev's S3 prefix; transcripts, analytics, training
+  state, active profiles, and other environment data remain isolated. Artifacts copy first and
+  the Dev category pointer changes last, preventing it from naming an absent model.
+- Dev's comparison GPU is manual-only (`GPU_IDLE_STOP_MINUTES=0`, schedule off, no ASG or
+  coordinator). Staging keeps one ASG baseline, packs matching work onto its oldest worker, and
+  terminates newest overflow first so routing does not keep scale-down candidates artificially hot.
 - Promotion order is: merge/test one commit, fast-forward both remote pointers without force,
   deploy each target with its own `-Env`, then verify Lambda package hashes, client assets,
   worker commits, and environment-specific infrastructure independently.
@@ -231,7 +238,8 @@ These live in runtime configuration and will not appear in any branch diff:
 
 - Staging live-gateway `.env` and staging Lambda env carry `LIVE_AUTH_EXEMPT_ORIGINS`
   (`https://d3k2rz0hqm8nxi.cloudfront.net,https://faculty.lkcmedicine.org`). Dev has neither.
-- Staging S3 holds the deployed chatbot prompt; dev has no such object.
+- Both prefixes hold the published lecture category; staging faculty owns it and Dev receives the
+  publish-time mirror. Other application state remains environment-specific.
 - Staging ASG instances run `warm-staging-deanvoice.sh` from a systemd drop-in
   (`gpu-inference-worker.service.d/staging-warm.conf`) and keep several deploy scripts
   truncated to zero bytes on the fleet image. Neither applies to dev.

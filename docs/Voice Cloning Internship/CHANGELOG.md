@@ -1595,3 +1595,18 @@
 - Code files changed: `client/src/pages/LivePage.jsx`, `client/src/giPublicAccess.test.js`.
 - Tests run: `node --test src/giPublicAccess.test.js` (26/26), `npm run build:chatbot`.
 - Not tested: the new faculty banner has not been deployed or browser-verified.
+- Added publish-time staging-to-Dev mirroring for lecture category records and the exact cloned
+  profile, GPT/SoVITS weights, and selected reference audio. Backfilled `gi-bleeding` and verified
+  nine artifact copies by size/ETag before switching Dev to `deanvoice-v1`.
+- Hid advanced settings on faculty, made Dev GPU lifecycle manual-only, and corrected staging's
+  daily ASG actions to preserve one baseline without resetting desired capacity.
+- Unified both remote branches at `7c9a781`; deployed equal Lambda package hashes and equal GI
+  bundle `assets/index-BrQYHCPo.js`. Dev fixed and staging ASG workers independently returned
+  HTTP 200 WAV synthesis for the mirrored DeanVoice model.
+- Code files changed: `client/env/staging/chatbot-text.env`, `client/src/giPublicAccess.test.js`,
+  `lambda/.env.deployment`, `lambda/.env.deployment.staging`, `lambda/chatbot-prompt/index.js`,
+  `lambda/chatbot-prompt/index.test.js`, `lambda/shared/s3.js`.
+- Tests run: Lambda 282/282; client 464/464; targeted config suite 27/27; both client builds;
+  public category/bundle checks; S3 size/ETag checks; two real worker synthesis canaries.
+- Not tested: authenticated faculty publish from the browser, a second lecture/profile, and an
+  active 50-GPU event run remain pending.

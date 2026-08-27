@@ -1,10 +1,9 @@
 # Active TODO
 
-- [ ] Verify faculty lecture-voice publishing with at least two real lecture categories and
-  two different trained profiles: each signed-in lecturer must see only authorized completed
-  voices, publishing must update only that category, lectures must load the published binding,
-  standard voices must bypass GPU capacity, and cloned voices must reach the correct immutable
-  GPT/SoVITS pair. Add explicit profile revisions only if historical reproducibility is required.
+- [ ] Finish authenticated faculty publishing proof with at least two real lecture categories and
+  two trained profiles. One-category storage/runtime proof now passes: staging and Dev both expose
+  `gi-bleeding -> deanvoice-v1`, mirrored artifacts match, and both GPUs synthesize the exact pair.
+  Still prove lecturer ownership in-browser, category isolation, and standard-voice GPU bypass.
 - [ ] Add per-model burst planning on top of the implemented lecture binding. Use
   confirmed conversations, admitted/queued work, and expiring reservations to calculate
   each model's slot deficit and batch-launch the required two-slot GPUs with headroom,

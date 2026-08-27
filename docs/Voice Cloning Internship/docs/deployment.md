@@ -82,7 +82,7 @@ role belongs to the staging ASG path only.
 |---|---|---|
 | Branch | `separate-containers-new` for all components | `codex/staging-multi-user-scaling` for all components |
 | Fixed GPU instance | `i-03f258d470a2fa73f` | `i-0f0da8be59367f7a8` |
-| Capacity management | fixed GPU; activity start + five-minute idle-check; no schedule, ASG, scaling alarms, or ASG actions | fixed GPU 07:00-19:00 Singapore schedule plus `vcs-staging-gpu-inference`, recurring ASG actions, reactive policies, and event actions |
+| Capacity management | manually controlled fixed GPU; idle stop and schedule disabled; no coordinator or ASG | fixed training/control GPU plus model-aware `vcs-staging-gpu-inference`; one baseline, reactive overflow, and explicit event prewarm |
 | Worker access | SSM | SSM |
 
 There is no dev `-dev` Lambda, `echolect-dev/` prefix, dev ASG, or separate dev chatbot
@@ -90,17 +90,19 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-25): both remote pointers share the same head and unified
-application commit `30234eb`; Dev/staging main
-Lambdas share one exact package SHA, while only staging has coordinator/ASG configuration.
-Staging ASG is min/desired 1, max 192, ELB health with 1,200-second grace, and launch-template
-v39/default backed by tagged AMI `ami-0cf96ffb91690b17c`. Fresh instance
-`i-0c92f3224029284ee` proved exact commit, zero runtime drift, and service readiness. All client targets were
-rebuilt; the Dev/staging GI bundles currently share `assets/index-BRieZIOC.js`. The fixed
-Dev and staging workers are also on `30234eb` and passed their applicable health checks.
+Latest live read-back (2026-08-27): both remote pointers contain the same reviewed application
+commit `7c9a781` (a later docs-only sync does not alter deployment); Dev/staging main
+Lambdas share exact package SHA `eey+5dbE…`, while only staging has coordinator/ASG config.
+Both GI distributions serve `assets/index-BrQYHCPo.js`. Dev fixed worker `i-03f258d470a2fa73f`
+is manually running on unchanged worker commit `30234eb` and synthesized DeanVoice successfully.
+Staging ASG is min/desired 1, max 192; current worker `i-0468f296715e61df3` is healthy on
+target port 3103, registered for DeanVoice, and synthesized successfully. Both daily actions
+preserve min 1 and leave desired unset; `NewestInstance` removes overflow first.
 
 Staging chatbot serves the GI build from `codex/staging-multi-user-scaling`; its published
-`gi-bleeding` category currently selects cloned profile `deanvoice-v1`.
+`gi-bleeding` category currently selects cloned profile `deanvoice-v1`. Faculty publish copies
+the selected profile, exact weights/references, and then its category into Dev's `echolect/`
+prefix. It does not share transcripts, analytics, training state, or other environment data.
 Staging Live Fast starts multi-sentence voice after the first confirmed completed
 streamed sentence. The staging Lambda exposes profile-resolution, worker-round-trip,
 capacity-retry, cold-environment, and total timing headers; memory is 512 MB.
@@ -304,14 +306,15 @@ redundant student-entry warm-up burst.
   instance ID. Min 1 keeps a warm baseline in `subnet-0c1937ef298f54500`.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
-- Live scale-out uses occupied synthesis slots / (`HealthyHostCount * 2`) and works
-  outside event mode. Below five healthy GPUs, one 70% minute sets exact capacity
-  five; at five or more it adds ten and re-evaluates subsequent samples. The old
-  rejection alarm is telemetry-only.
-  Scale-in removes one instance after fifteen no-traffic minutes.
+- Live scale-out is model-aware in the coordinator: route to an existing matching free slot;
+  otherwise reassign a differently loaded worker only after five demand-idle minutes, or add
+  one ASG instance. Matching requests pack onto the oldest worker. Legacy rejection/occupancy
+  alarms are telemetry-only; scale-in removes one newest instance after fifteen no-traffic minutes.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
-  2 minutes. Normal scale-in stops at min 1; an event min 50 cannot auto-scale below
-  50 until the paired scale-down action restores min/desired 1.
+  2 minutes. Normal scale-in stops at min 1. Event mode can immediately set or schedule the
+  configured 50-GPU floor; every new worker claims pending model demand, otherwise warms
+  `deanvoice-v1`, completes ten two-slot warm rounds and public RIFF primes, and only then
+  becomes ready. A paired scale-down restores the normal one-GPU baseline.
 - A browser-keepalive A/B completed all four real-flow waves: 100/100 and 150/150
   on 50 effective GPUs, then 100/100 and 150/150 on fully primed 60 GPUs. The earlier
   33/100 and 13/150 collapse was a harness mismatch, not a demonstrated GPU limit.

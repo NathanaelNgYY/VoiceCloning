@@ -4,13 +4,13 @@ Last updated: 2026-08-27
 
 ## Current Dev State
 
-- Remote branches `separate-containers-new` and `codex/staging-multi-user-scaling` share the same
-  head and unified application commit `30234eb`. Dev/staging main Lambdas have the exact same package SHA; all Dev and
-  staging client targets were rebuilt from that tree. Fixed Dev GPU `i-03f258d470a2fa73f` also
-  runs `30234eb`; all three worker services and their health/readiness probes passed.
+- Both active remote branches contain reviewed application commit `7c9a781`; the docs-only sync does not change deployments.
+  Dev/staging main Lambdas share exact package SHA `eey+5dbE…`; both GI sites serve
+  `assets/index-BrQYHCPo.js`. Fixed Dev GPU `i-03f258d470a2fa73f` runs worker commit `30234eb`;
+  an SSM-routed `deanvoice-v1` synthesis returned HTTP 200 and 129,964 WAV bytes.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
-  Dev remains fixed-instance/on-demand: `GPU_SCHEDULE_ENABLED=false`, no inference ASG, and fixed
-  GPU `i-03f258d470a2fa73f` belongs to no ASG.
+  Its comparison GPU is manual-only: schedule off, idle-stop threshold zero, no coordinator/ASG,
+  and `i-03f258d470a2fa73f` belongs to no ASG. It is currently running and inference-ready.
 - Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
@@ -29,18 +29,17 @@ Last updated: 2026-08-27
   Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
   progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
   This is not cross-tab/device backend idempotency.
-- Current automated evidence: client 447/447 and Lambda 279/279; prior GPU worker 23/23,
+- Current automated evidence: client 464/464 and Lambda 282/282; prior GPU worker 23/23,
   inference worker 258/258, and live gateway 180/180 evidence remains applicable.
 
 ## Current Staging State
 
-- The faculty empty-selection fix and reviewed GI tree are deployed to the custom domains; public
-  assets and `gi-bleeding -> deanvoice-v1` pass. API 401 still blocks real lecturer publish proof.
-- The 2026-08-25 faculty deployment had overwritten staging's coordinator-aware main Lambda and
-  lecture client. Unified commit `30234eb` restores faculty publishing plus model coordination;
-  the main Lambda now matches Dev's package SHA, the coordinator was redeployed, and public Dev/
-  staging assets expose capacity, stock-voice, and crash-boundary code. Staging currently publishes
-  cloned `deanvoice-v1`; Dev has no deployed category object and uses its legacy/build fallback.
+- Faculty's empty-selection and hidden-advanced-settings fixes are deployed; its bundle contains no
+  advanced-settings label. `gi-bleeding -> deanvoice-v1` is byte-equivalent through both public APIs.
+  API 401 still blocks a real lecturer-browser publish proof.
+- Staging faculty is the only authoring surface. Publishing now copies the selected profile, GPT/
+  SoVITS weights, primary/aux references, then the category into Dev; current `deanvoice-v1` was
+  backfilled and all nine artifacts matched by size/ETag before the Dev category changed.
 - Fixed staging GPU `i-0f0da8be59367f7a8` runs `30234eb`; all three services restarted and passed
   the applicable liveness/readiness checks. Prior tracked and colliding untracked files on fixed Dev,
   fixed staging, and updated ASG workers remain recoverable in named server-side stashes.
@@ -51,8 +50,9 @@ Last updated: 2026-08-27
   desired 1->2 exactly once, deeply warmed the requested Dean pool, and scaled back to one.
   Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Fresh v39 instance
   `i-0c92f3224029284ee` booted at `30234eb` with zero tracked/runtime drift and reached inference
-  plus gateway readiness. ASG health grace is 1,200s; final state is min/desired 1, max 192, ELB
-  health, and one healthy unprotected v39 worker. Authenticated browser UI remains unverified.
+  plus gateway readiness. Current ASG worker `i-0468f296715e61df3` is healthy on port 3103,
+  registered for `deanvoice-v1`, and returned HTTP 200/226,604 WAV bytes. ASG is min/desired 1,
+  max 192; daily actions now preserve min 1 and leave desired unset. Authenticated UI remains unverified.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
 - The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
