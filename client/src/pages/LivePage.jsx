@@ -3976,6 +3976,12 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const isReady = usingStandardVoice
     || (selectedModelLoaded && Boolean(liveRefParams))
     || (serverReady && selectedVoiceResolvesPerRequest);
+  // Faculty users without an owned or explicitly selected voice are intentionally
+  // left unselected. That is an idle choice state, not an in-progress model load.
+  const waitingForFacultyVoiceSelection = canEditInstructions
+    && modelsFetched
+    && !selectedProfile
+    && !usingStandardVoice;
   // Scoped to the cloned-voice pipeline: the TTS panel's reference picking,
   // per-chunk regeneration and pronunciation dictionary are all GPT-SoVITS
   // machinery with no ElevenLabs equivalent.
@@ -4348,6 +4354,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
               surfacing each internal step as if the user had to act on it. */}
           {modelsFetched && availableProfiles.length === 0 ? (
             'No trained models found. Train a voice first, then return here.'
+          ) : waitingForFacultyVoiceSelection ? (
+            'Select a voice to begin.'
           ) : (
             <>
               <Loader2 size={14} className="shrink-0 animate-spin" />

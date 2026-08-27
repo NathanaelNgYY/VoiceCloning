@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-27
+
+- Deployed the faculty empty-selection fix to `faculty.lkcmedicine.org`: once profile loading
+  settles, the banner now says `Select a voice to begin.` without a spinner. Deployed the same
+  reviewed tree to `lectures.lkcmedicine.org`; public bundle and category readback returned the
+  new assets and `gi-bleeding -> deanvoice-v1`.
+- Hardened lecture publishing so a cloned `voiceProfileId` must exist and belong to the lecturer,
+  unless the caller has supervisor authority. Stock ElevenLabs IDs keep their existing path.
+- Corrected coordinator admission to count active plus queued work and to pack matching requests
+  onto the longest-lived worker first. The ASG now uses `NewestInstance`, making newer overflow
+  workers the first scale-in candidates; min/desired stayed 1 and the sole worker stayed healthy.
+- Removed the coordinator packager's redundant Windows staging copy of `node_modules`; both Lambda
+  ZIPs packaged and were deployed with successful Lambda update status. Tests: client 447/447,
+  Lambda 279/279, chatbot/GI/live-fast builds, PowerShell syntax, package inspection, public asset/
+  category readback, ASG/Lambda readback, and authenticated faculty DOM verification. The faculty
+  browser session still received API 401 and could not list voices, so real publish remains pending.
+
 ## 2026-08-25
 
 - Completed unified runtime rollout after credential refresh. Fixed Dev and staging workers now
@@ -1571,3 +1588,10 @@
 - Code files changed: none.
 - Tests run: none.
 - Not tested: repo behavior was inspected only; no runtime or unit verification was executed.
+# 2026-08-27
+
+- Faculty Live Fast now shows `Select a voice to begin.` without a loading spinner when no cloned or standard voice is selected; real model-loading states retain the existing progress banner.
+- AWS readback found staging inference scaled 1→2 for Dean demand at 02:06 UTC and 2→3 for a distinct pending `cs-nathanael-ng-v1` faculty model at 02:13 UTC. Existing coordinator logs do not preserve the active/queued snapshot needed to prove why the first Dean request exhausted capacity.
+- Code files changed: `client/src/pages/LivePage.jsx`, `client/src/giPublicAccess.test.js`.
+- Tests run: `node --test src/giPublicAccess.test.js` (26/26), `npm run build:chatbot`.
+- Not tested: the new faculty banner has not been deployed or browser-verified.

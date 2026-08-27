@@ -306,6 +306,17 @@ test("the faculty chatbot uses Microsoft SSO with only staff domains", () => {
   assert.doesNotMatch(stagingFacultyEnv, /student\.main\.ntu\.edu\.sg/);
 });
 
+test("faculty treats an empty voice selection as idle instead of loading", () => {
+  assert.match(
+    livePageSource,
+    /waitingForFacultyVoiceSelection\s*=\s*canEditInstructions[\s\S]*?!selectedProfile[\s\S]*?!usingStandardVoice/,
+  );
+  assert.match(
+    livePageSource,
+    /waitingForFacultyVoiceSelection\s*\?\s*\([\s\S]*?'Select a voice to begin\.'/,
+  );
+});
+
 test("client deploys force the SPA shell to revalidate instead of reopening an old bundle", () => {
   assert.match(deployClientSource, /aws s3 cp\s+"\$dist\\index\.html"\s+"\$target\/index\.html"/);
   assert.match(deployClientSource, /--cache-control\s+"no-cache, no-store, must-revalidate"/);

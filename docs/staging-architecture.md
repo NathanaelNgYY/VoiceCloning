@@ -48,7 +48,9 @@ so neither action resets a busy autoscaled fleet. The 19:00 action keeps its his
 Each ready `g6.xlarge` worker advertises two synthesis slots and one resident model pair. For a
 requested lecture voice, the coordinator applies this order:
 
-1. Route to a reachable READY worker with the same immutable GPT+SoVITS pair and a free slot.
+1. Route to a reachable READY worker with the same immutable GPT+SoVITS pair and a real free slot,
+   defined as `active + queued < maxSlots`. Among matches, pack onto the longest-lived worker first
+   so newer overflow workers can become continuously idle.
 2. If none is free, reassign a different-model worker only when it has zero active and zero queued
    requests and both its worker activity and resident-model demand have been idle for at least five
    minutes. Reassignment drains, loads the requested pair, warms references, and performs real TTS
@@ -69,8 +71,10 @@ duplicate scale/reassignment starts.
 There is no minimum GPU per voice. The ASG has one global minimum GPU; scheduled actions preserve
 that floor without pinning voice pools. Legacy Target Optimizer occupancy scale-out alarms are
 telemetry-only. Scale-in uses coordinator inactivity and removes capacity after the configured
-15-minute idle window; controlled scale-down passed, but an untouched full 15-minute timing canary
-remains pending.
+15-minute idle window. Its `NewestInstance` termination policy removes newer overflow capacity
+first after active workers clear instance protection. The fixed staging GPU remains the training,
+progress, and control instance; lecture synthesis routes only through the inference ASG. Controlled
+scale-down passed, but an untouched full 15-minute timing canary remains pending.
 
 ### Faculty-selected lecture voice (implemented; multi-lecture verification pending)
 

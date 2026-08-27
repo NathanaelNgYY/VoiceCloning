@@ -474,16 +474,70 @@ test('PUT publishes the voice the lecture should speak in', async () => {
   const writes = [];
   const handler = createHandler({
     authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      'voice-profiles/lecturer-v1.json': {
+        voiceProfileId: 'lecturer-v1',
+        displayName: 'lecturer',
+        ownerEmail: 'lecturer@ntu.edu.sg',
+      },
+    }),
     writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
     now: () => '2026-08-25T02:00:00.000Z',
   });
 
-  for (const voiceProfileId of ['elevenlabs:Xb7hH8MSUJpSbSDYk0k2', 'deanvoice-v1']) {
+  for (const voiceProfileId of ['elevenlabs:Xb7hH8MSUJpSbSDYk0k2', 'lecturer-v1']) {
     writes.length = 0;
     const response = await handler(event('PUT', { prompt: 'Instructions', voiceProfileId }));
     assert.equal(response.statusCode, 200);
     assert.equal(JSON.parse(writes[0].buffer.toString('utf-8')).voiceProfileId, voiceProfileId);
   }
+});
+
+test('PUT rejects a missing cloned voice instead of breaking the lecture later', async () => {
+  const writes = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: async () => { throw missingKeyError(); },
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+  });
+
+  const response = await handler(event('PUT', { prompt: 'Instructions', voiceProfileId: 'missing-v1' }));
+
+  assert.equal(response.statusCode, 400);
+  assert.match(JSON.parse(response.body).error, /does not exist/u);
+  assert.equal(writes.length, 0);
+});
+
+test('PUT rejects another lecturer voice but permits a supervisor', async () => {
+  const profileReader = readerFor({
+    'voice-profiles/deanvoice-v1.json': {
+      voiceProfileId: 'deanvoice-v1',
+      displayName: 'DeanVoice',
+      ownerEmail: 'josephsung@ntu.edu.sg',
+    },
+  });
+  const writes = [];
+  const ordinary = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: profileReader,
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+  });
+  const supervisor = createHandler({
+    authGuard: { authorize: async () => ({
+      email: 'supervisor@ntu.edu.sg',
+      roles: ['Supervisor'],
+    }) },
+    readObject: profileReader,
+    writeObject: async (key, buffer) => { writes.push({ key, buffer }); },
+  });
+
+  const denied = await ordinary(event('PUT', { prompt: 'Instructions', voiceProfileId: 'deanvoice-v1' }));
+  assert.equal(denied.statusCode, 403);
+  assert.equal(writes.length, 0);
+
+  const allowed = await supervisor(event('PUT', { prompt: 'Instructions', voiceProfileId: 'deanvoice-v1' }));
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(JSON.parse(writes[0].buffer.toString('utf-8')).voiceProfileId, 'deanvoice-v1');
 });
 
 test('a malformed voice is rejected, not silently dropped', async () => {

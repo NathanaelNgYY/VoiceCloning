@@ -14,6 +14,7 @@ const worker = (overrides = {}) => ({
   active: 0,
   queued: 0,
   maxSlots: 2,
+  firstSeenAt: now - 900_000,
   lastActivityAt: now - 600_000,
   ...overrides,
 });
@@ -75,4 +76,32 @@ test('counts only free slots on reachable ready matching workers', () => {
     worker({ instanceId: 'i-other', modelKey: 'dean' }),
     worker({ instanceId: 'i-starting', modelKey: 'dean-v2', state: 'STARTING' }),
   ], 'dean-v2'), 3);
+});
+
+test('packs matching work onto the oldest worker so newer capacity can scale in', () => {
+  const result = chooseCapacityAction({
+    requestedModelKey: 'dean',
+    now,
+    workers: [
+      worker({ instanceId: 'i-new', firstSeenAt: now - 60_000, active: 1 }),
+      worker({ instanceId: 'i-old', firstSeenAt: now - 900_000, active: 0 }),
+    ],
+  });
+
+  assert.equal(result.type, 'route');
+  assert.equal(result.worker.instanceId, 'i-old');
+});
+
+test('does not route to a worker whose queued work consumes its final slot', () => {
+  const result = chooseCapacityAction({
+    requestedModelKey: 'dean',
+    now,
+    workers: [
+      worker({ instanceId: 'i-full', active: 1, queued: 1 }),
+      worker({ instanceId: 'i-free', firstSeenAt: now - 60_000, active: 0, queued: 0 }),
+    ],
+  });
+
+  assert.equal(result.type, 'route');
+  assert.equal(result.worker.instanceId, 'i-free');
 });

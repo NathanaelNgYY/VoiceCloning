@@ -24,6 +24,7 @@ import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { isSafePathSegment } from '../shared/paths.js';
 import { parseElevenLabsVoiceId } from '../shared/elevenLabs.js';
+import { normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
 
 // The pre-category object: one global prompt for every frontend. Still read as
 // the fallback below, so the apps deployed before categories existed keep
@@ -111,6 +112,20 @@ export function normalizePublishedVoiceProfileId(value) {
   if (!raw) return '';
   if (parseElevenLabsVoiceId(raw)) return raw;
   return isSafePathSegment(raw) ? raw : null;
+}
+
+function isAdminIdentity(identity, env = process.env) {
+  const requiredRole = env.SUPERVISOR_APP_ROLE || 'Supervisor';
+  const allowedOids = new Set(
+    String(env.SUPERVISOR_OIDS || '').split(',').map((value) => value.trim()).filter(Boolean),
+  );
+  return Boolean(identity?.roles?.includes(requiredRole) || allowedOids.has(identity?.oid));
+}
+
+function profileBelongsTo(profile, email) {
+  const owner = normalizeEmail(profile?.ownerEmail);
+  if (owner) return owner === normalizeEmail(email);
+  return ownsVoiceName(email, profile?.displayName);
 }
 
 export function createHandler({
@@ -203,8 +218,9 @@ export function createHandler({
     // putting an auth dependency in front of that would trade a real risk for a
     // startup failure mode.
     if (!authGuard) return err(503, 'Publishing is not configured', event);
+    let identity;
     try {
-      await authGuard.authorize(event);
+      identity = await authGuard.authorize(event);
     } catch {
       return err(401, 'Sign in to publish.', event);
     }
@@ -250,6 +266,21 @@ export function createHandler({
     const voiceProfileId = normalizePublishedVoiceProfileId(body?.voiceProfileId);
     if (voiceProfileId === null) {
       return err(400, 'voiceProfileId must be a saved profile id or elevenlabs:<voiceId>', event);
+    }
+    if (voiceProfileId && !parseElevenLabsVoiceId(voiceProfileId)) {
+      let profile;
+      try {
+        profile = JSON.parse((await readObject(`voice-profiles/${voiceProfileId}.json`)).toString('utf-8'));
+      } catch (error) {
+        if (isMissingObject(error)) {
+          return err(400, `Voice profile ${voiceProfileId} does not exist`, event);
+        }
+        console.error('[chatbot-prompt] voice profile read failed', error);
+        return err(500, 'Could not verify the selected voice.', event);
+      }
+      if (!isAdminIdentity(identity) && !profileBelongsTo(profile, identity?.email)) {
+        return err(403, 'You can only publish a voice that belongs to you.', event);
+      }
     }
 
     // schemaVersion 4 adds `voiceProfileId`; 3 added `category`. Stored as well

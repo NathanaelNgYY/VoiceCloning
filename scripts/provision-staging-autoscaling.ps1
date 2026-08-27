@@ -386,6 +386,7 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
     --health-check-type ELB `
     --health-check-grace-period $cfg.healthCheckGracePeriodSeconds `
     --default-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --termination-policies NewestInstance `
     --tags "Key=Environment,Value=staging,PropagateAtLaunch=true" "Key=ManagedBy,Value=VoiceCloningRepo,PropagateAtLaunch=true"
 } else {
   Invoke-AwsJson autoscaling update-auto-scaling-group --region $cfg.region `
@@ -395,7 +396,8 @@ if (-not $asg -or $asg.AutoScalingGroups.Count -eq 0) {
     --vpc-zone-identifier ($cfg.subnetIds -join ',') `
     --health-check-type ELB `
     --health-check-grace-period $cfg.healthCheckGracePeriodSeconds `
-    --default-instance-warmup $cfg.healthCheckGracePeriodSeconds
+    --default-instance-warmup $cfg.healthCheckGracePeriodSeconds `
+    --termination-policies NewestInstance
 }
 
 $albResource = ($cfg.albArn -split ':loadbalancer/')[1]

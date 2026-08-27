@@ -7,6 +7,12 @@
 
 ## Active
 
+- 2026-08-27: the deployed faculty bundle renders the correct idle `Select a voice to begin.`
+  state, but the existing signed-in Chrome session received 401 from session-signin/profile API
+  calls and showed `Sign in to see your voices.` A retry did not recover. The AWS base session
+  expired before server-log inspection, so whether this is a stale Entra token or server audience/
+  validation issue is not yet isolated; actual lecturer voice listing and publish remain blocked.
+
 - 2026-08-25 fixed: Dev and staging application branches had diverged, then a faculty-site
   deployment replaced staging's main Lambda/client with code that omitted coordinator calls.
   Both branch pointers share the same head and unified application commit `30234eb`; both main Lambdas share one package SHA and all

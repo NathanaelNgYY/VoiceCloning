@@ -7,8 +7,20 @@ export function chooseCapacityAction({
 } = {}) {
   const ready = workers.filter((worker) => worker.state === 'READY' && worker.reachable !== false);
   const matching = ready
-    .filter((worker) => worker.modelKey === requestedModelKey && worker.active < worker.maxSlots)
-    .sort((a, b) => a.active - b.active || a.lastActivityAt - b.lastActivityAt);
+    .filter((worker) => (
+      worker.modelKey === requestedModelKey
+      && Number(worker.active || 0) + Number(worker.queued || 0) < Number(worker.maxSlots || 0)
+    ))
+    // Stable packing order: fill the longest-lived matching worker first so
+    // newer overflow workers become continuously idle and eligible for scale-in.
+    // Every candidate already has a real free slot; age never overrides capacity.
+    .sort((a, b) => (
+      Number(a.firstSeenAt || Number.MAX_SAFE_INTEGER)
+      - Number(b.firstSeenAt || Number.MAX_SAFE_INTEGER)
+      || (Number(b.active || 0) + Number(b.queued || 0))
+        - (Number(a.active || 0) + Number(a.queued || 0))
+      || String(a.instanceId || '').localeCompare(String(b.instanceId || ''))
+    ));
   if (matching.length > 0) return { type: 'route', worker: matching[0] };
 
   const reassignable = ready

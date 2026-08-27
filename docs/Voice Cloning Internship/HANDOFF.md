@@ -1,6 +1,6 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-25
+Last updated: 2026-08-27
 
 ## Current Dev State
 
@@ -29,12 +29,13 @@ Last updated: 2026-08-25
   Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
   progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
   This is not cross-tab/device backend idempotency.
-- Final automated evidence for the unified tree: client 436/436, Lambda 275/275, GPU worker
-  23/23, inference worker 258/258, live gateway 180/180, four client builds, plus 15/15 tests
-  for the later white-screen merge. Real authenticated browser verification remains pending.
+- Current automated evidence: client 447/447 and Lambda 279/279; prior GPU worker 23/23,
+  inference worker 258/258, and live gateway 180/180 evidence remains applicable.
 
 ## Current Staging State
 
+- The faculty empty-selection fix and reviewed GI tree are deployed to the custom domains; public
+  assets and `gi-bleeding -> deanvoice-v1` pass. API 401 still blocks real lecturer publish proof.
 - The 2026-08-25 faculty deployment had overwritten staging's coordinator-aware main Lambda and
   lecture client. Unified commit `30234eb` restores faculty publishing plus model coordination;
   the main Lambda now matches Dev's package SHA, the coordinator was redeployed, and public Dev/
@@ -43,8 +44,9 @@ Last updated: 2026-08-25
 - Fixed staging GPU `i-0f0da8be59367f7a8` runs `30234eb`; all three services restarted and passed
   the applicable liveness/readiness checks. Prior tracked and colliding untracked files on fixed Dev,
   fixed staging, and updated ASG workers remain recoverable in named server-side stashes.
-- Lecture-click capacity preparation and model-aware routing are live on staging: matching slot ->
-  five-minute demand-idle reassignment -> per-model scale-out, with two admitted slots per GPU.
+- Lecture-click capacity routing is live: matching real free slot -> five-minute demand-idle
+  reassignment -> per-model scale-out, with two slots per GPU. Matches pack onto the oldest worker;
+  `NewestInstance` scales in overflow. Fixed GPU is training/control, not lecture synthesis.
   A concurrent canary returned two RIFF WAVs, showed usable `BUSY_STARTING`, atomically raised
   desired 1->2 exactly once, deeply warmed the requested Dean pool, and scaled back to one.
   Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Fresh v39 instance
@@ -73,10 +75,10 @@ Last updated: 2026-08-25
 - Faculty SSO is deployed at `faculty.lkcmedicine.org`: Microsoft sign-in admits only
   staff/associate domains and writes to `vcs-staging-lecturers`. Lectures remains separate.
   A real staff sign-in and lecturer-table write are still unverified.
-- Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192 and two slots per GPU.
-  Legacy ALB occupancy actions are telemetry-only; scale-in uses coordinator Lambda invocation
-  idleness. Alarm/action readback and a controlled protected scale-down passed; a full untouched
-  15-minute alarm-trigger timing canary remains pending. Final desired is 1. The 07:00/19:00
+- Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192 and two slots per GPU. Legacy
+  ALB actions are telemetry-only; coordinator idleness plus `NewestInstance` drives scale-in.
+  Readback shows desired 1 and one healthy unprotected worker; a
+  full untouched 15-minute alarm-trigger timing canary remains pending. The 07:00/19:00
   Singapore actions preserve min 1 without a per-voice minimum.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
 - Full chunking is aligned at 240 characters. Full reuses warm medium ASR with strict beam/tail
