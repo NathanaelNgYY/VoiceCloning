@@ -4,6 +4,7 @@ import {
   createVoiceProfileBrowserDebugSummary,
   writeVoiceProfileBrowserDebug,
 } from '../lib/voiceProfileDebug.js';
+import { isGpuOfflineResponse, synthesisResponseError } from '../lib/synthesisResponse.js';
 import { API_BASE_URL, resolveApiPath, getStorageMode, isS3Mode } from '@/lib/runtimeConfig';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 
@@ -22,13 +23,7 @@ export const GPU_OFFLINE_MESSAGE = APP_MODE_CONFIG.gi
   ? 'The voice engine is still starting up — please try again in a moment.'
   : 'GPU not started — press Start GPU to begin.';
 
-// A GPU-down request typically comes back as a 502/503/504 from the reverse
-// proxy (often with an HTML body), so detect both the status and the tell-tale
-// HTML text.
-export function isGpuOfflineResponse(status, body = '') {
-  if ([502, 503, 504].includes(Number(status))) return true;
-  return /50[234]|Service (Temporarily )?Unavailable|Bad Gateway|Gateway Time-?out/i.test(String(body));
-}
+export { isGpuOfflineResponse };
 
 // The same 502/503/504 covers a stopped instance, a voice model mid-load, and a
 // synthesis-queue timeout — all recoverable. Callers must be able to tell that
@@ -42,10 +37,11 @@ export function gpuOfflineError(status) {
   return error;
 }
 
-function responseError(message, status) {
-  const error = new Error(message);
-  error.status = Number(status) || 0;
-  return error;
+// Decode a non-200 body from a synthesis route. Every such route must go through
+// this one call: a route that decodes its own body is how Live Fast came to
+// relabel a loading voice model as "GPU not started".
+function synthesisError(text, status) {
+  return synthesisResponseError(text, status, { gpuOfflineMessage: GPU_OFFLINE_MESSAGE });
 }
 
 function isSpecialBody(data) {
@@ -428,27 +424,7 @@ export async function synthesize(params) {
   });
 
   if (res.status !== 200) {
-    const text = await res.data.text();
-    let payload = null;
-    try { payload = JSON.parse(text); } catch { /* non-JSON proxy response */ }
-    if (payload?.code === 'MODEL_CAPACITY_STARTING' || payload?.code === 'MODEL_CAPACITY_LIMIT') {
-      const error = responseError(payload.error || 'This lecture voice is preparing.', res.status);
-      error.code = payload.code;
-      error.retryAfterSeconds = Number(payload.retryAfterSeconds) || 0;
-      error.scaleStarted = payload.scaleStarted === true;
-      error.voiceProfileId = payload.voiceProfileId || '';
-      throw error;
-    }
-    if (isGpuOfflineResponse(res.status, text)) {
-      throw gpuOfflineError(res.status);
-    }
-    let message;
-    try {
-      message = payload?.error || JSON.parse(text).error;
-    } catch {
-      message = text;
-    }
-    throw responseError(message || `Request failed with status ${res.status}`, res.status);
+    throw synthesisError(await res.data.text(), res.status);
   }
 
   return {
@@ -467,17 +443,7 @@ export async function synthesizeSentence(params, { replyToken = '' } = {}) {
   });
 
   if (res.status !== 200) {
-    const text = await res.data.text();
-    if (isGpuOfflineResponse(res.status, text)) {
-      throw gpuOfflineError(res.status);
-    }
-    let message;
-    try {
-      message = JSON.parse(text).error;
-    } catch {
-      message = text;
-    }
-    throw responseError(message || `Request failed with status ${res.status}`, res.status);
+    throw synthesisError(await res.data.text(), res.status);
   }
 
   // A standard (ElevenLabs) voice returns mp3, the GPU returns wav. Assuming wav
