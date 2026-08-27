@@ -216,6 +216,13 @@ test("the dev client sends a token type both dev backends verify", () => {
   }
 });
 
+test("the Dev comparison GPU has no scheduled or idle-triggered lifecycle", () => {
+  assert.match(devBackendEnvs.lambda, /^GPU_SCHEDULE_ENABLED=false$/m);
+  assert.match(devBackendEnvs.lambda, /^GPU_IDLE_STOP_MINUTES=0$/m);
+  assert.doesNotMatch(devBackendEnvs.lambda, /^GPU_INFERENCE_ASG_NAME=/m);
+  assert.doesNotMatch(devBackendEnvs.lambda, /^MODEL_COORDINATOR_FUNCTION_NAME=/m);
+});
+
 test("the shared voice API attaches the configured Microsoft token", () => {
   assert.match(
     apiServiceSource,
