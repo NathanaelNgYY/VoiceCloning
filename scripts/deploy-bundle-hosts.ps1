@@ -15,6 +15,11 @@ $hosts = @(
   @{ Id='i-09edbf1092b034096'; Branch='codex/staging-multi-user-scaling'; Kind='asg' },
   @{ Id='i-06baeb3164054ff47'; Branch='codex/staging-multi-user-scaling'; Kind='asg' }
 )
+$deployConfig = Get-Content (Join-Path $PSScriptRoot 'deploy.config.json') -Raw | ConvertFrom-Json
+$manualDevId = [string]$deployConfig.dev.manualRoutingTestInstanceId
+if ($manualDevId -and $manualDevId -notin $hosts.Id) {
+  $hosts += @{ Id=$manualDevId; Branch='separate-containers-new'; Kind='dev' }
+}
 foreach ($requestedId in $InstanceIds) {
   if ($requestedId -notin $hosts.Id) {
     $hosts += @{ Id=$requestedId; Branch='codex/staging-multi-user-scaling'; Kind='asg' }
