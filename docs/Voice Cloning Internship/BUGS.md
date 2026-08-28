@@ -7,6 +7,12 @@
 
 ## Active
 
+- 2026-08-28 fixed and deployed: one person's sequential voice selections could grow the staging
+  ASG from one to three GPUs because each previously requested model was protected for five minutes.
+  Idle nonmatching workers now reassign immediately; scale-out occurs only when all eligible workers
+  are occupied, queued, draining, starting, or unavailable. Live proof reassigned Dean on the sole
+  worker while desired capacity stayed at one, and final readback is one healthy idle worker.
+
 - 2026-08-27 fixed and deployed: staging faculty publishing updated only the staging category;
   Dev could point at an absent profile/model if it was copied manually. Publish now mirrors the
   exact cloned profile, both weights, and selected references before writing Dev's category.
@@ -14,7 +20,8 @@
 
 - 2026-08-27 fixed operationally: the old staging 19:00 scheduled action still set min/desired
   to zero despite the tracked one-GPU baseline. Both daily actions now preserve min 1, leave
-  desired unset, and retain max 192. Dev's idle stop is disabled so its test GPU is manual-only.
+  desired unset, and retain max 192. Dev's original GPU retains its 30-minute activity stop;
+  the new second comparison GPU is manual-only.
 
 - 2026-08-27: the deployed faculty bundle renders the correct idle `Select a voice to begin.`
   state, but the existing signed-in Chrome session received 401 from session-signin/profile API

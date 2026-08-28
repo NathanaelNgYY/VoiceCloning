@@ -1,16 +1,15 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 ## Current Dev State
 
-- Both active remote branches contain reviewed application commit `7c9a781`; the docs-only sync does not change deployments.
-  Dev/staging main Lambdas share exact package SHA `eey+5dbE…`; both GI sites serve
-  `assets/index-BrQYHCPo.js`. Fixed Dev GPU `i-03f258d470a2fa73f` runs worker commit `30234eb`;
-  an SSM-routed `deanvoice-v1` synthesis returned HTTP 200 and 129,964 WAV bytes.
+- Both active remote branches contain reviewed application commit `47abe3b`. Dev Lambda code SHA
+  is `gzs8X16q…`; staging's deployed coordinator uses immediate idle-worker reassignment.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
-  Its comparison GPU is manual-only: schedule off, idle-stop threshold zero, no coordinator/ASG,
-  and `i-03f258d470a2fa73f` belongs to no ASG. It is currently running and inference-ready.
+  Original GPU `i-03f258d470a2fa73f` remains activity-managed with a 30-minute idle stop. Separate
+  comparison GPU `i-0048470294e4ec518` is manual-only. Neither uses an ASG/coordinator. Both are
+  healthy inference targets; a dedicated ALB path pins idle checks to the original GPU only.
 - Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
@@ -29,8 +28,9 @@ Last updated: 2026-08-27
   Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
   progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
   This is not cross-tab/device backend idempotency.
-- Current automated evidence: client 464/464 and Lambda 282/282; prior GPU worker 23/23,
-  inference worker 258/258, and live gateway 180/180 evidence remains applicable.
+- Current targeted evidence includes client config 27/27, Lambda instance/coordinator 28/28,
+  coordinator 11/11, and inference worker 258/258. Two ALB TTS calls reached different Dev GPUs,
+  returned WAVs, and both workers reported the exact Dean GPT/SoVITS pair loaded.
 
 ## Current Staging State
 
@@ -43,15 +43,13 @@ Last updated: 2026-08-27
 - Fixed staging GPU `i-0f0da8be59367f7a8` runs `30234eb`; all three services restarted and passed
   the applicable liveness/readiness checks. Prior tracked and colliding untracked files on fixed Dev,
   fixed staging, and updated ASG workers remain recoverable in named server-side stashes.
-- Lecture-click capacity routing is live: matching real free slot -> five-minute demand-idle
-  reassignment -> per-model scale-out, with two slots per GPU. Matches pack onto the oldest worker;
-  `NewestInstance` scales in overflow. Fixed GPU is training/control, not lecture synthesis.
+- Lecture-click capacity routing is live: matching real free slot -> immediate idle-worker
+  reassignment -> scale-out only when every eligible worker is active, queued, draining, starting,
+  or unavailable. A positive reassignment window remains configurable for explicit events.
   A concurrent canary returned two RIFF WAVs, showed usable `BUSY_STARTING`, atomically raised
   desired 1->2 exactly once, deeply warmed the requested Dean pool, and scaled back to one.
-  Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Fresh v39 instance
-  `i-0c92f3224029284ee` booted at `30234eb` with zero tracked/runtime drift and reached inference
-  plus gateway readiness. Current ASG worker `i-0468f296715e61df3` is healthy on port 3103,
-  registered for `deanvoice-v1`, and returned HTTP 200/226,604 WAV bytes. ASG is min/desired 1,
+  Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Current ASG worker
+  `i-08203eed43c173e96` is healthy, READY for `deanvoice-v1`, idle, and has no queue. ASG is min/desired 1,
   max 192; daily actions now preserve min 1 and leave desired unset. Authenticated UI remains unverified.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
@@ -77,7 +75,7 @@ Last updated: 2026-08-27
   A real staff sign-in and lecturer-table write are still unverified.
 - Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192 and two slots per GPU. Legacy
   ALB actions are telemetry-only; coordinator idleness plus `NewestInstance` drives scale-in.
-  Readback shows desired 1 and one healthy unprotected worker; a
+  Readback shows desired 1 and one healthy idle worker; a
   full untouched 15-minute alarm-trigger timing canary remains pending. The 07:00/19:00
   Singapore actions preserve min 1 without a per-voice minimum.
 - Staging learner analytics remains absent. Do not deploy dev analytics to staging.
@@ -97,12 +95,12 @@ Last updated: 2026-08-27
 - Project memory is mirrored between the primary Obsidian folder and
   `docs/Voice Cloning Internship`; keep edited files byte-identical.
 - GitHub pushes work with the configured credential manager override; both active remote pointers
-  were read back at `21596bf` before the AWS credential expiry.
+  were read back at `47abe3b` before the final deployment checks.
 
 ## Next Session
 
-1. Refresh user-level `VCS_AWS_*`; deploy/read back the running Dev worker, require fixed staging
-   inference readiness, and compare the active ASG worker/launch-image runtime to `21596bf`.
+1. Have an account administrator delete orphaned temporary snapshot `snap-08ec74499a13176f7`;
+   the temporary AMI was deregistered but this role lacks `ec2:DeleteSnapshot`.
 2. Open Dev GI in a new tab with an allowlisted account and confirm the first render (without
    refresh) is D25, then verify sign-in, Dean text/audio, `/admin`, and mobile layout.
 3. Exercise the new voice config lifecycle: untouched default reselects only same-model clips;

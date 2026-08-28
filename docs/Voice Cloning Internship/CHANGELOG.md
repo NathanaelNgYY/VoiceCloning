@@ -1610,3 +1610,24 @@
   public category/bundle checks; S3 size/ETag checks; two real worker synthesis canaries.
 - Not tested: authenticated faculty publish from the browser, a second lecture/profile, and an
   active 50-GPU event run remain pending.
+
+# 2026-08-28
+
+- Corrected staging model routing so a ready idle GPU changes to the requested model immediately;
+  sequential voice choices by one user no longer reserve several GPUs for five minutes and force
+  unnecessary scale-out. A positive residence window remains available for explicit event mode.
+- Restored the original Dev GPU's 30-minute activity stop and added a separate manual-only Dev
+  inference GPU. A dedicated activity route prevents the shared target group from stopping the
+  original based on the comparison GPU's state.
+- Deployed both Dev workers and Dev Lambda. Two ALB requests produced valid WAVs on different GPUs,
+  both with the exact Dean weights. Staging finished at desired 1 with one healthy idle Dean worker.
+- The deployed staging TTS page showed GPU ready, DeanVoice ready, and no perpetual loading state.
+- Temporary AMI `ami-02b84a31fa1faf824` was deregistered. Snapshot
+  `snap-08ec74499a13176f7` remains because the assumed role lacks `ec2:DeleteSnapshot`.
+- Code files changed: `client/src/giPublicAccess.test.js`, `gpu-inference-worker/src/routes/activity.js`,
+  `lambda/instance/index.js`, `lambda/instance/index.test.js`, `lambda/model-coordinator/index.js`,
+  `lambda/model-coordinator/decision.js`, `lambda/model-coordinator/decision.test.js`, deployment
+  env/config files, and `scripts/deploy-bundle-hosts.ps1`.
+- Tests run: client config 27/27; Lambda instance/coordinator 28/28; coordinator 11/11;
+  inference worker 258/258; live AWS Lambda/ASG/target-health checks; two real Dev TTS calls.
+- Not tested: authenticated faculty Publish from the browser and a full multi-user scale-out event.

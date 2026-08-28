@@ -225,9 +225,13 @@
   exact selected cloned-voice artifacts into Dev's S3 prefix; transcripts, analytics, training
   state, active profiles, and other environment data remain isolated. Artifacts copy first and
   the Dev category pointer changes last, preventing it from naming an absent model.
-- Dev's comparison GPU is manual-only (`GPU_IDLE_STOP_MINUTES=0`, schedule off, no ASG or
-  coordinator). Staging keeps one ASG baseline, packs matching work onto its oldest worker, and
-  terminates newest overflow first so routing does not keep scale-down candidates artificially hot.
+- Dev's original GPU remains activity-managed (`GPU_IDLE_STOP_MINUTES=30`, schedule off). A separate
+  second inference GPU is manual-only; neither belongs to an ASG or coordinator. A dedicated ALB
+  activity path reports only the original GPU so the shared two-target inference group cannot stop it
+  based on the comparison GPU's idle state.
+- Staging keeps one ASG baseline and immediately reuses any ready idle worker for a different model.
+  It scales out only when every eligible worker is occupied/unavailable and terminates newest overflow
+  first. Explicit event mode may opt into a positive model-residency window and scheduled prewarming.
 - Promotion order is: merge/test one commit, fast-forward both remote pointers without force,
   deploy each target with its own `-Env`, then verify Lambda package hashes, client assets,
   worker commits, and environment-specific infrastructure independently.

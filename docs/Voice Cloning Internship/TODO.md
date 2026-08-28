@@ -1,5 +1,9 @@
 # Active TODO
 
+- [ ] Delete orphaned temporary snapshot `snap-08ec74499a13176f7` with an identity that has
+  `ec2:DeleteSnapshot`. The associated temporary AMI is deregistered; the live manual Dev GPU is
+  independent and must remain available for explicit two-target tests.
+
 - [ ] Finish authenticated faculty publishing proof with at least two real lecture categories and
   two trained profiles. One-category storage/runtime proof now passes: staging and Dev both expose
   `gi-bleeding -> deanvoice-v1`, mirrored artifacts match, and both GPUs synthesize the exact pair.
