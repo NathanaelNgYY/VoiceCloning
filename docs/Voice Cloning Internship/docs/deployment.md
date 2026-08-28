@@ -90,8 +90,9 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-28): both remote pointers contain application commit `5571ae6`.
-Both main Lambdas have exact code SHA `3CbOy8HC…`. Dev has 30-minute idle stop, schedule off, a
+Latest source read-back (2026-08-28): both remote pointers contain application commit `b3756db`.
+Both main Lambdas have exact code SHA `3CbOy8HC…`, built from parent `5571ae6`; deploy the later
+published-name and failed-scale-claim cleanup merge after credentials refresh. Dev has 30-minute idle stop, schedule off, a
 routing-only coordinator over its two fixed IDs, and
 a fixed-activity URL routed only to original GPU `i-03f258d470a2fa73f`. Shared inference also has
 manual comparison GPU `i-0048470294e4ec518`. Both were started for the pending two-worker coordinator

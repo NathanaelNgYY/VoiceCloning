@@ -19,6 +19,9 @@
   deployed bundle readback, exact Lambda SHA/config readback, and coordinator preflight. A separate
   Dev DynamoDB table could not be created by the deployment role; Dev safely shares the lease table
   but filters fleet discovery to its two unique fixed instance IDs.
+- Merged concurrent Staging commits for published lecture voice naming and failed scale-claim cleanup
+  into both environment pointers at `b3756db`; combined tests pass client 485/485 and Lambda 298/298.
+  This merged delta is not deployed yet because the user-level AWS session expired.
 
 ## 2026-08-27
 

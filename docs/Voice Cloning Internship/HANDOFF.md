@@ -4,8 +4,9 @@ Last updated: 2026-08-28
 
 ## Current Dev State
 
-- Both active remote branches contain reviewed application commit `5571ae6`. Dev and Staging main
-  Lambdas have exact code SHA `3CbOy8HC…`; both coordinators run the same package.
+- Both active remote branches contain merged application commit `b3756db`. Dev and Staging main
+  Lambdas have exact code SHA `3CbOy8HC…`, deployed from parent `5571ae6`; the later published-name
+  and failed-scale-claim cleanup merge still needs deployment after AWS credentials are refreshed.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Original GPU `i-03f258d470a2fa73f` remains activity-managed with a 30-minute idle stop. Separate
   comparison GPU `i-0048470294e4ec518` is manual-only. Dev now uses the shared model coordinator in
@@ -30,7 +31,7 @@ Last updated: 2026-08-28
   Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
   progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
   This is not cross-tab/device backend idempotency.
-- Current evidence includes client 479/479, Lambda 288/288, focused routing/queue 91/91, and deployed
+- Current evidence includes client 485/485, Lambda 298/298, focused routing/queue 91/91, and deployed
   bundle/Lambda readback. A Dev preflight with both GPUs off returned `DEV_CAPACITY_SIMULATED`; the
   new coordinator has not yet proved both running workers because AWS credentials expired before SSM.
 
@@ -102,7 +103,7 @@ Last updated: 2026-08-28
 - Project memory is mirrored between the primary Obsidian folder and
   `docs/Voice Cloning Internship`; keep edited files byte-identical.
 - GitHub pushes work with the configured credential manager override; both active remote pointers
-  were read back at `5571ae6` after deployment checks.
+  were read back at `b3756db`; deployed package parity was checked before that final merge.
 
 ## Next Session
 
