@@ -90,14 +90,15 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest source read-back (2026-08-28): both remote pointers contain application commit `b3756db`.
-Both main Lambdas have exact code SHA `3CbOy8HC…`, built from parent `5571ae6`; deploy the later
-published-name and failed-scale-claim cleanup merge after credentials refresh. Dev has 30-minute idle stop, schedule off, a
+Latest live read-back (2026-08-28): both remote pointers contain application commit `e993d81`.
+Both main Lambdas have exact code SHA `HOGKsqec…`; both coordinators have exact SHA `VS4H7Bee…`.
+Dev has 30-minute idle stop, schedule off, a
 routing-only coordinator over its two fixed IDs, and
 a fixed-activity URL routed only to original GPU `i-03f258d470a2fa73f`. Shared inference also has
-manual comparison GPU `i-0048470294e4ec518`. Both were started for the pending two-worker coordinator
-test; the manual worker must be stopped afterward. With both off, Dev preflight returned its simulated
-Staging scale action. Staging ASG is min/desired 1,
+manual comparison GPU `i-0048470294e4ec518`. Coordinator traffic reaches worker port 3003 only from
+the coordinator Lambda security group. Live proof routed Dean first to the manual GPU, then after its
+stop to the original GPU; a third saturated request queued for 3,177 ms. Manual is stopped and the
+original is activity-managed. Staging ASG is min/desired 1,
 max 192; worker `i-08203eed43c173e96` is healthy, idle, and READY
 for Dean. Coordinator reassignment is zero-delay for ordinary traffic, while explicit event config
 may set a positive residency window. Both daily actions preserve min 1 and leave desired unset.

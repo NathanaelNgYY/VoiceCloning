@@ -19,9 +19,16 @@
   deployed bundle readback, exact Lambda SHA/config readback, and coordinator preflight. A separate
   Dev DynamoDB table could not be created by the deployment role; Dev safely shares the lease table
   but filters fleet discovery to its two unique fixed instance IDs.
-- Merged concurrent Staging commits for published lecture voice naming and failed scale-claim cleanup
-  into both environment pointers at `b3756db`; combined tests pass client 485/485 and Lambda 298/298.
-  This merged delta is not deployed yet because the user-level AWS session expired.
+- Merged and deployed concurrent published-lecture voice naming and failed scale-claim cleanup.
+  Final environment pointers are `e993d81`; combined tests pass client 485/485 and Lambda 299/299.
+- Live Dev bring-up exposed and fixed two missing prerequisites: unassigned base-ready workers were
+  excluded from coordinator reassignment, and the Dev worker security group did not allow port 3003
+  from the coordinator Lambda group. Both fixed GPUs now retain authenticated coordinator config.
+- Proved fixed-GPU routing without Dev autoscaling: manual GPU loaded Dean and returned a 154,924-byte
+  RIFF; after it was stopped, the original GPU loaded the same model and returned a 142,124-byte RIFF.
+  A one-GPU three-request saturation canary returned three RIFFs; waits were 0/0/3,177 ms, proving the
+  third request used the bounded worker queue. Final manual GPU state is stopped; original is running
+  under its existing 30-minute activity stop. Staging remained min/desired 1 throughout.
 
 ## 2026-08-27
 

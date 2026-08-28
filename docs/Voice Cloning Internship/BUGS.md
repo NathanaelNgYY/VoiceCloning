@@ -7,6 +7,12 @@
 
 ## Active
 
+- 2026-08-28 fixed and deployed: Dev routing-only coordination saw two running, locally ready GPUs
+  as unavailable. Unassigned base-ready workers were excluded from reassignment, both workers lacked
+  coordinator auth, and their security group admitted port 3003 only from the ALB. The decision now
+  assigns `UNASSIGNED` workers, both services persist the shared token, and TCP 3003 is allowed only
+  from the coordinator Lambda security group. Two-GPU failover and a real 3,177-ms queued request passed.
+
 - 2026-08-28 fixed and deployed: one person's sequential voice selections could grow the staging
   ASG from one to three GPUs because each previously requested model was protected for five minutes.
   Idle nonmatching workers now reassign immediately; scale-out occurs only when all eligible workers
