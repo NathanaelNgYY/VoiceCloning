@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $instanceIds = @('i-03f258d470a2fa73f', 'i-0048470294e4ec518')
+$coordinatorFunction = 'Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-dev-coordinator'
 foreach ($name in @('ACCESS_KEY_ID', 'SECRET_ACCESS_KEY', 'SESSION_TOKEN')) {
   $value = [Environment]::GetEnvironmentVariable("VCS_AWS_$name", 'User')
   if (-not $value) { throw "User-level VCS_AWS_$name is missing" }
@@ -12,52 +13,52 @@ foreach ($name in @('ACCESS_KEY_ID', 'SECRET_ACCESS_KEY', 'SESSION_TOKEN')) {
 }
 $assumed = aws sts assume-role `
   --role-arn "arn:aws:iam::$AccountId`:role/Liu_Teng_Yu_Intern2026" `
-  --role-session-name 'codex-dev-worker-inspection' --output json | ConvertFrom-Json
+  --role-session-name 'codex-dev-worker-coordinator-config' --output json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or -not $assumed.Credentials) { throw 'AssumeRole failed' }
 $env:AWS_ACCESS_KEY_ID = $assumed.Credentials.AccessKeyId
 $env:AWS_SECRET_ACCESS_KEY = $assumed.Credentials.SecretAccessKey
 $env:AWS_SESSION_TOKEN = $assumed.Credentials.SessionToken
 if ((aws sts get-caller-identity --query Account --output text) -ne $AccountId) {
-  throw "Refusing to inspect outside AWS account $AccountId"
+  throw "Refusing to configure outside AWS account $AccountId"
 }
 
-$instanceIds = @(
-  aws ssm describe-instance-information `
-    --region $Region `
-    --filters "Key=InstanceIds,Values=$($instanceIds -join ',')" `
-    --query "InstanceInformationList[?PingStatus=='Online'].InstanceId" `
-    --output text
-) -split '\s+' | Where-Object { $_ }
-if ($instanceIds.Count -eq 0) { throw 'No Dev coordinator worker is online in SSM' }
+$config = aws lambda get-function-configuration `
+  --region $Region --function-name $coordinatorFunction --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'Could not read the Dev coordinator configuration' }
+$authToken = [string]$config.Environment.Variables.MODEL_COORDINATOR_AUTH_TOKEN
+if (-not $authToken) { throw 'The Dev coordinator auth token is missing' }
+$encodedToken = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($authToken))
 
 $commands = @(
   'set -eu',
+  "token=`$(printf '%s' '$encodedToken' | base64 -d)",
+  'sudo install -d -m 755 /etc/systemd/system/gpu-inference-worker.service.d',
+  'printf "%s\n" "[Service]" "Environment=MODEL_COORDINATOR_AUTH_TOKEN=${token}" | sudo tee /etc/systemd/system/gpu-inference-worker.service.d/dev-coordinator.conf >/dev/null',
+  'sudo chmod 600 /etc/systemd/system/gpu-inference-worker.service.d/dev-coordinator.conf',
+  'sudo systemctl daemon-reload',
+  'sudo systemctl restart gpu-inference-worker.service',
+  'for attempt in $(seq 1 60); do if systemctl is-active --quiet gpu-inference-worker.service && curl -sf -H "X-VCS-Coordinator-Token: ${token}" http://127.0.0.1:3003/coordinator/status >/tmp/vcs-coordinator-status.json; then break; fi; sleep 2; done',
   'echo "inferenceService=$(systemctl is-active gpu-inference-worker.service || true)"',
-  'environment="$(systemctl show gpu-inference-worker.service -p Environment --value || true)"',
-  'token="$(printf "%s" "$environment" | tr " " "\n" | sed -n "s/^MODEL_COORDINATOR_AUTH_TOKEN=//p" | tail -1)"',
-  'if [ -n "$token" ]; then echo tokenConfigured=yes; else echo tokenConfigured=no; fi',
   'code="$(curl -sS -o /tmp/vcs-coordinator-status.json -w "%{http_code}" -H "X-VCS-Coordinator-Token: ${token}" http://127.0.0.1:3003/coordinator/status || true)"',
   'echo "coordinatorHttp=${code}"',
   'if [ "$code" = "200" ]; then jq -c "{ready,active,queued,maxSlots,modelKey,voiceProfileId,draining}" /tmp/vcs-coordinator-status.json; fi'
 )
-$parametersPath = Join-Path $env:TEMP 'vcs-dev-worker-inspection-parameters.json'
+$parametersPath = Join-Path $env:TEMP 'vcs-dev-worker-coordinator-config-parameters.json'
 [IO.File]::WriteAllText(
   $parametersPath,
   (@{ commands = $commands } | ConvertTo-Json -Depth 4 -Compress),
   (New-Object Text.UTF8Encoding($false))
 )
 try {
-  $sent = aws ssm send-command `
+  $commandId = aws ssm send-command `
     --region $Region --instance-ids $instanceIds `
-    --document-name AWS-RunShellScript `
-    --parameters "file://$parametersPath" `
+    --document-name AWS-RunShellScript --parameters "file://$parametersPath" `
     --query 'Command.CommandId' --output text
-  if ($LASTEXITCODE -ne 0 -or -not $sent) { throw 'Failed to send worker inspection command' }
+  if ($LASTEXITCODE -ne 0 -or -not $commandId) { throw 'Failed to configure Dev workers' }
   foreach ($instanceId in $instanceIds) {
-    aws ssm wait command-executed `
-      --region $Region --command-id $sent --instance-id $instanceId
+    aws ssm wait command-executed --region $Region --command-id $commandId --instance-id $instanceId
     aws ssm get-command-invocation `
-      --region $Region --command-id $sent --instance-id $instanceId `
+      --region $Region --command-id $commandId --instance-id $instanceId `
       --query '{InstanceId:InstanceId,Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' `
       --output json
   }

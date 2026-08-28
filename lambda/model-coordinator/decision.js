@@ -5,7 +5,10 @@ export function chooseCapacityAction({
   now = Date.now(),
   reassignIdleMs = 0,
 } = {}) {
-  const ready = workers.filter((worker) => worker.state === 'READY' && worker.reachable !== false);
+  const available = workers.filter((worker) => (
+    ['READY', 'UNASSIGNED'].includes(worker.state) && worker.reachable !== false
+  ));
+  const ready = available.filter((worker) => worker.state === 'READY');
   const matching = ready
     .filter((worker) => (
       worker.modelKey === requestedModelKey
@@ -23,7 +26,7 @@ export function chooseCapacityAction({
     ));
   if (matching.length > 0) return { type: 'route', worker: matching[0] };
 
-  const reassignable = ready
+  const reassignable = available
     .filter((worker) => {
       if (worker.modelKey === requestedModelKey) return false;
       if (worker.active !== 0 || worker.queued !== 0) return false;

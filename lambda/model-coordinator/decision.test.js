@@ -59,6 +59,29 @@ test('reassigns an idle worker immediately for a sequential request to another v
   assert.equal(result.worker.instanceId, 'i-1');
 });
 
+test('assigns a base-ready worker that has no resident model yet', () => {
+  const worker = {
+    instanceId: 'i-unassigned',
+    state: 'UNASSIGNED',
+    reachable: true,
+    modelKey: '',
+    active: 0,
+    queued: 0,
+    maxSlots: 2,
+    lastActivityAt: 0,
+  };
+
+  const result = chooseCapacityAction({
+    workers: [worker],
+    requestedModelKey: 'dean-model',
+    now: 10_000,
+    reassignIdleMs: 0,
+  });
+
+  assert.equal(result.type, 'reassign');
+  assert.equal(result.worker.instanceId, 'i-unassigned');
+});
+
 test('a positive event residency window can protect a recently demanded voice', () => {
   const result = chooseCapacityAction({
     requestedModelKey: 'dean-v2',
