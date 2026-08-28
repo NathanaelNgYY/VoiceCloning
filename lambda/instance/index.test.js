@@ -456,6 +456,49 @@ test('idle check keeps the GPU running when the inference worker was recently ac
   }
 });
 
+test('idle check can pin inference activity to the original fixed GPU', async () => {
+  const urls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({
+      busy: false,
+      idleMs: 2 * 60 * 1000,
+      lastActivityAt: Date.now() - (2 * 60 * 1000),
+      inferenceStatus: 'idle',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  globalThis.__voiceCloningEc2Client = {
+    async send() {
+      return { Reservations: [{ Instances: [{ State: { Name: 'running' } }] }] };
+    },
+  };
+
+  const { handler } = await import(`./index.js?fixedInferenceActivity=${Date.now()}`);
+  try {
+    await withEnv({
+      GPU_INSTANCE_ID: 'i-dev-fixed',
+      GPU_WORKER_URL: 'http://shared-dev-alb.test',
+      INFERENCE_WORKER_URL: 'http://shared-dev-alb.test',
+      GPU_FIXED_INFERENCE_ACTIVITY_URL: 'http://shared-dev-alb.test/fixed-inference/activity/status',
+      GPU_IDLE_STOP_MINUTES: '10',
+    }, async () => {
+      const response = await handler({
+        requestContext: { http: { method: 'POST' } },
+        rawPath: '/api/instance/idle-check',
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(urls, [
+        'http://shared-dev-alb.test/activity/status',
+        'http://shared-dev-alb.test/fixed-inference/activity/status',
+      ]);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.__voiceCloningEc2Client;
+  }
+});
+
 test('schedule mode starts a stopped GPU inside the window and ignores activity', async () => {
   const calls = [];
   globalThis.__voiceCloningEc2Client = {

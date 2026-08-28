@@ -25,7 +25,11 @@ const region = process.env.AWS_REGION || 'ap-northeast-2';
 const tableName = process.env.MODEL_COORDINATOR_TABLE || 'vcs-staging-model-workers';
 const asgName = process.env.MODEL_COORDINATOR_ASG || 'vcs-staging-gpu-inference';
 const authToken = String(process.env.MODEL_COORDINATOR_AUTH_TOKEN || '').trim();
-const reassignIdleMs = Math.max(60_000, Number(process.env.MODEL_REASSIGN_IDLE_MS) || 300_000);
+// Sequential requests from one user must reuse idle capacity even when they
+// select a different model. A positive value remains available for an event
+// that deliberately wants short-lived model residency, but staging uses zero
+// so scale-out is reserved for genuinely overlapping work.
+const reassignIdleMs = Math.max(0, Number(process.env.MODEL_REASSIGN_IDLE_MS) || 0);
 const bootEstimateSeconds = Math.max(60, Number(process.env.MODEL_BOOT_ESTIMATE_SECONDS) || 360);
 const requestTimeoutMs = Math.max(5_000, Number(process.env.MODEL_WORKER_TIMEOUT_MS) || 110_000);
 const assignmentTimeoutMs = Math.max(

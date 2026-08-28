@@ -3,7 +3,7 @@ export function chooseCapacityAction({
   requestedModelKey,
   lastDemandByModel = {},
   now = Date.now(),
-  reassignIdleMs = 300_000,
+  reassignIdleMs = 0,
 } = {}) {
   const ready = workers.filter((worker) => worker.state === 'READY' && worker.reachable !== false);
   const matching = ready

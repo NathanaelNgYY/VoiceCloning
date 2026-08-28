@@ -46,7 +46,19 @@ test('reassigns an idle worker when the matching pool is full', () => {
   assert.equal(result.worker.instanceId, 'i-dean');
 });
 
-test('does not reassign a recently demanded voice even when its GPU is idle', () => {
+test('reassigns an idle worker immediately for a sequential request to another voice', () => {
+  const result = chooseCapacityAction({
+    requestedModelKey: 'dean-v2',
+    now,
+    reassignIdleMs: 0,
+    lastDemandByModel: { dean: now - 30_000 },
+    workers: [worker({ modelKey: 'dean' })],
+  });
+  assert.equal(result.type, 'reassign');
+  assert.equal(result.worker.instanceId, 'i-1');
+});
+
+test('a positive event residency window can protect a recently demanded voice', () => {
   const result = chooseCapacityAction({
     requestedModelKey: 'dean-v2',
     now,

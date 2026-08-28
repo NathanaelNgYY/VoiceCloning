@@ -203,8 +203,14 @@ function activityProbeTargets() {
     url: `${trainingUrl}/activity/status`,
   }];
 
+  const fixedInferenceActivityUrl = String(process.env.GPU_FIXED_INFERENCE_ACTIVITY_URL || '').trim();
   const inferenceUrl = inferenceWorkerUrl();
-  if (inferenceUrl) {
+  if (fixedInferenceActivityUrl) {
+    targets.push({
+      name: 'inference',
+      url: fixedInferenceActivityUrl,
+    });
+  } else if (inferenceUrl) {
     targets.push({
       name: 'inference',
       url: `${inferenceUrl}/inference/activity/status`,
