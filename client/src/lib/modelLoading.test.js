@@ -5,6 +5,8 @@ import {
   extractModelSelectWarmedReferenceSelection,
   resolveWarmedReferencePrompt,
   isSelectedModelLoaded,
+  canPinVoicePerRequest,
+  isVoiceReadyToSynthesize,
   resolveInferenceStatusState,
   sameLoadedWeights,
   shouldHoldReadyDuringTransientStatus,
@@ -381,4 +383,95 @@ test('isSelectedModelLoaded reports ready once the digest suffix is accounted fo
     loadedGPTPath: '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice-e25-1203a84d89c6.ckpt',
     loadedSoVITSPath: '/opt/gpt-sovits/worker_temp/model_cache/DeanVoice_e20_s2260-77cb04370df3.pth',
   }), true);
+});
+
+// Regression: two sites sharing one inference backend must both stay usable.
+// Each page used to auto-load its own voice onto the shared GPU and then gate
+// readiness on /inference/status, so whichever page lost the race sat on
+// "Loading the voice — this may take a moment." for good.
+
+test('canPinVoicePerRequest needs the profile id and both halves of the weight pair', () => {
+  const full = { voiceProfileId: 'dr-lim', selectedGPT: 'gpt.ckpt', selectedSoVITS: 'sovits.pth' };
+  assert.equal(canPinVoicePerRequest(full), true);
+  assert.equal(canPinVoicePerRequest({ ...full, selectedGPT: '' }), false);
+  assert.equal(canPinVoicePerRequest({ ...full, selectedSoVITS: '   ' }), false);
+  assert.equal(canPinVoicePerRequest({ ...full, voiceProfileId: '' }), false);
+  assert.equal(canPinVoicePerRequest({}), false);
+});
+
+test('a pinned voice is ready even while the shared GPU holds another site\'s model', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: false,
+    serverReady: true,
+    selectedModelLoaded: false,   // /inference/status reports the other site's voice
+    pinsOwnWeights: true,
+    resolvesPerRequest: false,
+    hasReferenceParams: true,
+  }), true);
+});
+
+test('a pinned voice still waits for its reference clip', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: false,
+    serverReady: true,
+    selectedModelLoaded: false,
+    pinsOwnWeights: true,
+    resolvesPerRequest: false,
+    hasReferenceParams: false,
+  }), false);
+});
+
+test('pinning does not paper over a backend that is not up', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: false,
+    serverReady: false,
+    selectedModelLoaded: false,
+    pinsOwnWeights: true,
+    resolvesPerRequest: false,
+    hasReferenceParams: true,
+  }), false);
+});
+
+test('a saved profile resolves its own references, so it needs none from the page', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: false,
+    serverReady: true,
+    selectedModelLoaded: false,
+    pinsOwnWeights: false,
+    resolvesPerRequest: true,
+    hasReferenceParams: false,
+  }), true);
+});
+
+test('an already-loaded model stays ready without pinning, GPU state unread', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: false,
+    serverReady: false,
+    selectedModelLoaded: true,
+    pinsOwnWeights: false,
+    resolvesPerRequest: false,
+    hasReferenceParams: true,
+  }), true);
+});
+
+test('a stock voice is ready with no weights, references or backend at all', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: true,
+    serverReady: false,
+    selectedModelLoaded: false,
+    pinsOwnWeights: false,
+    resolvesPerRequest: false,
+    hasReferenceParams: false,
+  }), true);
+});
+
+test('nothing selected is not ready', () => {
+  assert.equal(isVoiceReadyToSynthesize({
+    usingStandardVoice: false,
+    serverReady: true,
+    selectedModelLoaded: false,
+    pinsOwnWeights: false,
+    resolvesPerRequest: false,
+    hasReferenceParams: false,
+  }), false);
 });

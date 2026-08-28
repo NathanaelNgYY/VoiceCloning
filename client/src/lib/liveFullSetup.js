@@ -106,6 +106,29 @@ export function buildLiveFullRefParams({
   };
 }
 
+// Which reference Full synthesis should use.
+//
+// A saved rank #1 config is preferred: it pins a reviewed clip and its transcript.
+// But requiring one made Full the only route that could not fall back to the
+// reference the page is already synthesising Live Fast with — the selection the
+// model load's auto-reference pass chose. A voice that never had a config saved
+// was then stuck on "create a config first" with no way to make one from that
+// screen, even though Live Fast was working from a perfectly good clip.
+//
+// `configParams` is passed in already-resolved because building it needs the
+// component's training-audio list to recover transcripts.
+export function resolveLiveFullRefParams({
+  configParams = null,
+  primaryPath = '',
+  promptText = '',
+  promptLang = 'en',
+  auxRefAudios = [],
+  settings = DEFAULT_LIVE_FULL_SETTINGS,
+} = {}) {
+  if (configParams) return configParams;
+  return buildLiveFullRefParams({ primaryPath, promptText, promptLang, auxRefAudios, settings });
+}
+
 export function buildLiveFullConfigPayload({
   configId = '',
   configName = 'Live Full default',
