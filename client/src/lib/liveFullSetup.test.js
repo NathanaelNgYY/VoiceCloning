@@ -4,6 +4,7 @@ import {
   DEFAULT_LIVE_FULL_SETTINGS,
   buildLiveFullConfigPayload,
   buildLiveFullRefParams,
+  resolveLiveFullRefParams,
   filterLiveFullConfigs,
   filterLiveFastConfigs,
   normalizeLiveFullSettings,
@@ -127,4 +128,45 @@ test('buildLiveFullConfigPayload marks configs as live full only', () => {
   assert.equal(payload.inferenceMetadata.pipeline, 'liveFull');
   assert.equal(payload.inferenceMetadata.preferredRoute, 'full');
   assert.equal(payload.referenceMetadata.selectedPaths.primary, 'training/runs/demo/ref.wav');
+});
+
+// Regression: Full used to require a saved rank #1 config while Live Fast was
+// happily synthesising from the auto-picked reference, so a voice that never had
+// a config saved dead-ended on "Create or load Live Fast rank #1".
+
+test('resolveLiveFullRefParams prefers a saved rank #1 config when there is one', () => {
+  const configParams = { ref_audio_path: 'from/config.wav', prompt_text: 'saved' };
+  const resolved = resolveLiveFullRefParams({
+    configParams,
+    primaryPath: 'from/live-selection.wav',
+    promptText: 'live',
+  });
+  assert.equal(resolved, configParams);
+});
+
+test('resolveLiveFullRefParams falls back to the live reference selection', () => {
+  const resolved = resolveLiveFullRefParams({
+    configParams: null,
+    primaryPath: 'training/datasets/Voice/denoised/clip.wav',
+    promptText: 'the spoken words of the clip',
+    promptLang: 'en',
+    auxRefAudios: [{ path: 'training/datasets/Voice/denoised/aux.wav' }],
+  });
+  assert.equal(resolved.ref_audio_path, 'training/datasets/Voice/denoised/clip.wav');
+  assert.equal(resolved.prompt_text, 'the spoken words of the clip');
+  assert.deepEqual(resolved.aux_ref_audio_paths, ['training/datasets/Voice/denoised/aux.wav']);
+});
+
+test('resolveLiveFullRefParams does not require a transcript, matching Live Fast', () => {
+  const resolved = resolveLiveFullRefParams({
+    configParams: null,
+    primaryPath: 'clip.wav',
+    promptText: '',
+  });
+  assert.equal(resolved.ref_audio_path, 'clip.wav');
+  assert.equal(resolved.prompt_text, '');
+});
+
+test('resolveLiveFullRefParams still yields nothing when there is no reference at all', () => {
+  assert.equal(resolveLiveFullRefParams({ configParams: null, primaryPath: '' }), null);
 });

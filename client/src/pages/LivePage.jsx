@@ -69,6 +69,7 @@ import {
   DEFAULT_LIVE_FULL_SETTINGS,
   buildLiveFullConfigPayload,
   buildLiveFullRefParams,
+  resolveLiveFullRefParams,
   filterLiveFastConfigs,
   filterLiveFullConfigs,
   isAutoManagedLiveFastConfig,
@@ -619,9 +620,29 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       primaryName: primaryPath ? fallbackName(primaryPath) : 'none',
     };
   }, [voiceConfigs]);
-  const liveFullRefParams = useMemo(() => (
-    buildLiveFullRefParamsFromLiveFastRankOne(voiceConfigs[0], liveFullSettings)
-  ), [voiceConfigs, trainingAudioFiles, liveFullSettings]);
+  // A saved rank #1 config is the preferred source — it pins a reviewed reference
+  // clip and its transcript. But a voice that has never had one saved still has a
+  // reference selection: the one Live Fast is synthesising with right now, chosen
+  // by the model load's auto-reference pass. Requiring the config made Full the
+  // only route that could not use it, which dead-ended those voices on
+  // "Create or load Live Fast rank #1" with no way forward from this screen.
+  // Full takes the same clip; only the settings differ.
+  const liveFullRefParams = useMemo(() => resolveLiveFullRefParams({
+    configParams: buildLiveFullRefParamsFromLiveFastRankOne(voiceConfigs[0], liveFullSettings),
+    primaryPath: refAudioPath,
+    promptText,
+    promptLang,
+    auxRefAudios,
+    settings: liveFullSettings,
+  }), [
+    voiceConfigs,
+    trainingAudioFiles,
+    liveFullSettings,
+    refAudioPath,
+    promptText,
+    promptLang,
+    auxRefAudios,
+  ]);
   const liveVoiceModel = useMemo(() => ({
     voiceProfileId: selectedVoiceProfileId,
     gptRef: selectedGPT,
@@ -2227,7 +2248,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // request hits. It returns a sessionId immediately, streams progress over SSE, and
     // fetches the finished audio via a presigned URL (bytes never traverse the Lambda).
     if (!liveFullRefParams) {
-      setTtsError('Create or load Live Fast rank #1 before generating Full Inference audio.');
+      // Reaching here now means there is no reference clip at all, not merely no
+      // saved config — the fallback above covers the latter. Name the thing the
+      // user can actually act on.
+      setTtsError('Pick a reference clip for this voice before generating Full Inference audio.');
       return;
     }
     if (fullTtsSubmissionRef.current) {
