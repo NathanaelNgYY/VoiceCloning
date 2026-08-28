@@ -390,6 +390,11 @@ export async function handleLiveTtsRequest(body, {
   // client asks to skip its verification. Never forwarded to the engine.
   const skipVerify = Boolean(resolvedParams.skip_verify);
   delete resolvedParams.skip_verify;
+  // Scheduler/residency metadata, consumed upstream by ensureRequestVoiceModel in
+  // acquireSynthesisLease. The weights it names are already loaded by the time we
+  // get here, and these params are forwarded to GPT-SoVITS' /tts verbatim, so drop
+  // it the same way the Full path does (services/longTextInference.js).
+  delete resolvedParams.voice_model;
   const emphasizedText = await prepareTextBeforeNormalization(resolvedParams.text);
   // Formula expansion is a deterministic in-process text rewrite, not a quality
   // pass. Reuse it on Live Fast so scientific notation is spoken consistently

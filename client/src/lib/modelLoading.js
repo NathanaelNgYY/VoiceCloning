@@ -41,6 +41,47 @@ export function isSelectedModelLoaded({
   );
 }
 
+// A synthesis request that names both halves of the weight pair pins that voice
+// on whichever instance serves it — the worker loads exactly those weights for
+// exactly that call (gpu-inference-worker/src/services/requestVoiceModel.js ->
+// ensureRequestVoiceModel). Both halves are required: a half-filled `voice_model`
+// keys the worker's scheduler and then falls through to whatever the GPU held.
+export function canPinVoicePerRequest({ voiceProfileId, selectedGPT, selectedSoVITS }) {
+  return Boolean(
+    String(voiceProfileId || '').trim()
+      && String(selectedGPT || '').trim()
+      && String(selectedSoVITS || '').trim()
+  );
+}
+
+// Can this page synthesise right now?
+//
+// The old answer was `isSelectedModelLoaded(...) && refs`, which asks whether the
+// shared GPU currently holds our voice. That is the wrong question once more than
+// one page talks to the same backend: each page auto-loads its own voice over the
+// other's, so /inference/status reports whoever wrote last and the loser waits on
+// "Loading the voice" forever. With a pinned request the loaded model is not this
+// page's concern — the selection plus its references is the whole condition.
+//
+// `pinsOwnWeights` still needs `serverReady`: pinning says which weights to load,
+// not that there is anything up to load them.
+export function isVoiceReadyToSynthesize({
+  usingStandardVoice,
+  serverReady,
+  selectedModelLoaded,
+  pinsOwnWeights,
+  resolvesPerRequest,
+  hasReferenceParams,
+}) {
+  if (usingStandardVoice) return true;
+  if (selectedModelLoaded && hasReferenceParams) return true;
+  if (!serverReady) return false;
+  // A saved profile carries its own references, resolved server-side per request
+  // (lambda/shared/voiceProfileRuntime.js), so it needs none from this page.
+  if (resolvesPerRequest) return true;
+  return Boolean(pinsOwnWeights && hasReferenceParams);
+}
+
 export function shouldLoadSelectedProfile({
   selectedProfile,
   loadedGPTPath,

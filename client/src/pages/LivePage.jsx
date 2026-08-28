@@ -78,6 +78,8 @@ import {
   buildModelSelectWarmPayload,
   extractModelSelectWarmedReferenceSelection,
   isSelectedModelLoaded,
+  canPinVoicePerRequest,
+  isVoiceReadyToSynthesize,
   resolveInferenceStatusState,
   resolveWarmedReferencePrompt,
   sameLoadedWeights,
@@ -553,13 +555,31 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     && myVoices.some((voice) => (
       voice.displayName === selectedProfile?.displayName && voice.hasSavedProfile
     ));
+  // Second, build-independent route to the same conclusion: once the selection
+  // names both halves of the weight pair, every synthesis this page issues can
+  // carry them as `voice_model`, and the worker pins exactly those weights on
+  // whichever instance serves the call (gpu-inference-worker/src/services/
+  // requestVoiceModel.js -> ensureRequestVoiceModel). No saved profile and no
+  // ownership lookup needed, which matters because both of those are faculty-only
+  // and left the live-fast/TTS build with no per-request route at all.
+  //
+  // This is what lets two sites hold two different voices at once. The GPU still
+  // holds one model at a time, but that is now a scheduling detail the worker
+  // resolves per request instead of a singleton the pages fight over: previously
+  // each site auto-loaded its own voice over the other's and then waited forever
+  // for /inference/status to report a voice the other site had already replaced.
+  const selectedVoicePinsOwnWeights = canPinVoicePerRequest({
+    voiceProfileId: selectedVoiceProfileId,
+    selectedGPT,
+    selectedSoVITS,
+  });
   // The voice the user is about to hear. Once it is resolved per request the
   // loaded-model report describes some arbitrary instance rather than this
   // chat, so naming that voice would be actively wrong; elsewhere the loaded
   // model is still the honest answer and the label is unchanged.
   const speakingProfile = usingStandardVoice
     ? standardVoice
-    : selectedVoiceResolvesPerRequest
+    : (selectedVoiceResolvesPerRequest || selectedVoicePinsOwnWeights)
       ? (selectedProfile || loadedProfile)
       : (loadedProfile || selectedProfile);
 
@@ -614,6 +634,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     activeVoiceProfile?.updatedAt,
     selectedProfile?.updatedAt,
   ]);
+  // The same snapshot, but only once it can actually pin a voice. A half-filled
+  // `voice_model` is worse than none: the worker keys its scheduler on whatever
+  // it is given and then falls through to the weights the GPU already held.
+  const pinnedVoiceModel = selectedVoicePinsOwnWeights ? liveVoiceModel : null;
 
   // A stock voice is addressed purely by id — no reference clip, no weights.
   // The empty ref params keep the snapshot shape the conversation hook expects,
@@ -2017,6 +2041,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     const params = {
       text: 'This is a short saved voice configuration sample.',
       text_lang: inference.language || liveLanguage,
+      // Sampling a config must audition the voice that config belongs to, not
+      // whichever voice the shared GPU is holding for someone else right now.
+      ...(pinnedVoiceModel ? { voice_model: pinnedVoiceModel } : {}),
       ref_audio_path: primaryPath,
       prompt_text: prompt,
       prompt_lang: referencePromptLang(reference.primary, primaryFile, promptLang),
@@ -2090,10 +2117,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       return;
     }
 
+    // Carrying the weight pair on the request is what makes this instance-agnostic:
+    // the worker loads exactly this voice for exactly this call, so a concurrent
+    // session on another site cannot synthesise in the wrong voice or evict ours.
+    // It also skips the saved-profile lookup in lambda/shared/voiceProfileRuntime.js,
+    // which 404s for a trained voice that was never saved as a profile.
     const baseParams = {
       text,
       voiceProfileId: selectedVoiceProfileId,
       text_lang: liveLanguage,
+      ...(pinnedVoiceModel ? { voice_model: pinnedVoiceModel } : {}),
     };
     const liveFastParams = {
       ...baseParams,
@@ -2913,6 +2946,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         text,
         voiceProfileId: selectedVoiceProfileId,
         text_lang: liveLanguage,
+        ...(pinnedVoiceModel ? { voice_model: pinnedVoiceModel } : {}),
         ...(liveRefParams || {}),
       });
       recordTtsHistory({
@@ -3449,6 +3483,10 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   // showing "not loaded".
   useEffect(() => {
     if (!isLiveFastBuild) return;
+    // A pinned selection reloads its own weights for every request, so another
+    // site swapping the shared model is no longer something this user has to act
+    // on — telling them to "reload yours to continue" would be plainly wrong.
+    if (selectedVoicePinsOwnWeights) return;
     const sig = `${loadedGPTPath}::${loadedSoVITSPath}`;
     const prev = observedLoadedSigRef.current;
     observedLoadedSigRef.current = sig;
@@ -3462,7 +3500,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       title: 'Shared voice model changed',
       message: 'Another session loaded a different voice on the shared GPU. Only one model can be active at a time — reload yours to continue.',
     });
-  }, [isLiveFastBuild, loadedGPTPath, loadedSoVITSPath, loadingModel, selectedGPT, selectedSoVITS]);
+  }, [isLiveFastBuild, loadedGPTPath, loadedSoVITSPath, loadingModel, selectedGPT, selectedSoVITS, selectedVoicePinsOwnWeights]);
 
   useEffect(() => {
     if (!modelsFetched || availableProfiles.length === 0) return;
@@ -3970,12 +4008,25 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const selectedModelLoaded = isSelectedModelLoaded({
     serverReady, selectedGPT, selectedSoVITS, loadedGPTPath, loadedSoVITSPath,
   });
+  // What the voice indicator reports. A pinned voice does not need its weights
+  // resident ahead of time, so the shared GPU holding someone else's model is no
+  // reason to show this user "Loading..." — the distinction the banner below
+  // draws is weights-vs-references, and with pinning only references remain.
+  const voiceModelReady = selectedModelLoaded
+    || (serverReady && selectedVoicePinsOwnWeights);
   // A stock voice needs no weights on the GPU and no reference clip, so it is
   // ready the moment it is picked — which is also why it keeps the kiosk usable
-  // while the GPU is cold or the inference group is still scaling up.
-  const isReady = usingStandardVoice
-    || (selectedModelLoaded && Boolean(liveRefParams))
-    || (serverReady && selectedVoiceResolvesPerRequest);
+  // while the GPU is cold or the inference group is still scaling up. The rest of
+  // the rule, including why the loaded-model report no longer gates this page,
+  // lives with isVoiceReadyToSynthesize in lib/modelLoading.js.
+  const isReady = isVoiceReadyToSynthesize({
+    usingStandardVoice,
+    serverReady,
+    selectedModelLoaded,
+    pinsOwnWeights: selectedVoicePinsOwnWeights,
+    resolvesPerRequest: selectedVoiceResolvesPerRequest,
+    hasReferenceParams: Boolean(liveRefParams),
+  });
   // Faculty users without an owned or explicitly selected voice are intentionally
   // left unselected. That is an idle choice state, not an in-progress model load.
   const waitingForFacultyVoiceSelection = canEditInstructions
@@ -4293,15 +4344,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <div className="flex items-center gap-3">
               <span className={cn(
                 'flex items-center gap-1.5 text-xs',
-                selectedModelLoaded ? 'text-emerald-600' : loadingModel || selectedProfile || !modelsFetched ? 'text-blue-500' : 'text-slate-400'
+                voiceModelReady ? 'text-emerald-600' : loadingModel || selectedProfile || !modelsFetched ? 'text-blue-500' : 'text-slate-400'
               )}>
                 {/* A selected-but-not-loaded profile is about to auto-load, so show
                     it as loading rather than the confusing "No model". */}
-                {loadingModel || (!selectedModelLoaded && (selectedProfile || !modelsFetched))
+                {loadingModel || (!voiceModelReady && (selectedProfile || !modelsFetched))
                   ? <Loader2 size={11} className="animate-spin" />
-                  : <span className={cn('h-2 w-2 rounded-full', selectedModelLoaded ? 'bg-emerald-500' : 'bg-slate-300')} />
+                  : <span className={cn('h-2 w-2 rounded-full', voiceModelReady ? 'bg-emerald-500' : 'bg-slate-300')} />
                 }
-                {selectedModelLoaded ? 'Ready' : loadingModel || selectedProfile || !modelsFetched ? 'Loading...' : 'No model'}
+                {voiceModelReady ? 'Ready' : loadingModel || selectedProfile || !modelsFetched ? 'Loading...' : 'No model'}
               </span>
               <Button
                 type="button"
@@ -4359,7 +4410,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
           ) : (
             <>
               <Loader2 size={14} className="shrink-0 animate-spin" />
-              {!selectedModelLoaded
+              {!voiceModelReady
                 ? 'Loading the voice — this may take a moment.'
                 : 'Almost ready — preparing the voice references.'}
             </>
