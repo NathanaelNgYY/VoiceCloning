@@ -66,6 +66,13 @@ test('does not hide a model-capacity start behind rapid synthesis retries', () =
   assert.equal(isRetryableSynthesisError(err), false);
 });
 
+test('Dev capacity simulation is informational and is not retried', () => {
+  const err = capacityErr(5, 'DEV_CAPACITY_SIMULATED');
+
+  assert.equal(isCapacityWaitError(err), true);
+  assert.equal(isRetryableSynthesisError(err), false);
+});
+
 test('does not retry a cancelled clip', () => {
   // 499 is the worker rejecting a barged-in reply — re-issuing it would resurrect
   // audio the user already talked over.

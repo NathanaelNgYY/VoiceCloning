@@ -179,6 +179,10 @@ const devBackendEnvs = {
     "utf8",
   ),
 };
+const devCoordinatorEnv = readFileSync(
+  new URL("../../lambda/.env.deployment.coordinator.dev", import.meta.url),
+  "utf8",
+);
 
 test("the dev GI build gates behind sign-in with a usable Entra config", () => {
   assert.match(devGiEnv, /^VITE_GI_AUTH_ENABLED=true$/m);
@@ -216,12 +220,18 @@ test("the dev client sends a token type both dev backends verify", () => {
   }
 });
 
-test("the original Dev GPU retains activity-based shutdown without an ASG schedule", () => {
+test("Dev keeps activity shutdown separate from its routing-only coordinator", () => {
   assert.match(devBackendEnvs.lambda, /^GPU_SCHEDULE_ENABLED=false$/m);
   assert.match(devBackendEnvs.lambda, /^GPU_IDLE_STOP_MINUTES=30$/m);
   assert.match(devBackendEnvs.lambda, /^GPU_INSTANCE_ID=i-03f258d470a2fa73f$/m);
   assert.doesNotMatch(devBackendEnvs.lambda, /^GPU_INFERENCE_ASG_NAME=/m);
-  assert.doesNotMatch(devBackendEnvs.lambda, /^MODEL_COORDINATOR_FUNCTION_NAME=/m);
+  assert.match(devBackendEnvs.lambda, /^MODEL_COORDINATOR_FUNCTION_NAME=.+-dev-coordinator$/m);
+  assert.match(devCoordinatorEnv, /^MODEL_COORDINATOR_MODE=routing-only$/m);
+  assert.match(
+    devCoordinatorEnv,
+    /^MODEL_COORDINATOR_INSTANCE_IDS=i-03f258d470a2fa73f,i-0048470294e4ec518$/m,
+  );
+  assert.doesNotMatch(devCoordinatorEnv, /^MODEL_COORDINATOR_ASG=/m);
 });
 
 test("the shared voice API attaches the configured Microsoft token", () => {

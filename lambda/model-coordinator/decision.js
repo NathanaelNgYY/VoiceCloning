@@ -52,3 +52,17 @@ export function matchingFreeSlots(workers = [], requestedModelKey = '') {
       Number(worker.maxSlots || 0) - Number(worker.active || 0) - Number(worker.queued || 0),
     ), 0);
 }
+
+export function chooseQueuedMatchingWorker(workers = [], requestedModelKey = '') {
+  return workers
+    .filter((worker) => (
+      worker.state === 'READY'
+      && worker.reachable !== false
+      && worker.modelKey === requestedModelKey
+    ))
+    .sort((left, right) => (
+      Number(left.active || 0) + Number(left.queued || 0)
+      - Number(right.active || 0) - Number(right.queued || 0)
+      || String(left.instanceId || '').localeCompare(String(right.instanceId || ''))
+    ))[0] || null;
+}

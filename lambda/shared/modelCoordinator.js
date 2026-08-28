@@ -51,10 +51,31 @@ export async function coordinatedInferencePostBinary(routePath, body = {}, heade
 }
 
 export async function coordinatedInferencePost(routePath, body = {}, headers = {}) {
-  if (!functionName() || routePath !== '/live/cancel') return inferencePost(routePath, body, headers);
-  const result = await invokeCoordinator({ action: 'cancel', replyToken: body.replyToken });
+  if (!functionName()) return inferencePost(routePath, body, headers);
+  if (routePath === '/live/cancel') {
+    const result = await invokeCoordinator({ action: 'cancel', replyToken: body.replyToken });
+    if (!result || Number(result.statusCode) >= 400) throwCoordinatorError(result || {});
+    return result;
+  }
+  const result = await invokeCoordinator({ action: 'synthesize', routePath, body, headers });
   if (!result || Number(result.statusCode) >= 400) throwCoordinatorError(result || {});
-  return result;
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(result.bodyBase64 || '', 'base64').toString('utf8'));
+  } catch {
+    const error = new Error('Coordinator returned an invalid JSON worker response');
+    error.statusCode = 502;
+    throw error;
+  }
+  return {
+    ...parsed,
+    coordinatorAdmission: {
+      workerId: result.workerId || '',
+      queueWaitMs: Number(result.queueWaitMs) || 0,
+      capacityAction: result.capacityAction?.type || result.capacityAction || 'none',
+      simulated: result.capacityAction?.simulated === true,
+    },
+  };
 }
 
 export async function getCoordinatedModelStatus(body = {}) {

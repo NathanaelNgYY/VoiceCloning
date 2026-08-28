@@ -286,6 +286,41 @@ test('inference preserves worker busy status for multi-user feedback', async () 
   assert.match(JSON.parse(response.body).error, /another generation/iu);
 });
 
+test('initial Full generation uses coordinated admission while follow-up edits stay direct', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    resolveSynthesisBody: async (body) => ({
+      ...body,
+      ref_audio_path: 'ref.wav',
+      voice_model: { voiceProfileId: 'dean', gptRef: 'g.ckpt', sovitsRef: 's.pth' },
+    }),
+    postJson: async (routePath, payload) => {
+      calls.push({ kind: 'direct', routePath, payload });
+      return { revision: 2 };
+    },
+    postCoordinatedJson: async (routePath, payload) => {
+      calls.push({ kind: 'coordinated', routePath, payload });
+      return { sessionId: 'full-1' };
+    },
+  });
+
+  const generated = await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/generate',
+    body: JSON.stringify({ text: 'Full text.', voiceProfileId: 'dean' }),
+  });
+  assert.equal(JSON.parse(generated.body).sessionId, 'full-1');
+  assert.equal(calls[0].kind, 'coordinated');
+  assert.equal(calls[0].routePath, '/inference/generate');
+
+  await localHandler({
+    requestContext: { http: { method: 'POST' } },
+    rawPath: '/api/inference/delete-chunk',
+    body: JSON.stringify({ sessionId: 'full-1', index: 0 }),
+  });
+  assert.equal(calls[1].kind, 'direct');
+});
+
 test('inference current returns idle when the GPU worker is not reachable', async () => {
   const previousFetch = globalThis.fetch;
   process.env.GPU_WORKER_URL = 'http://localhost:3999';

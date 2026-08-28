@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toModelSummary } from './index.js';
+import { createHandler, toModelSummary } from './index.js';
 
 function withEnv(values, fn) {
   const previous = {};
@@ -36,6 +36,40 @@ test('toModelSummary includes object modification metadata for frontend recency 
     size: 2048,
     lastModified: lastModified.toISOString(),
     mtimeMs: lastModified.getTime(),
+  });
+});
+
+test('models select prepares the exact saved voice through the coordinator when configured', async () => {
+  const calls = [];
+  const localHandler = createHandler({
+    loadPair: async () => { throw new Error('direct model load must not run'); },
+    resolveSynthesisBody: async (body) => ({
+      ...body,
+      ref_audio_path: 'refs/dean.wav',
+      voice_model: { voiceProfileId: 'deanvoice-v1', gptRef: 'g.ckpt', sovitsRef: 's.pth' },
+    }),
+    prepareModel: async (body) => {
+      calls.push(body);
+      return { state: 'WARMING', canStartConversation: false, capacityAction: 'reassign' };
+    },
+  });
+
+  await withEnv({ MODEL_COORDINATOR_FUNCTION_NAME: 'dev-coordinator' }, async () => {
+    const response = await localHandler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/models/select',
+      body: JSON.stringify({
+        voiceProfileId: 'deanvoice-v1',
+        gptKey: 'g.ckpt',
+        sovitsKey: 's.pth',
+        ref_audio_path: 'refs/dean.wav',
+      }),
+    });
+    const payload = JSON.parse(response.body);
+    assert.equal(payload.coordinatorCapacity.state, 'WARMING');
+    assert.equal(payload.message, 'Voice capacity is preparing');
+    assert.equal(calls[0].voice_model.gptRef, 'g.ckpt');
+    assert.equal(calls[0].ref_audio_path, 'refs/dean.wav');
   });
 });
 

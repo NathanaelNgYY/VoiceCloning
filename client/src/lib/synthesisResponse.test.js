@@ -42,6 +42,18 @@ test('keeps the fleet-at-limit code distinct from a stopped GPU', () => {
   assert.notEqual(err.message, GPU_OFFLINE);
 });
 
+test('preserves the Dev routing-only capacity simulation message', () => {
+  const err = decode(JSON.stringify({
+    code: 'DEV_CAPACITY_SIMULATED',
+    error: 'Dev routing simulation: staging would request another GPU; Dev autoscaling is disabled.',
+    retryAfterSeconds: 5,
+  }), 503);
+
+  assert.equal(err.code, 'DEV_CAPACITY_SIMULATED');
+  assert.match(err.message, /autoscaling is disabled/u);
+  assert.equal(err.retryAfterSeconds, 5);
+});
+
 test('defaults a capacity body that carries no message or retry hint', () => {
   const err = decode(JSON.stringify({ code: 'MODEL_CAPACITY_STARTING' }), 503);
 

@@ -14,7 +14,11 @@
 // `isRetryableSynthesisError` (lib/backendErrors.js) deliberately refuses to retry
 // these, so dropping the code costs more than a wrong message — it turns a wait
 // into a dead end.
-export const CAPACITY_CODES = new Set(['MODEL_CAPACITY_STARTING', 'MODEL_CAPACITY_LIMIT']);
+export const CAPACITY_CODES = new Set([
+  'MODEL_CAPACITY_STARTING',
+  'MODEL_CAPACITY_LIMIT',
+  'DEV_CAPACITY_SIMULATED',
+]);
 
 // A GPU-down request typically comes back as a 502/503/504 from the reverse proxy
 // (often with an HTML body), so detect both the status and the tell-tale HTML text.

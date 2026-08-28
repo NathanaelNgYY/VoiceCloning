@@ -18,12 +18,16 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import {
   chooseCapacityAction,
+  chooseQueuedMatchingWorker,
   matchingFreeSlots,
 } from './decision.js';
 
 const region = process.env.AWS_REGION || 'ap-northeast-2';
 const tableName = process.env.MODEL_COORDINATOR_TABLE || 'vcs-staging-model-workers';
 const asgName = process.env.MODEL_COORDINATOR_ASG || 'vcs-staging-gpu-inference';
+const coordinatorMode = cleanEnv(process.env.MODEL_COORDINATOR_MODE || 'autoscale').toLowerCase();
+const configuredInstanceIds = cleanEnv(process.env.MODEL_COORDINATOR_INSTANCE_IDS)
+  .split(',').map((item) => item.trim()).filter(Boolean);
 const authToken = String(process.env.MODEL_COORDINATOR_AUTH_TOKEN || '').trim();
 // Sequential requests from one user must reuse idle capacity even when they
 // select a different model. A positive value remains available for an event
@@ -44,6 +48,14 @@ const lambda = new LambdaClient({ region });
 const document = DynamoDBDocumentClient.from(new DynamoDBClient({ region }), {
   marshallOptions: { removeUndefinedValues: true },
 });
+
+function cleanEnv(value) {
+  return String(value || '').trim();
+}
+
+function routingOnly() {
+  return coordinatorMode === 'routing-only';
+}
 
 function clean(value) {
   return String(value || '').trim();
@@ -125,18 +137,30 @@ async function refreshFleet(existingItems, now = Date.now()) {
   const existing = new Map(
     existingItems.filter((item) => item.entity === 'WORKER').map((item) => [item.instanceId, item]),
   );
-  const fleet = await autoscaling.send(new DescribeAutoScalingGroupsCommand({
-    AutoScalingGroupNames: [asgName],
-  }));
-  const group = fleet.AutoScalingGroups?.[0];
-  if (!group) throw new Error(`Auto Scaling group ${asgName} was not found`);
-  const candidates = (group.Instances || []).filter((item) =>
-    ['InService', 'Pending', 'Pending:Wait', 'Pending:Proceed'].includes(item.LifecycleState));
-  const ids = candidates.map((item) => item.InstanceId).filter(Boolean);
+  let group;
+  let ids;
+  if (routingOnly()) {
+    ids = configuredInstanceIds;
+    group = {
+      DesiredCapacity: ids.length,
+      MaxSize: ids.length,
+      Instances: ids.map((InstanceId) => ({ InstanceId, LifecycleState: 'InService' })),
+    };
+  } else {
+    const fleet = await autoscaling.send(new DescribeAutoScalingGroupsCommand({
+      AutoScalingGroupNames: [asgName],
+    }));
+    group = fleet.AutoScalingGroups?.[0];
+    if (!group) throw new Error(`Auto Scaling group ${asgName} was not found`);
+    const candidates = (group.Instances || []).filter((item) =>
+      ['InService', 'Pending', 'Pending:Wait', 'Pending:Proceed'].includes(item.LifecycleState));
+    ids = candidates.map((item) => item.InstanceId).filter(Boolean);
+  }
   if (ids.length === 0) return { group, workers: [] };
 
   const described = await ec2.send(new DescribeInstancesCommand({ InstanceIds: ids }));
-  const instances = (described.Reservations || []).flatMap((reservation) => reservation.Instances || []);
+  const instances = (described.Reservations || []).flatMap((reservation) => reservation.Instances || [])
+    .filter((instance) => instance.State?.Name === 'running');
   const workers = await Promise.all(instances.filter((instance) => instance.PrivateIpAddress).map(async (instance) => {
     const prior = existing.get(instance.InstanceId) || {};
     return probeWorker({
@@ -275,7 +299,7 @@ async function runReassignment(id, now = Date.now()) {
 }
 
 async function setWorkerProtection(instanceId, protectedFromScaleIn) {
-  if (!instanceId) return;
+  if (!instanceId || routingOnly()) return;
   await autoscaling.send(new SetInstanceProtectionCommand({
     AutoScalingGroupName: asgName,
     InstanceIds: [instanceId],
@@ -283,7 +307,10 @@ async function setWorkerProtection(instanceId, protectedFromScaleIn) {
   }));
 }
 
-async function forwardSynthesis(worker, routePath, body, headers = {}) {
+async function forwardSynthesis(worker, routePath, body, headers = {}, {
+  allowQueue = false,
+  priority = false,
+} = {}) {
   const replyToken = clean(headers['X-VCS-Reply-Token'] || headers['x-vcs-reply-token']);
   if (replyToken) {
     await document.send(new PutCommand({
@@ -303,7 +330,8 @@ async function forwardSynthesis(worker, routePath, body, headers = {}) {
     const response = await fetchWithTimeout(workerUrl(worker, routePath), {
       method: 'POST',
       headers: coordinatorHeaders({
-        'X-VCS-Coordinator-Direct': '1',
+        ...(!allowQueue ? { 'X-VCS-Coordinator-Direct': '1' } : {}),
+        ...(priority ? { 'X-VCS-Capacity-Retry': '1' } : {}),
         ...headers,
       }),
       body: JSON.stringify(body),
@@ -337,6 +365,14 @@ async function forwardSynthesis(worker, routePath, body, headers = {}) {
 }
 
 async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
+  if (routingOnly()) {
+    return {
+      started: false,
+      simulated: true,
+      atMaximum: true,
+      message: 'Dev routing simulation: staging would request another GPU; Dev autoscaling is disabled.',
+    };
+  }
   const pendingId = `PENDING#${modelKey}`;
   const existing = await document.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
   if (existing.Item && now - Number(existing.Item.requestedAt || 0) < pendingTtlMs) {
@@ -431,6 +467,7 @@ function capacityResponse({
   capacityAction = 'none',
   started = false,
   atMaximum = false,
+  simulated = false,
 } = {}) {
   const waiting = ['STARTING', 'WARMING'].includes(state);
   return {
@@ -443,6 +480,10 @@ function capacityResponse({
     capacityAction,
     capacityStarted: started,
     atMaximum,
+    simulated,
+    message: simulated
+      ? 'Dev routing simulation: staging would prepare another GPU, but Dev autoscaling is disabled.'
+      : '',
     retryAfterSeconds: waiting ? bootEstimateSeconds : 0,
     voiceProfileId: clean(model?.voiceProfileId),
   };
@@ -521,6 +562,7 @@ async function prepareCapacity(event) {
     capacityAction: 'scale',
     started: scale.started,
     atMaximum: scale.atMaximum,
+    simulated: scale.simulated === true,
   });
 }
 
@@ -558,7 +600,12 @@ async function ensureCapacityAfterAdmission(worker, modelKey, body) {
     return { type: 'reassign', started: reassignment.started };
   }
   const scale = await requestScale(group, modelKey, body, now);
-  return { type: 'scale', started: scale.started, atMaximum: scale.atMaximum === true };
+  return {
+    type: scale.simulated ? 'simulate-scale' : 'scale',
+    started: scale.started,
+    atMaximum: scale.atMaximum === true,
+    simulated: scale.simulated === true,
+  };
 }
 
 async function synthesize(event) {
@@ -619,6 +666,39 @@ async function synthesize(event) {
     }
   }
 
+  if (!selected) {
+    const queuedWorker = chooseQueuedMatchingWorker(workers, modelKey);
+    if (queuedWorker) {
+      const forward = forwardSynthesis(queuedWorker, routePath, body, event.headers || {}, {
+        allowQueue: true,
+        priority: true,
+      });
+      const capacity = ensureCapacityAfterAdmission(queuedWorker, modelKey, body).catch((error) => {
+        console.error('[model-coordinator][queued-capacity]', error);
+        return null;
+      });
+      try {
+        const [result, capacityAction] = await Promise.all([forward, capacity]);
+        return { ...result, queuedAdmission: true, capacityAction };
+      } catch (error) {
+        if (![429, 503].includes(error.statusCode)) throw error;
+        const scale = await requestScale(group, modelKey, body, now);
+        return {
+          statusCode: 503,
+          code: scale.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_TIMEOUT',
+          error: scale.simulated
+            ? scale.message
+            : 'This voice is heavily loaded. Your queue wait expired while more GPU capacity was preparing.',
+          retryAfterSeconds: scale.simulated ? 5 : 2,
+          scaleStarted: scale.started,
+          simulated: scale.simulated === true,
+          voiceProfileId: clean(model.voiceProfileId),
+          modelKey,
+        };
+      }
+    }
+  }
+
   if (selected) {
     try {
       const forward = forwardSynthesis(selected, routePath, body, event.headers || {});
@@ -656,12 +736,15 @@ async function synthesize(event) {
   const scale = await requestScale(group, modelKey, body, now);
   return {
     statusCode: 503,
-    code: scale.atMaximum ? 'MODEL_CAPACITY_LIMIT' : 'MODEL_CAPACITY_STARTING',
-    error: scale.atMaximum
+    code: scale.simulated ? 'DEV_CAPACITY_SIMULATED' : scale.atMaximum ? 'MODEL_CAPACITY_LIMIT' : 'MODEL_CAPACITY_STARTING',
+    error: scale.simulated
+      ? scale.message
+      : scale.atMaximum
       ? 'No GPU is available for this lecture voice and staging is at its capacity limit.'
       : 'This lecture voice is preparing on a GPU. You can wait or use another lecture meanwhile.',
-    retryAfterSeconds: scale.atMaximum ? 30 : bootEstimateSeconds,
+    retryAfterSeconds: scale.simulated ? 5 : scale.atMaximum ? 30 : bootEstimateSeconds,
     scaleStarted: scale.started,
+    simulated: scale.simulated === true,
     voiceProfileId: clean(model.voiceProfileId),
     modelKey,
   };

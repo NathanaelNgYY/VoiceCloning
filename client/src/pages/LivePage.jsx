@@ -91,6 +91,7 @@ import { formatActiveVoiceProfileSummary } from '@/lib/activeVoiceProfile';
 import { getStorageMode } from '@/lib/runtimeConfig';
 import { useGpuStatus } from '@/lib/gpuStatus.jsx';
 import { isTransientBackendError, sanitizeBackendError } from '@/lib/backendErrors';
+import { voiceCapacityNotice } from '@/lib/voiceCapacity';
 import FloatingNotice from '@/components/FloatingNotice';
 import {
   addTtsHistoryItem,
@@ -1438,6 +1439,24 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       }));
       if (selectionChanged()) {
         return;
+      }
+      const coordinatorCapacity = response.data?.coordinatorCapacity;
+      if (coordinatorCapacity && !coordinatorCapacity.canStartConversation) {
+        setGpuNotice({
+          tone: coordinatorCapacity.simulated ? 'info' : 'warning',
+          title: coordinatorCapacity.simulated ? 'Dev capacity simulation' : 'Preparing voice capacity',
+          message: coordinatorCapacity.message || voiceCapacityNotice(coordinatorCapacity),
+        });
+        window.setTimeout(() => loadSelectedModel(attempt, activeRequestVersion), 15_000);
+        return;
+      }
+      if (coordinatorCapacity?.capacityTight || /^BUSY_/u.test(String(coordinatorCapacity?.state || ''))) {
+        setGpuNotice({
+          tone: 'info',
+          title: coordinatorCapacity.simulated ? 'Dev capacity simulation' : 'Voice is heavily loaded',
+          message: coordinatorCapacity.message
+            || 'This voice is available, but your request may queue while additional capacity is prepared.',
+        });
       }
       const latestRankOneConfig = voiceConfigsRef.current[0] || rankOneConfig;
       const latestRankOneIsAutoManaged = isAutoManagedLiveFastConfig(latestRankOneConfig, selectedExpName);

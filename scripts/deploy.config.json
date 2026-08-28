@@ -50,6 +50,7 @@
   },
   "dev": {
     "lambdaFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project",
+    "coordinatorFunction": "Liu_Teng_Yu_Intern2026-Voice_Cloning_Project-dev-coordinator",
     "lambdaMemoryMb": 512,
     "region": "ap-northeast-2",
     "s3Region": "ap-southeast-1",

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   chooseCapacityAction,
+  chooseQueuedMatchingWorker,
   matchingFreeSlots,
 } from './decision.js';
 
@@ -116,4 +117,20 @@ test('does not route to a worker whose queued work consumes its final slot', () 
 
   assert.equal(result.type, 'route');
   assert.equal(result.worker.instanceId, 'i-free');
+});
+
+test('queues on the least-loaded resident worker when every matching slot is occupied', () => {
+  const selected = chooseQueuedMatchingWorker([
+    worker({ instanceId: 'i-busier', active: 2, queued: 2 }),
+    worker({ instanceId: 'i-next', active: 2, queued: 0 }),
+    worker({ instanceId: 'i-other-model', modelKey: 'alex', active: 0 }),
+  ], 'dean');
+
+  assert.equal(selected.instanceId, 'i-next');
+});
+
+test('does not queue an absent model on a worker holding different weights', () => {
+  assert.equal(chooseQueuedMatchingWorker([
+    worker({ modelKey: 'alex', active: 2 }),
+  ], 'dean'), null);
 });

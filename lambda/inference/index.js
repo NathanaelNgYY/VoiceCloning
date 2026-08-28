@@ -1,5 +1,6 @@
 import { generatePresignedGetUrl } from '../shared/s3.js';
 import { inferencePost, inferenceGet, inferencePostBinary, inferenceGetBinary, inferencePublicUrl } from '../shared/gpuWorker.js';
+import { coordinatedInferencePost, coordinatedInferencePostBinary } from '../shared/modelCoordinator.js';
 import { useGpuWorkerArtifacts } from '../shared/artifacts.js';
 import { corsHeaders, ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { createVoiceProfileResolver, VoiceProfileResolutionError } from '../shared/voiceProfileRuntime.js';
@@ -38,15 +39,18 @@ function redirect(location) {
 
 export function createHandler({
   resolveSynthesisBody = createVoiceProfileResolver(),
-  postBinary = inferencePostBinary,
+  postBinary = coordinatedInferencePostBinary,
   getBinary = inferenceGetBinary,
   postJson = inferencePost,
+  postCoordinatedJson,
   getJson = inferenceGet,
   isWorkerUnavailable = isWorkerUnavailableError,
   shouldUseGpuWorkerArtifacts = useGpuWorkerArtifacts,
   buildInferencePublicUrl = inferencePublicUrl,
   buildPresignedGetUrl = generatePresignedGetUrl,
 } = {}) {
+  const initialFullPostJson = postCoordinatedJson
+    || (postJson === inferencePost ? coordinatedInferencePost : postJson);
   return async function handler(event) {
     if (event.requestContext?.http?.method === 'OPTIONS') {
       return preflight();
@@ -79,7 +83,7 @@ export function createHandler({
         if (!body.text) return err(400, 'text is required');
         const resolvedBody = await resolveSynthesisBody(body);
         if (!resolvedBody.ref_audio_path) return err(400, 'ref_audio_path is required');
-        return ok(await postJson('/inference/generate', resolvedBody, demoHdr));
+        return ok(await initialFullPostJson('/inference/generate', resolvedBody, demoHdr));
       }
 
       if (method === 'POST' && routePath.endsWith('/inference/regenerate-chunk')) {
