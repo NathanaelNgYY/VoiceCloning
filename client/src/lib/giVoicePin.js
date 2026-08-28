@@ -41,16 +41,36 @@ export function matchesPinnedVoice(profile, pinnedKey) {
 }
 
 /**
- * A human-readable name for whichever voice is in force.
+ * A matching key for whichever voice is in force, for the pin-mismatch notice.
  *
  * A stock voice's id is an opaque ElevenLabs handle, so normalising it the way a
  * cloned voice's name is normalised produces gibberish
- * ("elevenlabsxb7hh8msujpsbsdyk0k2"). The lecture site has no voice catalogue to
- * look the real name up in, so it says what the voice *is* instead.
+ * ("elevenlabsxb7hh8msujpsbsdyk0k2"). It says what the voice *is* instead.
+ *
+ * This is a *key*, not a label — it lowercases and strips separators so it can
+ * be compared against a pin. Use describeVoiceForDisplay for anything a student
+ * reads.
  */
 export function describePinnedVoice(voiceProfileId) {
   const id = String(voiceProfileId || '').trim();
   if (!id) return '';
   if (id.toLowerCase().startsWith('elevenlabs:')) return 'standard voice';
   return normalizeVoiceKey(id);
+}
+
+/**
+ * What to call a voice on screen when no published name is available.
+ *
+ * A cloned voice's id is a slug of the name it was trained under, so it reads as
+ * a name already and is shown as-is — normalising it here would only strip the
+ * separators that make it legible. A stock voice's id is an opaque ElevenLabs
+ * handle that names nothing, so it is described rather than shown; the real name
+ * ("Alice - Clear, Engaging Educator") lives in the published record and is what
+ * callers prefer when the server could resolve it.
+ */
+export function describeVoiceForDisplay(voiceProfileId) {
+  const id = String(voiceProfileId || '').trim();
+  if (!id) return '';
+  if (id.toLowerCase().startsWith('elevenlabs:')) return 'standard voice';
+  return id;
 }

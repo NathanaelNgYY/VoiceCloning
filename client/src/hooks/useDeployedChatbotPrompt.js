@@ -22,7 +22,7 @@ function fingerprint(category, prompt, documents, voiceProfileId = '') {
 /**
  * Loads the deployed assistant instructions and reference documents.
  *
- * Returns `{ version, voiceProfileId, refresh }`. `version` increments whenever the deployed
+ * Returns `{ version, voiceProfileId, voiceDisplayName, refresh }`. `version` increments whenever the deployed
  * config actually changes; callers that resolve the prompt inside a useMemo must
  * list it as a dependency, or the memo keeps the bundled default forever — which
  * is exactly how the GI build ignored every deploy.
@@ -42,6 +42,10 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
   // The voice this lecture was published with. '' means the lecture names no
   // voice, and the caller keeps its build-time pin.
   const [voiceProfileId, setVoiceProfileId] = useState('');
+  // The name that voice was picked by on the faculty site. Kept beside the id
+  // rather than derived from it: a stock voice's id is an opaque handle, and the
+  // server is the only side that can turn it back into a name.
+  const [voiceDisplayName, setVoiceDisplayName] = useState('');
   const inFlightRef = useRef(false);
   const fingerprintRef = useRef(null);
 
@@ -49,7 +53,12 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const { prompt, documents, voiceProfileId: publishedVoice } = await fetchDeployedChatbotSystemPrompt({
+      const {
+        prompt,
+        documents,
+        voiceProfileId: publishedVoice,
+        voiceDisplayName: publishedVoiceName,
+      } = await fetchDeployedChatbotSystemPrompt({
         category: resolvedCategory,
       });
       // The service reports a failed fetch as empty values. Treating that as a
@@ -67,6 +76,7 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
       setDeployedChatbotSystemPrompt(prompt);
       setDeployedChatbotDocuments(documents);
       setVoiceProfileId(publishedVoice || '');
+      setVoiceDisplayName(publishedVoiceName || '');
       setVersion((count) => count + 1);
     } finally {
       inFlightRef.current = false;
@@ -88,5 +98,5 @@ export function useDeployedChatbotPrompt({ category = DEFAULT_CHATBOT_CATEGORY }
     refresh();
   }, [refresh, resolvedCategory]);
 
-  return { version, voiceProfileId, refresh };
+  return { version, voiceProfileId, voiceDisplayName, refresh };
 }

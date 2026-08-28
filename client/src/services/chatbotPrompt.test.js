@@ -110,3 +110,52 @@ test('the editor scopes its browser-local draft to the lecture being edited', ()
   // one voice while approving a lecture that speaks in another.
   assert.match(source, /deployChatbotSystemPrompt\(\{[\s\S]{0,600}voiceProfileId: speakingVoiceProfileId,/);
 });
+
+test('the lecture engine names the voice the lecturer picked, not its raw id', () => {
+  // A stock voice's id ("elevenlabs:Xb7hH8MSUJpSbSDYk0k2") is an opaque handle.
+  // The faculty picker names it "Alice - Clear, Engaging Educator", and the
+  // student beside the same lecture must see those same words.
+  const source = readFileSync(join(SRC_DIR, 'hooks', 'useGiChatEngine.js'), 'utf-8');
+
+  assert.match(
+    source,
+    /publishedVoiceDisplayName/,
+    'the engine reads the published voice name',
+  );
+  assert.match(
+    source,
+    /activeVoiceLabel = requestedVoiceProfileId\s*\?\s*\(\(publishedVoiceIsInForce/,
+    'the label prefers the published name over the id',
+  );
+  assert.match(
+    source,
+    /describeVoiceForDisplay\(requestedVoiceProfileId\)/,
+    'an unresolved voice is described, never shown as a raw id',
+  );
+});
+
+test('the published voice name only names the voice actually in force', () => {
+  // The build pin and the bundled course mapping both outrank nothing, but the
+  // published id can lose to neither — labelling a pinned voice with the
+  // published lecture\u2019s name would name the wrong voice on screen.
+  const source = readFileSync(join(SRC_DIR, 'hooks', 'useGiChatEngine.js'), 'utf-8');
+
+  assert.match(
+    source,
+    /publishedVoiceIsInForce\s*=[\s\S]{0,200}requestedVoiceProfileId === String\(publishedVoiceProfileId/,
+    'the name is used only when the published voice is the one requested',
+  );
+});
+
+test('the deployed-config fetch carries the published voice name', () => {
+  const source = readFileSync(join(SRC_DIR, 'services', 'chatbotPrompt.js'), 'utf-8');
+
+  assert.match(
+    source,
+    /voiceDisplayName: typeof data\?\.voiceDisplayName === 'string' \? data\.voiceDisplayName : ''/,
+    'the name is read off the response',
+  );
+  // A failed fetch must report a name-shaped empty, not undefined, or the hook
+  // would set undefined and the label would read "undefined" on screen.
+  assert.match(source, /const empty = \{[\s\S]{0,300}voiceDisplayName: '',/);
+});
