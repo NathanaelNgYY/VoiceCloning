@@ -4,13 +4,14 @@ Last updated: 2026-08-28
 
 ## Current Dev State
 
-- Both active remote branches contain reviewed application commit `47abe3b`. Dev Lambda code SHA
-  is `gzs8X16q…`; staging's deployed coordinator uses immediate idle-worker reassignment.
+- Both active remote branches contain reviewed application commit `5571ae6`. Dev and Staging main
+  Lambdas have exact code SHA `3CbOy8HC…`; both coordinators run the same package.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Original GPU `i-03f258d470a2fa73f` remains activity-managed with a 30-minute idle stop. Separate
-  comparison GPU `i-0048470294e4ec518` is manual-only. Neither uses an ASG/coordinator. Both passed
-  inference checks; the comparison GPU was stopped after testing. A dedicated ALB path pins idle
-  checks to the original GPU only.
+  comparison GPU `i-0048470294e4ec518` is manual-only. Dev now uses the shared model coordinator in
+  `routing-only` mode across those exact IDs: no ASG/start/stop action, with simulated Staging scale
+  messages under pressure. Both GPUs were started for a pending live routing test; stop the manual
+  one afterward. A dedicated ALB path pins idle checks to the original GPU only.
 - Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
@@ -29,9 +30,9 @@ Last updated: 2026-08-28
   Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
   progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
   This is not cross-tab/device backend idempotency.
-- Current targeted evidence includes client config 27/27, Lambda instance/coordinator 28/28,
-  coordinator 11/11, and inference worker 258/258. Two ALB TTS calls reached different Dev GPUs,
-  returned WAVs, and both workers reported the exact Dean GPT/SoVITS pair loaded.
+- Current evidence includes client 479/479, Lambda 288/288, focused routing/queue 91/91, and deployed
+  bundle/Lambda readback. A Dev preflight with both GPUs off returned `DEV_CAPACITY_SIMULATED`; the
+  new coordinator has not yet proved both running workers because AWS credentials expired before SSM.
 
 ## Current Staging State
 
@@ -52,9 +53,14 @@ Last updated: 2026-08-28
   Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Current ASG worker
   `i-08203eed43c173e96` is healthy, READY for `deanvoice-v1`, idle, and has no queue. ASG is min/desired 1,
   max 192; daily actions now preserve min 1 and leave desired unset. Authenticated UI remains unverified.
+- TTS and Faculty model selection now use the same coordinator preflight as lecture selection instead
+  of random ALB preparation. Live Fast and initial Full admission are coordinated. If every resident
+  exact-model slot is occupied, work enters the bounded worker priority/FIFO queue while Staging asks
+  for overflow capacity. Follow-up Full session edits remain session-aware direct operations.
 - Deep warm and request-time enforcement share one canonical hashed model-cache path and the
   same production model snapshot. Commit `5634303` is live on all five serving workers.
-- The shared deployed code makes environment differences explicit: Dev alone configures its learner table;
+- The shared deployed code makes environment differences explicit: Dev alone configures its learner table
+  and routing-only fixed-instance coordinator; Staging alone owns ASG autoscaling;
   staging alone sets `GPU_STATUS_READINESS_TARGET=inference`; Dev shows advanced TTS controls and
   staging hides them through `VITE_SHOW_ADVANCED_SETTINGS`. No quality/retry fork remains locally.
 - Live Fast now reports GPU readiness from the routed inference fleet `/models` endpoint,
@@ -96,23 +102,16 @@ Last updated: 2026-08-28
 - Project memory is mirrored between the primary Obsidian folder and
   `docs/Voice Cloning Internship`; keep edited files byte-identical.
 - GitHub pushes work with the configured credential manager override; both active remote pointers
-  were read back at `47abe3b` before the final deployment checks.
+  were read back at `5571ae6` after deployment checks.
 
 ## Next Session
 
-1. Have an account administrator delete orphaned temporary snapshot `snap-08ec74499a13176f7`;
+1. Refresh user-level `VCS_AWS_*`, inspect both running Dev workers' coordinator auth/readiness, run
+   an exact-model two-worker routing/queue canary, then stop manual GPU `i-0048470294e4ec518`.
+2. Have an account administrator delete orphaned temporary snapshot `snap-08ec74499a13176f7`;
    the temporary AMI was deregistered but this role lacks `ec2:DeleteSnapshot`.
-2. Open Dev GI in a new tab with an allowlisted account and confirm the first render (without
-   refresh) is D25, then verify sign-in, Dean text/audio, `/admin`, and mobile layout.
-3. Exercise the new voice config lifecycle: untouched default reselects only same-model clips;
-   Update/reorder pins rank 1; Load previews a config without rewriting the profile. Listen to
-   the repaired Dev primary and confirm the transcript displayed after a fresh model load.
-4. Run a representative clean/noisy Dev training job and inspect `clip-scores.json` and
-   `training-quality-report.json`; compare old/new reference sets and cloned audio blind.
-5. Collect labeled phoneme crops, calibrate on a training split, and validate on held-out audio
-   before changing verifier thresholds.
-6. For staging event work, follow `docs/staging-architecture.md` and `TODO.md`; prewarm known
-   bursts because reactive scaling is too slow for sudden arrivals.
-7. Browser-refresh an active Full and Full Queue request on staging and Dev, and prove that
-   the same session ID resumes with no second S3 session. Then instrument first-chunk verifier
-   and model stages; do not change the 3→5 policy without a controlled quality comparison.
+3. Verify Dev GI sign-in, Dean text/audio, `/admin`, mobile layout, and the voice-config lifecycle.
+4. Run a representative clean/noisy Dev training job; compare reference sets and cloned audio blind.
+5. Calibrate the phoneme verifier on labeled training/held-out crops before changing thresholds.
+6. Prewarm known Staging bursts; reactive scaling is not immediate event safety.
+7. Browser-refresh active Full/Queue requests and prove the same S3 session resumes without resubmit.

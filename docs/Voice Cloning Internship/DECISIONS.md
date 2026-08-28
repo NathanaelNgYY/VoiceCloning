@@ -98,6 +98,16 @@
 - Full-inference session state, events, chunks, cancellation, and final artifacts use
   S3 as shared state so any horizontally-routed target can continue the session.
 - Training remains a separate serial queued service on the fixed training target.
+- One coordinator owns cloned-model preparation and initial synthesis admission for lectures,
+  TTS, and Faculty. Live Fast, synchronous Full, and initial asynchronous Full use it; Full session
+  follow-up edits stay on the durable session-aware path.
+- When an exact resident model has no free slot, the coordinator admits work to that worker's
+  bounded priority/FIFO queue and asks for overflow capacity concurrently. It never switches a busy
+  worker to another model. Matching work packs onto older workers first so newer overflow workers can
+  become idle and scale in.
+- Dev runs the same decision code in `routing-only` mode over two explicit fixed instance IDs. It
+  performs no ASG, start, stop, or instance-protection action and reports the Staging action it would
+  have taken. Staging alone runs `autoscale` mode.
 - Staging scales one shared EC2 inference ASG through the model coordinator. There is
   no ASG or minimum GPU per voice. Legacy ALB occupancy scale-out alarms are telemetry
   only; SageMaker endpoint migration remains deferred.

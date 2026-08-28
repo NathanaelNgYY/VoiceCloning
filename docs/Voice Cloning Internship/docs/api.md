@@ -88,6 +88,9 @@ Notes:
 
 - `GET /api/models`
 - `POST /api/models/select`
+  - For a cloned `voiceProfileId`, resolves the exact saved GPT/SoVITS/reference snapshot and asks
+    the model coordinator to prepare capacity. It no longer sends model preparation through the
+    ordinary inference ALB. The response includes `coordinatorCapacity`.
 - `POST /api/voice-profile/activate`
 - `GET /api/voice-profile/active`
 - `POST /api/voice-profile/capacity` — authenticated lecture-voice preflight.
@@ -122,6 +125,10 @@ Notes:
 
 - `POST /api/inference`
 - `POST /api/inference/generate`
+  - Initial cloned-voice admission goes through the model coordinator. A free exact-model slot is
+    direct; saturated resident capacity enters its bounded priority/FIFO queue while Staging asks
+    for another GPU. Follow-up session edit routes remain direct because they operate on durable
+    session state rather than creating a new initial admission.
   - Optional Live Full chunk overrides: `max_chunk_words` (10–100; omission keeps the 170-character default) and `max_sentences_per_chunk` (1–5; default 2).
 - `GET /api/inference/result/:sessionId`
 - `GET /api/inference/chunk/:sessionId/:index` — raw generated chunk used by progressive queue playback
@@ -133,6 +140,8 @@ Notes:
 - `GET /api/inference/current`
 - `GET /api/inference/status`
 - `POST /api/live/tts-sentence`
+  - Cloned voices use the same coordinator and exact-model admission as lecture preflight. Model
+    switching/preparation is not a synthesis slot; queued synthesis is a real worker queue slot.
   - A request with reference audio plus complete `voice_model.gptRef` and
     `voice_model.sovitsRef` uses that immutable snapshot without rereading the saved
     profile. A request that provides only `voiceProfileId`, or lacks a complete

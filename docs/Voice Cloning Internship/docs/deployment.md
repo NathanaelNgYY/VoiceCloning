@@ -82,7 +82,7 @@ role belongs to the staging ASG path only.
 |---|---|---|
 | Branch | `separate-containers-new` for all components | `codex/staging-multi-user-scaling` for all components |
 | Fixed GPU instance | activity-managed `i-03f258d470a2fa73f`; manual inference comparison `i-0048470294e4ec518` | `i-0f0da8be59367f7a8` |
-| Capacity management | original stops after 30 idle minutes; comparison is manual-only; no coordinator or ASG | fixed training/control GPU plus model-aware `vcs-staging-gpu-inference`; one baseline, immediate idle reassignment, reactive overflow, and explicit event prewarm |
+| Capacity management | routing-only coordinator over both fixed IDs; original stops after 30 idle minutes; comparison is manual-only; no ASG/automatic start | fixed training/control GPU plus model-aware `vcs-staging-gpu-inference`; one baseline, immediate idle reassignment, reactive overflow, and explicit event prewarm |
 | Worker access | SSM | SSM |
 
 There is no dev `-dev` Lambda, `echolect-dev/` prefix, dev ASG, or separate dev chatbot
@@ -90,12 +90,13 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-28): both remote pointers contain application commit `47abe3b`.
-Dev Lambda code SHA is `gzs8X16q…`, with 30-minute idle stop, schedule off, no coordinator, and
+Latest live read-back (2026-08-28): both remote pointers contain application commit `5571ae6`.
+Both main Lambdas have exact code SHA `3CbOy8HC…`. Dev has 30-minute idle stop, schedule off, a
+routing-only coordinator over its two fixed IDs, and
 a fixed-activity URL routed only to original GPU `i-03f258d470a2fa73f`. Shared inference also has
-manual comparison GPU `i-0048470294e4ec518`; both targets were healthy during the routing test, then
-the manual GPU was stopped. Two sequential ALB requests returned valid WAVs, advanced a different
-worker timestamp each, and loaded the same Dean GPT/SoVITS pair. Staging ASG is min/desired 1,
+manual comparison GPU `i-0048470294e4ec518`. Both were started for the pending two-worker coordinator
+test; the manual worker must be stopped afterward. With both off, Dev preflight returned its simulated
+Staging scale action. Staging ASG is min/desired 1,
 max 192; worker `i-08203eed43c173e96` is healthy, idle, and READY
 for Dean. Coordinator reassignment is zero-delay for ordinary traffic, while explicit event config
 may set a positive residency window. Both daily actions preserve min 1 and leave desired unset.

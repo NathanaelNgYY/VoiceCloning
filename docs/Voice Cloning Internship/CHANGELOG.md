@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-28
+
+- Unified cloned-voice preparation and initial synthesis behind the model coordinator. TTS and
+  Faculty `/models/select`, Live Fast, synchronous Full, and initial asynchronous Full admission
+  now use the exact pinned model through one routing authority. Same-model saturation uses the
+  worker's bounded priority/FIFO queue while Staging requests additional capacity in parallel.
+- Added Dev routing-only coordination over fixed instances `i-03f258d470a2fa73f` and
+  `i-0048470294e4ec518`. It uses the same routing code but has no ASG actions; unavailable capacity
+  returns `DEV_CAPACITY_SIMULATED`. The original GPU retains 30-minute activity shutdown and the
+  comparison GPU remains manual-only. Both were started for a pending two-worker live test.
+- Deployed identical main Lambda package SHA `3CbOy8HC…` to Dev and Staging, the coordinator package
+  to both coordinators, and new TTS/Faculty bundles. Live preflight proved Staging `READY` with two
+  free Dean slots while desired capacity remained 1; Dev with both GPUs off returned the simulated
+  scale message. Worker-level two-GPU proof remains pending because the refreshed user-level AWS
+  session expired before SSM inspection.
+- Tests: client 479/479, Lambda 288/288, focused cross-package 91/91, live-fast and Faculty builds,
+  deployed bundle readback, exact Lambda SHA/config readback, and coordinator preflight. A separate
+  Dev DynamoDB table could not be created by the deployment role; Dev safely shares the lease table
+  but filters fleet discovery to its two unique fixed instance IDs.
+
 ## 2026-08-27
 
 - Deployed the faculty empty-selection fix to `faculty.lkcmedicine.org`: once profile loading
