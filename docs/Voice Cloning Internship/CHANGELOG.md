@@ -1620,7 +1620,8 @@
   inference GPU. A dedicated activity route prevents the shared target group from stopping the
   original based on the comparison GPU's state.
 - Deployed both Dev workers and Dev Lambda. Two ALB requests produced valid WAVs on different GPUs,
-  both with the exact Dean weights. Staging finished at desired 1 with one healthy idle Dean worker.
+  both with the exact Dean weights. The manual GPU was stopped after the test. Staging finished at
+  desired 1 with one healthy idle Dean worker.
 - The deployed staging TTS page showed GPU ready, DeanVoice ready, and no perpetual loading state.
 - Temporary AMI `ami-02b84a31fa1faf824` was deregistered. Snapshot
   `snap-08ec74499a13176f7` remains because the assumed role lacks `ec2:DeleteSnapshot`.

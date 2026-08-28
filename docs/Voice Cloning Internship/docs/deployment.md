@@ -93,9 +93,10 @@ pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 Latest live read-back (2026-08-28): both remote pointers contain application commit `47abe3b`.
 Dev Lambda code SHA is `gzs8X16q…`, with 30-minute idle stop, schedule off, no coordinator, and
 a fixed-activity URL routed only to original GPU `i-03f258d470a2fa73f`. Shared inference also has
-manual comparison GPU `i-0048470294e4ec518`; both targets are healthy. Two sequential ALB requests
-returned valid WAVs, advanced a different worker timestamp each, and loaded the same Dean GPT/SoVITS
-pair. Staging ASG is min/desired 1, max 192; worker `i-08203eed43c173e96` is healthy, idle, and READY
+manual comparison GPU `i-0048470294e4ec518`; both targets were healthy during the routing test, then
+the manual GPU was stopped. Two sequential ALB requests returned valid WAVs, advanced a different
+worker timestamp each, and loaded the same Dean GPT/SoVITS pair. Staging ASG is min/desired 1,
+max 192; worker `i-08203eed43c173e96` is healthy, idle, and READY
 for Dean. Coordinator reassignment is zero-delay for ordinary traffic, while explicit event config
 may set a positive residency window. Both daily actions preserve min 1 and leave desired unset.
 

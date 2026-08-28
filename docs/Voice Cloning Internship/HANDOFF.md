@@ -8,8 +8,9 @@ Last updated: 2026-08-28
   is `gzs8X16q…`; staging's deployed coordinator uses immediate idle-worker reassignment.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Original GPU `i-03f258d470a2fa73f` remains activity-managed with a 30-minute idle stop. Separate
-  comparison GPU `i-0048470294e4ec518` is manual-only. Neither uses an ASG/coordinator. Both are
-  healthy inference targets; a dedicated ALB path pins idle checks to the original GPU only.
+  comparison GPU `i-0048470294e4ec518` is manual-only. Neither uses an ASG/coordinator. Both passed
+  inference checks; the comparison GPU was stopped after testing. A dedicated ALB path pins idle
+  checks to the original GPU only.
 - Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
   now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
   the deleted split-layout bundle.
