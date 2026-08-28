@@ -311,9 +311,11 @@ redundant student-entry warm-up burst.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
 - Live scale-out is model-aware in the coordinator: route to an existing matching free slot;
-  otherwise reassign a differently loaded worker only after five demand-idle minutes, or add
-  one ASG instance. Matching requests pack onto the oldest worker. Legacy rejection/occupancy
-  alarms are telemetry-only; scale-in removes one newest instance after fifteen no-traffic minutes.
+  otherwise immediately reassign an eligible idle unassigned/differently loaded worker, or add
+  one ASG instance when all eligible workers are occupied or unavailable. A positive residency
+  delay is only an explicit event-mode configuration. Matching requests pack onto the oldest worker.
+  Legacy rejection/occupancy alarms are telemetry-only; scale-in removes one newest instance after
+  fifteen no-traffic minutes.
   Warmup/health grace is 10 minutes, cooldown 5 minutes, and target drain up to
   2 minutes. Normal scale-in stops at min 1. Event mode can immediately set or schedule the
   configured 50-GPU floor; every new worker claims pending model demand, otherwise warms
@@ -326,9 +328,11 @@ redundant student-entry warm-up burst.
   all target-healthy 07:09:27, and all public-prime logs by 07:11:30. Health therefore
   preceded strict prime by about two minutes; reactive strict readiness took 11m46s
   from load start. Post-scale 100/150 peaked at 27.5/47.5%, so no second +10.
-- Target Optimizer does not queue rejected requests. Lambda retries within 30 seconds;
-  a request routed on retry is marked and receives priority in the worker's local
-  queue. A slot may be briefly unused while rejected Lambdas sleep before retry.
+- An exact-model request admitted while both resident slots are occupied enters that worker's
+  bounded priority/FIFO queue while the coordinator requests overflow capacity. If no worker has
+  the model, the coordinator prepares an idle worker and returns a retryable preparation state;
+  it does not hold the original HTTP request through a multi-minute model load. A slot may be
+  briefly unused while rejected Lambdas sleep before retry.
 - Launch-template v15 requires 10 two-slot rounds (20 RIFF responses) before
   advertising capacity, covering first-chunk and verified later-chunk paths. A fresh
   validator completed the deep rounds in 26 seconds and full cloud-init warm in 256

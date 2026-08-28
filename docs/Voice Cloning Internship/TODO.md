@@ -1,5 +1,9 @@
 # Active TODO
 
+- [ ] Revoke or refresh the temporary AWS session credentials exposed in the debugging conversation,
+  then replace the user-level `VCS_AWS_*` values. Never record the replacement values in the vault,
+  repository, terminal transcript, or progress report.
+
 - [ ] Delete orphaned temporary snapshot `snap-08ec74499a13176f7` with an identity that has
   `ec2:DeleteSnapshot`. The associated temporary AMI is deregistered; the live manual Dev GPU is
   independent and must remain available for explicit two-target tests.

@@ -4,7 +4,7 @@ Last updated: 2026-08-28
 
 ## Current Dev State
 
-- Both active remote branches contain deployed application commit `e993d81`. Dev and Staging main
+- Both active remote branches are aligned and contain deployed application commit `e993d81`. Dev and Staging main
   Lambdas have exact code SHA `HOGKsqec…`; both coordinators have exact SHA `VS4H7Bee…`.
 - Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
   Original GPU `i-03f258d470a2fa73f` remains activity-managed with a 30-minute idle stop. Separate
@@ -102,15 +102,18 @@ Last updated: 2026-08-28
   variables; snapshot/read live configuration before any configuration update.
 - Project memory is mirrored between the primary Obsidian folder and
   `docs/Voice Cloning Internship`; keep edited files byte-identical.
-- GitHub pushes work with the configured credential manager override; both active remote pointers
-  were read back at `e993d81`; deployed main/coordinator package parity was verified afterward.
+- GitHub pushes work with the configured credential manager override. Both active remote pointers
+  were aligned at `9b90928` before this handoff update; deployed main/coordinator package parity
+  was verified after the application rollout.
 
 ## Next Session
 
-1. Have an account administrator delete orphaned temporary snapshot `snap-08ec74499a13176f7`;
+1. Revoke/refresh the exposed temporary AWS session and safely replace user-level `VCS_AWS_*`.
+2. Have an account administrator delete orphaned temporary snapshot `snap-08ec74499a13176f7`;
    the temporary AMI was deregistered but this role lacks `ec2:DeleteSnapshot`.
-2. Verify Dev GI sign-in, Dean text/audio, `/admin`, mobile layout, and the voice-config lifecycle.
-3. Run a representative clean/noisy Dev training job; compare reference sets and cloned audio blind.
-4. Calibrate the phoneme verifier on labeled training/held-out crops before changing thresholds.
-5. Prewarm known Staging bursts; reactive scaling is not immediate event safety.
-6. Browser-refresh active Full/Queue requests and prove the same S3 session resumes without resubmit.
+3. Authenticated-test Faculty, TTS, staging lecture, and Dev GI with two categories/profiles; record routing/queue/scaling.
+4. Verify Dev GI sign-in, Dean text/audio, `/admin`, mobile layout, and the voice-config lifecycle.
+5. Run a representative clean/noisy Dev training job; compare reference sets and cloned audio blind.
+6. Calibrate the phoneme verifier on labeled training/held-out crops before changing thresholds.
+7. Prewarm known bursts; waits beyond the bounded worker/request timeout need a durable central queue.
+8. Browser-refresh active Full/Queue requests and prove the same S3 session resumes without resubmit.

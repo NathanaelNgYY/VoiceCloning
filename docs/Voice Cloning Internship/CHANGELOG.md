@@ -29,6 +29,10 @@
   A one-GPU three-request saturation canary returned three RIFFs; waits were 0/0/3,177 ms, proving the
   third request used the bounded worker queue. Final manual GPU state is stopped; original is running
   under its existing 30-minute activity stop. Staging remained min/desired 1 throughout.
+- Added the complete Week 22 contribution report and tightened the next-session handoff. Corrected an
+  obsolete deployment note: ordinary model reassignment is immediate when an eligible unassigned or
+  differently loaded worker is idle; only explicit event configuration may impose a residency delay.
+  No application or cloud runtime was changed by this documentation update.
 
 ## 2026-08-27
 
