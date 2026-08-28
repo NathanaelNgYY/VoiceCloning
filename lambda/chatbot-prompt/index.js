@@ -29,7 +29,7 @@ import {
 import { ok, err, preflight, parseJsonBody } from '../shared/cors.js';
 import { createLiveAuthGuard } from '../shared/liveAuth.js';
 import { isSafePathSegment } from '../shared/paths.js';
-import { parseElevenLabsVoiceId } from '../shared/elevenLabs.js';
+import { parseElevenLabsVoiceId, listElevenLabsVoices } from '../shared/elevenLabs.js';
 import { normalizeEmail, ownsVoiceName } from '../shared/voiceIdentity.js';
 
 // The pre-category object: one global prompt for every frontend. Still read as
@@ -120,6 +120,37 @@ export function normalizePublishedVoiceProfileId(value) {
   return isSafePathSegment(raw) ? raw : null;
 }
 
+/**
+ * A human-readable name for a published voice.
+ *
+ * A cloned voice's id is a slug of its own name, so the lecture site can read a
+ * name straight off it. A stock voice's id is an opaque ElevenLabs handle
+ * ("elevenlabs:Xb7hH8MSUJpSbSDYk0k2") that no amount of normalising turns into
+ * words, and the lecture site has no voice catalogue of its own to look it up
+ * in. Resolving it here — the one place that already talks to ElevenLabs — is
+ * what lets a lecture name the same voice the lecturer picked on the faculty
+ * site ("Alice - Clear, Engaging Educator").
+ *
+ * Matched on the parsed voice id rather than the whole profile id, so a stored
+ * id whose prefix is cased differently still finds its voice.
+ *
+ * Never throws, and an unresolved name is '': a name is a label, and neither a
+ * voice dropped from the shortlist nor an unreachable ElevenLabs may stop a
+ * lecture loading its assistant.
+ */
+async function resolveElevenLabsDisplayName(voiceProfileId) {
+  const voiceId = parseElevenLabsVoiceId(voiceProfileId);
+  if (!voiceId) return '';
+  try {
+    const voices = await listElevenLabsVoices();
+    const match = voices.find((voice) => parseElevenLabsVoiceId(voice?.voiceProfileId) === voiceId);
+    return String(match?.displayName || '').trim();
+  } catch (error) {
+    console.warn(`[chatbot-prompt] stock voice name lookup failed: ${error.message}`);
+    return '';
+  }
+}
+
 function isAdminIdentity(identity, env = process.env) {
   const requiredRole = env.SUPERVISOR_APP_ROLE || 'Supervisor';
   const allowedOids = new Set(
@@ -173,6 +204,8 @@ export function createHandler({
   mirrorArtifact = copyObjectToPrefix,
   writeMirrorObject = uploadBufferToPrefix,
   authGuard = createLiveAuthGuard(),
+  // Injected so tests can name a stock voice without standing up ElevenLabs.
+  resolveStockVoiceName = resolveElevenLabsDisplayName,
   now = () => new Date().toISOString(),
 } = {}) {
   return async function handler(event) {
@@ -225,8 +258,20 @@ export function createHandler({
 
       if (!stored) {
         // Nothing deployed yet — the frontend falls back to its built-in default.
-        return ok({ category, prompt: '', documents: [], voiceProfileId: '', updatedAt: '', updatedBy: '' }, {}, event);
+        return ok({ category, prompt: '', documents: [], voiceProfileId: '', voiceDisplayName: '', updatedAt: '', updatedBy: '' }, {}, event);
       }
+
+      // schemaVersion 4 adds the voice. Older records have none, and read back
+      // as '' — the lecture site then keeps its build-time pin, which is
+      // exactly the behaviour it had before lectures could carry a voice.
+      const publishedVoiceProfileId = typeof stored.voiceProfileId === 'string' ? stored.voiceProfileId : '';
+      // schemaVersion 5 stores the name the lecturer picked alongside the id.
+      // Records published before it carry only the id, so a stock voice's name
+      // is resolved here on read — that is what names the voice on lectures
+      // published earlier, without anyone having to republish them.
+      const publishedVoiceDisplayName =
+        (typeof stored.voiceDisplayName === 'string' ? stored.voiceDisplayName.trim() : '')
+        || await resolveStockVoiceName(publishedVoiceProfileId);
 
       return ok({
         category,
@@ -234,10 +279,8 @@ export function createHandler({
         // schemaVersion 1 records predate uploaded documents and have no such
         // field; they read back as a prompt with no reference material.
         documents: normalizeDocuments(stored.documents),
-        // schemaVersion 4 adds the voice. Older records have none, and read back
-        // as '' — the lecture site then keeps its build-time pin, which is
-        // exactly the behaviour it had before lectures could carry a voice.
-        voiceProfileId: typeof stored.voiceProfileId === 'string' ? stored.voiceProfileId : '',
+        voiceProfileId: publishedVoiceProfileId,
+        voiceDisplayName: publishedVoiceDisplayName,
         updatedAt: stored.updatedAt || '',
         updatedBy: stored.updatedBy || '',
       }, {}, event);
@@ -344,9 +387,25 @@ export function createHandler({
       }
     }
 
-    // schemaVersion 4 adds `voiceProfileId`; 3 added `category`. Stored as well
-    // as keyed on so a raw object is self-describing when read out of the bucket.
-    const record = { schemaVersion: 4, category, prompt, documents, voiceProfileId, updatedAt: now() };
+    // Resolved server-side rather than taken from the request: the name is what
+    // the lecture site renders, and the client that sends the id has no standing
+    // to decide what that id is called.
+    const voiceDisplayName = clonedVoiceProfile
+      ? String(clonedVoiceProfile.displayName || '').trim()
+      : await resolveStockVoiceName(voiceProfileId);
+
+    // schemaVersion 5 adds `voiceDisplayName`; 4 added `voiceProfileId`; 3 added
+    // `category`. Stored as well as keyed on so a raw object is self-describing
+    // when read out of the bucket.
+    const record = {
+      schemaVersion: 5,
+      category,
+      prompt,
+      documents,
+      voiceProfileId,
+      voiceDisplayName,
+      updatedAt: now(),
+    };
     const recordBuffer = Buffer.from(JSON.stringify(record), 'utf-8');
     try {
       await writeObject(

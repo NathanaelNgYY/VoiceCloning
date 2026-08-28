@@ -11,6 +11,7 @@ import { sanitizeBackendError } from '@/lib/backendErrors';
 import { APP_MODE_CONFIG } from '@/lib/appMode';
 import {
   describePinnedVoice,
+  describeVoiceForDisplay,
   matchesPinnedVoice,
   resolvePinnedVoiceKey,
   resolvePinnedVoiceProfileId,
@@ -60,6 +61,7 @@ export function useGiChatEngine({
   const {
     version: deployedPromptVersion,
     voiceProfileId: publishedVoiceProfileId,
+    voiceDisplayName: publishedVoiceDisplayName,
     refresh: refreshDeployedPrompt,
   } = useDeployedChatbotPrompt({ category });
   const voicePinOptions = useMemo(() => ({
@@ -179,12 +181,24 @@ export function useGiChatEngine({
     };
   }, [requestedVoiceProfileId, usesStandardVoice]);
 
-  // Human-readable name of the active cloned voice, for the read-only
-  // indicator. getFullActiveVoiceProfile() returns the stored profile
-  // payload directly (lambda/voice-profile/index.js:197), which carries
-  // displayName — no separate model-list lookup needed.
+  // Human-readable name of the voice in force, for the read-only indicator.
+  //
+  // The published name comes first, and only when the published voice is the one
+  // actually in force — it is the name the lecturer chose the voice by on the
+  // faculty site, so a student and a lecturer looking at the same lecture see the
+  // same words ("Alice - Clear, Engaging Educator"). Without it a stock voice
+  // showed its raw id, which names nothing to anyone.
+  //
+  // Then the id described, which shows a cloned voice's slug as-is and calls an
+  // unresolved stock voice a "standard voice". Then, with no requested
+  // voice at all, the loaded profile's own name: getFullActiveVoiceProfile()
+  // returns the stored profile payload directly (lambda/voice-profile/index.js),
+  // which carries displayName — no separate model-list lookup needed.
+  const publishedVoiceIsInForce =
+    Boolean(requestedVoiceProfileId) && requestedVoiceProfileId === String(publishedVoiceProfileId || '').trim();
   const activeVoiceLabel = requestedVoiceProfileId
-    ? requestedVoiceProfileId
+    ? ((publishedVoiceIsInForce ? String(publishedVoiceDisplayName || '').trim() : '')
+      || describeVoiceForDisplay(requestedVoiceProfileId))
     : String(activeProfile?.displayName || '').trim();
 
   // The cloned voice this build expects. The active profile is a single shared

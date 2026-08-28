@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  describeVoiceForDisplay,
   matchesPinnedVoice,
   resolvePinnedVoiceKey,
   resolvePinnedVoiceProfileId,
@@ -64,4 +65,20 @@ test('matchesPinnedVoice accepts anything when no pin is configured', () => {
 test('matchesPinnedVoice rejects a missing profile when a pin is set', () => {
   // No active profile at all must not read as "the pinned voice is ready".
   assert.equal(matchesPinnedVoice(null, 'deanvoice'), false);
+});
+
+test('describeVoiceForDisplay describes a stock voice rather than showing its handle', () => {
+  // "elevenlabs:Xb7hH8MSUJpSbSDYk0k2" names nothing to a student. This is only
+  // the fallback — the published name is preferred when the server resolved one.
+  assert.equal(describeVoiceForDisplay('elevenlabs:Xb7hH8MSUJpSbSDYk0k2'), 'standard voice');
+});
+
+test('describeVoiceForDisplay shows a cloned voice id as-is', () => {
+  // Unlike the matching key, the label keeps the separators that make it legible.
+  assert.equal(describeVoiceForDisplay('dean-voice-v1'), 'dean-voice-v1');
+});
+
+test('describeVoiceForDisplay has nothing to say about no voice', () => {
+  assert.equal(describeVoiceForDisplay(''), '');
+  assert.equal(describeVoiceForDisplay(null), '');
 });

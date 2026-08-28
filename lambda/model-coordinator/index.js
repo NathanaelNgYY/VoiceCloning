@@ -364,7 +364,13 @@ async function forwardSynthesis(worker, routePath, body, headers = {}, {
   }
 }
 
-async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
+export async function requestScale(
+  group,
+  modelKey,
+  synthesisBody,
+  now = Date.now(),
+  { documentClient = document, autoscalingClient = autoscaling } = {},
+) {
   if (routingOnly()) {
     return {
       started: false,
@@ -374,7 +380,7 @@ async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
     };
   }
   const pendingId = `PENDING#${modelKey}`;
-  const existing = await document.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
+  const existing = await documentClient.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
   if (existing.Item && now - Number(existing.Item.requestedAt || 0) < pendingTtlMs) {
     return { started: false, pending: existing.Item };
   }
@@ -390,7 +396,7 @@ async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
     expiresAt: Math.floor((now + pendingTtlMs) / 1_000),
   };
   try {
-    await document.send(new PutCommand({
+    await documentClient.send(new PutCommand({
       TableName: tableName,
       Item: pending,
       ConditionExpression: 'attribute_not_exists(id) OR requestedAt < :staleBefore',
@@ -398,13 +404,25 @@ async function requestScale(group, modelKey, synthesisBody, now = Date.now()) {
     }));
   } catch (error) {
     if (error.name !== 'ConditionalCheckFailedException') throw error;
-    const winner = await document.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
+    const winner = await documentClient.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
     return { started: false, pending: winner.Item };
   }
-  await autoscaling.send(new UpdateAutoScalingGroupCommand({
-    AutoScalingGroupName: asgName,
-    DesiredCapacity: Math.min(maximum, desired + 1),
-  }));
+  try {
+    await autoscalingClient.send(new UpdateAutoScalingGroupCommand({
+      AutoScalingGroupName: asgName,
+      DesiredCapacity: Math.min(maximum, desired + 1),
+    }));
+  } catch (error) {
+    // The marker is claimed before the bump so two concurrent callers cannot both
+    // grow the group. That ordering means a failed bump would otherwise strand a
+    // PENDING row asserting a boot that never happened, and prepareCapacity
+    // short-circuits on that row — reporting STARTING for the whole TTL while
+    // nothing launches and no later poll ever retries. Release the claim instead.
+    await documentClient
+      .send(new DeleteCommand({ TableName: tableName, Key: { id: pendingId } }))
+      .catch(() => {});
+    throw error;
+  }
   return { started: true, pending };
 }
 

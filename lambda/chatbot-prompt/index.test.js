@@ -51,7 +51,7 @@ test('GET returns an empty prompt when nothing is deployed yet', async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(JSON.parse(response.body), {
-    category: DEFAULT_CATEGORY, prompt: '', documents: [], voiceProfileId: '', updatedAt: '', updatedBy: '',
+    category: DEFAULT_CATEGORY, prompt: '', documents: [], voiceProfileId: '', voiceDisplayName: '', updatedAt: '', updatedBy: '',
   });
 });
 
@@ -77,6 +77,7 @@ test('GET returns the deployed prompt and documents', async () => {
     prompt: 'Deployed instructions',
     documents: [{ name: 'paper.pdf', text: 'Findings.' }],
     voiceProfileId: '',
+    voiceDisplayName: '',
     updatedAt: '2026-08-13T00:00:00.000Z',
     updatedBy: 'editor@example.com',
   });
@@ -101,6 +102,7 @@ test('GET reads a schemaVersion 1 record as a prompt with no documents', async (
     prompt: 'Older deploy',
     documents: [],
     voiceProfileId: '',
+    voiceDisplayName: '',
     updatedAt: '2026-08-01T00:00:00.000Z',
     updatedBy: '',
   });
@@ -217,11 +219,12 @@ test('PUT stores the prompt for a signed-in caller', async () => {
   assert.equal(writes[0].key, DEFAULT_KEY);
   assert.equal(writes[0].contentType, 'application/json');
   assert.deepEqual(JSON.parse(writes[0].buffer.toString('utf-8')), {
-    schemaVersion: 4,
+    schemaVersion: 5,
     category: DEFAULT_CATEGORY,
     prompt: 'New instructions',
     documents: [],
     voiceProfileId: '',
+    voiceDisplayName: '',
     updatedAt: '2026-08-13T01:00:00.000Z',
   });
 });
@@ -280,7 +283,7 @@ test('PUT stores uploaded documents alongside the prompt', async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(JSON.parse(writes[0].buffer.toString('utf-8')), {
-    schemaVersion: 4,
+    schemaVersion: 5,
     category: DEFAULT_CATEGORY,
     prompt: 'Use the attached papers',
     documents: [
@@ -288,6 +291,7 @@ test('PUT stores uploaded documents alongside the prompt', async () => {
       { name: 'b.pdf', text: 'Beta.' },
     ],
     voiceProfileId: '',
+    voiceDisplayName: '',
     updatedAt: '2026-08-13T01:00:00.000Z',
   });
 });
@@ -682,4 +686,123 @@ test('a failed artifact mirror leaves both category records unchanged', async ()
   assert.equal(response.statusCode, 500);
   assert.equal(sourceWrites.length, 0);
   assert.equal(mirrorWrites.length, 0);
+});
+
+test('GET names a stock voice a lecture was published with', async () => {
+  // What a student sees beside the chat. Without this the indicator showed the
+  // raw "elevenlabs:Xb7hH8MSUJpSbSDYk0k2", which names nothing to anyone.
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      [DEFAULT_KEY]: {
+        schemaVersion: 5,
+        prompt: 'Deployed',
+        documents: [],
+        voiceProfileId: 'elevenlabs:Xb7hH8MSUJpSbSDYk0k2',
+        voiceDisplayName: 'Alice - Clear, Engaging Educator',
+      },
+    }),
+  });
+
+  const response = await handler(event('GET'));
+
+  assert.equal(JSON.parse(response.body).voiceDisplayName, 'Alice - Clear, Engaging Educator');
+});
+
+test('GET resolves the name of a stock voice published before names were stored', async () => {
+  // The schemaVersion 4 records already in the bucket carry only an id. They
+  // must name their voice without anyone having to republish the lecture.
+  const asked = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      [DEFAULT_KEY]: {
+        schemaVersion: 4,
+        prompt: 'Deployed',
+        documents: [],
+        voiceProfileId: 'elevenlabs:Xb7hH8MSUJpSbSDYk0k2',
+      },
+    }),
+    resolveStockVoiceName: async (id) => {
+      asked.push(id);
+      return 'Alice - Clear, Engaging Educator';
+    },
+  });
+
+  const response = await handler(event('GET'));
+
+  assert.deepEqual(asked, ['elevenlabs:Xb7hH8MSUJpSbSDYk0k2']);
+  assert.equal(JSON.parse(response.body).voiceDisplayName, 'Alice - Clear, Engaging Educator');
+});
+
+test('GET falls back to no name when the stock voice cannot be resolved', async () => {
+  // A voice dropped from the shortlist, or an unreachable ElevenLabs. The
+  // lecture still loads; the client then describes the voice generically.
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      [DEFAULT_KEY]: {
+        schemaVersion: 4,
+        prompt: 'Deployed',
+        documents: [],
+        voiceProfileId: 'elevenlabs:gone',
+      },
+    }),
+    resolveStockVoiceName: async () => '',
+  });
+
+  const response = await handler(event('GET'));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).voiceDisplayName, '');
+});
+
+test('PUT stores the stock voice name resolved server-side, not one sent by the client', async () => {
+  // The name is what the lecture site renders, so the caller that sends the id
+  // does not get to decide what that id is called.
+  const writes = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({}),
+    writeObject: async (key, buffer, contentType) => { writes.push({ key, buffer, contentType }); },
+    resolveStockVoiceName: async () => 'Alice - Clear, Engaging Educator',
+    now: () => '2026-08-13T01:00:00.000Z',
+  });
+
+  const response = await handler(event('PUT', {
+    prompt: 'Speak as Alice',
+    voiceProfileId: 'elevenlabs:Xb7hH8MSUJpSbSDYk0k2',
+    voiceDisplayName: 'Something the client made up',
+  }));
+
+  assert.equal(response.statusCode, 200);
+  const record = JSON.parse(writes[0].buffer.toString('utf-8'));
+  assert.equal(record.schemaVersion, 5);
+  assert.equal(record.voiceDisplayName, 'Alice - Clear, Engaging Educator');
+});
+
+test('PUT stores a cloned voice name from its stored profile', async () => {
+  const writes = [];
+  const handler = createHandler({
+    authGuard: ALLOW_AUTH,
+    readObject: readerFor({
+      'voice-profiles/lecturer-v1.json': {
+        voiceProfileId: 'lecturer-v1',
+        displayName: 'lecturer',
+        ownerEmail: 'lecturer@ntu.edu.sg',
+      },
+    }),
+    writeObject: async (key, buffer, contentType) => { writes.push({ key, buffer, contentType }); },
+    // A cloned voice needs no ElevenLabs lookup at all.
+    resolveStockVoiceName: async () => { throw new Error('must not be called'); },
+    now: () => '2026-08-13T01:00:00.000Z',
+  });
+
+  const response = await handler(event('PUT', {
+    prompt: 'Speak as me',
+    voiceProfileId: 'lecturer-v1',
+  }));
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(writes[0].buffer.toString('utf-8')).voiceDisplayName, 'lecturer');
 });

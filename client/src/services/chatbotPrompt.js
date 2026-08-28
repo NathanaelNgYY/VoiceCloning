@@ -48,6 +48,7 @@ export async function fetchDeployedChatbotSystemPrompt(
     prompt: '',
     documents: [],
     voiceProfileId: '',
+    voiceDisplayName: '',
     updatedAt: '',
   };
   try {
@@ -62,6 +63,10 @@ export async function fetchDeployedChatbotSystemPrompt(
       // build pinned — which is what every lecture published before voices
       // existed reads back as.
       voiceProfileId: typeof data?.voiceProfileId === 'string' ? data.voiceProfileId : '',
+      // What the lecturer picked this voice by on the faculty site, resolved
+      // server-side. '' when the server could not name it, and the caller then
+      // describes the voice generically rather than showing a raw id.
+      voiceDisplayName: typeof data?.voiceDisplayName === 'string' ? data.voiceDisplayName : '',
       updatedAt: data?.updatedAt || '',
     };
   } catch {
