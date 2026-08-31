@@ -349,7 +349,7 @@ test('an authenticated lecture capacity preflight resolves the pinned model befo
     text: 'Lecture voice capacity preflight.',
   }]);
   assert.equal(prepared[0].voice_model.voiceProfileId, 'deanvoice-v1');
-  assert.deepEqual(prepareOptions, [{ allowScale: false, source: 'lecture-preflight' }]);
+  assert.deepEqual(prepareOptions, [{ allowScale: true, source: 'lecture-preflight' }]);
   assert.deepEqual(JSON.parse(response.body), {
     state: 'STARTING',
     canStartConversation: false,

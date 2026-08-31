@@ -5,6 +5,7 @@ import {
   chooseCapacityAction,
   choosePreparationAction,
   chooseQueuedMatchingWorker,
+  fleetIsInMotion,
   matchingFreeSlots,
 } from './decision.js';
 
@@ -237,4 +238,117 @@ test('does not queue an absent model on a worker holding different weights', () 
   assert.equal(chooseQueuedMatchingWorker([
     worker({ modelKey: 'alex', active: 2 }),
   ], 'dean'), null);
+});
+
+test('spreads a burst across matching workers instead of stacking one queue', () => {
+  const fleet = [
+    worker({ instanceId: 'i-a', active: 2, queued: 1 }),
+    worker({ instanceId: 'i-b', active: 2, queued: 0 }),
+    worker({ instanceId: 'i-c', active: 2, queued: 0 }),
+  ];
+
+  assert.equal(chooseQueuedMatchingWorker(fleet, 'dean', 2).instanceId, 'i-b');
+});
+
+test('refuses to queue deeper than the configured per-worker ceiling', () => {
+  assert.equal(chooseQueuedMatchingWorker([
+    worker({ instanceId: 'i-a', active: 2, queued: 2 }),
+    worker({ instanceId: 'i-b', active: 2, queued: 2 }),
+  ], 'dean', 2), null);
+});
+
+test('a worker below the ceiling still accepts overflow while another is full', () => {
+  const selected = chooseQueuedMatchingWorker([
+    worker({ instanceId: 'i-full', active: 2, queued: 2 }),
+    worker({ instanceId: 'i-room', active: 2, queued: 1 }),
+  ], 'dean', 2);
+
+  assert.equal(selected.instanceId, 'i-room');
+});
+
+test('a live reassignment for another model still counts as fleet motion', () => {
+  assert.equal(fleetIsInMotion({
+    coordinationItems: [{
+      entity: 'REASSIGN',
+      modelKey: 'someone-elses-model',
+      synthesisBody: {},
+      requestedAt: now - 5_000,
+    }],
+    workers: [worker({ state: 'READY' })],
+    now,
+  }), true);
+});
+
+test('a warming worker counts as fleet motion even with no coordination rows', () => {
+  assert.equal(fleetIsInMotion({
+    coordinationItems: [],
+    workers: [worker({ state: 'DRAINING' })],
+    now,
+  }), true);
+});
+
+test('a stale reassignment row does not pin the fleet in motion forever', () => {
+  assert.equal(fleetIsInMotion({
+    coordinationItems: [{
+      entity: 'REASSIGN',
+      synthesisBody: {},
+      requestedAt: now - 900_000,
+    }],
+    workers: [worker({ state: 'READY' })],
+    now,
+    pendingTtlMs: 600_000,
+  }), false);
+});
+
+test('a settled ready fleet is not in motion, so real demand may still scale', () => {
+  assert.equal(fleetIsInMotion({
+    coordinationItems: [{ entity: 'MODEL', lastDemandAt: now }],
+    workers: [worker({ state: 'READY' }), worker({ instanceId: 'i-2', state: 'READY' })],
+    now,
+  }), false);
+});
+
+test('selection defers instead of scaling while the fleet is mid-transition', () => {
+  // The 1->2->3->4 incident: the only GPU is switching to another user's model,
+  // so nothing is routable or reassignable for this selection.
+  const workers = [worker({ modelKey: 'other', state: 'DRAINING' })];
+  const inMotion = fleetIsInMotion({ coordinationItems: [], workers, now });
+  const action = choosePreparationAction({
+    workers,
+    requestedModelKey: 'dean',
+    now,
+    allowScale: true && !inMotion,
+  });
+
+  assert.equal(inMotion, true);
+  assert.equal(action.type, 'defer');
+});
+
+test('a worker already promised to another model is not spare capacity', () => {
+  const fleet = [worker({ instanceId: 'i-idle', modelKey: 'other', active: 0, queued: 0 })];
+
+  // Without the promise, this idle GPU looks reassignable to every caller.
+  assert.equal(chooseCapacityAction({
+    workers: fleet, requestedModelKey: 'dean', now,
+  }).type, 'reassign');
+
+  // Once it is committed to someone else's switch, it is not offered again.
+  assert.equal(chooseCapacityAction({
+    workers: fleet, requestedModelKey: 'dean', now, reassigningWorkerIds: ['i-idle'],
+  }).type, 'scale');
+});
+
+test('a promised worker does not block a genuinely free second GPU', () => {
+  const action = chooseCapacityAction({
+    workers: [
+      worker({ instanceId: 'i-promised', modelKey: 'other' }),
+      worker({ instanceId: 'i-spare', modelKey: 'another' }),
+    ],
+    requestedModelKey: 'dean',
+    now,
+    reassigningWorkerIds: ['i-promised'],
+  });
+
+  assert.equal(action.type, 'reassign');
+  assert.equal(action.worker.instanceId, 'i-spare');
 });

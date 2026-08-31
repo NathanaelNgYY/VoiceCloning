@@ -1,10 +1,17 @@
 # Active TODO
 
-- [ ] Deploy the 2026-08-31 coordinator regression fix to Dev and Staging, then run a signed-in
-  two-user same-model burst and two different cloned models. Prove two occupied slots do not scale,
-  a real third queued/rejected request prepares exactly one overflow GPU, Dev ignores Staging markers,
-  opposing lecture polls do not model-thrash, and desired capacity naturally returns 3->1. The local
-  code passes 312 Lambda tests and packages; none of this corrected behavior is live yet.
+- [ ] Run a signed-in two-user same-model burst plus two different cloned models against the deployed
+  2026-08-31 (later) coordinator. Prove two occupied slots do not scale, a real third queued request
+  prepares exactly one overflow GPU and queues on the least-loaded matching GPU, a fourth past the
+  two-per-GPU ceiling returns retryable `MODEL_QUEUE_FULL` without a second scale, Dev ignores Staging
+  markers, opposing lecture polls do not model-thrash, and desired capacity naturally returns to 1.
+  Deployment and the selection/anti-thrash guards are already proven live; the concurrency side is not.
+
+- [ ] Browser-test the new selection behaviour on Dev TTS, Dev GI, Staging lectures, and Staging
+  Faculty. Selecting a voice/lecture should show a preparing/already-preparing notice that clears when
+  the GPU is ready — the old "this voice will load on demand" text is gone. Also confirm an ElevenLabs
+  stock voice takes no slot and never marks a GPU busy, and that Dev's `SIMULATED` message appears
+  once both Dev GPUs are occupied.
 
 - [ ] Revoke or refresh the temporary AWS session credentials exposed in the debugging conversation,
   then replace the user-level `VCS_AWS_*` values. Never record the replacement values in the vault,

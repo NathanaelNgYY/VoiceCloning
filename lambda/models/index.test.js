@@ -72,7 +72,7 @@ test('models select prepares the exact saved voice through the coordinator when 
     assert.equal(payload.message, 'Voice capacity is preparing');
     assert.equal(calls[0].voice_model.gptRef, 'g.ckpt');
     assert.equal(calls[0].ref_audio_path, 'refs/dean.wav');
-    assert.deepEqual(options, [{ allowScale: false, source: 'models-select' }]);
+    assert.deepEqual(options, [{ allowScale: true, source: 'models-select' }]);
   });
 });
 

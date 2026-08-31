@@ -21,6 +21,7 @@ import {
   chooseCapacityAction,
   choosePreparationAction,
   chooseQueuedMatchingWorker,
+  fleetIsInMotion,
   matchingFreeSlots,
 } from './decision.js';
 
@@ -50,6 +51,10 @@ const assignmentTimeoutMs = Math.max(
   Number(process.env.MODEL_ASSIGNMENT_TIMEOUT_MS) || 840_000,
 );
 const pendingTtlMs = Math.max(120_000, Number(process.env.MODEL_PENDING_TTL_MS) || 600_000);
+// Bounded overflow waiting per GPU. A burst spreads across matching workers up
+// to this depth; beyond it the request is retried by the caller instead of
+// queueing without limit behind work that has not started.
+const maxQueuedPerWorker = Math.max(1, Number(process.env.MODEL_MAX_QUEUED_PER_WORKER) || 2);
 
 const autoscaling = new AutoScalingClient({ region });
 const ec2 = new EC2Client({ region });
@@ -308,6 +313,16 @@ function liveReassignment(item, now = Date.now()) {
   return item?.entity === 'REASSIGN'
     && Boolean(item.synthesisBody)
     && now - Number(item.requestedAt || 0) < pendingTtlMs;
+}
+
+// Workers already committed to a live reassignment for some other model. They
+// still probe as idle READY until the switch actually begins, so without this
+// they look like spare capacity to every concurrent selection.
+function promisedWorkerIds(items, now = Date.now()) {
+  return items
+    .filter((item) => itemInScope(item) && liveReassignment(item, now))
+    .map((item) => clean(item.workerId))
+    .filter(Boolean);
 }
 
 async function scheduleReassignment(worker, modelKey, synthesisBody, now = Date.now(), {
@@ -673,14 +688,43 @@ async function prepareCapacity(event) {
     });
   }
 
+  // The reassign/boot short-circuits above are keyed to the REQUESTED model, so
+  // they cannot see a transition running for a different one. That gap is what
+  // produced the 1->2->3->4 incident: one person clicking through three voices,
+  // each click finding the only GPU mid-switch for someone else's model, nothing
+  // reassignable, and therefore scaling. A selection waits for capacity already
+  // in motion instead of buying more. Real synthesis is unaffected and still
+  // scales on real overlapping demand.
+  const fleetInMotion = fleetIsInMotion({
+    coordinationItems: existing.filter((item) => itemInScope(item)),
+    workers,
+    now,
+    pendingTtlMs,
+  });
   const action = choosePreparationAction({
     workers,
     requestedModelKey: modelKey,
     lastDemandByModel: demandMap(existing),
     now,
     reassignIdleMs: preflightReassignIdleMs,
-    allowScale,
+    reassigningWorkerIds: promisedWorkerIds(existing, now),
+    allowScale: allowScale && !fleetInMotion,
   });
+  if (action.type === 'defer' && fleetInMotion) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: 'await-fleet-transition', allowScale,
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      desiredCapacity: group.DesiredCapacity,
+    }));
+    return capacityResponse({
+      state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
+      canStartConversation: readyMatching.length > 0,
+      model,
+      matchingWorkers: readyMatching.length,
+      capacityAction: 'reassign',
+      message: 'GPU capacity is already being prepared. This voice will be ready shortly without starting another GPU.',
+    });
+  }
   if (action.type === 'reassign') {
     console.log('[model-coordinator][decision]', JSON.stringify({
       request: 'prepare', source, decision: 'reassign', allowScale,
@@ -770,6 +814,7 @@ async function ensureCapacityAfterAdmission(worker, modelKey, body) {
     lastDemandByModel: demandMap(existing),
     now,
     reassignIdleMs,
+    reassigningWorkerIds: promisedWorkerIds(existing, now),
   });
   if (action.type === 'reassign') {
     console.log('[model-coordinator][decision]', JSON.stringify({
@@ -806,6 +851,8 @@ async function synthesize(event) {
   const refreshed = await refreshFleet(existing, now);
   const { group } = refreshed;
   const workers = lockedFleet(existing, refreshed.workers, now);
+  const matchingWorkerCount = workers.filter((worker) =>
+    worker.reachable && worker.state === 'READY' && worker.modelKey === modelKey).length;
   const pending = existing.find((item) => (
     item.id === coordinationKey('PENDING', modelKey) && now - item.requestedAt < pendingTtlMs
   ));
@@ -841,6 +888,7 @@ async function synthesize(event) {
       lastDemandByModel: demandMap(existing),
       now,
       reassignIdleMs,
+      reassigningWorkerIds: promisedWorkerIds(existing, now),
     });
     if (action.type === 'route') selected = action.worker;
     if (action.type === 'reassign') {
@@ -864,7 +912,37 @@ async function synthesize(event) {
   }
 
   if (!selected) {
-    const queuedWorker = chooseQueuedMatchingWorker(workers, modelKey);
+    const queuedWorker = chooseQueuedMatchingWorker(workers, modelKey, maxQueuedPerWorker);
+    // Every matching GPU is already at its queue ceiling. The first overflow
+    // request has already asked for more capacity, so retry against the growing
+    // fleet instead of buying another GPU per waiting request.
+    if (!queuedWorker && matchingWorkerCount > 0) {
+      const scaling = pending
+        ? {
+          started: false,
+          simulated: routingOnly(),
+          message: 'Dev capacity simulation: every fixed GPU for this voice is busy with a full waiting list. Staging is already preparing another GPU; retry shortly.',
+        }
+        : await requestScale(group, modelKey, body, now);
+      console.log('[model-coordinator][decision]', JSON.stringify({
+        request: 'synthesize', decision: 'queue-full-retry', voiceProfileId: clean(model.voiceProfileId),
+        modelKey: modelKey.slice(0, 12), matchingWorkers: matchingWorkerCount,
+        maxQueuedPerWorker, alreadyScaling: Boolean(pending), desiredCapacity: group.DesiredCapacity,
+      }));
+      return {
+        statusCode: 503,
+        code: scaling.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_FULL',
+        error: scaling.simulated
+          ? scaling.message
+          : 'This lecture voice is busy and its waiting list is full. More GPU capacity is preparing; your request will retry automatically.',
+        retryAfterSeconds: scaling.simulated ? 5 : 5,
+        scaleStarted: scaling.started === true,
+        retryable: true,
+        simulated: scaling.simulated === true,
+        voiceProfileId: clean(model.voiceProfileId),
+        modelKey,
+      };
+    }
     if (queuedWorker) {
       console.log('[model-coordinator][decision]', JSON.stringify({
         request: 'synthesize', decision: 'queue', voiceProfileId: clean(model.voiceProfileId),

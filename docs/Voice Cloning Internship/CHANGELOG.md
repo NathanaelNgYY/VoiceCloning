@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-08-31 (later) — Voice selection now prepares capacity; two coordinator bugs fixed
+
+- Policy change, agreed with the user: selecting a voice/lecture PREPARES it. `allowScale` is now
+  `true` for `models-select` (`lambda/models/index.js`) and `lecture-preflight`
+  (`lambda/voice-profile/index.js`), and the TTS/Faculty dropdown no longer sends
+  `prepareCapacity: false` (`client/src/pages/LivePage.jsx`). The former metadata-only selection
+  and its "this voice will load on demand" notice were the confusing frontend behaviour.
+- Bug 1 (fleet-wide scale guard). The reassign/boot short-circuits in `prepareCapacity` are keyed to
+  the REQUESTED model, so a transition running for a DIFFERENT model was invisible. With scaling
+  re-enabled this reproduced the 1->2->3->4 incident. Added `fleetIsInMotion()` (`decision.js`):
+  a selection defers with `WARMING` + "GPU capacity is already being prepared" instead of scaling
+  while any live reassignment, pending boot, or non-READY worker exists. Synthesis is unaffected and
+  still scales on real overlapping demand.
+- Bug 2 (reassignment thrash). A worker stays idle READY until its switch actually begins, so three
+  near-simultaneous selections each scheduled their own reassignment onto the SAME GPU; it would
+  thrash through three models and two callers were told a GPU was warming for a voice it would never
+  hold. `chooseCapacityAction` now takes `reassigningWorkerIds` and excludes already-promised workers
+  (`promisedWorkerIds()` in `index.js`, wired into prepare, post-admission, and synthesis).
+- Bounded, distributed overflow queue. `chooseQueuedMatchingWorker` takes `maxQueuedPerWorker`
+  (`MODEL_MAX_QUEUED_PER_WORKER`, default 2, set explicitly in both coordinator env files). It already
+  picked the least-loaded matching worker, so queueing was distributed — the previous handoff text
+  claiming otherwise was wrong. Beyond the ceiling, `synthesize` returns retryable 503
+  `MODEL_QUEUE_FULL` and only scales if no boot is already pending, per the user's rule that the first
+  overflow has already asked for capacity. The worker's own `SYNTHESIS_MAX_QUEUE_DEPTH` is 100, so the
+  coordinator ceiling is the real bound; no worker or AMI change was needed.
+- Verified unchanged and correct: the busy/generating marker is real (`synthesisScheduler` increments
+  `active` on admission and decrements in a `finally`), scale-in protection is held across assignment
+  and synthesis (`SetInstanceProtection`), oldest-first packing by `firstSeenAt`, and the event
+  residency-minimum lock.
+
+- Files: `lambda/model-coordinator/decision.js`, `lambda/model-coordinator/index.js`,
+  `lambda/models/index.js`, `lambda/voice-profile/index.js`, `client/src/pages/LivePage.jsx`,
+  `lambda/.env.deployment.coordinator.{dev,staging}`, plus tests in
+  `lambda/model-coordinator/decision.test.js`, `lambda/models/index.test.js`,
+  `lambda/voice-profile/index.test.js`.
+- Tests run: Lambda 322/322, coordinator 41/41, client 491/491. Note `lambda/model-coordinator`
+  needs its own `npm install`; without it the whole Lambda suite fails on a missing
+  `@aws-sdk/client-lambda`.
+- Deployed 2026-08-31: both main Lambdas, both coordinators, and the Dev/Staging `live-fast`
+  (TTS/Faculty) client bundles.
+- Live evidence (staging, desired capacity 1 throughout): selecting deanvoice on an idle
+  cs-nathanael GPU returned `WARMING`/`reassign` `started=true` and the GPU settled READY on
+  deanvoice; two further alexv1 selections during that switch returned `started=false` with the
+  "already being prepared" message. Desired stayed 1 before, during, and after. Dev reassigned its
+  fixed GPU to alexv1 as expected.
+- NOT yet verified: any browser flow, the queue/overflow and `MODEL_QUEUE_FULL` retry path under real
+  concurrent synthesis, Dev's `SIMULATED` message (needs both Dev GPUs busy), ElevenLabs
+  slot-bypass in the UI, and faculty publishing.
+
 ## 2026-08-31
 
 - Diagnosed the signed-in two-user regression from live evidence. At 08:15:26Z and 08:15:27Z,

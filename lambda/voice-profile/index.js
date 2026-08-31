@@ -468,8 +468,11 @@ export function createHandler({
           voiceProfileId,
           text: 'Lecture voice capacity preflight.',
         });
+        // Opening a lecture prepares its voice. Warming/pending short-circuits
+        // and the preflight reassignment grace keep polling lectures from
+        // thrashing or purchasing duplicate GPUs.
         return ok(await prepareModelCapacity(resolvedBody, {
-          allowScale: false,
+          allowScale: true,
           source: 'lecture-preflight',
         }), {}, event);
       }

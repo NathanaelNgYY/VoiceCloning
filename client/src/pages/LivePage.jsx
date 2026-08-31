@@ -1437,9 +1437,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         refAudioPath: rankOneIsAutoManaged ? '' : rankOneReferences.primaryPath,
         auxRefAudioPaths: rankOneIsAutoManaged ? [] : rankOneReferences.auxPaths,
         refreshAutoReferences: rankOneIsAutoManaged,
-        // Faculty/TTS dropdown changes pin metadata only. A real Generate/Start
-        // request is the demand signal allowed to reassign or scale a GPU.
-        prepareCapacity: false,
+        // Choosing a voice in TTS/Faculty prepares it on a GPU, exactly like
+        // opening a lecture, so the first Generate does not pay a cold start.
       }));
       if (selectionChanged()) {
         return;

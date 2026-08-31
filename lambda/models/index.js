@@ -112,8 +112,12 @@ export function createHandler({
               selectionOnly: true,
             });
           }
+          // Selecting a voice prepares it. The coordinator still short-circuits
+          // on a live reassignment or pending boot for this model, so scaling
+          // happens only when no matching slot, no warming GPU and no idle GPU
+          // can serve the selection.
           const coordinatorCapacity = await prepareModel(synthesisBody, {
-            allowScale: false,
+            allowScale: true,
             source: 'models-select',
           });
           return ok({

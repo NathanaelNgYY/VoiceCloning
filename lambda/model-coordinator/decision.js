@@ -4,7 +4,14 @@ export function chooseCapacityAction({
   lastDemandByModel = {},
   now = Date.now(),
   reassignIdleMs = 0,
+  reassigningWorkerIds = [],
 } = {}) {
+  // A worker already promised to another model is not spare capacity. Without
+  // this, three selections arriving before the first switch begins each see the
+  // same still-idle GPU and each schedule their own reassignment onto it, so it
+  // thrashes through three models and two of the three callers are told a GPU is
+  // warming for a voice it will never hold.
+  const promised = new Set(reassigningWorkerIds.filter(Boolean));
   const available = workers.filter((worker) => (
     ['READY', 'UNASSIGNED'].includes(worker.state) && worker.reachable !== false
   ));
@@ -30,6 +37,7 @@ export function chooseCapacityAction({
     .filter((worker) => {
       if (worker.modelKey === requestedModelKey) return false;
       if (worker.residencyLocked === true) return false;
+      if (promised.has(worker.instanceId)) return false;
       if (worker.active !== 0 || worker.queued !== 0) return false;
       const modelLastDemand = Number(lastDemandByModel[worker.modelKey] || 0);
       const idleSince = Math.max(Number(worker.lastActivityAt || 0), modelLastDemand);
@@ -89,6 +97,29 @@ export function choosePreparationAction({ allowScale = false, ...capacityInput }
   return action;
 }
 
+// True when the fleet is already changing shape for anyone: a live reassignment,
+// a claimed boot, or a worker that is not yet READY. A selection preflight must
+// not buy a GPU in this state. The per-model short-circuits cannot see it,
+// because a transition for a DIFFERENT model leaves no record under this model's
+// key — the gap that turned one person's three lecture clicks into desired
+// capacity 1->2->3->4.
+export function fleetIsInMotion({
+  coordinationItems = [],
+  workers = [],
+  now = Date.now(),
+  pendingTtlMs = 600_000,
+} = {}) {
+  const liveRecord = (item) => {
+    if (!item) return false;
+    const fresh = now - Number(item.requestedAt || 0) < pendingTtlMs;
+    if (item.entity === 'REASSIGN') return Boolean(item.synthesisBody) && fresh;
+    if (item.entity === 'PENDING') return fresh;
+    return false;
+  };
+  return coordinationItems.some(liveRecord)
+    || workers.some((worker) => worker.reachable !== false && worker.state !== 'READY');
+}
+
 export function matchingFreeSlots(workers = [], requestedModelKey = '') {
   return workers
     .filter((worker) =>
@@ -101,12 +132,22 @@ export function matchingFreeSlots(workers = [], requestedModelKey = '') {
     ), 0);
 }
 
-export function chooseQueuedMatchingWorker(workers = [], requestedModelKey = '') {
+// Overflow waiting is bounded and spread. Each matching worker accepts at most
+// `maxQueuedPerWorker` waiting requests, and the least-loaded worker is chosen
+// first so a burst distributes across the fleet instead of stacking on one GPU.
+// Returning null while matching workers exist means every one is at its queue
+// ceiling; the caller must retry rather than queue deeper.
+export function chooseQueuedMatchingWorker(
+  workers = [],
+  requestedModelKey = '',
+  maxQueuedPerWorker = Number.MAX_SAFE_INTEGER,
+) {
   return workers
     .filter((worker) => (
       worker.state === 'READY'
       && worker.reachable !== false
       && worker.modelKey === requestedModelKey
+      && Number(worker.queued || 0) < Number(maxQueuedPerWorker)
     ))
     .sort((left, right) => (
       Number(left.active || 0) + Number(left.queued || 0)
