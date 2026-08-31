@@ -107,6 +107,7 @@ export function buildModelSelectWarmPayload({
   refAudioPath = '',
   auxRefAudioPaths = [],
   refreshAutoReferences = false,
+  prepareCapacity = true,
 } = {}) {
   const primaryPath = String(refAudioPath || '').trim();
   const normalizedVoiceProfileId = String(voiceProfileId || '').trim();
@@ -114,12 +115,14 @@ export function buildModelSelectWarmPayload({
     return {
       ...(normalizedVoiceProfileId ? { voiceProfileId: normalizedVoiceProfileId } : {}),
       ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
+      ...(!prepareCapacity ? { prepareCapacity: false } : {}),
     };
   }
 
   return {
     ...(normalizedVoiceProfileId ? { voiceProfileId: normalizedVoiceProfileId } : {}),
     ...(refreshAutoReferences ? { refresh_auto_references: true } : {}),
+    ...(!prepareCapacity ? { prepareCapacity: false } : {}),
     ref_audio_path: primaryPath,
     aux_ref_audio_paths: Array.from(auxRefAudioPaths || [])
       .map((item) => String(item || '').trim())
@@ -129,20 +132,21 @@ export function buildModelSelectWarmPayload({
 }
 
 export function extractModelSelectWarmedReferenceSelection(result = {}) {
-  const primaryPath = String(result?.warmedReferences?.ref_audio_path || '').trim();
+  const references = result?.resolvedReferences || result?.warmedReferences || {};
+  const primaryPath = String(references.ref_audio_path || '').trim();
   if (!primaryPath) {
     return null;
   }
 
   return {
     refAudioPath: primaryPath,
-    auxRefAudioPaths: Array.from(result?.warmedReferences?.aux_ref_audio_paths || [])
+    auxRefAudioPaths: Array.from(references.aux_ref_audio_paths || [])
       .map((item) => String(item || '').trim())
       .filter(Boolean)
       .filter((path) => path !== primaryPath)
       .slice(0, 5),
-    promptText: String(result?.warmedReferences?.prompt_text || '').trim(),
-    promptLang: String(result?.warmedReferences?.prompt_lang || '').trim(),
+    promptText: String(references.prompt_text || '').trim(),
+    promptLang: String(references.prompt_lang || '').trim(),
   };
 }
 

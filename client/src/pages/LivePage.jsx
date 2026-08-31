@@ -380,6 +380,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
   const [selectedPersonKey, setSelectedPersonKey] = useState('');
   const [loadedGPTPath, setLoadedGPTPath] = useState('');
   const [loadedSoVITSPath, setLoadedSoVITSPath] = useState('');
+  const [modelSelectionOnly, setModelSelectionOnly] = useState(false);
   const [serverReady, setServerReady] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -1436,11 +1437,16 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         refAudioPath: rankOneIsAutoManaged ? '' : rankOneReferences.primaryPath,
         auxRefAudioPaths: rankOneIsAutoManaged ? [] : rankOneReferences.auxPaths,
         refreshAutoReferences: rankOneIsAutoManaged,
+        // Faculty/TTS dropdown changes pin metadata only. A real Generate/Start
+        // request is the demand signal allowed to reassign or scale a GPU.
+        prepareCapacity: false,
       }));
       if (selectionChanged()) {
         return;
       }
       const coordinatorCapacity = response.data?.coordinatorCapacity;
+      const selectionOnly = response.data?.selectionOnly === true;
+      setModelSelectionOnly(selectionOnly);
       if (coordinatorCapacity && !coordinatorCapacity.canStartConversation) {
         setGpuNotice({
           tone: coordinatorCapacity.simulated ? 'info' : 'warning',
@@ -1484,7 +1490,9 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         loadedSoVITSPath: selectedSoVITS,
       });
       setReferenceMessage(
-        latestRankOneConfig && !latestRankOneIsAutoManaged
+        selectionOnly
+          ? 'Voice selected. GPU capacity will be prepared by the first synthesis request.'
+          : latestRankOneConfig && !latestRankOneIsAutoManaged
           ? `Loaded rank #1 config ${latestRankOneConfig.configName || latestRankOneConfig.configId} after model load.`
           : ['SIMULATED', 'ON_DEMAND'].includes(coordinatorState)
           ? 'Voice pinned. It will load on the first synthesis request if no idle GPU is available.'
@@ -2512,6 +2520,7 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
     // Keep the visible selection urgent so Radix can close the menu immediately;
     // defer the many dependent reference-state resets to a transition.
     setSelectedPersonKey(value);
+    setModelSelectionOnly(false);
     setModelError('');
     autoReferenceKeyRef.current = '';
     autoLoadAttemptKeyRef.current = '';
@@ -4396,15 +4405,15 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
             <div className="flex items-center gap-3">
               <span className={cn(
                 'flex items-center gap-1.5 text-xs',
-                voiceModelReady ? 'text-emerald-600' : loadingModel || selectedProfile || !modelsFetched ? 'text-blue-500' : 'text-slate-400'
+                modelSelectionOnly ? 'text-blue-600' : voiceModelReady ? 'text-emerald-600' : loadingModel || selectedProfile || !modelsFetched ? 'text-blue-500' : 'text-slate-400'
               )}>
                 {/* A selected-but-not-loaded profile is about to auto-load, so show
                     it as loading rather than the confusing "No model". */}
                 {loadingModel || (!voiceModelReady && (selectedProfile || !modelsFetched))
                   ? <Loader2 size={11} className="animate-spin" />
-                  : <span className={cn('h-2 w-2 rounded-full', voiceModelReady ? 'bg-emerald-500' : 'bg-slate-300')} />
+                  : <span className={cn('h-2 w-2 rounded-full', modelSelectionOnly ? 'bg-blue-500' : voiceModelReady ? 'bg-emerald-500' : 'bg-slate-300')} />
                 }
-                {voiceModelReady ? 'Ready' : loadingModel || selectedProfile || !modelsFetched ? 'Loading...' : 'No model'}
+                {modelSelectionOnly ? 'Selected' : voiceModelReady ? 'Ready' : loadingModel || selectedProfile || !modelsFetched ? 'Loading...' : 'No model'}
               </span>
               <Button
                 type="button"

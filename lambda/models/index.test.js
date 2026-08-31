@@ -76,6 +76,43 @@ test('models select prepares the exact saved voice through the coordinator when 
   });
 });
 
+test('metadata-only model selection resolves the exact voice without preparing GPU capacity', async () => {
+  let prepareCalls = 0;
+  const localHandler = createHandler({
+    loadPair: async () => { throw new Error('direct model load must not run'); },
+    resolveSynthesisBody: async (body) => ({
+      ...body,
+      ref_audio_path: 'refs/dean.wav',
+      aux_ref_audio_paths: ['refs/dean-aux.wav'],
+      prompt_text: 'Dean reference transcript.',
+      prompt_lang: 'en',
+      voice_model: { voiceProfileId: 'deanvoice-v1', gptRef: 'g.ckpt', sovitsRef: 's.pth' },
+    }),
+    prepareModel: async () => { prepareCalls += 1; },
+  });
+
+  await withEnv({ MODEL_COORDINATOR_FUNCTION_NAME: 'staging-coordinator' }, async () => {
+    const response = await localHandler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/models/select',
+      body: JSON.stringify({
+        voiceProfileId: 'deanvoice-v1',
+        gptKey: 'g.ckpt',
+        sovitsKey: 's.pth',
+        prepareCapacity: false,
+      }),
+    });
+    const payload = JSON.parse(response.body);
+    assert.equal(response.statusCode, 200);
+    assert.equal(payload.selectionOnly, true);
+    assert.equal(payload.coordinatorCapacity, undefined);
+    assert.equal(payload.resolvedReferences.ref_audio_path, 'refs/dean.wav');
+    assert.deepEqual(payload.resolvedReferences.aux_ref_audio_paths, ['refs/dean-aux.wav']);
+    assert.equal(payload.resolvedReferences.prompt_text, 'Dean reference transcript.');
+    assert.equal(prepareCalls, 0);
+  });
+});
+
 test('models handler can list models from GPU worker instead of S3', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;

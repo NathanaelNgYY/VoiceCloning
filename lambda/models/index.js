@@ -92,6 +92,26 @@ export function createHandler({
               sovitsRef: String(body.sovitsKey || body.sovitsPath || '').trim(),
             },
           });
+          const loaded = {
+            gptPath: String(body.gptKey || body.gptPath || synthesisBody.voice_model?.gptRef || ''),
+            sovitsPath: String(body.sovitsKey || body.sovitsPath || synthesisBody.voice_model?.sovitsRef || ''),
+          };
+          const resolvedReferences = {
+            ref_audio_path: String(synthesisBody.ref_audio_path || ''),
+            aux_ref_audio_paths: Array.isArray(synthesisBody.aux_ref_audio_paths)
+              ? synthesisBody.aux_ref_audio_paths
+              : [],
+            prompt_text: String(synthesisBody.prompt_text || ''),
+            prompt_lang: String(synthesisBody.prompt_lang || ''),
+          };
+          if (body.prepareCapacity === false) {
+            return ok({
+              message: 'Voice selected; GPU capacity will be prepared by synthesis',
+              loaded,
+              resolvedReferences,
+              selectionOnly: true,
+            });
+          }
           const coordinatorCapacity = await prepareModel(synthesisBody, {
             allowScale: false,
             source: 'models-select',
@@ -100,10 +120,8 @@ export function createHandler({
             message: coordinatorCapacity.canStartConversation
               ? 'Voice capacity is ready'
               : 'Voice capacity is preparing',
-            loaded: {
-              gptPath: String(body.gptKey || body.gptPath || synthesisBody.voice_model?.gptRef || ''),
-              sovitsPath: String(body.sovitsKey || body.sovitsPath || synthesisBody.voice_model?.sovitsRef || ''),
-            },
+            loaded,
+            resolvedReferences,
             coordinatorCapacity,
           });
         }

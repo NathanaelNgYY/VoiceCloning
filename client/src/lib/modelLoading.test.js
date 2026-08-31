@@ -242,6 +242,33 @@ test('extractModelSelectWarmedReferenceSelection normalizes the warmed reference
   }), null);
 });
 
+test('buildModelSelectWarmPayload can make a dropdown selection metadata-only', () => {
+  assert.deepEqual(buildModelSelectWarmPayload({
+    voiceProfileId: 'lecturer-a-v1',
+    prepareCapacity: false,
+  }), {
+    voiceProfileId: 'lecturer-a-v1',
+    prepareCapacity: false,
+  });
+});
+
+test('metadata-only model selection returns resolved references without claiming they were warmed', () => {
+  assert.deepEqual(extractModelSelectWarmedReferenceSelection({
+    selectionOnly: true,
+    resolvedReferences: {
+      ref_audio_path: 'refs/dean.wav',
+      aux_ref_audio_paths: ['refs/dean.wav', 'refs/dean-aux.wav'],
+      prompt_text: 'Dean reference transcript.',
+      prompt_lang: 'en',
+    },
+  }), {
+    refAudioPath: 'refs/dean.wav',
+    auxRefAudioPaths: ['refs/dean-aux.wav'],
+    promptText: 'Dean reference transcript.',
+    promptLang: 'en',
+  });
+});
+
 test('warmed reference prompt never follows a stale active profile from another primary clip', () => {
   assert.deepEqual(resolveWarmedReferencePrompt({
     refAudioPath: 'refs/new-primary.wav',
