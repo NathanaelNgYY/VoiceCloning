@@ -6,6 +6,12 @@
   route or reassign existing idle capacity but must never increase ASG desired capacity. Only a real
   synthesis admission or an explicitly authorized event-prewarm request may scale. Model warming
   reserves a worker but does not claim a synthesis slot or enter the TTS queue.
+- TTS and Faculty dropdown selection is metadata-only: resolve and pin the immutable model/reference
+  snapshot, but do not prepare or switch a GPU. Lecture opening retains non-scaling preflight because
+  it deliberately gates conversation readiness before the learner starts.
+- Event prewarm protects a minimum resident pool for the event voice. The oldest matching workers up
+  to that minimum are unavailable for other-model reassignment; capacity above the minimum remains
+  reusable so the lock does not freeze the whole fleet or prevent scale-in.
 
 - The app is split into separate runtime roles instead of one monolith:
   - `lambda/` handles browser-facing REST orchestration.

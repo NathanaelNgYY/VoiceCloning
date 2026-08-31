@@ -2,6 +2,19 @@
 
 ## 2026-08-31
 
+- Made TTS and Faculty voice selection metadata-only while preserving lecture non-scaling preflight.
+  Deployed Dev/Staging TTS and GI plus Staging Faculty; public asset hashes were read back.
+- Added event voice residency-minimum lock/unlock/status actions and decision enforcement. A live
+  lock-one check protected the Dean baseline without launching or switching a GPU.
+- Fixed Lambda deployment to upload coordinator code, not only its environment. Both Dev and Staging
+  coordinators were redeployed and the new action was invoked successfully.
+- Baked the hash-matched worker correction into `ami-07236b80dcdb93bcb`, promoted launch-template v40,
+  canaried one worker to coordinator READY, and observed automatic 2->1 scale-in. The prior excess
+  fleet also completed natural 4->3->2->1 scale-in.
+- Verified 129,324-byte Staging and 183,084-byte original-Dev Dean RIFF synthesis. The manual Dev
+  comparison worker stayed stopped during final Dev proof.
+- Tests: Lambda 309/309, client 491/491, worker 259/259, affected builds, script parsing, bundle
+  readback, live event-lock lifecycle, worker hash parity, coordinator readiness, and RIFF checks.
 - Fixed selection-driven staging scale-out. Model selection and lecture capacity preflight now route
   or reassign an idle worker without changing ASG desired capacity; unavailable selection returns
   `ON_DEMAND`. Only real synthesis admission or explicit event prewarm may scale.

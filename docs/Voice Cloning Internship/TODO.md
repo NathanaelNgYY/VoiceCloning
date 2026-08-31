@@ -1,9 +1,8 @@
 # Active TODO
 
-- [ ] After refreshing safe AWS credentials, deploy the pending Dev/Staging TTS and GI bundles plus
-  Staging Faculty, verify the original Dev worker, and bake/canary the corrected Staging worker AMI.
-- [ ] From an idle baseline, repeat Dean -> stock ElevenLabs -> Dean and two cloned-profile selections;
-  prove selection keeps desired unchanged, real saturation scales once, and quiet overflow scales in.
+- [ ] Run a signed-in two-user Staging burst for the same cloned model and then two different cloned
+  models. Capture coordinator route/queue/scale logs and UI messages. Metadata-only dropdown selection,
+  one v40 canary, and natural 4->3->2->1 plus canary 2->1 scale-in are already verified.
 
 - [ ] Revoke or refresh the temporary AWS session credentials exposed in the debugging conversation,
   then replace the user-level `VCS_AWS_*` values. Never record the replacement values in the vault,

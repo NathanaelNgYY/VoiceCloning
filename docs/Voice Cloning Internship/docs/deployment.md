@@ -4,11 +4,15 @@
 
 ### Autoscaling decision boundary (2026-08-31)
 
-- Dropdown selection, Faculty preparation, and lecture page preflight must call coordinator prepare
-  with scaling disabled. They can route/reassign but cannot call `UpdateAutoScalingGroup`.
+- TTS and Faculty dropdown selection resolves/pins metadata only and must not call coordinator
+  preparation. Lecture page preflight calls coordinator prepare with scaling disabled; it may
+  route/reassign existing idle capacity but cannot call `UpdateAutoScalingGroup`.
 - Real initial synthesis may route, queue, reassign, or scale. Explicit event prewarm may separately
   opt into scale. Search coordinator logs for `[model-coordinator][decision]` to attribute the source
   and exact decision before interpreting an instance-count change.
+- Event mode writes a coordinator residency lock for the default event voice and configured minimum.
+  Protected minimum workers are unavailable to other-model reassignment; overflow workers remain
+  reusable. A scheduled scale-down supplies the lock expiry; disabling event mode removes the lock.
 - ASG replacement after an EC2 member is stopped is capacity maintenance, not synthesis scale-out.
   Check scaling activity cause and EC2 state-transition reason before combining those incidents.
 - Worker runtime changes must be baked into and canaried from the launch-template AMI; patching current
@@ -102,18 +106,21 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-28): both remote pointers contain application commit `e993d81`.
-Both main Lambdas have exact code SHA `HOGKsqec…`; both coordinators have exact SHA `VS4H7Bee…`.
+Latest live read-back (2026-08-31): both local deployment pointers contain application commit
+`f1b441f`; remote pointers must be checked after the final push. Both main Lambdas and both
+coordinators were redeployed from this tree. `deploy-lambda.ps1` now packages/uploads coordinator
+code as well as synchronizing its environment, preventing false-success coordinator rollouts.
 Dev has 30-minute idle stop, schedule off, a
 routing-only coordinator over its two fixed IDs, and
 a fixed-activity URL routed only to original GPU `i-03f258d470a2fa73f`. Shared inference also has
 manual comparison GPU `i-0048470294e4ec518`. Coordinator traffic reaches worker port 3003 only from
-the coordinator Lambda security group. Live proof routed Dean first to the manual GPU, then after its
-stop to the original GPU; a third saturated request queued for 3,177 ms. Manual is stopped and the
-original is activity-managed. Staging ASG is min/desired 1,
-max 192; worker `i-08203eed43c173e96` is healthy, idle, and READY
-for Dean. Coordinator reassignment is zero-delay for ordinary traffic, while explicit event config
-may set a positive residency window. Both daily actions preserve min 1 and leave desired unset.
+the coordinator Lambda security group. Final live proof isolated the original GPU, prepared Dean,
+and returned a 183,084-byte RIFF; the manual comparison worker remained stopped. The original stays
+activity-managed. Staging ASG is min/desired 1 and max 192; worker `i-030f2a2a2428230de` was healthy,
+idle, and READY for Dean and returned a 129,324-byte coordinated RIFF. Corrected worker files were
+baked into `ami-07236b80dcdb93bcb`, launch-template v40. One v40 canary reached coordinator READY;
+the no-traffic policy then returned desired 2->1. Scaling activity also records natural 4->3->2->1.
+Both daily actions preserve min 1 and leave desired unset.
 
 Staging chatbot serves the GI build from `codex/staging-multi-user-scaling`; its published
 `gi-bleeding` category currently selects cloned profile `deanvoice-v1`. Faculty publish copies

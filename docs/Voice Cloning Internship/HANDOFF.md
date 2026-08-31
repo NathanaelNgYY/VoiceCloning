@@ -39,23 +39,30 @@ Last updated: 2026-08-31
 
 ## Deployment Evidence and Limits
 
-- Dev and Staging main Lambdas and coordinators were deployed on 2026-08-31. Both coordinator
-  packages have code SHA `OLEIMPMl...rPao=`.
-- All four then-current Staging ASG workers received the worker runtime fix and reported
-  coordinator-ready. The manual Dev comparison worker also reported ready.
-- The original activity-managed Dev worker received the file/restart command but did not report
-  model-ready before the local wait was stopped; its final state is unverified.
-- The current Staging launch-template AMI does not yet contain this worker runtime change. Bake and
-  promote a verified worker after credentials are refreshed, or later scale-outs will use the old file.
-- Client source/builds are complete, but Dev/Staging TTS, GI, and Faculty bundles were not deployed
-  in this final pass because the user-level safe AWS session expired. Existing live clients still use
-  the deployed API behavior; new `ON_DEMAND`/Dev simulation wording awaits client deployment.
-- Automated evidence: Lambda 302/302, client 489/489, worker 259/259, Live Fast/chatbot/GI builds,
-  and `git diff --check` pass. Authenticated Faculty publishing and a real multi-user scale test
-  remain unverified.
+- Dev and Staging main Lambdas/coordinators and the Dev/Staging TTS, GI, and Staging Faculty bundles
+  were deployed on 2026-08-31. Public readback returned TTS `DFWQ-Hnh`/`D4Nofi_u`, Faculty
+  `CwYdV_vL`, and both GI sites `Z4F7ReUL`.
+- Dropdown selection on TTS/Faculty is now metadata-only: it resolves and pins immutable model and
+  reference data but does not prepare, switch, queue, or scale a GPU. First synthesis owns admission.
+- Event mode has a coordinator residency-minimum lock. The oldest required workers for the event
+  voice cannot be reassigned; excess workers remain reusable. A live lock-one/status/unlock check
+  protected exactly one Dean worker and created no GPU.
+- The deploy script previously updated coordinator environment only. It now packages/uploads the
+  coordinator ZIP and waits for the code update; live lock actions proved the corrected deployment.
+- Corrected worker files were hash-matched on an idle READY Staging worker, baked as
+  `ami-07236b80dcdb93bcb`, and promoted to launch-template v40. One canary reached coordinator READY;
+  the 15-minute no-traffic policy then naturally returned desired 2->1. The earlier 4->3->2->1
+  sequence is also recorded as successful scale-in activity.
+- Original Dev GPU `i-03f258d470a2fa73f` was isolated from the manual comparison worker, prepared
+  Dean, and returned a 183,084-byte RIFF. Staging direct coordination returned a 129,324-byte RIFF.
+- Automated evidence: Lambda 309/309, client 491/491, worker 259/259, affected builds, PowerShell
+  parsing, public bundle readback, and live AWS checks. The in-app browser bridge failed before page
+  control, so authenticated Faculty publishing and a real two-user burst remain unverified.
 
 ## Queue and Scaling Contract
 
+- TTS and Faculty voice selection is metadata-only. Lecture opening may preflight existing capacity
+  with scaling disabled; it can reuse/reassign an idle worker but cannot purchase a GPU.
 - Model switching/warming reserves a worker for preparation but claims no synthesis slot and does
   not enter the TTS queue.
 - A real synthesis first routes to a ready exact-model free slot. If all exact-model slots are busy,
@@ -67,6 +74,8 @@ Last updated: 2026-08-31
   the next exact-model request queues. Queueing is per matching worker, not globally even distribution.
 - Routing deliberately packs existing/older exact-model capacity so a newer unused overflow GPU can
   become idle and scale down. It is not round-robin.
+- During event mode, the configured minimum resident workers for the event voice are unavailable to
+  other-model reassignment. Workers above that minimum follow ordinary routing and scale-in rules.
 - Scale-in remains independent of model selection: idle overflow workers drain and terminate under
   the Staging quiet-window/cooldown policy; the baseline remains.
 
@@ -82,13 +91,8 @@ Last updated: 2026-08-31
 
 ## Next Session
 
-1. Refresh the safe user-level AWS session.
-2. Inspect the original Dev worker; verify coordinator status and a real Dean synthesis.
-3. Deploy Dev/Staging TTS and GI plus Staging Faculty client bundles; verify public asset hashes.
-4. Bake the corrected Staging worker into a new AMI/launch-template version and canary one scale-out.
-5. Let excess Staging capacity scale down naturally; confirm selection alone never changes desired.
-6. Run authenticated Faculty -> Staging lecture -> Dev lecture publishing with two cloned profiles.
-7. Run a controlled two-user same-model and different-model test; capture route, queue, scale, and
+1. Run authenticated Faculty -> Staging lecture -> Dev lecture publishing with two cloned profiles.
+2. Run a controlled two-user same-model and different-model test; capture route, queue, scale, and
    scale-down decision logs.
-8. Revoke any temporary credentials exposed during prior debugging and remove the orphaned snapshot
+3. Revoke any temporary credentials exposed during prior debugging and remove the orphaned snapshot
    when an administrator is available.

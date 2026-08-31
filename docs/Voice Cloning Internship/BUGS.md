@@ -7,15 +7,21 @@
 
 ## Active
 
-- 2026-08-31 fixed in code and deployed to the APIs/coordinators: selecting or preflighting several
-  voices could increase Staging desired capacity while the existing GPU was only warming/draining.
-  These non-synthesis paths can no longer scale. Live three-profile selection held desired at 4.
-  Client wording and durable worker AMI promotion remain pending.
+- 2026-08-31 fixed and fully deployed: selecting TTS/Faculty voices previously performed direct GPU
+  preparation, and selection/preflight could increase Staging desired capacity while a worker was
+  warming/draining. TTS/Faculty selection is now metadata-only; lecture preflight may reuse capacity
+  but cannot scale. All affected clients are deployed and Staging naturally returned 4->3->2->1.
 
-- 2026-08-31 fixed in the worker runtime: model reassignment could fail with `Inference server is
+- 2026-08-31 fixed and baked in launch-template v40: model reassignment could fail with `Inference server is
   already running` after a short readiness probe missed a healthy managed Python process applying
-  weights. The worker now reuses that process. Four Staging workers and the manual Dev worker were
-  verified ready; the original Dev worker's final readiness is unverified.
+  weights. The worker now reuses that process. A hash-matched Staging source produced
+  `ami-07236b80dcdb93bcb`; one canary reached coordinator READY and scaled down naturally. The isolated
+  original Dev worker returned a 183,084-byte Dean RIFF.
+
+- 2026-08-31 fixed in deployment tooling: `deploy-lambda.ps1` synchronized the coordinator environment
+  but did not upload `model-coordinator.zip`, so a rollout could appear successful while coordinator
+  code stayed old. It now packages, uploads, and waits for both coordinator functions; live event-lock
+  actions verified the new code.
 
 - 2026-08-28 fixed and deployed: Dev routing-only coordination saw two running, locally ready GPUs
   as unavailable. Unassigned base-ready workers were excluded from reassignment, both workers lacked
