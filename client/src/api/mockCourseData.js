@@ -31,16 +31,6 @@ const courses = [
         description: "Clinical overview of upper and lower GI bleeding, presentation, stabilization, and core management principles.",
         matchSummary: "Exact title match",
         videoUrl: GI_BLEEDING_VIDEO_URL,
-        topics: [
-            { time: 0, label: "Introduction & Overview", thumbnailTime: 6 },
-            { time: 65.14, label: "Presentation & Epidemiology", thumbnailTime: 71.14 },
-            { time: 136.92, label: "Initial Assessment & Stabilization", thumbnailTime: 142.92 },
-            { time: 187.5, label: "Upper GI Bleeding: Causes", thumbnailTime: 193.5 },
-            { time: 279.64, label: "Upper GI Bleeding: Management", thumbnailTime: 285.64 },
-            { time: 355.51, label: "Endoscopy: Timing & Therapy", thumbnailTime: 361.51 },
-            { time: 505.88, label: "Lower GI Bleeding", thumbnailTime: 511.88 },
-            { time: 624.42, label: "Key Messages", thumbnailTime: 630.42 },
-        ],
         transcriptSegments: [
             {
                 time: 0,
@@ -199,7 +189,39 @@ function withWordTimings(course) {
     };
 }
 
+// The Content Outline and the transcript are the same checkpoints — the outline
+// is the thumbnail view of them, the transcript the text view — so the outline
+// is derived here rather than hand-maintained beside `transcriptSegments`.
+// Keeping the two lists by hand is exactly how they drifted apart: the outline
+// had 8 coarse chapters against the transcript's 18 sections.
+//
+// The thumbnail is grabbed a few seconds into the section so it lands on the
+// slide the section is about rather than on the transition into it.
+const OUTLINE_THUMBNAIL_OFFSET_SECONDS = 6;
+
+function outlineTopicsFrom(transcriptSegments) {
+    return transcriptSegments.map((segment) => {
+        const offsetTime = segment.time + OUTLINE_THUMBNAIL_OFFSET_SECONDS;
+        const segmentEnd = Number(segment.endTime);
+        return {
+            time: segment.time,
+            label: segment.title,
+            // Never past the section's own end — a short section would otherwise
+            // show the next section's slide.
+            thumbnailTime: Number.isFinite(segmentEnd)
+                ? Math.min(offsetTime, segmentEnd)
+                : offsetTime,
+        };
+    });
+}
+
 export function getMockCourseBySlug(slug) {
     const course = courses.find((item) => item.slug === slug) ?? null;
-    return course ? withWordTimings(course) : null;
+    if (!course) return null;
+
+    const timedCourse = withWordTimings(course);
+    return {
+        ...timedCourse,
+        topics: outlineTopicsFrom(timedCourse.transcriptSegments),
+    };
 }
