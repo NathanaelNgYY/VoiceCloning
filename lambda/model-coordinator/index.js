@@ -938,6 +938,49 @@ async function synthesize(event) {
     }
   }
 
+  // Admit one request onto a matching worker's bounded waiting list and, in
+  // parallel, prepare overflow capacity. Shared by the ordinary overflow path and
+  // by the race path below, where an optimistic route lost the last free slot.
+  const admitQueued = async (queuedWorker) => {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'synthesize', decision: 'queue', voiceProfileId: clean(model.voiceProfileId),
+      modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
+      active: queuedWorker.active, queued: queuedWorker.queued, desiredCapacity: group.DesiredCapacity,
+    }));
+    const forward = forwardSynthesis(queuedWorker, routePath, body, event.headers || {}, {
+      allowQueue: true,
+      priority: true,
+    });
+    const capacity = ensureCapacityAfterAdmission(queuedWorker, modelKey, body).catch((error) => {
+      console.error('[model-coordinator][queued-capacity]', error);
+      return null;
+    });
+    try {
+      const [result, capacityAction] = await Promise.all([forward, capacity]);
+      return { ...result, queuedAdmission: true, capacityAction };
+    } catch (error) {
+      if (![429, 503].includes(error.statusCode)) throw error;
+      console.log('[model-coordinator][decision]', JSON.stringify({
+        request: 'synthesize', decision: 'scale-after-queue-timeout', voiceProfileId: clean(model.voiceProfileId),
+        modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
+        desiredCapacity: group.DesiredCapacity,
+      }));
+      const scale = await requestScale(group, modelKey, body, now);
+      return {
+        statusCode: 503,
+        code: scale.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_TIMEOUT',
+        error: scale.simulated
+          ? scale.message
+          : 'This voice is heavily loaded. Your queue wait expired while more GPU capacity was preparing.',
+        retryAfterSeconds: scale.simulated ? 5 : 2,
+        scaleStarted: scale.started,
+        simulated: scale.simulated === true,
+        voiceProfileId: clean(model.voiceProfileId),
+        modelKey,
+      };
+    }
+  };
+
   if (!selected) {
     const queuedWorker = chooseQueuedMatchingWorker(workers, modelKey, maxQueuedPerWorker);
     // Every matching GPU is already at its queue ceiling. The first overflow
@@ -970,45 +1013,7 @@ async function synthesize(event) {
         modelKey,
       };
     }
-    if (queuedWorker) {
-      console.log('[model-coordinator][decision]', JSON.stringify({
-        request: 'synthesize', decision: 'queue', voiceProfileId: clean(model.voiceProfileId),
-        modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
-        active: queuedWorker.active, queued: queuedWorker.queued, desiredCapacity: group.DesiredCapacity,
-      }));
-      const forward = forwardSynthesis(queuedWorker, routePath, body, event.headers || {}, {
-        allowQueue: true,
-        priority: true,
-      });
-      const capacity = ensureCapacityAfterAdmission(queuedWorker, modelKey, body).catch((error) => {
-        console.error('[model-coordinator][queued-capacity]', error);
-        return null;
-      });
-      try {
-        const [result, capacityAction] = await Promise.all([forward, capacity]);
-        return { ...result, queuedAdmission: true, capacityAction };
-      } catch (error) {
-        if (![429, 503].includes(error.statusCode)) throw error;
-        console.log('[model-coordinator][decision]', JSON.stringify({
-          request: 'synthesize', decision: 'scale-after-queue-timeout', voiceProfileId: clean(model.voiceProfileId),
-          modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
-          desiredCapacity: group.DesiredCapacity,
-        }));
-        const scale = await requestScale(group, modelKey, body, now);
-        return {
-          statusCode: 503,
-          code: scale.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_TIMEOUT',
-          error: scale.simulated
-            ? scale.message
-            : 'This voice is heavily loaded. Your queue wait expired while more GPU capacity was preparing.',
-          retryAfterSeconds: scale.simulated ? 5 : 2,
-          scaleStarted: scale.started,
-          simulated: scale.simulated === true,
-          voiceProfileId: clean(model.voiceProfileId),
-          modelKey,
-        };
-      }
-    }
+    if (queuedWorker) return admitQueued(queuedWorker);
   }
 
   if (selected) {
@@ -1025,8 +1030,16 @@ async function synthesize(event) {
       return await forward;
     } catch (error) {
       if (![429, 503].includes(error.statusCode)) throw error;
-      // A live race consumed the final slot; fall through to scale instead of
-      // queueing a third request on a nominal two-slot worker.
+      // A live race consumed the final slot. In a real burst every request sees
+      // free slots and routes optimistically, so this is the COMMON path for the
+      // third caller, not a rare one — rejecting it here skipped the waiting list
+      // entirely and returned a ten-minute "preparing" error while the queue sat
+      // empty. Re-probe and take the bounded queue if it has room; only a
+      // genuinely full waiting list falls through to scale.
+      const current = await probeWorker(selected).catch(() => null);
+      if (current?.reachable && Number(current.queued || 0) < maxQueuedPerWorker) {
+        return admitQueued(current);
+      }
     }
   }
 

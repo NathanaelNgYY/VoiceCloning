@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-08-31 (concurrency testing) — burst requests skipped the queue entirely
+
+- Ran three simultaneous same-voice synthesis requests against staging. Before the fix: two returned
+  audio and the THIRD returned 503 `MODEL_CAPACITY_STARTING` with a ten-minute retry, while the
+  worker's waiting list sat completely empty. Logs showed three `route` decisions then `scale`.
+- Root cause: in a real burst every request reads the fleet before any slot is taken, so all three
+  route optimistically. The third loses the race, the worker rejects it with 429/503, and the catch in
+  `synthesize` deliberately fell through to `scale` — skipping the queue. The comment called this a
+  rare live race; it is actually the COMMON path for the third caller in any burst, which is exactly
+  the case the bounded queue was built for.
+- Fix: the queued-admission logic is extracted into `admitQueued()` and is now reachable from the race
+  path. On a 429/503 the coordinator re-probes the worker and, if its waiting list is under
+  `MODEL_MAX_QUEUED_PER_WORKER`, admits the request there; only a genuinely full list falls through
+  to scale.
+- Verified live after deploy: all three requests returned 200 with audio (387,885 / 421,164 / 387,885
+  bytes), the third carrying `queuedAdmission: true` and completing in 8.6s. Decision sequence is now
+  route -> route -> queue -> post-admission scale, which is the intended contract: two slots serve two
+  users, the third waits briefly and is still served, and exactly one overflow GPU is prepared.
+- Tests: Lambda 324/324, coordinator 43/43.
+
+## 2026-08-31 (schedule) — staging ASG now really stops at 19:00
+
+- `vcs-staging-daily-stop` previously set `MinSize=1, MaxSize=192` with desired unchanged, so it
+  stopped nothing and staging ran a g6.xlarge 24/7. It now sets `MinSize=0, DesiredCapacity=0`,
+  matching the fixed GPUs' 07:00-19:00 SGT window. `set-staging-asg-daily-schedule.ps1` gained an
+  `offHoursDesiredCapacity` config key, since a floor of 0 alone cannot reduce an existing desired
+  capacity. Applied and read back live.
+- Tradeoff reintroduced: work still running at 19:00 is now terminated. An event that must overrun
+  needs its own scheduled action or a temporary suspension of this one.
+
+
 ## 2026-08-31 (browser testing) — selection-time scaling regression found and fixed
 
 - Browser-tested Dev TTS and Staging lectures against the deployed selection-prepare change.
