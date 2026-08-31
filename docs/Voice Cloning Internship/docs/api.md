@@ -2,6 +2,16 @@
 
 ## Lambda REST Surface (`/api/*`)
 
+### Model capacity semantics
+
+- `POST /api/models/select` and `POST /api/voice-profile/capacity` are non-scaling preparation
+  checks. They may return `READY`, `WARMING` after idle-worker reassignment, or `ON_DEMAND` when
+  the first real synthesis must prepare capacity. Dev may return `SIMULATED` because its coordinator
+  has fixed workers and no ASG authority.
+- Model switching does not consume a synthesis slot. Initial Fast/Full synthesis uses coordinator
+  admission; exact-model contention may use the bounded worker queue. A cold model preparation is
+  returned as retryable state rather than holding an HTTP request through GPU boot/model load.
+
 Primary router: `lambda/router.js`
 
 ### Config and uploads

@@ -9,6 +9,8 @@ export function normalizeVoiceCapacity(value = {}) {
     capacityTight: value?.capacityTight === true,
     retryAfterSeconds: Math.max(0, Number(value?.retryAfterSeconds) || 0),
     capacityAction: String(value?.capacityAction || 'none').trim().toLowerCase(),
+    simulated: value?.simulated === true,
+    message: String(value?.message || '').trim(),
   };
 }
 
@@ -19,6 +21,12 @@ export function voiceCapacityBlocksConversation(capacity = {}) {
 
 export function voiceCapacityNotice(capacity = {}) {
   const value = normalizeVoiceCapacity(capacity);
+  if (value.simulated || value.state === 'SIMULATED') {
+    return value.message || 'Dev capacity simulation: staging would prepare more capacity, but Dev autoscaling is disabled.';
+  }
+  if (value.state === 'ON_DEMAND') {
+    return value.message || 'This voice will load on the first synthesis request. Selecting it did not start another GPU.';
+  }
   if (value.state === 'CHECKING') return 'Checking this lecture voice capacity…';
   if (value.state === 'STARTING') {
     return 'This lecture voice is not active yet. A GPU is starting; allow up to 15 minutes, or try another lecture meanwhile.';

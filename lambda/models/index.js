@@ -92,7 +92,10 @@ export function createHandler({
               sovitsRef: String(body.sovitsKey || body.sovitsPath || '').trim(),
             },
           });
-          const coordinatorCapacity = await prepareModel(synthesisBody);
+          const coordinatorCapacity = await prepareModel(synthesisBody, {
+            allowScale: false,
+            source: 'models-select',
+          });
           return ok({
             message: coordinatorCapacity.canStartConversation
               ? 'Voice capacity is ready'

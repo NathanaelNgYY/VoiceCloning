@@ -83,7 +83,7 @@ export async function getCoordinatedModelStatus(body = {}) {
   return invokeCoordinator({ action: 'status', body });
 }
 
-export async function prepareCoordinatedModel(body = {}) {
+export async function prepareCoordinatedModel(body = {}, { allowScale = false, source = 'preflight' } = {}) {
   if (!functionName()) {
     return {
       statusCode: 200,
@@ -93,7 +93,7 @@ export async function prepareCoordinatedModel(body = {}) {
       coordinatorConfigured: false,
     };
   }
-  const result = await invokeCoordinator({ action: 'prepare', body });
+  const result = await invokeCoordinator({ action: 'prepare', body, allowScale, source });
   if (!result || Number(result.statusCode) >= 400) throwCoordinatorError(result || {});
   return { ...result, coordinatorConfigured: true };
 }

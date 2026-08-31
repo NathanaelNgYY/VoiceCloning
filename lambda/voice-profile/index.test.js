@@ -321,6 +321,7 @@ test('the pinned profile endpoint rejects an unsigned caller before reading stor
 test('an authenticated lecture capacity preflight resolves the pinned model before coordinating', async () => {
   const resolved = [];
   const prepared = [];
+  const prepareOptions = [];
   const handler = createHandler({
     authGuard: { authorize: async () => ({ oid: 'student-1' }) },
     resolveCapacityBody: async (body) => {
@@ -331,8 +332,9 @@ test('an authenticated lecture capacity preflight resolves the pinned model befo
         voice_model: { voiceProfileId: body.voiceProfileId, gptRef: 'g.ckpt', sovitsRef: 's.pth' },
       };
     },
-    prepareModelCapacity: async (body) => {
+    prepareModelCapacity: async (body, options) => {
       prepared.push(body);
+      prepareOptions.push(options);
       return { state: 'STARTING', canStartConversation: false, retryAfterSeconds: 900 };
     },
   });
@@ -347,6 +349,7 @@ test('an authenticated lecture capacity preflight resolves the pinned model befo
     text: 'Lecture voice capacity preflight.',
   }]);
   assert.equal(prepared[0].voice_model.voiceProfileId, 'deanvoice-v1');
+  assert.deepEqual(prepareOptions, [{ allowScale: false, source: 'lecture-preflight' }]);
   assert.deepEqual(JSON.parse(response.body), {
     state: 'STARTING',
     canStartConversation: false,

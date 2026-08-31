@@ -89,3 +89,22 @@ test('exit before readiness rejects immediately and clears ownership', async () 
   assert.equal(server.isRunning(), false);
   assert.equal(server.ready, false);
 });
+
+test('a managed server that misses a busy readiness probe is reused instead of relaunched', async () => {
+  let spawns = 0;
+  const server = new InferenceServer({
+    spawnProcess: () => {
+      spawns += 1;
+      return makeChild(4000);
+    },
+  });
+  server.process = makeChild(3999);
+  server.ready = false;
+  server.probeReady = async () => false;
+
+  const status = await server.start();
+
+  assert.equal(spawns, 0);
+  assert.equal(server.isRunning(), true);
+  assert.equal(status.managed, true);
+});

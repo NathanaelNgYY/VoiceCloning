@@ -2,6 +2,18 @@
 
 ## Current Shape
 
+### Autoscaling decision boundary (2026-08-31)
+
+- Dropdown selection, Faculty preparation, and lecture page preflight must call coordinator prepare
+  with scaling disabled. They can route/reassign but cannot call `UpdateAutoScalingGroup`.
+- Real initial synthesis may route, queue, reassign, or scale. Explicit event prewarm may separately
+  opt into scale. Search coordinator logs for `[model-coordinator][decision]` to attribute the source
+  and exact decision before interpreting an instance-count change.
+- ASG replacement after an EC2 member is stopped is capacity maintenance, not synthesis scale-out.
+  Check scaling activity cause and EC2 state-transition reason before combining those incidents.
+- Worker runtime changes must be baked into and canaried from the launch-template AMI; patching current
+  workers alone does not update future scale-outs.
+
 The repo docs describe a split cloud deployment:
 
 - CloudFront serves the frontend and is the browser entrypoint.

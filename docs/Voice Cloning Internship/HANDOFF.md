@@ -1,119 +1,94 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-28
+Last updated: 2026-08-31
 
-## Current Dev State
+## Current State
 
-- Both active remote branches are aligned and contain deployed application commit `e993d81`. Dev and Staging main
-  Lambdas have exact code SHA `HOGKsqec…`; both coordinators have exact SHA `VS4H7Bee…`.
-- Dev contains staging application behavior plus dev-only learner analytics and voice-quality work.
-  Original GPU `i-03f258d470a2fa73f` remains activity-managed with a 30-minute idle stop. Separate
-  comparison GPU `i-0048470294e4ec518` is manual-only. Dev now uses the shared model coordinator in
-  `routing-only` mode across those exact IDs: no ASG/start/stop action, with simulated Staging scale
-  messages under pressure. Both workers have persistent coordinator auth. Manual GPU
-  `i-0048470294e4ec518` is stopped; original `i-03f258d470a2fa73f` is running with Dean and remains
-  under its 30-minute activity stop. A dedicated ALB path pins idle checks to the original only.
-- Dev GI uses the centered D25 staging login, not the faculty split-panel design. The SPA shell
-  now returns `no-store, must-revalidate, no-cache`, preventing a first navigation from reusing
-  the deleted split-layout bundle.
-- Model load waits for the selected model's rank-1 config. Curated/user-reordered rank 1 is
-  authoritative. Untouched or legacy cross-model `default` rank 1 runs scored `Use best`
-  only on the experiment derived from the selected weights, then stores the same references
-  in default config and voice profile. The Load button is inference-session-only.
-- Training now filters acoustically bad or implausibly transcribed clips before features.
-  Reference selection uses measured metrics and diversity. The shadow phoneme verifier has
-  monotonic per-phone CTC evidence and a weakest-phone floor. Real listening comparison and
-  held-out phoneme calibration are still required; tests do not prove audible improvement.
-  A user comparison reported worse Dev pronunciation/gibberish, but used Dev
-  `dea-voice-version2-v1` versus staging `deanvoice-v1`, so the cause is not isolated.
-  The same quality code is now on staging by explicit user decision, but remains audibly unvalidated.
-- A pending Full/Full Queue session is persisted per browser tab after the backend accepts it.
-  Refresh reconnects its SSE session instead of submitting another GPU job, restores text and
-  progress, and warns before navigation. A synchronous lock also blocks duplicate clicks.
-  This is not cross-tab/device backend idempotency.
-- Current evidence includes client 485/485, Lambda 299/299, two fixed-GPU Dean RIFFs (154,924 and
-  142,124 bytes), and a real same-model saturation canary with queue waits 0/0/3,177 ms. Dev never
-  started a GPU; Staging stayed min/desired 1 with one healthy worker.
+- Dev and Staging use one application tree. Dev branch `separate-containers-new` and Staging
+  branch `codex/staging-multi-user-scaling` must point to the same reviewed commit; runtime
+  configuration owns the deliberate differences.
+- Dev has two fixed inference GPUs behind the coordinator. The original GPU remains activity-managed
+  with a 30-minute idle stop; the comparison GPU is manual-only. Dev coordinator is routing-only:
+  it routes, reassigns, and queues like Staging but only simulates scale decisions.
+- Staging owns the inference ASG (min 1, max 192, two synthesis slots per GPU). Faculty is the sole
+  authoring surface. Publishing mirrors only the selected immutable cloned-voice snapshot and category
+  to Dev; training runs, analytics, transcripts, and other state stay isolated.
+- ElevenLabs stock voices bypass the cloned-voice GPU coordinator. Selecting a stock voice must not
+  load it onto a GPU or evict the resident cloned voice.
 
-## Current Staging State
+## 2026-08-31 Autoscaling Incident
 
-- Faculty's empty-selection and hidden-advanced-settings fixes are deployed; its bundle contains no
-  advanced-settings label. `gi-bleeding -> deanvoice-v1` is byte-equivalent through both public APIs.
-  API 401 still blocks a real lecturer-browser publish proof.
-- Staging faculty is the only authoring surface. Publishing now copies the selected profile, GPT/
-  SoVITS weights, primary/aux references, then the category into Dev; current `deanvoice-v1` was
-  backfilled and all nine artifacts matched by size/ETag before the Dev category changed.
-- Fixed staging GPU `i-0f0da8be59367f7a8` runs `30234eb`; all three services restarted and passed
-  the applicable liveness/readiness checks. Prior tracked and colliding untracked files on fixed Dev,
-  fixed staging, and updated ASG workers remain recoverable in named server-side stashes.
-- Lecture-click capacity routing is live: matching real free slot -> immediate idle-worker
-  reassignment -> scale-out only when every eligible worker is active, queued, draining, starting,
-  or unavailable. A positive reassignment window remains configurable for explicit events.
-  A concurrent canary returned two RIFF WAVs, showed usable `BUSY_STARTING`, atomically raised
-  desired 1->2 exactly once, deeply warmed the requested Dean pool, and scaled back to one.
-  Launch-template v39/default uses tagged AMI `ami-0cf96ffb91690b17c`. Current ASG worker
-  `i-08203eed43c173e96` is healthy, READY for `deanvoice-v1`, idle, and has no queue. ASG is min/desired 1,
-  max 192; daily actions now preserve min 1 and leave desired unset. Authenticated UI remains unverified.
-- TTS and Faculty model selection now use the same coordinator preflight as lecture selection instead
-  of random ALB preparation. Live Fast and initial Full admission are coordinated. If every resident
-  exact-model slot is occupied, work enters the bounded worker priority/FIFO queue while Staging asks
-  for overflow capacity. Follow-up Full session edits remain session-aware direct operations.
-- Deep warm and request-time enforcement share one canonical hashed model-cache path and the
-  same production model snapshot. Commit `5634303` is live on all five serving workers.
-- The shared deployed code makes environment differences explicit: Dev alone configures its learner table
-  and routing-only fixed-instance coordinator; Staging alone owns ASG autoscaling;
-  staging alone sets `GPU_STATUS_READINESS_TARGET=inference`; Dev shows advanced TTS controls and
-  staging hides them through `VITE_SHOW_ADVANCED_SETTINGS`. No quality/retry fork remains locally.
-- Live Fast now reports GPU readiness from the routed inference fleet `/models` endpoint,
-  not the fixed training worker. Dev retains its fixed-worker probe. The hidden-tab Full
-  output path accepts a downloaded RIFF/WAVE without waiting for throttled media metadata.
-  Lambda and Live Fast asset `index-MsbyZc5S.js` are deployed; public status/model/inference
-  readback passed. A real background-tab browser reproduction is still pending.
-- Durable events proved one staging Full request took 490.19 seconds because lazy `large-v3`
-  verification timed out, then Full generated ten takes across two chunks. Full now uses warm
-  medium ASR with the existing strict beam/timing/tail gates and stops after one usable take if
-  ASR itself is unavailable. The same text completed directly on staging in 18 seconds with five takes.
-- A prior exact Full request completed a valid 929,324-byte WAV in 460.03 seconds. Its first
-  chunk took 451.95 seconds and six attempts after sentence fallback; chunk 1 took 7.68 seconds.
-  Staging origins were missing from shared-bucket CORS and terminal sessions could remain
-  marked local on the originating worker, causing the false finalization error after refresh.
-  CORS is corrected and terminal SSE state is cleared so reconnect uses durable S3 replay.
-- Faculty SSO is deployed at `faculty.lkcmedicine.org`: Microsoft sign-in admits only
-  staff/associate domains and writes to `vcs-staging-lecturers`. Lectures remains separate.
-  A real staff sign-in and lecturer-table write are still unverified.
-- Staging inference ASG `vcs-staging-gpu-inference` has min 1/max 192 and two slots per GPU. Legacy
-  ALB actions are telemetry-only; coordinator idleness plus `NewestInstance` drives scale-in.
-  Readback shows desired 1 and one healthy idle worker; a
-  full untouched 15-minute alarm-trigger timing canary remains pending. The 07:00/19:00
-  Singapore actions preserve min 1 without a per-voice minimum.
-- Staging learner analytics remains absent. Do not deploy dev analytics to staging.
-- Full chunking is aligned at 240 characters. Full reuses warm medium ASR with strict beam/tail
-  gates and no longer regenerates five times when ASR itself is unavailable. Staging's Dean
-  profile and rank-1 defaults match Dev settings and retain identical references.
+- Verified root cause: `/models/select` and lecture `/voice-profile/capacity` preflight could call
+  the coordinator's scale operation. While one GPU was draining/warming another model, the next
+  selection saw no eligible worker and increased desired capacity. AWS recorded direct desired changes
+  1->2, 2->3, and later 3->4 even though this was one-person model-selection activity.
+- Fixed policy: selection and page preflight may route an exact resident model or reassign one truly
+  idle worker, but cannot increase ASG desired capacity. If no worker is immediately eligible, Staging
+  returns `ON_DEMAND`; the first real synthesis request may then reassign or scale. Explicit event
+  prewarm may opt into scaling.
+- Live proof after deployment: sequential Dean, Alex, and cs-nathanael selections returned
+  `READY`, `WARMING/reassign`, and `ON_DEMAND`. ASG desired stayed 4 before and after.
+- Structured coordinator logs now record prepare/synthesis source and decisions: route, queue,
+  reassign, on-demand, post-admission scale, and queue-timeout scale.
+- Separate ASG replacement launches at 02:09 UTC were not inferred load scaling. Several instances
+  were explicitly stopped at the same timestamp (`Client.UserInitiatedShutdown`), so the ASG
+  replaced them to maintain desired capacity.
+- Worker reassignment no longer throws `Inference server is already running` merely because the
+  managed Python process missed a two-second readiness probe while applying weights. A live managed
+  process is reused and the real downstream request timeout reports genuine failures.
+
+## Deployment Evidence and Limits
+
+- Dev and Staging main Lambdas and coordinators were deployed on 2026-08-31. Both coordinator
+  packages have code SHA `OLEIMPMl...rPao=`.
+- All four then-current Staging ASG workers received the worker runtime fix and reported
+  coordinator-ready. The manual Dev comparison worker also reported ready.
+- The original activity-managed Dev worker received the file/restart command but did not report
+  model-ready before the local wait was stopped; its final state is unverified.
+- The current Staging launch-template AMI does not yet contain this worker runtime change. Bake and
+  promote a verified worker after credentials are refreshed, or later scale-outs will use the old file.
+- Client source/builds are complete, but Dev/Staging TTS, GI, and Faculty bundles were not deployed
+  in this final pass because the user-level safe AWS session expired. Existing live clients still use
+  the deployed API behavior; new `ON_DEMAND`/Dev simulation wording awaits client deployment.
+- Automated evidence: Lambda 302/302, client 487/487, worker 259/259, Live Fast/chatbot/GI builds,
+  and `git diff --check` pass. Authenticated Faculty publishing and a real multi-user scale test
+  remain unverified.
+
+## Queue and Scaling Contract
+
+- Model switching/warming reserves a worker for preparation but claims no synthesis slot and does
+  not enter the TTS queue.
+- A real synthesis first routes to a ready exact-model free slot. If all exact-model slots are busy,
+  the bounded worker priority/FIFO queue may hold the short wait while Staging prepares overflow.
+- If no GPU has the model, synthesis reassigns an idle GPU and returns preparation/retry, or asks
+  Staging to scale when none is safely reassignable. The HTTP request is not held through a multi-minute
+  cold start.
+- One Full or Fast synthesis request consumes one slot, not two. A two-slot GPU can run two requests;
+  the next exact-model request queues. Queueing is per matching worker, not globally even distribution.
+- Routing deliberately packs existing/older exact-model capacity so a newer unused overflow GPU can
+  become idle and scale down. It is not round-robin.
+- Scale-in remains independent of model selection: idle overflow workers drain and terminate under
+  the Staging quiet-window/cooldown policy; the baseline remains.
+
 ## Operating Rules
 
-- Code repo branches: Dev `separate-containers-new`; staging
-  `codex/staging-multi-user-scaling`. Keep both pointers on the same reviewed commit; activate
-  environment differences through deployment configuration, not divergent application trees.
-- AWS account/role: `329599637774` / `Liu_Teng_Yu_Intern2026`. Read user-level
-  `VCS_AWS_*`, map them to process `AWS_*`, assume the role, and verify identity before writes.
-  Never print or persist credentials or private URLs.
-- `lambda/.env.deployment` is incomplete. The deploy script merges it into live Lambda
-  variables; snapshot/read live configuration before any configuration update.
-- Project memory is mirrored between the primary Obsidian folder and
-  `docs/Voice Cloning Internship`; keep edited files byte-identical.
-- GitHub pushes work with the configured credential manager override. Both active remote pointers
-  were aligned at `9b90928` before this handoff update; deployed main/coordinator package parity
-  was verified after the application rollout.
+- Read user-level `VCS_AWS_*`, map them only to process `AWS_*`, assume the project role, and verify
+  account identity before AWS writes. Never print or persist credentials.
+- Lambda deployment merges tracked environment files into live variables; never replace the complete
+  live environment map.
+- Keep project-memory edits byte-identical between the primary vault and
+  `docs/Voice Cloning Internship`.
+- Preserve unrelated server-side/source changes and the user's dirty working tree.
 
 ## Next Session
 
-1. Revoke/refresh the exposed temporary AWS session and safely replace user-level `VCS_AWS_*`.
-2. Have an account administrator delete orphaned temporary snapshot `snap-08ec74499a13176f7`;
-   the temporary AMI was deregistered but this role lacks `ec2:DeleteSnapshot`.
-3. Authenticated-test Faculty, TTS, staging lecture, and Dev GI with two categories/profiles; record routing/queue/scaling.
-4. Verify Dev GI sign-in, Dean text/audio, `/admin`, mobile layout, and the voice-config lifecycle.
-5. Run a representative clean/noisy Dev training job; compare reference sets and cloned audio blind.
-6. Calibrate the phoneme verifier on labeled training/held-out crops before changing thresholds.
-7. Prewarm known bursts; waits beyond the bounded worker/request timeout need a durable central queue.
-8. Browser-refresh active Full/Queue requests and prove the same S3 session resumes without resubmit.
+1. Refresh the safe user-level AWS session.
+2. Inspect the original Dev worker; verify coordinator status and a real Dean synthesis.
+3. Deploy Dev/Staging TTS and GI plus Staging Faculty client bundles; verify public asset hashes.
+4. Bake the corrected Staging worker into a new AMI/launch-template version and canary one scale-out.
+5. Let excess Staging capacity scale down naturally; confirm selection alone never changes desired.
+6. Run authenticated Faculty -> Staging lecture -> Dev lecture publishing with two cloned profiles.
+7. Run a controlled two-user same-model and different-model test; capture route, queue, scale, and
+   scale-down decision logs.
+8. Revoke any temporary credentials exposed during prior debugging and remove the orphaned snapshot
+   when an administrator is available.

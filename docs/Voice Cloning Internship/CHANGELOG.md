@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-08-31
+
+- Fixed selection-driven staging scale-out. Model selection and lecture capacity preflight now route
+  or reassign an idle worker without changing ASG desired capacity; unavailable selection returns
+  `ON_DEMAND`. Only real synthesis admission or explicit event prewarm may scale.
+- Added structured route/queue/reassign/scale decision logs and corrected Dev simulated capacity so
+  it no longer claims Staging is at its GPU limit.
+- Fixed worker model reassignment to reuse a managed Python inference process while it is temporarily
+  unresponsive during weight application instead of throwing `Inference server is already running`.
+- Deployed both main Lambdas and coordinators plus all four then-current Staging worker runtimes.
+  Live Dean/Alex/cs-nathanael selections kept desired capacity unchanged at 4. Client deployment,
+  launch-image promotion, and final original-Dev-worker verification are pending expired credentials.
+- Tests: Lambda 302/302, client 487/487, worker 259/259, three client builds, diff check, and live
+  AWS before/after selection verification.
+
 ## 2026-08-28
 
 - Unified cloned-voice preparation and initial synthesis behind the model coordinator. TTS and

@@ -1450,7 +1450,14 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
         window.setTimeout(() => loadSelectedModel(attempt, activeRequestVersion), 15_000);
         return;
       }
-      if (coordinatorCapacity?.capacityTight || /^BUSY_/u.test(String(coordinatorCapacity?.state || ''))) {
+      const coordinatorState = String(coordinatorCapacity?.state || '').toUpperCase();
+      if (coordinatorCapacity?.simulated || ['SIMULATED', 'ON_DEMAND'].includes(coordinatorState)) {
+        setGpuNotice({
+          tone: 'info',
+          title: coordinatorCapacity?.simulated ? 'Dev capacity simulation' : 'Voice loads on demand',
+          message: coordinatorCapacity.message || voiceCapacityNotice(coordinatorCapacity),
+        });
+      } else if (coordinatorCapacity?.capacityTight || /^BUSY_/u.test(coordinatorState)) {
         setGpuNotice({
           tone: 'info',
           title: coordinatorCapacity.simulated ? 'Dev capacity simulation' : 'Voice is heavily loaded',
@@ -1479,6 +1486,8 @@ export default function LivePage({ replyMode = 'phrases', mode = 'chat' }) {
       setReferenceMessage(
         latestRankOneConfig && !latestRankOneIsAutoManaged
           ? `Loaded rank #1 config ${latestRankOneConfig.configName || latestRankOneConfig.configId} after model load.`
+          : ['SIMULATED', 'ON_DEMAND'].includes(coordinatorState)
+          ? 'Voice pinned. It will load on the first synthesis request if no idle GPU is available.'
           : syncedSelection
           ? `${syncedSelection.primaryFilename} loaded with ${syncedSelection.auxRefAudioPaths.length} auxiliary clip${syncedSelection.auxRefAudioPaths.length === 1 ? '' : 's'}.`
           : 'Voice model loaded.',

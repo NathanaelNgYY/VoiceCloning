@@ -7,6 +7,16 @@
 
 ## Active
 
+- 2026-08-31 fixed in code and deployed to the APIs/coordinators: selecting or preflighting several
+  voices could increase Staging desired capacity while the existing GPU was only warming/draining.
+  These non-synthesis paths can no longer scale. Live three-profile selection held desired at 4.
+  Client wording and durable worker AMI promotion remain pending.
+
+- 2026-08-31 fixed in the worker runtime: model reassignment could fail with `Inference server is
+  already running` after a short readiness probe missed a healthy managed Python process applying
+  weights. The worker now reuses that process. Four Staging workers and the manual Dev worker were
+  verified ready; the original Dev worker's final readiness is unverified.
+
 - 2026-08-28 fixed and deployed: Dev routing-only coordination saw two running, locally ready GPUs
   as unavailable. Unassigned base-ready workers were excluded from reassignment, both workers lacked
   coordinator auth, and their security group admitted port 3003 only from the ALB. The decision now

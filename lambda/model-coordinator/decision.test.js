@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   chooseCapacityAction,
+  choosePreparationAction,
   chooseQueuedMatchingWorker,
   matchingFreeSlots,
 } from './decision.js';
@@ -140,6 +141,38 @@ test('does not route to a worker whose queued work consumes its final slot', () 
 
   assert.equal(result.type, 'route');
   assert.equal(result.worker.instanceId, 'i-free');
+});
+
+test('model selection defers instead of scaling while the only GPU is warming', () => {
+  const result = choosePreparationAction({
+    requestedModelKey: 'dean',
+    now,
+    workers: [worker({ modelKey: 'alex', state: 'STARTING', active: 0, queued: 0 })],
+  });
+
+  assert.deepEqual(result, { type: 'defer' });
+});
+
+test('explicit event preparation may scale while the only GPU is warming', () => {
+  const result = choosePreparationAction({
+    requestedModelKey: 'dean',
+    now,
+    allowScale: true,
+    workers: [worker({ modelKey: 'alex', state: 'STARTING', active: 0, queued: 0 })],
+  });
+
+  assert.deepEqual(result, { type: 'scale' });
+});
+
+test('model selection still reassigns an existing idle GPU without scaling', () => {
+  const result = choosePreparationAction({
+    requestedModelKey: 'dean-v2',
+    now,
+    workers: [worker({ modelKey: 'dean' })],
+  });
+
+  assert.equal(result.type, 'reassign');
+  assert.equal(result.worker.instanceId, 'i-1');
 });
 
 test('queues on the least-loaded resident worker when every matching slot is occupied', () => {

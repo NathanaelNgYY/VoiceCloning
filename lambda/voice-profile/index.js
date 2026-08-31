@@ -468,7 +468,10 @@ export function createHandler({
           voiceProfileId,
           text: 'Lecture voice capacity preflight.',
         });
-        return ok(await prepareModelCapacity(resolvedBody), {}, event);
+        return ok(await prepareModelCapacity(resolvedBody, {
+          allowScale: false,
+          source: 'lecture-preflight',
+        }), {}, event);
       }
 
       if (method === 'POST' && ACTIVATE_PROFILE_PATH.test(routePath)) {

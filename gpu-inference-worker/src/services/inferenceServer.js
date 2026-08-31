@@ -117,7 +117,11 @@ export class InferenceServer {
       this.ready = response.status > 0;
       return this.ready;
     } catch {
-      this.ready = false;
+      // A managed Python server can miss this short liveness probe while it is
+      // applying weights or synthesizing. Its child-process close handler is the
+      // authoritative signal that it exited; do not turn a busy process into a
+      // false "stopped" state that makes start() try to launch it again.
+      if (!this.process) this.ready = false;
       return false;
     }
   }
@@ -128,6 +132,9 @@ export class InferenceServer {
   }
 
   async start() {
+    if (this.process && this.ready) {
+      return this.getStatusSnapshot();
+    }
     if (await this.probeReady()) {
       return this.getStatusSnapshot();
     }
@@ -137,7 +144,11 @@ export class InferenceServer {
     }
 
     if (this.process) {
-      throw new Error('Inference server is already running');
+      // The process is managed and alive but missed the two-second /docs probe,
+      // normally because a weight change is occupying the Python event loop.
+      // Reuse it; set*Weights/requestJson has the longer operation-specific
+      // timeout and will surface a real failure if the process is unhealthy.
+      return this.getStatusSnapshot();
     }
 
     this.startPromise = new Promise((resolve, reject) => {
@@ -272,6 +283,8 @@ export class InferenceServer {
     if (!response.ok) {
       throw new Error(extractErrorMessage(payload, `Inference server returned ${response.status}`));
     }
+
+    this.ready = true;
 
     return payload;
   }

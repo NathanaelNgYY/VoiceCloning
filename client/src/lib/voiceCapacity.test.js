@@ -32,3 +32,25 @@ test('a successful request can report the background scale-out on the next capac
   assert.equal(voiceCapacityBlocksConversation(capacity), false);
   assert.match(voiceCapacityNotice(capacity), /another GPU is starting/i);
 });
+
+test('selection-only preparation is usable without claiming that another GPU started', () => {
+  const capacity = {
+    state: 'ON_DEMAND',
+    canStartConversation: true,
+    message: 'Selecting this voice did not start another GPU.',
+  };
+  assert.equal(voiceCapacityBlocksConversation(capacity), false);
+  assert.match(voiceCapacityNotice(capacity), /did not start another GPU/i);
+});
+
+test('Dev routing simulation never renders as a staging GPU limit', () => {
+  const capacity = {
+    state: 'SIMULATED',
+    canStartConversation: true,
+    simulated: true,
+    message: 'Dev capacity simulation: staging would wait for real synthesis.',
+  };
+  assert.equal(voiceCapacityBlocksConversation(capacity), false);
+  assert.match(voiceCapacityNotice(capacity), /Dev capacity simulation/i);
+  assert.doesNotMatch(voiceCapacityNotice(capacity), /staging is at its GPU limit/i);
+});

@@ -1,5 +1,10 @@
 # Active TODO
 
+- [ ] After refreshing safe AWS credentials, deploy the pending Dev/Staging TTS and GI bundles plus
+  Staging Faculty, verify the original Dev worker, and bake/canary the corrected Staging worker AMI.
+- [ ] From an idle baseline, repeat Dean -> stock ElevenLabs -> Dean and two cloned-profile selections;
+  prove selection keeps desired unchanged, real saturation scales once, and quiet overflow scales in.
+
 - [ ] Revoke or refresh the temporary AWS session credentials exposed in the debugging conversation,
   then replace the user-level `VCS_AWS_*` values. Never record the replacement values in the vault,
   repository, terminal transcript, or progress report.

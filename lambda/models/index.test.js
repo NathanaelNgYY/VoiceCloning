@@ -41,6 +41,7 @@ test('toModelSummary includes object modification metadata for frontend recency 
 
 test('models select prepares the exact saved voice through the coordinator when configured', async () => {
   const calls = [];
+  const options = [];
   const localHandler = createHandler({
     loadPair: async () => { throw new Error('direct model load must not run'); },
     resolveSynthesisBody: async (body) => ({
@@ -48,8 +49,9 @@ test('models select prepares the exact saved voice through the coordinator when 
       ref_audio_path: 'refs/dean.wav',
       voice_model: { voiceProfileId: 'deanvoice-v1', gptRef: 'g.ckpt', sovitsRef: 's.pth' },
     }),
-    prepareModel: async (body) => {
+    prepareModel: async (body, prepareOptions) => {
       calls.push(body);
+      options.push(prepareOptions);
       return { state: 'WARMING', canStartConversation: false, capacityAction: 'reassign' };
     },
   });
@@ -70,6 +72,7 @@ test('models select prepares the exact saved voice through the coordinator when 
     assert.equal(payload.message, 'Voice capacity is preparing');
     assert.equal(calls[0].voice_model.gptRef, 'g.ckpt');
     assert.equal(calls[0].ref_audio_path, 'refs/dean.wav');
+    assert.deepEqual(options, [{ allowScale: false, source: 'models-select' }]);
   });
 });
 

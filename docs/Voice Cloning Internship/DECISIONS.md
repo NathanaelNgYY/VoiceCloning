@@ -2,6 +2,11 @@
 
 ## Architecture
 
+- Capacity preparation and synthesis admission are distinct. Voice selection and page preflight may
+  route or reassign existing idle capacity but must never increase ASG desired capacity. Only a real
+  synthesis admission or an explicitly authorized event-prewarm request may scale. Model warming
+  reserves a worker but does not claim a synthesis slot or enter the TTS queue.
+
 - The app is split into separate runtime roles instead of one monolith:
   - `lambda/` handles browser-facing REST orchestration.
   - `gpu-worker/` handles training-oriented GPU work.

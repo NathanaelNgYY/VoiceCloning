@@ -18,6 +18,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import {
   chooseCapacityAction,
+  choosePreparationAction,
   chooseQueuedMatchingWorker,
   matchingFreeSlots,
 } from './decision.js';
@@ -486,6 +487,7 @@ function capacityResponse({
   started = false,
   atMaximum = false,
   simulated = false,
+  message = '',
 } = {}) {
   const waiting = ['STARTING', 'WARMING'].includes(state);
   return {
@@ -499,9 +501,9 @@ function capacityResponse({
     capacityStarted: started,
     atMaximum,
     simulated,
-    message: simulated
+    message: clean(message) || (simulated
       ? 'Dev routing simulation: staging would prepare another GPU, but Dev autoscaling is disabled.'
-      : '',
+      : ''),
     retryAfterSeconds: waiting ? bootEstimateSeconds : 0,
     voiceProfileId: clean(model?.voiceProfileId),
   };
@@ -513,6 +515,8 @@ async function prepareCapacity(event) {
   if (!modelKey) return { statusCode: 400, error: 'The request has no immutable GPT/SoVITS model pair.' };
   const now = Date.now();
   const model = body.voice_model || {};
+  const allowScale = event.allowScale === true;
+  const source = clean(event.source) || 'preflight';
   const existing = await scanState();
   await recordDemand(modelKey, model.voiceProfileId, now);
   const { group, workers } = await refreshFleet(existing, now);
@@ -522,6 +526,10 @@ async function prepareCapacity(event) {
   const reassigning = existing.find((item) => item.id === `REASSIGN#${modelKey}` && liveReassignment(item, now));
   const booting = existing.find((item) => item.id === `PENDING#${modelKey}` && now - item.requestedAt < pendingTtlMs);
   if (freeSlots > 0) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: 'route', allowScale, voiceProfileId: clean(model.voiceProfileId),
+      modelKey: modelKey.slice(0, 12), availableSlots: freeSlots, desiredCapacity: group.DesiredCapacity,
+    }));
     return capacityResponse({
       state: reassigning ? 'READY_WARMING' : booting ? 'READY_SCALING' : 'READY',
       canStartConversation: true,
@@ -533,6 +541,11 @@ async function prepareCapacity(event) {
   }
 
   if (reassigning) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: 'reassign-pending', allowScale,
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      desiredCapacity: group.DesiredCapacity,
+    }));
     return capacityResponse({
       state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
       canStartConversation: readyMatching.length > 0,
@@ -542,6 +555,11 @@ async function prepareCapacity(event) {
     });
   }
   if (booting) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: 'scale-pending', allowScale,
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      desiredCapacity: group.DesiredCapacity,
+    }));
     return capacityResponse({
       state: readyMatching.length > 0 ? 'BUSY_STARTING' : 'STARTING',
       canStartConversation: readyMatching.length > 0,
@@ -551,14 +569,20 @@ async function prepareCapacity(event) {
     });
   }
 
-  const action = chooseCapacityAction({
+  const action = choosePreparationAction({
     workers,
     requestedModelKey: modelKey,
     lastDemandByModel: demandMap(existing),
     now,
     reassignIdleMs,
+    allowScale,
   });
   if (action.type === 'reassign') {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: 'reassign', allowScale,
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      workerId: action.worker.instanceId, desiredCapacity: group.DesiredCapacity,
+    }));
     const scheduled = await scheduleReassignment(action.worker, modelKey, body, now);
     return capacityResponse({
       state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
@@ -569,12 +593,38 @@ async function prepareCapacity(event) {
       started: scheduled.started,
     });
   }
+  if (action.type === 'defer') {
+    const simulated = routingOnly();
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: simulated ? 'simulate-on-demand' : 'on-demand', allowScale,
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      desiredCapacity: group.DesiredCapacity,
+    }));
+    return capacityResponse({
+      state: simulated ? 'SIMULATED' : 'ON_DEMAND',
+      canStartConversation: true,
+      model,
+      matchingWorkers: readyMatching.length,
+      capacityAction: 'none',
+      simulated,
+      message: simulated
+        ? 'Dev capacity simulation: no idle fixed GPU can prepare this voice. Staging would wait for a real synthesis request before requesting another GPU; Dev autoscaling is disabled.'
+        : 'This voice will load on demand. Selecting it did not start another GPU; the first synthesis request will prepare capacity if needed.',
+    });
+  }
+  console.log('[model-coordinator][decision]', JSON.stringify({
+    request: 'prepare', source, decision: 'scale', allowScale,
+    voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+    desiredCapacity: group.DesiredCapacity,
+  }));
   const scale = await requestScale(group, modelKey, body, now);
   return capacityResponse({
-    state: scale.atMaximum
+    state: scale.simulated
+      ? 'SIMULATED'
+      : scale.atMaximum
       ? readyMatching.length > 0 ? 'BUSY_LIMIT' : 'LIMIT'
       : readyMatching.length > 0 ? 'BUSY_STARTING' : 'STARTING',
-    canStartConversation: readyMatching.length > 0,
+    canStartConversation: scale.simulated === true || readyMatching.length > 0,
     model,
     matchingWorkers: readyMatching.length,
     capacityAction: 'scale',
@@ -614,9 +664,19 @@ async function ensureCapacityAfterAdmission(worker, modelKey, body) {
     reassignIdleMs,
   });
   if (action.type === 'reassign') {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'post-admission', decision: 'reassign', voiceProfileId: clean(body?.voice_model?.voiceProfileId),
+      modelKey: modelKey.slice(0, 12), workerId: action.worker.instanceId,
+      admittedWorkerId: worker.instanceId, desiredCapacity: group.DesiredCapacity,
+    }));
     const reassignment = await scheduleReassignment(action.worker, modelKey, body, now);
     return { type: 'reassign', started: reassignment.started };
   }
+  console.log('[model-coordinator][decision]', JSON.stringify({
+    request: 'post-admission', decision: 'scale', voiceProfileId: clean(body?.voice_model?.voiceProfileId),
+    modelKey: modelKey.slice(0, 12), admittedWorkerId: worker.instanceId,
+    desiredCapacity: group.DesiredCapacity,
+  }));
   const scale = await requestScale(group, modelKey, body, now);
   return {
     type: scale.simulated ? 'simulate-scale' : 'scale',
@@ -670,6 +730,11 @@ async function synthesize(event) {
     });
     if (action.type === 'route') selected = action.worker;
     if (action.type === 'reassign') {
+      console.log('[model-coordinator][decision]', JSON.stringify({
+        request: 'synthesize', decision: 'reassign', voiceProfileId: clean(model.voiceProfileId),
+        modelKey: modelKey.slice(0, 12), workerId: action.worker.instanceId,
+        desiredCapacity: group.DesiredCapacity,
+      }));
       const scheduled = await scheduleReassignment(action.worker, modelKey, body, now);
       return {
         statusCode: 503,
@@ -687,6 +752,11 @@ async function synthesize(event) {
   if (!selected) {
     const queuedWorker = chooseQueuedMatchingWorker(workers, modelKey);
     if (queuedWorker) {
+      console.log('[model-coordinator][decision]', JSON.stringify({
+        request: 'synthesize', decision: 'queue', voiceProfileId: clean(model.voiceProfileId),
+        modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
+        active: queuedWorker.active, queued: queuedWorker.queued, desiredCapacity: group.DesiredCapacity,
+      }));
       const forward = forwardSynthesis(queuedWorker, routePath, body, event.headers || {}, {
         allowQueue: true,
         priority: true,
@@ -700,6 +770,11 @@ async function synthesize(event) {
         return { ...result, queuedAdmission: true, capacityAction };
       } catch (error) {
         if (![429, 503].includes(error.statusCode)) throw error;
+        console.log('[model-coordinator][decision]', JSON.stringify({
+          request: 'synthesize', decision: 'scale-after-queue-timeout', voiceProfileId: clean(model.voiceProfileId),
+          modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
+          desiredCapacity: group.DesiredCapacity,
+        }));
         const scale = await requestScale(group, modelKey, body, now);
         return {
           statusCode: 503,
@@ -719,6 +794,11 @@ async function synthesize(event) {
 
   if (selected) {
     try {
+      console.log('[model-coordinator][decision]', JSON.stringify({
+        request: 'synthesize', decision: 'route', voiceProfileId: clean(model.voiceProfileId),
+        modelKey: modelKey.slice(0, 12), workerId: selected.instanceId,
+        active: selected.active, queued: selected.queued, desiredCapacity: group.DesiredCapacity,
+      }));
       const forward = forwardSynthesis(selected, routePath, body, event.headers || {});
       // Always observe the worker after admission. Two simultaneous Lambda
       // invocations can both have seen two free slots before either request was
@@ -751,6 +831,10 @@ async function synthesize(event) {
     };
   }
 
+  console.log('[model-coordinator][decision]', JSON.stringify({
+    request: 'synthesize', decision: 'scale', voiceProfileId: clean(model.voiceProfileId),
+    modelKey: modelKey.slice(0, 12), desiredCapacity: group.DesiredCapacity,
+  }));
   const scale = await requestScale(group, modelKey, body, now);
   return {
     statusCode: 503,

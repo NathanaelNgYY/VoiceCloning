@@ -44,6 +44,15 @@ export function chooseCapacityAction({
   return { type: 'scale' };
 }
 
+// Page-load/model-selection preflight may reuse capacity that already exists, but
+// it must not purchase another GPU. Real synthesis and explicit event prewarming
+// are the only callers allowed to turn a scale decision into an ASG mutation.
+export function choosePreparationAction({ allowScale = false, ...capacityInput } = {}) {
+  const action = chooseCapacityAction(capacityInput);
+  if (action.type === 'scale' && !allowScale) return { type: 'defer' };
+  return action;
+}
+
 export function matchingFreeSlots(workers = [], requestedModelKey = '') {
   return workers
     .filter((worker) =>
