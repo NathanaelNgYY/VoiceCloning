@@ -1,5 +1,11 @@
 # Active TODO
 
+- [ ] Ask an administrator for `cloudtrail:LookupEvents` (or a CloudTrail Lake query) to attribute the
+  staging ASG instance stops recorded in BUGS.md. Until then the churn cannot be traced: the Lambda
+  scheduler/idle-stop touches only the fixed `i-0f0da8be59367f7a8`, and no repo script stops ASG
+  instances.
+
+
 - [ ] Run a signed-in two-user same-model burst plus two different cloned models against the deployed
   2026-08-31 (later) coordinator. Prove two occupied slots do not scale, a real third queued request
   prepares exactly one overflow GPU and queues on the least-loaded matching GPU, a fourth past the

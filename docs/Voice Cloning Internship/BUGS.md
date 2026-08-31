@@ -1,5 +1,33 @@
 # Bugs
 
+- Open: something outside the repo stops freshly-launched staging ASG instances, and the group
+  rebuilds them. On 2026-08-31 `i-06377cac29eaadff0` was taken out of service at 09:37:41Z with cause
+  "EC2 health check indicating it has been terminated or stopped"; its replacement
+  `i-0aba3a13bca27b90d` launched 09:37:43Z and met the same fate at 09:45:41Z. The handoff records the
+  same `Client.UserInitiatedShutdown` pattern at 02:09Z. It is NOT the Lambda scheduler or idle-stop:
+  those act only on the fixed `GPU_INSTANCE_ID=i-0f0da8be59367f7a8`, never on ASG instances, and no
+  repo script issues StopInstances against the group. Attribution needs `cloudtrail:LookupEvents`,
+  which the internship role is denied. Each cycle wastes a g6.xlarge boot.
+
+- Not a bug, but the docs were wrong: staging has no 19:00 scale-to-zero. Both scheduled actions set
+  `MinSize=1, MaxSize=192` with desired unchanged, so one g6.xlarge runs 24/7 by design
+  (`offHoursMinCapacity: 1`). `PROJECT_MAP.md` claimed scale-to-zero and has been corrected.
+  Decision 2026-08-31: keep MinSize=1 so staging stays warm; revisit only if cost matters more than
+  avoiding a ~10-minute first-request cold start.
+
+- Open (UX): Faculty shows a full-screen blocking "Starting the GPU" modal while capacity warms, so a
+  lecturer cannot write or edit instructions during the wait. The lecture surface correctly uses the
+  non-blocking `BUSY_STARTING` notice instead.
+
+- Open: a `PENDING` boot marker is not cleared when the GPU it requested arrives and loads the model,
+  so `prepareCapacity` keeps returning `BUSY_STARTING` ("another GPU is starting") for up to the
+  10-minute TTL after the voice is genuinely ready. `synthesize` does delete the marker on a matching
+  boot; `prepareCapacity` does not.
+
+- Open: the staging lecture badge showed `cs-nathanael-ng` while `client/env/staging/gi.env` still
+  pins `VITE_GI_VOICE_PROFILE_ID=deanvoice-v1`. Confirm which binding wins after a faculty publish.
+
+
 - Fixed: passive long pauses and transcript scrolling previously increased the same numeric
   score used for concept personalization, allowing ambiguous behaviour to imply uncertainty.
   They are now retained only as raw analytics; only bounded rewatches and clarification

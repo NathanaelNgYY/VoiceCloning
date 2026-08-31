@@ -158,7 +158,9 @@
 - `scripts/warm-staging-deanvoice.sh`
   - Loads the pinned model/references and validates the real TTS route before optimizer startup.
 - `scripts/provision-staging-autoscaling.ps1` / `scripts/set-staging-asg-daily-schedule.ps1` / `scripts/staging-autoscaling.config.json`
-  - Staging ASG provisioning plus its recurring 07:00 start and 19:00 scale-to-zero schedule.
+  - Staging ASG provisioning plus its recurring 07:00/19:00 schedule. NOT a scale-to-zero: both live
+    actions set `MinSize=1, MaxSize=192` and leave desired unchanged, so staging keeps one g6.xlarge
+    running 24/7 (`offHoursMinCapacity: 1`). Verified live 2026-08-31.
 - `docs/staging-architecture.md`
   - Authoritative live staging/dev resource map, rollout state, tests, and permissions.
 - `docs/dev-environment-duplication-guide.md`
