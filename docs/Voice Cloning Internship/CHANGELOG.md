@@ -12,7 +12,8 @@
 - Deployed both main Lambdas and coordinators plus all four then-current Staging worker runtimes.
   Live Dean/Alex/cs-nathanael selections kept desired capacity unchanged at 4. Client deployment,
   launch-image promotion, and final original-Dev-worker verification are pending expired credentials.
-- Tests: Lambda 302/302, client 487/487, worker 259/259, three client builds, diff check, and live
+- Tests: Lambda 302/302, client 489/489 after merging concurrent lecture-outline work, worker 259/259,
+  three client builds, diff check, and live
   AWS before/after selection verification.
 
 ## 2026-08-28

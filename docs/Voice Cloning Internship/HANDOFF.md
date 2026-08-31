@@ -50,7 +50,7 @@ Last updated: 2026-08-31
 - Client source/builds are complete, but Dev/Staging TTS, GI, and Faculty bundles were not deployed
   in this final pass because the user-level safe AWS session expired. Existing live clients still use
   the deployed API behavior; new `ON_DEMAND`/Dev simulation wording awaits client deployment.
-- Automated evidence: Lambda 302/302, client 487/487, worker 259/259, Live Fast/chatbot/GI builds,
+- Automated evidence: Lambda 302/302, client 489/489, worker 259/259, Live Fast/chatbot/GI builds,
   and `git diff --check` pass. Authenticated Faculty publishing and a real multi-user scale test
   remain unverified.
 
