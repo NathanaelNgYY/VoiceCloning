@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { UpdateAutoScalingGroupCommand } from '@aws-sdk/client-auto-scaling';
 import { DeleteCommand, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { requestScale } from './index.js';
+import { coordinationKey, requestScale } from './index.js';
 
 const MODEL_KEY = 'a1b2c3';
-const PENDING_ID = `PENDING#${MODEL_KEY}`;
+const PENDING_ID = coordinationKey('PENDING', MODEL_KEY);
 const GROUP = { DesiredCapacity: 2, MaxSize: 8 };
 const BODY = { voice_model: { gptRef: 'gpt', sovitsRef: 'sovits' } };
 const NOW = 1_700_000_000_000;
@@ -72,6 +72,7 @@ test('claims a boot and grows the group by one', async () => {
   assert.equal(autoscalingClient.calls.length, 1);
   assert.ok(autoscalingClient.calls[0] instanceof UpdateAutoScalingGroupCommand);
   assert.equal(autoscalingClient.calls[0].input.DesiredCapacity, 3);
+  assert.equal(documentClient.calls[1].input.Item.coordinatorScope, 'vcs-staging-gpu-inference');
 });
 
 test('releases the PENDING claim when the scale-up call fails', async () => {

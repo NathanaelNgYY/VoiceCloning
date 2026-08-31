@@ -36,6 +36,13 @@ const authToken = String(process.env.MODEL_COORDINATOR_AUTH_TOKEN || '').trim();
 // that deliberately wants short-lived model residency, but staging uses zero
 // so scale-out is reserved for genuinely overlapping work.
 const reassignIdleMs = Math.max(0, Number(process.env.MODEL_REASSIGN_IDLE_MS) || 0);
+// Lecture pages poll capacity. A short preparation-only grace prevents two open
+// lectures with different voices from continuously switching the same idle GPU.
+// Real synthesis still uses reassignIdleMs and can claim a genuinely idle GPU.
+const preflightReassignIdleMs = Math.max(
+  reassignIdleMs,
+  Number(process.env.MODEL_PREFLIGHT_REASSIGN_IDLE_MS) || 30_000,
+);
 const bootEstimateSeconds = Math.max(60, Number(process.env.MODEL_BOOT_ESTIMATE_SECONDS) || 360);
 const requestTimeoutMs = Math.max(5_000, Number(process.env.MODEL_WORKER_TIMEOUT_MS) || 110_000);
 const assignmentTimeoutMs = Math.max(
@@ -57,6 +64,17 @@ function cleanEnv(value) {
 
 function routingOnly() {
   return coordinatorMode === 'routing-only';
+}
+
+const coordinatorScope = cleanEnv(process.env.MODEL_COORDINATOR_SCOPE)
+  || (routingOnly() ? 'dev' : asgName);
+
+export function coordinationKey(entity, key, scope = coordinatorScope) {
+  return `${entity}#${scope}#${key}`;
+}
+
+function itemInScope(item, scope = coordinatorScope) {
+  return clean(item?.coordinatorScope) === scope;
 }
 
 function clean(value) {
@@ -187,7 +205,8 @@ async function recordDemand(modelKey, voiceProfileId, now = Date.now()) {
     TableName: tableName,
     Item: {
       entity: 'MODEL',
-      id: `MODEL#${modelKey}`,
+      id: coordinationKey('MODEL', modelKey),
+      coordinatorScope,
       modelKey,
       voiceProfileId: clean(voiceProfileId),
       lastDemandAt: now,
@@ -198,14 +217,14 @@ async function recordDemand(modelKey, voiceProfileId, now = Date.now()) {
 
 function demandMap(items) {
   return Object.fromEntries(items
-    .filter((item) => item.entity === 'MODEL' && item.modelKey)
+    .filter((item) => item.entity === 'MODEL' && item.modelKey && itemInScope(item))
     .map((item) => [item.modelKey, Number(item.lastDemandAt) || 0]));
 }
 
 function lockedFleet(items, workers, now = Date.now()) {
   return applyResidencyLocks(
     workers,
-    items.filter((item) => item.entity === 'RESIDENCY_LOCK'),
+    items.filter((item) => item.entity === 'RESIDENCY_LOCK' && itemInScope(item)),
     now,
   );
 }
@@ -229,7 +248,8 @@ export async function lockResidency(event, now = Date.now(), {
     TableName: coordinatorTable,
     Item: {
       entity: 'RESIDENCY_LOCK',
-      id: `LOCK#${lockKey}`,
+      id: coordinationKey('LOCK', lockKey),
+      coordinatorScope,
       voiceProfileId,
       modelKey: bodyModelKey || undefined,
       minimumWorkers,
@@ -252,12 +272,15 @@ export async function unlockResidency(event, {
   const lockKey = bodyModelKey || `profile:${voiceProfileId}`;
   await documentClient.send(new DeleteCommand({
     TableName: coordinatorTable,
-    Key: { id: `LOCK#${lockKey}` },
+    Key: { id: coordinationKey('LOCK', lockKey) },
   }));
   return { statusCode: 200, locked: false, voiceProfileId, modelKey: bodyModelKey };
 }
 
-async function assignWorker(worker, synthesisBody, { ignoreIdle = false } = {}) {
+async function assignWorker(worker, synthesisBody, {
+  ignoreIdle = false,
+  requiredIdleMs = reassignIdleMs,
+} = {}) {
   await setWorkerProtection(worker.instanceId, true);
   try {
     const response = await fetchWithTimeout(workerUrl(worker, '/coordinator/assign'), {
@@ -265,7 +288,7 @@ async function assignWorker(worker, synthesisBody, { ignoreIdle = false } = {}) 
       headers: coordinatorHeaders(),
       body: JSON.stringify({
         synthesisBody,
-        requiredIdleMs: ignoreIdle ? 0 : reassignIdleMs,
+        requiredIdleMs: ignoreIdle ? 0 : requiredIdleMs,
       }),
     }, assignmentTimeoutMs);
     const data = await response.json().catch(() => ({}));
@@ -287,8 +310,10 @@ function liveReassignment(item, now = Date.now()) {
     && now - Number(item.requestedAt || 0) < pendingTtlMs;
 }
 
-async function scheduleReassignment(worker, modelKey, synthesisBody, now = Date.now()) {
-  const id = `REASSIGN#${modelKey}`;
+async function scheduleReassignment(worker, modelKey, synthesisBody, now = Date.now(), {
+  requiredIdleMs = reassignIdleMs,
+} = {}) {
+  const id = coordinationKey('REASSIGN', modelKey);
   const existing = await document.send(new GetCommand({ TableName: tableName, Key: { id } }));
   if (liveReassignment(existing.Item, now)) {
     return { started: false, pending: existing.Item };
@@ -296,10 +321,12 @@ async function scheduleReassignment(worker, modelKey, synthesisBody, now = Date.
   const pending = {
     entity: 'REASSIGN',
     id,
+    coordinatorScope,
     modelKey,
     workerId: worker.instanceId,
     synthesisBody,
     requestedAt: now,
+    requiredIdleMs,
     expiresAt: Math.floor((now + pendingTtlMs) / 1_000),
   };
   try {
@@ -342,14 +369,16 @@ async function runReassignment(id, now = Date.now()) {
       requestedModelKey: pending.modelKey,
       lastDemandByModel: demandMap(existing),
       now,
-      reassignIdleMs,
+      reassignIdleMs: Math.max(0, Number(pending.requiredIdleMs) || 0),
     });
     // Re-evaluate immediately before the destructive model switch. New work or
     // renewed demand for the resident voice invalidates the old decision.
     if (action.type !== 'reassign' || action.worker.instanceId !== pending.workerId) {
       return { statusCode: 200, assigned: false, reason: 'no-longer-idle' };
     }
-    const worker = await assignWorker(action.worker, pending.synthesisBody);
+    const worker = await assignWorker(action.worker, pending.synthesisBody, {
+      requiredIdleMs: Math.max(0, Number(pending.requiredIdleMs) || 0),
+    });
     return { statusCode: 200, assigned: true, workerId: worker.instanceId };
   } finally {
     await document.send(new DeleteCommand({ TableName: tableName, Key: { id } })).catch(() => {});
@@ -437,7 +466,7 @@ export async function requestScale(
       message: 'Dev routing simulation: staging would request another GPU; Dev autoscaling is disabled.',
     };
   }
-  const pendingId = `PENDING#${modelKey}`;
+  const pendingId = coordinationKey('PENDING', modelKey);
   const existing = await documentClient.send(new GetCommand({ TableName: tableName, Key: { id: pendingId } }));
   if (existing.Item && now - Number(existing.Item.requestedAt || 0) < pendingTtlMs) {
     return { started: false, pending: existing.Item };
@@ -448,6 +477,7 @@ export async function requestScale(
   const pending = {
     entity: 'PENDING',
     id: pendingId,
+    coordinatorScope,
     modelKey,
     synthesisBody,
     requestedAt: now,
@@ -484,18 +514,29 @@ export async function requestScale(
   return { started: true, pending };
 }
 
-export function bootAssignmentClaimable(item, instanceId, now = Date.now()) {
+export function bootAssignmentClaimable(item, instanceId, now = Date.now(), scope = coordinatorScope) {
   return item?.entity === 'PENDING'
+    && clean(item.coordinatorScope) === scope
     && Boolean(item.synthesisBody)
     && now - Number(item.requestedAt || 0) < pendingTtlMs
     && (!item.claimedBy || item.claimedBy === instanceId || Number(item.claimExpiresAt || 0) < now);
+}
+
+export function pendingWorkerMatchesBoot(pending, worker, modelKey) {
+  if (!pending || !worker) return false;
+  return worker.reachable !== false
+    && worker.state === 'READY'
+    && worker.modelKey === modelKey
+    && (worker.instanceId === pending.claimedBy
+      || Number(worker.firstSeenAt || 0) >= Number(pending.requestedAt || 0))
+    && Number(worker.active || 0) + Number(worker.queued || 0) < Number(worker.maxSlots || 0);
 }
 
 async function claimBootAssignment(instanceId, now = Date.now()) {
   if (!instanceId) return { statusCode: 400, error: 'instanceId is required' };
   const items = await scanState();
   const pending = items
-    .filter((item) => bootAssignmentClaimable(item, instanceId, now))
+    .filter((item) => bootAssignmentClaimable(item, instanceId, now, coordinatorScope))
     .sort((left, right) => Number(left.requestedAt || 0) - Number(right.requestedAt || 0));
 
   for (const candidate of pending) {
@@ -582,8 +623,12 @@ async function prepareCapacity(event) {
   const readyMatching = workers.filter((worker) =>
     worker.reachable && worker.state === 'READY' && worker.modelKey === modelKey);
   const freeSlots = matchingFreeSlots(workers, modelKey);
-  const reassigning = existing.find((item) => item.id === `REASSIGN#${modelKey}` && liveReassignment(item, now));
-  const booting = existing.find((item) => item.id === `PENDING#${modelKey}` && now - item.requestedAt < pendingTtlMs);
+  const reassigning = existing.find((item) => (
+    item.id === coordinationKey('REASSIGN', modelKey) && liveReassignment(item, now)
+  ));
+  const booting = existing.find((item) => (
+    item.id === coordinationKey('PENDING', modelKey) && now - item.requestedAt < pendingTtlMs
+  ));
   if (freeSlots > 0) {
     console.log('[model-coordinator][decision]', JSON.stringify({
       request: 'prepare', source, decision: 'route', allowScale, voiceProfileId: clean(model.voiceProfileId),
@@ -633,7 +678,7 @@ async function prepareCapacity(event) {
     requestedModelKey: modelKey,
     lastDemandByModel: demandMap(existing),
     now,
-    reassignIdleMs,
+    reassignIdleMs: preflightReassignIdleMs,
     allowScale,
   });
   if (action.type === 'reassign') {
@@ -642,7 +687,9 @@ async function prepareCapacity(event) {
       voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
       workerId: action.worker.instanceId, desiredCapacity: group.DesiredCapacity,
     }));
-    const scheduled = await scheduleReassignment(action.worker, modelKey, body, now);
+    const scheduled = await scheduleReassignment(action.worker, modelKey, body, now, {
+      requiredIdleMs: preflightReassignIdleMs,
+    });
     return capacityResponse({
       state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
       canStartConversation: readyMatching.length > 0,
@@ -759,16 +806,16 @@ async function synthesize(event) {
   const refreshed = await refreshFleet(existing, now);
   const { group } = refreshed;
   const workers = lockedFleet(existing, refreshed.workers, now);
-  const pending = existing.find((item) => item.id === `PENDING#${modelKey}` && now - item.requestedAt < pendingTtlMs);
-  const reassigning = existing.find((item) => item.id === `REASSIGN#${modelKey}` && liveReassignment(item, now));
+  const pending = existing.find((item) => (
+    item.id === coordinationKey('PENDING', modelKey) && now - item.requestedAt < pendingTtlMs
+  ));
+  const reassigning = existing.find((item) => (
+    item.id === coordinationKey('REASSIGN', modelKey) && liveReassignment(item, now)
+  ));
   let selected;
 
   if (pending) {
-    const bootWarmed = workers.find((worker) =>
-      worker.reachable
-      && worker.state === 'READY'
-      && worker.modelKey === modelKey
-      && worker.active + worker.queued < worker.maxSlots);
+    const bootWarmed = workers.find((worker) => pendingWorkerMatchesBoot(pending, worker, modelKey));
     if (bootWarmed) {
       selected = bootWarmed;
       await document.send(new DeleteCommand({ TableName: tableName, Key: { id: pending.id } }));
@@ -867,17 +914,10 @@ async function synthesize(event) {
         active: selected.active, queued: selected.queued, desiredCapacity: group.DesiredCapacity,
       }));
       const forward = forwardSynthesis(selected, routePath, body, event.headers || {});
-      // Always observe the worker after admission. Two simultaneous Lambda
-      // invocations can both have seen two free slots before either request was
-      // admitted; checking only a stale "one slot left" snapshot misses that
-      // race. This starts capacity only if the live worker is actually full and
-      // a fleet refresh confirms no matching slot remains.
-      const capacity = ensureCapacityAfterAdmission(selected, modelKey, body).catch((error) => {
-        console.error('[model-coordinator][post-admission-capacity]', error);
-        return null;
-      });
-      const [result, capacityAction] = await Promise.all([forward, capacity]);
-      return { ...result, capacityAction };
+      // A merely-full worker is not evidence of unmet demand. Capacity is
+      // prepared only when a request is actually queued/rejected, so two users
+      // can consume the two configured slots without launching overflow GPUs.
+      return await forward;
     } catch (error) {
       if (![429, 503].includes(error.statusCode)) throw error;
       // A live race consumed the final slot; fall through to scale instead of
@@ -934,7 +974,9 @@ export async function handler(event = {}) {
         statusCode: 200,
         desiredCapacity: group.DesiredCapacity,
         workers: lockedFleet(existing, workers),
-        residencyLocks: existing.filter((item) => item.entity === 'RESIDENCY_LOCK'),
+        residencyLocks: existing.filter((item) => (
+          item.entity === 'RESIDENCY_LOCK' && itemInScope(item)
+        )),
       };
     }
     if (event.action === 'synthesize') return synthesize(event);

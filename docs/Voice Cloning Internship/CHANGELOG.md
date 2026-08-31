@@ -2,6 +2,16 @@
 
 ## 2026-08-31
 
+- Diagnosed the signed-in two-user regression from live evidence. At 08:15:26Z and 08:15:27Z,
+  `post-admission -> scale` changed Staging desired capacity 1->2->3 even though the two requests
+  only filled the configured two slots. New instances' `active=2` state came from their two-request
+  public-prime readiness work, not an inaccurate idle counter.
+- Fixed locally, not deployed: direct successful admissions no longer speculatively prepare overflow;
+  actual queued/rejected demand still does. Pending scale/reassignment/demand/event-lock records are
+  environment-scoped, a pre-existing matching worker cannot clear a boot marker, and lecture preflight
+  uses a 30-second reassignment grace while real synthesis can still reassign an idle GPU immediately.
+- Tests: coordinator 31/31, full Lambda 312/312, model-coordinator package build, and diff check.
+  Live deployment, signed-in Dev/Staging browser verification, and natural 3->1 cleanup are untested.
 - Made TTS and Faculty voice selection metadata-only while preserving lecture non-scaling preflight.
   Deployed Dev/Staging TTS and GI plus Staging Faculty; public asset hashes were read back.
 - Added event voice residency-minimum lock/unlock/status actions and decision enforcement. A live

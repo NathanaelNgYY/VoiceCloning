@@ -12,6 +12,13 @@
 - Event prewarm protects a minimum resident pool for the event voice. The oldest matching workers up
   to that minimum are unavailable for other-model reassignment; capacity above the minimum remains
   reusable so the lock does not freeze the whole fleet or prevent scale-in.
+- Filling the final free slot is not unmet demand and must not by itself launch overflow. Scale-out
+  begins only when a synthesis request is actually queued/rejected or event prewarm explicitly asks
+  for capacity. Coordination rows in the shared DynamoDB table are environment-scoped; Dev and
+  Staging may share storage but never pending boots, reassignments, demand leases, or event locks.
+- Lecture preflight has a 30-second preparation-only residency grace to stop two polling pages from
+  switching one idle GPU back and forth. Real synthesis keeps immediate idle reassignment; the grace
+  is not a synthesis slot, queue entry, user priority, or long-lived model pin.
 
 - The app is split into separate runtime roles instead of one monolith:
   - `lambda/` handles browser-facing REST orchestration.

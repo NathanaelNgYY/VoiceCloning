@@ -4,6 +4,11 @@
 
 ### Autoscaling decision boundary (2026-08-31)
 
+- Local regression correction is not deployed yet. Live evidence at 08:15:26Z/08:15:27Z showed
+  successful direct admissions triggering two speculative `post-admission -> scale` decisions and
+  desired 1->2->3. Deploy only the two coordinator functions after review; no client/worker/AMI change
+  is required for this patch. Then prove two occupied slots do not scale and a real third queued or
+  rejected request starts exactly one overflow worker.
 - TTS and Faculty dropdown selection resolves/pins metadata only and must not call coordinator
   preparation. Lecture page preflight calls coordinator prepare with scaling disabled; it may
   route/reassign existing idle capacity but cannot call `UpdateAutoScalingGroup`.
@@ -17,6 +22,11 @@
   Check scaling activity cause and EC2 state-transition reason before combining those incidents.
 - Worker runtime changes must be baked into and canaried from the launch-template AMI; patching current
   workers alone does not update future scale-outs.
+- The shared DynamoDB table is partitioned logically by `MODEL_COORDINATOR_SCOPE=dev|staging` for
+  demand, reassign, pending-scale, and residency-lock records. Never remove the scope variables or
+  interpret legacy unscoped markers as live state. `MODEL_PREFLIGHT_REASSIGN_IDLE_MS=30000` protects
+  an idle prepared lecture voice from opposing 15-second polls; real synthesis keeps immediate idle
+  reassignment through `MODEL_REASSIGN_IDLE_MS=0`.
 
 The repo docs describe a split cloud deployment:
 

@@ -40,9 +40,11 @@ if (-not $authToken) { throw 'The Staging coordinator auth token is missing' }
 
 $variables = @{
   MODEL_COORDINATOR_MODE = 'routing-only'
+  MODEL_COORDINATOR_SCOPE = 'dev'
   MODEL_COORDINATOR_TABLE = $coordinatorTable
   MODEL_COORDINATOR_INSTANCE_IDS = 'i-03f258d470a2fa73f,i-0048470294e4ec518'
   MODEL_REASSIGN_IDLE_MS = '0'
+  MODEL_PREFLIGHT_REASSIGN_IDLE_MS = '30000'
   MODEL_BOOT_ESTIMATE_SECONDS = '60'
   MODEL_COORDINATOR_AUTH_TOKEN = $authToken
 }

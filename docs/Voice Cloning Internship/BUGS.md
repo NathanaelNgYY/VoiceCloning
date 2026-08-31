@@ -7,10 +7,15 @@
 
 ## Active
 
-- 2026-08-31 fixed and fully deployed: selecting TTS/Faculty voices previously performed direct GPU
-  preparation, and selection/preflight could increase Staging desired capacity while a worker was
-  warming/draining. TTS/Faculty selection is now metadata-only; lecture preflight may reuse capacity
-  but cannot scale. All affected clients are deployed and Staging naturally returned 4->3->2->1.
+- 2026-08-31 regression fixed locally, not deployed: two admitted requests filled a two-slot worker
+  and each speculative post-admission check scaled, producing direct desired changes 1->2->3.
+  A pre-existing matching worker then incorrectly cleared the first boot marker, permitting the
+  duplicate scale. Dev also consumed Staging's unscoped pending marker and displayed a false GPU-
+  starting message, while different lecture pages with 15-second polling and zero preparation grace
+  repeatedly switched the sole worker. The local correction scales only for actual queue/rejection,
+  scopes coordination records per environment, preserves a pending boot until its new/claimed worker
+  is ready, and gives preflight-only reassignment a 30-second anti-thrash grace. Lambda 312/312 and
+  coordinator packaging pass; cloud deployment and signed-in browser verification remain pending.
 
 - 2026-08-31 fixed and baked in launch-template v40: model reassignment could fail with `Inference server is
   already running` after a short readiness probe missed a healthy managed Python process applying

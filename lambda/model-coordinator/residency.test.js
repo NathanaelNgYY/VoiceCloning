@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DeleteCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { lockResidency, unlockResidency } from './index.js';
+import { coordinationKey, lockResidency, unlockResidency } from './index.js';
 
 function recorder() {
   const calls = [];
@@ -26,7 +26,8 @@ test('event lock stores the configured profile minimum and expiry', async () => 
   assert.ok(documentClient.calls[0] instanceof PutCommand);
   assert.deepEqual(documentClient.calls[0].input.Item, {
     entity: 'RESIDENCY_LOCK',
-    id: 'LOCK#profile:deanvoice-v1',
+    id: coordinationKey('LOCK', 'profile:deanvoice-v1'),
+    coordinatorScope: 'vcs-staging-gpu-inference',
     voiceProfileId: 'deanvoice-v1',
     modelKey: undefined,
     minimumWorkers: 2,
@@ -56,6 +57,6 @@ test('event unlock deletes only the requested profile lock', async () => {
   assert.ok(documentClient.calls[0] instanceof DeleteCommand);
   assert.deepEqual(documentClient.calls[0].input, {
     TableName: 'test-table',
-    Key: { id: 'LOCK#profile:deanvoice-v1' },
+    Key: { id: coordinationKey('LOCK', 'profile:deanvoice-v1') },
   });
 });

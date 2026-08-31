@@ -1,8 +1,10 @@
 # Active TODO
 
-- [ ] Run a signed-in two-user Staging burst for the same cloned model and then two different cloned
-  models. Capture coordinator route/queue/scale logs and UI messages. Metadata-only dropdown selection,
-  one v40 canary, and natural 4->3->2->1 plus canary 2->1 scale-in are already verified.
+- [ ] Deploy the 2026-08-31 coordinator regression fix to Dev and Staging, then run a signed-in
+  two-user same-model burst and two different cloned models. Prove two occupied slots do not scale,
+  a real third queued/rejected request prepares exactly one overflow GPU, Dev ignores Staging markers,
+  opposing lecture polls do not model-thrash, and desired capacity naturally returns 3->1. The local
+  code passes 312 Lambda tests and packages; none of this corrected behavior is live yet.
 
 - [ ] Revoke or refresh the temporary AWS session credentials exposed in the debugging conversation,
   then replace the user-level `VCS_AWS_*` values. Never record the replacement values in the vault,

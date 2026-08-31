@@ -36,6 +36,13 @@ Last updated: 2026-08-31
 - Worker reassignment no longer throws `Inference server is already running` merely because the
   managed Python process missed a two-second readiness probe while applying weights. A live managed
   process is reused and the real downstream request timeout reports genuine failures.
+- Later signed-in testing exposed a second regression. Live logs proved two requests filled the sole
+  worker's two slots, then speculative post-admission checks directly changed desired 1->2->3.
+  The first pending boot was also cleared by the old matching worker before a new worker existed.
+- Dev's false “GPU starting” notice was cross-environment leakage: both coordinators shared unscoped
+  pending/reassignment records. Opposing lecture polls also switched one idle worker repeatedly because
+  preparation grace was zero. These three corrections are local at the current branch head only:
+  scoped records, no direct-admission overflow, correct boot ownership, and 30-second preflight grace.
 
 ## Deployment Evidence and Limits
 
@@ -58,6 +65,9 @@ Last updated: 2026-08-31
 - Automated evidence: Lambda 309/309, client 491/491, worker 259/259, affected builds, PowerShell
   parsing, public bundle readback, and live AWS checks. The in-app browser bridge failed before page
   control, so authenticated Faculty publishing and a real two-user burst remain unverified.
+- Regression-fix evidence is local only: coordinator 31/31, Lambda 312/312, package build, and live
+  read-only AWS attribution. Do not describe the corrected behavior as deployed until both coordinator
+  functions are updated and a signed-in two-user/third-request test passes.
 
 ## Queue and Scaling Contract
 
@@ -67,6 +77,9 @@ Last updated: 2026-08-31
   not enter the TTS queue.
 - A real synthesis first routes to a ready exact-model free slot. If all exact-model slots are busy,
   the bounded worker priority/FIFO queue may hold the short wait while Staging prepares overflow.
+- Occupying the final free slot does not itself scale. Overflow preparation begins only after an
+  actual queued/rejected request (or explicit event prewarm), preventing two users on two slots from
+  purchasing unused GPUs. Shared-table coordination records are scoped to Dev or Staging.
 - If no GPU has the model, synthesis reassigns an idle GPU and returns preparation/retry, or asks
   Staging to scale when none is safely reassignable. The HTTP request is not held through a multi-minute
   cold start.
@@ -91,8 +104,9 @@ Last updated: 2026-08-31
 
 ## Next Session
 
-1. Run authenticated Faculty -> Staging lecture -> Dev lecture publishing with two cloned profiles.
-2. Run a controlled two-user same-model and different-model test; capture route, queue, scale, and
-   scale-down decision logs.
-3. Revoke any temporary credentials exposed during prior debugging and remove the orphaned snapshot
+1. Deploy both coordinator functions from the local regression fix; do not deploy clients/workers.
+2. Run controlled two-user same/different-model tests plus one real third request; capture route,
+   queue, exactly-one-scale, Dev isolation, anti-thrash, and natural scale-down evidence.
+3. Run authenticated Faculty -> Staging lecture -> Dev lecture publishing with two cloned profiles.
+4. Revoke any temporary credentials exposed during prior debugging and remove the orphaned snapshot
    when an administrator is available.
