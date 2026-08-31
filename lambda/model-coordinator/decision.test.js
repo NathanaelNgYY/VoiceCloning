@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  applyResidencyLocks,
   chooseCapacityAction,
   choosePreparationAction,
   chooseQueuedMatchingWorker,
@@ -13,6 +14,7 @@ const worker = (overrides = {}) => ({
   state: 'READY',
   reachable: true,
   modelKey: 'dean',
+  voiceProfileId: 'deanvoice-v1',
   active: 0,
   queued: 0,
   maxSlots: 2,
@@ -141,6 +143,52 @@ test('does not route to a worker whose queued work consumes its final slot', () 
 
   assert.equal(result.type, 'route');
   assert.equal(result.worker.instanceId, 'i-free');
+});
+
+test('event residency minimum protects only the oldest required workers', () => {
+  const workers = applyResidencyLocks([
+    worker({ instanceId: 'i-old', firstSeenAt: now - 900_000 }),
+    worker({ instanceId: 'i-new', firstSeenAt: now - 60_000 }),
+  ], [{
+    entity: 'RESIDENCY_LOCK',
+    voiceProfileId: 'deanvoice-v1',
+    minimumWorkers: 1,
+  }], now);
+
+  assert.equal(workers.find((item) => item.instanceId === 'i-old').residencyLocked, true);
+  assert.notEqual(workers.find((item) => item.instanceId === 'i-new').residencyLocked, true);
+  const result = chooseCapacityAction({
+    requestedModelKey: 'alex',
+    workers,
+    now,
+  });
+  assert.equal(result.type, 'reassign');
+  assert.equal(result.worker.instanceId, 'i-new');
+});
+
+test('event residency minimum makes the last protected voice worker unavailable', () => {
+  const workers = applyResidencyLocks([worker()], [{
+    entity: 'RESIDENCY_LOCK',
+    voiceProfileId: 'deanvoice-v1',
+    minimumWorkers: 1,
+  }], now);
+
+  assert.equal(chooseCapacityAction({
+    requestedModelKey: 'alex',
+    workers,
+    now,
+  }).type, 'scale');
+});
+
+test('expired event residency locks do not protect workers', () => {
+  const workers = applyResidencyLocks([worker()], [{
+    entity: 'RESIDENCY_LOCK',
+    voiceProfileId: 'deanvoice-v1',
+    minimumWorkers: 1,
+    expiresAt: Math.floor((now - 1) / 1_000),
+  }], now);
+
+  assert.notEqual(workers[0].residencyLocked, true);
 });
 
 test('model selection defers instead of scaling while the only GPU is warming', () => {

@@ -690,4 +690,45 @@ if ($ScaleDownAt) {
     --min-size $cfg.minSize --max-size $MaxCapacity --desired-capacity $cfg.desiredCapacity
 }
 
+# Preserve the event's default-voice floor at the coordinator as well as at the
+# ASG. The lock is installed immediately (including for scheduled prewarm), so
+# the baseline worker cannot be repurposed before the event, and expires with
+# the scheduled scale-down. Overflow workers above the minimum remain reusable.
+if ($ModelCoordinatorFunctionName) {
+  $lockPayload = if ($eventEnabled) {
+    @{
+      action = 'lock-residency'
+      voiceProfileId = $DefaultVoiceProfileId
+      minimumWorkers = $PreWarmCapacity
+      expiresAt = if ($scaleDownTimestamp) { $scaleDownTimestamp.ToUnixTimeSeconds() } else { 0 }
+    }
+  } else {
+    @{
+      action = 'unlock-residency'
+      voiceProfileId = $DefaultVoiceProfileId
+    }
+  }
+  $lockPayloadPath = Join-Path $env:TEMP ('vcs-event-residency-' + [guid]::NewGuid().ToString('N') + '.json')
+  $lockResponsePath = Join-Path $env:TEMP ('vcs-event-residency-response-' + [guid]::NewGuid().ToString('N') + '.json')
+  try {
+    [IO.File]::WriteAllText(
+      $lockPayloadPath,
+      ($lockPayload | ConvertTo-Json -Compress),
+      (New-Object Text.UTF8Encoding($false))
+    )
+    Invoke-AwsJson lambda invoke --region $cfg.region `
+      --function-name $ModelCoordinatorFunctionName `
+      --cli-binary-format raw-in-base64-out `
+      --payload "fileb://$lockPayloadPath" $lockResponsePath | Out-Null
+    if ($Apply) {
+      $lockResponse = Get-Content $lockResponsePath -Raw | ConvertFrom-Json
+      if ([int]$lockResponse.statusCode -ne 200) {
+        throw "Coordinator event-residency update failed: $($lockResponse.error)"
+      }
+    }
+  } finally {
+    Remove-Item -LiteralPath $lockPayloadPath,$lockResponsePath -Force -ErrorAction SilentlyContinue
+  }
+}
+
 Write-Host "Staging ASG provisioning complete. Apply=$Apply Event=$eventEnabled ListenerSwitched=$SwitchListener Desired=$DesiredCapacity PreWarm=$PreWarmCapacity Max=$MaxCapacity Occupancy=$($cfg.scaleOutOccupancyPercent)% Slots=$SynthesisSlotsPerInstance BaselineTarget=$($cfg.baselineScaleCapacity) ScaleOutAdd=$ScaleOutAddCapacity PreWarmAt=$PreWarmAt"

@@ -29,6 +29,7 @@ export function chooseCapacityAction({
   const reassignable = available
     .filter((worker) => {
       if (worker.modelKey === requestedModelKey) return false;
+      if (worker.residencyLocked === true) return false;
       if (worker.active !== 0 || worker.queued !== 0) return false;
       const modelLastDemand = Number(lastDemandByModel[worker.modelKey] || 0);
       const idleSince = Math.max(Number(worker.lastActivityAt || 0), modelLastDemand);
@@ -42,6 +43,41 @@ export function chooseCapacityAction({
   if (reassignable.length > 0) return { type: 'reassign', worker: reassignable[0] };
 
   return { type: 'scale' };
+}
+
+// Event capacity is a minimum resident pool, not a blanket fleet freeze. For
+// each live lock, protect the oldest matching workers up to its minimum; any
+// overflow workers remain eligible for ordinary reassignment and scale-in.
+export function applyResidencyLocks(workers = [], locks = [], now = Date.now()) {
+  const protectedIds = new Set();
+  const liveLocks = locks.filter((lock) => (
+    lock?.entity === 'RESIDENCY_LOCK'
+    && Number(lock.minimumWorkers || 0) > 0
+    && (!Number(lock.expiresAt || 0) || Number(lock.expiresAt) * 1_000 > now)
+  ));
+
+  for (const lock of liveLocks) {
+    const candidates = workers
+      .filter((worker) => (
+        worker.reachable !== false
+        && worker.state === 'READY'
+        && (lock.modelKey
+          ? worker.modelKey === lock.modelKey
+          : worker.voiceProfileId === lock.voiceProfileId)
+      ))
+      .sort((left, right) => (
+        Number(left.firstSeenAt || Number.MAX_SAFE_INTEGER)
+        - Number(right.firstSeenAt || Number.MAX_SAFE_INTEGER)
+        || String(left.instanceId || '').localeCompare(String(right.instanceId || ''))
+      ));
+    for (const worker of candidates.slice(0, Number(lock.minimumWorkers))) {
+      protectedIds.add(worker.instanceId);
+    }
+  }
+
+  return workers.map((worker) => (
+    protectedIds.has(worker.instanceId) ? { ...worker, residencyLocked: true } : worker
+  ));
 }
 
 // Page-load/model-selection preflight may reuse capacity that already exists, but

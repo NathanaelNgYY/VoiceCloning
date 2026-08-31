@@ -17,6 +17,7 @@ import {
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
+  applyResidencyLocks,
   chooseCapacityAction,
   choosePreparationAction,
   chooseQueuedMatchingWorker,
@@ -201,6 +202,61 @@ function demandMap(items) {
     .map((item) => [item.modelKey, Number(item.lastDemandAt) || 0]));
 }
 
+function lockedFleet(items, workers, now = Date.now()) {
+  return applyResidencyLocks(
+    workers,
+    items.filter((item) => item.entity === 'RESIDENCY_LOCK'),
+    now,
+  );
+}
+
+export async function lockResidency(event, now = Date.now(), {
+  documentClient = document,
+  coordinatorTable = tableName,
+} = {}) {
+  const voiceProfileId = clean(event.voiceProfileId);
+  const bodyModelKey = modelResidencyKey(event.body || {});
+  if (!voiceProfileId && !bodyModelKey) {
+    return { statusCode: 400, error: 'A voiceProfileId or immutable model body is required.' };
+  }
+  const minimumWorkers = Number(event.minimumWorkers);
+  if (!Number.isInteger(minimumWorkers) || minimumWorkers < 1 || minimumWorkers > 192) {
+    return { statusCode: 400, error: 'minimumWorkers must be an integer from 1 to 192.' };
+  }
+  const lockKey = bodyModelKey || `profile:${voiceProfileId}`;
+  const expiresAt = Math.max(0, Number(event.expiresAt) || 0);
+  await documentClient.send(new PutCommand({
+    TableName: coordinatorTable,
+    Item: {
+      entity: 'RESIDENCY_LOCK',
+      id: `LOCK#${lockKey}`,
+      voiceProfileId,
+      modelKey: bodyModelKey || undefined,
+      minimumWorkers,
+      requestedAt: now,
+      expiresAt: expiresAt || undefined,
+    },
+  }));
+  return { statusCode: 200, locked: true, voiceProfileId, modelKey: bodyModelKey, minimumWorkers, expiresAt };
+}
+
+export async function unlockResidency(event, {
+  documentClient = document,
+  coordinatorTable = tableName,
+} = {}) {
+  const voiceProfileId = clean(event.voiceProfileId);
+  const bodyModelKey = modelResidencyKey(event.body || {});
+  if (!voiceProfileId && !bodyModelKey) {
+    return { statusCode: 400, error: 'A voiceProfileId or immutable model body is required.' };
+  }
+  const lockKey = bodyModelKey || `profile:${voiceProfileId}`;
+  await documentClient.send(new DeleteCommand({
+    TableName: coordinatorTable,
+    Key: { id: `LOCK#${lockKey}` },
+  }));
+  return { statusCode: 200, locked: false, voiceProfileId, modelKey: bodyModelKey };
+}
+
 async function assignWorker(worker, synthesisBody, { ignoreIdle = false } = {}) {
   await setWorkerProtection(worker.instanceId, true);
   try {
@@ -279,7 +335,8 @@ async function runReassignment(id, now = Date.now()) {
   }
   try {
     const existing = await scanState();
-    const { workers } = await refreshFleet(existing, now);
+    const refreshed = await refreshFleet(existing, now);
+    const workers = lockedFleet(existing, refreshed.workers, now);
     const action = chooseCapacityAction({
       workers,
       requestedModelKey: pending.modelKey,
@@ -519,7 +576,9 @@ async function prepareCapacity(event) {
   const source = clean(event.source) || 'preflight';
   const existing = await scanState();
   await recordDemand(modelKey, model.voiceProfileId, now);
-  const { group, workers } = await refreshFleet(existing, now);
+  const refreshed = await refreshFleet(existing, now);
+  const { group } = refreshed;
+  const workers = lockedFleet(existing, refreshed.workers, now);
   const readyMatching = workers.filter((worker) =>
     worker.reachable && worker.state === 'READY' && worker.modelKey === modelKey);
   const freeSlots = matchingFreeSlots(workers, modelKey);
@@ -652,7 +711,9 @@ async function ensureCapacityAfterAdmission(worker, modelKey, body) {
 
   const now = Date.now();
   const existing = await scanState();
-  const { group, workers } = await refreshFleet(existing, now);
+  const refreshed = await refreshFleet(existing, now);
+  const { group } = refreshed;
+  const workers = lockedFleet(existing, refreshed.workers, now);
   // A concurrent completion or another matching GPU may already have restored
   // capacity. Re-check after admission rather than scaling from stale counts.
   if (matchingFreeSlots(workers, modelKey) > 0) return null;
@@ -695,7 +756,9 @@ async function synthesize(event) {
   const model = body.voice_model || {};
   const existing = await scanState();
   await recordDemand(modelKey, model.voiceProfileId, now);
-  const { group, workers } = await refreshFleet(existing, now);
+  const refreshed = await refreshFleet(existing, now);
+  const { group } = refreshed;
+  const workers = lockedFleet(existing, refreshed.workers, now);
   const pending = existing.find((item) => item.id === `PENDING#${modelKey}` && now - item.requestedAt < pendingTtlMs);
   const reassigning = existing.find((item) => item.id === `REASSIGN#${modelKey}` && liveReassignment(item, now));
   let selected;
@@ -711,7 +774,11 @@ async function synthesize(event) {
       await document.send(new DeleteCommand({ TableName: tableName, Key: { id: pending.id } }));
     }
     const fresh = !selected && workers.find((worker) =>
-      worker.reachable && worker.active === 0 && worker.queued === 0 && worker.firstSeenAt >= pending.requestedAt);
+      worker.reachable
+      && worker.residencyLocked !== true
+      && worker.active === 0
+      && worker.queued === 0
+      && worker.firstSeenAt >= pending.requestedAt);
     if (fresh) {
       try {
         selected = await assignWorker(fresh, pending.synthesisBody || body, { ignoreIdle: true });
@@ -856,12 +923,19 @@ export async function handler(event = {}) {
   try {
     if (event.action === 'claim') return claimBootAssignment(clean(event.instanceId));
     if (event.action === 'cancel') return cancelReply(clean(event.replyToken));
+    if (event.action === 'lock-residency') return lockResidency(event);
+    if (event.action === 'unlock-residency') return unlockResidency(event);
     if (event.action === 'prepare') return prepareCapacity(event);
     if (event.action === 'reassign') return runReassignment(clean(event.id));
     if (event.action === 'status') {
       const existing = await scanState();
       const { group, workers } = await refreshFleet(existing);
-      return { statusCode: 200, desiredCapacity: group.DesiredCapacity, workers };
+      return {
+        statusCode: 200,
+        desiredCapacity: group.DesiredCapacity,
+        workers: lockedFleet(existing, workers),
+        residencyLocks: existing.filter((item) => item.entity === 'RESIDENCY_LOCK'),
+      };
     }
     if (event.action === 'synthesize') return synthesize(event);
     return { statusCode: 400, error: 'Unknown coordinator action' };
