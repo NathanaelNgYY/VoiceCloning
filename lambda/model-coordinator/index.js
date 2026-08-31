@@ -701,15 +701,42 @@ async function prepareCapacity(event) {
     now,
     pendingTtlMs,
   });
-  const action = choosePreparationAction({
+  const capacityInput = {
     workers,
     requestedModelKey: modelKey,
     lastDemandByModel: demandMap(existing),
     now,
-    reassignIdleMs: preflightReassignIdleMs,
     reassigningWorkerIds: promisedWorkerIds(existing, now),
-    allowScale: allowScale && !fleetInMotion,
+  };
+  // The preflight grace exists to stop two open lectures from swapping one GPU
+  // back and forth. It must not turn into a reason to BUY a GPU: a worker that
+  // is idle now and merely inside its grace window is still an idle worker to
+  // switch, which is exactly the capacity the user expects to be reused. If the
+  // grace is the only thing blocking a reassignment, wait for it rather than
+  // scaling.
+  const gracedOnly = allowScale
+    && chooseCapacityAction({ ...capacityInput, reassignIdleMs: preflightReassignIdleMs }).type === 'scale'
+    && chooseCapacityAction({ ...capacityInput, reassignIdleMs: 0 }).type === 'reassign';
+  const action = choosePreparationAction({
+    ...capacityInput,
+    reassignIdleMs: preflightReassignIdleMs,
+    allowScale: allowScale && !fleetInMotion && !gracedOnly,
   });
+  if (action.type === 'defer' && gracedOnly && !fleetInMotion) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'prepare', source, decision: 'await-reassign-grace', allowScale,
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      desiredCapacity: group.DesiredCapacity,
+    }));
+    return capacityResponse({
+      state: readyMatching.length > 0 ? 'BUSY_WARMING' : 'WARMING',
+      canStartConversation: readyMatching.length > 0,
+      model,
+      matchingWorkers: readyMatching.length,
+      capacityAction: 'reassign',
+      message: 'An idle GPU will switch to this voice shortly. No additional GPU is being started.',
+    });
+  }
   if (action.type === 'defer' && fleetInMotion) {
     console.log('[model-coordinator][decision]', JSON.stringify({
       request: 'prepare', source, decision: 'await-fleet-transition', allowScale,
@@ -901,7 +928,7 @@ async function synthesize(event) {
       return {
         statusCode: 503,
         code: 'MODEL_CAPACITY_STARTING',
-        error: 'An idle GPU is switching to this lecture voice. Please wait before starting voice conversation.',
+        error: 'An idle GPU is switching to this voice. Please wait a moment and try again.',
         retryAfterSeconds: bootEstimateSeconds,
         scaleStarted: false,
         reassignmentStarted: scheduled.started,
@@ -934,7 +961,7 @@ async function synthesize(event) {
         code: scaling.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_FULL',
         error: scaling.simulated
           ? scaling.message
-          : 'This lecture voice is busy and its waiting list is full. More GPU capacity is preparing; your request will retry automatically.',
+          : 'This voice is busy and its waiting list is full. More GPU capacity is preparing; your request will retry automatically.',
         retryAfterSeconds: scaling.simulated ? 5 : 5,
         scaleStarted: scaling.started === true,
         retryable: true,
@@ -1007,7 +1034,7 @@ async function synthesize(event) {
     return {
       statusCode: 503,
       code: 'MODEL_CAPACITY_STARTING',
-      error: 'An idle GPU is switching to this lecture voice. Please wait before starting voice conversation.',
+      error: 'An idle GPU is switching to this voice. Please wait a moment and try again.',
       retryAfterSeconds: bootEstimateSeconds,
       scaleStarted: false,
       reassignmentStarted: false,
@@ -1027,8 +1054,8 @@ async function synthesize(event) {
     error: scale.simulated
       ? scale.message
       : scale.atMaximum
-      ? 'No GPU is available for this lecture voice and staging is at its capacity limit.'
-      : 'This lecture voice is preparing on a GPU. You can wait or use another lecture meanwhile.',
+      ? 'No GPU is available for this voice and staging is at its capacity limit.'
+      : 'This voice is preparing on a GPU. You can wait, or use another voice or lecture meanwhile.',
     retryAfterSeconds: scale.simulated ? 5 : scale.atMaximum ? 30 : bootEstimateSeconds,
     scaleStarted: scale.started,
     simulated: scale.simulated === true,

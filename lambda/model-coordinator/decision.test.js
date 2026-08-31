@@ -352,3 +352,33 @@ test('a promised worker does not block a genuinely free second GPU', () => {
   assert.equal(action.type, 'reassign');
   assert.equal(action.worker.instanceId, 'i-spare');
 });
+
+test('the preflight grace delays a reassignment but must not justify scaling', () => {
+  // Idle GPU holding another model, whose model was in demand 5s ago. The 30s
+  // preflight grace blocks the switch right now, but the GPU is still idle
+  // capacity — buying a second GPU here is exactly the waste to avoid.
+  const workers = [worker({ instanceId: 'i-idle', modelKey: 'other', lastActivityAt: now - 5_000 })];
+  const input = {
+    workers,
+    requestedModelKey: 'dean',
+    lastDemandByModel: { other: now - 5_000 },
+    now,
+  };
+
+  assert.equal(chooseCapacityAction({ ...input, reassignIdleMs: 30_000 }).type, 'scale');
+  assert.equal(chooseCapacityAction({ ...input, reassignIdleMs: 0 }).type, 'reassign');
+});
+
+test('once the grace expires the same idle GPU is reassigned, not scaled', () => {
+  const workers = [worker({ instanceId: 'i-idle', modelKey: 'other', lastActivityAt: now - 60_000 })];
+  const action = chooseCapacityAction({
+    workers,
+    requestedModelKey: 'dean',
+    lastDemandByModel: { other: now - 60_000 },
+    now,
+    reassignIdleMs: 30_000,
+  });
+
+  assert.equal(action.type, 'reassign');
+  assert.equal(action.worker.instanceId, 'i-idle');
+});

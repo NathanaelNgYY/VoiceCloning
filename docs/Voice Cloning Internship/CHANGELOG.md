@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-08-31 (browser testing) — selection-time scaling regression found and fixed
+
+- Browser-tested Dev TTS and Staging lectures against the deployed selection-prepare change.
+- Dev TTS passed end to end: switching AlexV1 -> DeanVoice showed the Dev simulation notice while the
+  30-second grace held, then reassigned the fixed GPU and generated audio with DeanVoice.
+- REGRESSION FOUND on Staging. Opening the `gi-bleeding` lecture (voice `cs-nathanael-ng-v1`) drove ASG
+  desired 1 -> 2 and launched `i-0cadcf7b6efb07271`, even though the only GPU was idle holding
+  `deanvoice-v1`. Coordinator logs show `lecture-preflight -> scale` then repeated `scale-pending`.
+- Root cause: the preflight anti-thrash grace (`MODEL_PREFLIGHT_REASSIGN_IDLE_MS`, 30s) removes a
+  recently-demanded worker from the reassignable set. With selection-time scaling enabled, the request
+  then fell straight through to `scale`. The grace was only ever meant to delay a switch, never to
+  justify buying a GPU — an idle worker inside its grace window is still idle capacity.
+- Fix: `prepareCapacity` now compares the strict decision against the same decision with the grace
+  removed. If the grace is the ONLY thing blocking a reassignment (`gracedOnly`), it defers with
+  `WARMING` + "An idle GPU will switch to this voice shortly. No additional GPU is being started."
+  instead of scaling. Deployed to both environments.
+- Also fixed: coordinator error strings said "lecture voice" on every surface, so the Dev TTS page
+  showed "An idle GPU is switching to this lecture voice." They are now domain-neutral.
+- Post-fix canary at desired 2: a resident-voice prepare returned `READY`/none, and an immediate
+  different-voice prepare returned `WARMING`/reassign `started=false` with no scale. Desired held at 2.
+- Tests: Lambda 324/324, coordinator 43/43.
+
+- Open findings, not yet addressed:
+  - Faculty shows a full-screen blocking "Starting the GPU" modal while capacity warms, so a lecturer
+    cannot write or edit instructions during the wait. Decide whether authoring should stay usable.
+  - The lecture badge showed `cs-nathanael-ng` while `client/env/staging/gi.env` still sets
+    `VITE_GI_VOICE_PROFILE_ID=deanvoice-v1`. Confirm which binding is authoritative after a faculty
+    publish; the two disagree.
+  - `voiceCapacity.js` maps `STARTING` to "allow up to 15 minutes" but `WARMING` (a reassignment,
+    roughly a minute) to a separate message. The mapping is correct, but the 15-minute figure is what
+    a user sees whenever a GPU is genuinely bought.
+- Still unverified: Faculty authoring/publishing, Dev GI, ElevenLabs slot bypass, and the real
+  concurrent-synthesis overflow path (`MODEL_QUEUE_FULL`).
+
 ## 2026-08-31 (later) — Voice selection now prepares capacity; two coordinator bugs fixed
 
 - Policy change, agreed with the user: selecting a voice/lecture PREPARES it. `allowScale` is now

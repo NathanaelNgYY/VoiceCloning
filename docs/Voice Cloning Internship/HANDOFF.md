@@ -85,6 +85,10 @@ Last updated: 2026-08-31
 - Guard 2: a worker already promised to a live reassignment is not offered to any other selection.
   Workers stay idle READY until the switch begins, so without this, concurrent selections all target
   the same GPU and thrash it through several models.
+- Guard 3: the 30-second preflight anti-thrash grace may DELAY a switch but never justifies buying a
+  GPU. If the grace is the only thing blocking a reassignment, the selection defers with `WARMING`
+  ("An idle GPU will switch to this voice shortly"). Without this, opening a lecture whose voice was
+  not resident scaled 1->2 while an idle GPU sat available — proven in a browser on 2026-08-31.
 - Model switching/warming reserves a worker for preparation but claims no synthesis slot and does
   not enter the TTS queue.
 - A real synthesis first routes to a ready exact-model free slot. If all exact-model slots are busy,
