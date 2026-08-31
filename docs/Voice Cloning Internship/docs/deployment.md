@@ -106,9 +106,9 @@ branch. The two active branches are deployment pointers to the same reviewed com
 environment files and AWS configuration own the differences. Always verify both remote
 pointers, `scripts/deploy.config.json`, and live AWS before mutation.
 
-Latest live read-back (2026-08-31): both local deployment pointers contain application commit
-`f1b441f`; remote pointers must be checked after the final push. Both main Lambdas and both
-coordinators were redeployed from this tree. `deploy-lambda.ps1` now packages/uploads coordinator
+Latest live read-back (2026-08-31): the Dev and Staging remote deployment pointers were pushed
+together from the same reviewed tree after final verification. Both main Lambdas and both
+coordinators were redeployed from that tree. `deploy-lambda.ps1` now packages/uploads coordinator
 code as well as synchronizing its environment, preventing false-success coordinator rollouts.
 Dev has 30-minute idle stop, schedule off, a
 routing-only coordinator over its two fixed IDs, and
