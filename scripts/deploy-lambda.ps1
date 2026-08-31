@@ -11,6 +11,10 @@ if ($DryRun) { Write-Host "[dry-run] package lambda; ensure $($cfg.lambdaMemoryM
 Push-Location "$repo\lambda"
 npm run package:function-url
 $rc = $LASTEXITCODE
+if ($rc -eq 0 -and $cfg.coordinatorFunction) {
+  npm run package:model-coordinator
+  $rc = $LASTEXITCODE
+}
 Pop-Location
 if ($rc -ne 0) { throw "package failed" }
 # Merge an env file over the function's LIVE configuration instead of replacing
@@ -97,6 +101,16 @@ $coordinatorEnv = Join-Path $repo "lambda\.env.deployment.coordinator.$Env"
 if ($cfg.coordinatorFunction -and (Test-Path $coordinatorEnv)) {
   Sync-LambdaEnvironment -FunctionName $cfg.coordinatorFunction -EnvFile $coordinatorEnv `
     -Region $cfg.region
+
+  aws lambda update-function-code --region $cfg.region `
+    --function-name $cfg.coordinatorFunction `
+    --zip-file "fileb://$repo/lambda/.dist/model-coordinator.zip" `
+    --query '{FunctionName:FunctionName,LastModified:LastModified,CodeSha256:CodeSha256}' `
+    --output json
+  if ($LASTEXITCODE -ne 0) { throw "coordinator update-function-code failed" }
+  aws lambda wait function-updated-v2 --region $cfg.region `
+    --function-name $cfg.coordinatorFunction
+  if ($LASTEXITCODE -ne 0) { throw "waiting for coordinator code update failed" }
 }
 
 if ($cfg.lambdaMemoryMb) {
