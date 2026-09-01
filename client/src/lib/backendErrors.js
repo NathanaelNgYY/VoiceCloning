@@ -74,10 +74,12 @@ export function formatWaitEstimate(seconds) {
 
 // The full "you are waiting, here is how long" line. Returns '' for anything that
 // is not a capacity wait, so callers can use it as the branch itself.
-export function capacityWaitMessage(err) {
+export function capacityWaitMessage(err, { autoRetry = false } = {}) {
   if (!isCapacityWaitError(err)) return '';
   const base = sanitizeBackendError(err?.message) || 'A GPU is switching to this lecture voice.';
   const estimate = formatWaitEstimate(err?.retryAfterSeconds);
-  if (!estimate) return base;
-  return `${base} This usually takes ${estimate} — you can leave this page open and try again then.`;
+  if (!estimate) return autoRetry ? `${base} This page will retry the voice automatically.` : base;
+  return autoRetry
+    ? `${base} This usually takes ${estimate}. Keep this page open; the voice will retry automatically when ready.`
+    : `${base} This usually takes ${estimate} — you can leave this page open and try again then.`;
 }

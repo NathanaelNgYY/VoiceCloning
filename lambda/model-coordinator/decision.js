@@ -155,3 +155,38 @@ export function chooseQueuedMatchingWorker(
       || String(left.instanceId || '').localeCompare(String(right.instanceId || ''))
     ))[0] || null;
 }
+
+// One atomic synthesis admission decision. Callers must serialize this against
+// reservations from other coordinator invocations; keeping the policy pure
+// makes the two active slots and bounded distributed queue directly testable.
+export function chooseSynthesisAdmission({
+  workers = [],
+  requestedModelKey = '',
+  maxQueuedPerWorker = Number.MAX_SAFE_INTEGER,
+  ...capacityInput
+} = {}) {
+  const capacityAction = chooseCapacityAction({
+    ...capacityInput,
+    workers,
+    requestedModelKey,
+  });
+  if (capacityAction.type === 'route') {
+    return { type: 'direct', worker: capacityAction.worker };
+  }
+
+  const matchingWorkers = workers.filter((worker) => (
+    worker.state === 'READY'
+    && worker.reachable !== false
+    && worker.modelKey === requestedModelKey
+  ));
+  if (matchingWorkers.length === 0) return capacityAction;
+
+  const queuedWorker = chooseQueuedMatchingWorker(
+    workers,
+    requestedModelKey,
+    maxQueuedPerWorker,
+  );
+  return queuedWorker
+    ? { type: 'queue', worker: queuedWorker, capacityAction }
+    : { type: 'queue-full', capacityAction };
+}

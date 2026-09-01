@@ -48,25 +48,28 @@ so neither action resets a busy autoscaled fleet. The 19:00 action keeps its his
 Each ready `g6.xlarge` worker advertises two synthesis slots and one resident model pair. For a
 requested lecture voice, the coordinator applies this order:
 
-1. Route to a reachable READY worker with the same immutable GPT+SoVITS pair and a real free slot,
-   defined as `active + queued < maxSlots`. Among matches, pack onto the longest-lived worker first
-   so newer overflow workers can become continuously idle.
-2. If none is free, reassign a different-model worker only when it has zero active and zero queued
-   requests and both its worker activity and resident-model demand have been idle for at least five
-   minutes. Reassignment drains, loads the requested pair, warms references, and performs real TTS
-   before the worker registers READY.
-3. If no worker is safely reassignable, atomically increase ASG desired capacity by one (up to max
-   192) and record the requested model as pending. The new GPU claims the oldest pending model and
-   deep-warms that model on boot. A boot with no pending claim falls back to `deanvoice-v1`.
+1. Serialize the short fleet-admission decision with a scoped DynamoDB lease. Live per-request
+   reservation rows bridge concurrent/stale worker probes and expire if a Lambda dies. Route to a
+   reachable READY worker with the same immutable GPT+SoVITS pair and a real free slot, defined as
+   `active + queued < maxSlots`. Among matches, pack onto the longest-lived worker first so newer
+   overflow workers can become continuously idle.
+2. If every matching slot is occupied, admit the request to the least-loaded matching waiting list,
+   capped by `MODEL_MAX_QUEUED_PER_WORKER=2`, while preparing capacity. Reassign a different-model
+   worker only when it has zero effective active/queued work and is not event-residency protected;
+   otherwise atomically increase ASG desired capacity by one (up to max 192). A live per-model
+   `PENDING` marker prevents one scale-out per queued caller. Requests beyond every queue ceiling
+   receive retryable `MODEL_QUEUE_FULL` instead of being stacked onto one worker.
+3. If no worker has the requested model, reassign a safely idle worker or start one GPU and return
+   `MODEL_CAPACITY_STARTING`; the client retains the answer and retries its speech automatically.
+   The new GPU claims the pending model and deep-warms it on boot. A boot with no pending claim falls
+   back to `deanvoice-v1`.
 
-Lecture-click preflight does not scale merely because one matching slot remains. With a free slot it
-allows conversation and reports tight/background capacity where applicable. With a resident voice
-but no free slot it begins reassignment or scale-out in the background and leaves conversation
-usable. With no resident matching voice it reports WARMING/STARTING, blocks voice conversation, and
-offers the up-to-15-minute/other-lecture message. After an actual synthesis is admitted, the
-coordinator polls the selected worker; only if it is truly full and a fresh fleet read finds no
-matching free slot does it reassign an idle GPU or scale out. Conditional DynamoDB ownership prevents
-duplicate scale/reassignment starts.
+Lecture/voice-selection preflight does not scale merely because one matching slot remains. With a
+free slot it allows conversation and reports tight/background capacity where applicable. With a
+resident voice but no free slot it begins reassignment or scale-out in the background and leaves
+conversation usable. With no resident matching voice it reports WARMING/STARTING, blocks cloned
+speech, and offers the up-to-15-minute/other-lecture message. Actual synthesis—not a page view—owns
+the atomic slot/queue reservation. ElevenLabs stock voices bypass this coordinator entirely.
 
 There is no minimum GPU per voice. The ASG has one global minimum GPU; scheduled actions preserve
 that floor without pinning voice pools. Legacy Target Optimizer occupancy scale-out alarms are

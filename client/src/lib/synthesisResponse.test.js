@@ -42,6 +42,14 @@ test('keeps the fleet-at-limit code distinct from a stopped GPU', () => {
   assert.notEqual(err.message, GPU_OFFLINE);
 });
 
+test('keeps bounded queue responses retryable instead of decoding them as GPU offline', () => {
+  for (const code of ['MODEL_QUEUE_FULL', 'MODEL_QUEUE_TIMEOUT', 'MODEL_ADMISSION_BUSY']) {
+    const err = decode(capacityBody(code), 503);
+    assert.equal(err.code, code);
+    assert.notEqual(err.message, GPU_OFFLINE);
+  }
+});
+
 test('preserves the Dev routing-only capacity simulation message', () => {
   const err = decode(JSON.stringify({
     code: 'DEV_CAPACITY_SIMULATED',

@@ -20,7 +20,7 @@ import {
   applyResidencyLocks,
   chooseCapacityAction,
   choosePreparationAction,
-  chooseQueuedMatchingWorker,
+  chooseSynthesisAdmission,
   fleetIsInMotion,
   matchingFreeSlots,
 } from './decision.js';
@@ -55,6 +55,12 @@ const pendingTtlMs = Math.max(120_000, Number(process.env.MODEL_PENDING_TTL_MS) 
 // to this depth; beyond it the request is retried by the caller instead of
 // queueing without limit behind work that has not started.
 const maxQueuedPerWorker = Math.max(1, Number(process.env.MODEL_MAX_QUEUED_PER_WORKER) || 2);
+const admissionLeaseMs = Math.max(2_000, Number(process.env.MODEL_ADMISSION_LEASE_MS) || 10_000);
+const admissionWaitMs = Math.max(admissionLeaseMs, Number(process.env.MODEL_ADMISSION_WAIT_MS) || 15_000);
+const admissionReservationMs = Math.max(
+  requestTimeoutMs,
+  Number(process.env.MODEL_ADMISSION_RESERVATION_MS) || assignmentTimeoutMs,
+);
 
 const autoscaling = new AutoScalingClient({ region });
 const ec2 = new EC2Client({ region });
@@ -547,6 +553,139 @@ export function pendingWorkerMatchesBoot(pending, worker, modelKey) {
     && Number(worker.active || 0) + Number(worker.queued || 0) < Number(worker.maxSlots || 0);
 }
 
+function liveAdmission(item, now = Date.now()) {
+  return item?.entity === 'ADMISSION'
+    && itemInScope(item)
+    && Number(item.expiresAtMs || 0) > now
+    && Boolean(clean(item.workerId));
+}
+
+// A worker probe and a coordinator reservation describe the same work at
+// different points in time. Use the larger count instead of adding them, or a
+// request becomes double-counted as soon as the worker accepts it.
+export function applyAdmissionReservations(workers = [], items = [], now = Date.now()) {
+  const counts = new Map();
+  for (const item of items.filter((candidate) => liveAdmission(candidate, now))) {
+    const current = counts.get(item.workerId) || {
+      direct: 0, queued: 0, baselineActive: 0, baselineQueued: 0,
+    };
+    if (item.lane === 'queue') current.queued += 1;
+    else current.direct += 1;
+    current.baselineActive = Math.max(current.baselineActive, Number(item.baselineActive || 0));
+    current.baselineQueued = Math.max(current.baselineQueued, Number(item.baselineQueued || 0));
+    counts.set(item.workerId, current);
+  }
+  return workers.map((worker) => {
+    const reserved = counts.get(worker.instanceId) || {
+      direct: 0, queued: 0, baselineActive: 0, baselineQueued: 0,
+    };
+    const probedActive = Number(worker.active || 0);
+    const probedQueued = Number(worker.queued || 0);
+    const active = Math.max(probedActive, reserved.baselineActive + reserved.direct);
+    const queued = Math.max(probedQueued, reserved.baselineQueued + reserved.queued);
+    return {
+      ...worker,
+      active,
+      queued,
+      reservedDirect: reserved.direct,
+      reservedQueued: reserved.queued,
+      untrackedActive: Math.max(0, active - reserved.direct),
+      untrackedQueued: Math.max(0, queued - reserved.queued),
+    };
+  });
+}
+
+export async function acquireAdmissionLease(now = Date.now(), {
+  documentClient = document,
+  coordinatorTable = tableName,
+  waitMs = admissionWaitMs,
+  leaseMs = admissionLeaseMs,
+} = {}) {
+  const id = coordinationKey('ADMISSION_LOCK', 'fleet');
+  const owner = crypto.randomUUID();
+  const deadline = now + waitMs;
+  while (Date.now() <= deadline) {
+    const attemptAt = Date.now();
+    try {
+      await documentClient.send(new PutCommand({
+        TableName: coordinatorTable,
+        Item: {
+          entity: 'ADMISSION_LOCK', id, coordinatorScope, owner,
+          leaseExpiresAt: attemptAt + leaseMs,
+          expiresAt: Math.floor((attemptAt + leaseMs) / 1_000),
+        },
+        ConditionExpression: 'attribute_not_exists(id) OR leaseExpiresAt < :now',
+        ExpressionAttributeValues: { ':now': attemptAt },
+      }));
+      return { id, owner };
+    } catch (error) {
+      if (error.name !== 'ConditionalCheckFailedException') throw error;
+      await delay(25 + Math.floor(Math.random() * 50));
+    }
+  }
+  const error = new Error('GPU admission is briefly busy. Retry automatically.');
+  error.statusCode = 503;
+  error.code = 'MODEL_ADMISSION_BUSY';
+  throw error;
+}
+
+export async function releaseAdmissionLease(lease, {
+  documentClient = document,
+  coordinatorTable = tableName,
+} = {}) {
+  if (!lease?.id || !lease?.owner) return;
+  await documentClient.send(new DeleteCommand({
+    TableName: coordinatorTable,
+    Key: { id: lease.id },
+    ConditionExpression: 'owner = :owner',
+    ExpressionAttributeValues: { ':owner': lease.owner },
+  })).catch((error) => {
+    if (error.name !== 'ConditionalCheckFailedException') throw error;
+  });
+}
+
+async function reserveAdmission(worker, modelKey, lane, now = Date.now()) {
+  const token = crypto.randomUUID();
+  const id = coordinationKey('ADMISSION', token);
+  await document.send(new PutCommand({
+    TableName: tableName,
+    Item: {
+      entity: 'ADMISSION', id, coordinatorScope, token, modelKey,
+      workerId: worker.instanceId, lane, requestedAt: now,
+      baselineActive: Number(worker.untrackedActive || 0),
+      baselineQueued: Number(worker.untrackedQueued || 0),
+      expiresAtMs: now + admissionReservationMs,
+      expiresAt: Math.floor((now + admissionReservationMs) / 1_000),
+    },
+    ConditionExpression: 'attribute_not_exists(id)',
+  }));
+  return { id, token, workerId: worker.instanceId, lane };
+}
+
+async function releaseAdmission(reservation) {
+  if (!reservation?.id) return;
+  await document.send(new DeleteCommand({
+    TableName: tableName,
+    Key: { id: reservation.id },
+  })).catch(() => {});
+}
+
+export async function consumeCompletedBoot(
+  pending,
+  workers,
+  modelKey,
+  { documentClient = document, coordinatorTable = tableName } = {},
+) {
+  if (!pending) return null;
+  const worker = workers.find((candidate) => pendingWorkerMatchesBoot(pending, candidate, modelKey));
+  if (!worker) return null;
+  await documentClient.send(new DeleteCommand({
+    TableName: coordinatorTable,
+    Key: { id: pending.id },
+  }));
+  return worker;
+}
+
 async function claimBootAssignment(instanceId, now = Date.now()) {
   if (!instanceId) return { statusCode: 400, error: 'instanceId is required' };
   const items = await scanState();
@@ -622,6 +761,12 @@ function capacityResponse({
   };
 }
 
+export function capacityStartingMessage({ booting = false } = {}) {
+  return booting
+    ? 'A new GPU is starting and loading this voice. Please wait a moment.'
+    : 'An idle GPU is switching to this voice. Please wait a moment.';
+}
+
 async function prepareCapacity(event) {
   const body = event.body || {};
   const modelKey = modelResidencyKey(body);
@@ -641,9 +786,10 @@ async function prepareCapacity(event) {
   const reassigning = existing.find((item) => (
     item.id === coordinationKey('REASSIGN', modelKey) && liveReassignment(item, now)
   ));
-  const booting = existing.find((item) => (
+  let booting = existing.find((item) => (
     item.id === coordinationKey('PENDING', modelKey) && now - item.requestedAt < pendingTtlMs
   ));
+  if (await consumeCompletedBoot(booting, workers, modelKey)) booting = null;
   if (freeSlots > 0) {
     console.log('[model-coordinator][decision]', JSON.stringify({
       request: 'prepare', source, decision: 'route', allowScale, voiceProfileId: clean(model.voiceProfileId),
@@ -815,57 +961,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function ensureCapacityAfterAdmission(worker, modelKey, body) {
-  let saturated = false;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await delay(200);
-    const current = await probeWorker(worker);
-    if (current.reachable && current.active + current.queued >= current.maxSlots) {
-      saturated = true;
-      break;
-    }
-  }
-  if (!saturated) return null;
-
-  const now = Date.now();
-  const existing = await scanState();
-  const refreshed = await refreshFleet(existing, now);
-  const { group } = refreshed;
-  const workers = lockedFleet(existing, refreshed.workers, now);
-  // A concurrent completion or another matching GPU may already have restored
-  // capacity. Re-check after admission rather than scaling from stale counts.
-  if (matchingFreeSlots(workers, modelKey) > 0) return null;
-  const action = chooseCapacityAction({
-    workers,
-    requestedModelKey: modelKey,
-    lastDemandByModel: demandMap(existing),
-    now,
-    reassignIdleMs,
-    reassigningWorkerIds: promisedWorkerIds(existing, now),
-  });
-  if (action.type === 'reassign') {
-    console.log('[model-coordinator][decision]', JSON.stringify({
-      request: 'post-admission', decision: 'reassign', voiceProfileId: clean(body?.voice_model?.voiceProfileId),
-      modelKey: modelKey.slice(0, 12), workerId: action.worker.instanceId,
-      admittedWorkerId: worker.instanceId, desiredCapacity: group.DesiredCapacity,
-    }));
-    const reassignment = await scheduleReassignment(action.worker, modelKey, body, now);
-    return { type: 'reassign', started: reassignment.started };
-  }
-  console.log('[model-coordinator][decision]', JSON.stringify({
-    request: 'post-admission', decision: 'scale', voiceProfileId: clean(body?.voice_model?.voiceProfileId),
-    modelKey: modelKey.slice(0, 12), admittedWorkerId: worker.instanceId,
-    desiredCapacity: group.DesiredCapacity,
-  }));
-  const scale = await requestScale(group, modelKey, body, now);
-  return {
-    type: scale.simulated ? 'simulate-scale' : 'scale',
-    started: scale.started,
-    atMaximum: scale.atMaximum === true,
-    simulated: scale.simulated === true,
-  };
-}
-
 async function synthesize(event) {
   const body = event.body || {};
   const routePath = clean(event.routePath) || '/inference/tts';
@@ -877,24 +972,19 @@ async function synthesize(event) {
   await recordDemand(modelKey, model.voiceProfileId, now);
   const refreshed = await refreshFleet(existing, now);
   const { group } = refreshed;
-  const workers = lockedFleet(existing, refreshed.workers, now);
-  const matchingWorkerCount = workers.filter((worker) =>
-    worker.reachable && worker.state === 'READY' && worker.modelKey === modelKey).length;
-  const pending = existing.find((item) => (
+  const initiallyLockedWorkers = lockedFleet(existing, refreshed.workers, now);
+  let pending = existing.find((item) => (
     item.id === coordinationKey('PENDING', modelKey) && now - item.requestedAt < pendingTtlMs
-  ));
-  const reassigning = existing.find((item) => (
-    item.id === coordinationKey('REASSIGN', modelKey) && liveReassignment(item, now)
   ));
   let selected;
 
   if (pending) {
-    const bootWarmed = workers.find((worker) => pendingWorkerMatchesBoot(pending, worker, modelKey));
+    const bootWarmed = await consumeCompletedBoot(pending, initiallyLockedWorkers, modelKey);
     if (bootWarmed) {
       selected = bootWarmed;
-      await document.send(new DeleteCommand({ TableName: tableName, Key: { id: pending.id } }));
+      pending = null;
     }
-    const fresh = !selected && workers.find((worker) =>
+    const fresh = !selected && initiallyLockedWorkers.find((worker) =>
       worker.reachable
       && worker.residencyLocked !== true
       && worker.active === 0
@@ -908,138 +998,160 @@ async function synthesize(event) {
     }
   }
 
-  if (!selected) {
-    const action = chooseCapacityAction({
-      workers,
-      requestedModelKey: modelKey,
-      lastDemandByModel: demandMap(existing),
-      now,
-      reassignIdleMs,
-      reassigningWorkerIds: promisedWorkerIds(existing, now),
-    });
-    if (action.type === 'route') selected = action.worker;
-    if (action.type === 'reassign') {
-      console.log('[model-coordinator][decision]', JSON.stringify({
-        request: 'synthesize', decision: 'reassign', voiceProfileId: clean(model.voiceProfileId),
-        modelKey: modelKey.slice(0, 12), workerId: action.worker.instanceId,
-        desiredCapacity: group.DesiredCapacity,
-      }));
-      const scheduled = await scheduleReassignment(action.worker, modelKey, body, now);
-      return {
-        statusCode: 503,
-        code: 'MODEL_CAPACITY_STARTING',
-        error: 'An idle GPU is switching to this voice. Please wait a moment and try again.',
-        retryAfterSeconds: bootEstimateSeconds,
-        scaleStarted: false,
-        reassignmentStarted: scheduled.started,
-        voiceProfileId: clean(model.voiceProfileId),
-        modelKey,
-      };
-    }
-  }
+  let reservation;
+  let lane;
+  let capacityAction = null;
+  let matchingWorkerCount = 0;
+  let reassigning = null;
+  let queueFull = false;
+  let startupResponse = null;
+  const lease = await acquireAdmissionLease();
+  try {
+    // The fleet probes above may all have happened concurrently. Reservations
+    // written by earlier lease holders are the authoritative bridge until those
+    // requests appear in a later worker probe.
+    const currentItems = await scanState();
+    const workers = applyAdmissionReservations(
+      lockedFleet(currentItems, refreshed.workers, Date.now()),
+      currentItems,
+      Date.now(),
+    );
+    pending = currentItems.find((item) => (
+      item.id === coordinationKey('PENDING', modelKey)
+      && Date.now() - Number(item.requestedAt || 0) < pendingTtlMs
+    )) || pending;
+    reassigning = currentItems.find((item) => (
+      item.id === coordinationKey('REASSIGN', modelKey) && liveReassignment(item)
+    ));
+    const matchingWorkers = workers.filter((worker) =>
+      worker.reachable && worker.state === 'READY' && worker.modelKey === modelKey);
+    matchingWorkerCount = matchingWorkers.length;
 
-  // Admit one request onto a matching worker's bounded waiting list and, in
-  // parallel, prepare overflow capacity. Shared by the ordinary overflow path and
-  // by the race path below, where an optimistic route lost the last free slot.
-  const admitQueued = async (queuedWorker) => {
-    console.log('[model-coordinator][decision]', JSON.stringify({
-      request: 'synthesize', decision: 'queue', voiceProfileId: clean(model.voiceProfileId),
-      modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
-      active: queuedWorker.active, queued: queuedWorker.queued, desiredCapacity: group.DesiredCapacity,
-    }));
-    const forward = forwardSynthesis(queuedWorker, routePath, body, event.headers || {}, {
-      allowQueue: true,
-      priority: true,
-    });
-    const capacity = ensureCapacityAfterAdmission(queuedWorker, modelKey, body).catch((error) => {
-      console.error('[model-coordinator][queued-capacity]', error);
-      return null;
-    });
-    try {
-      const [result, capacityAction] = await Promise.all([forward, capacity]);
-      return { ...result, queuedAdmission: true, capacityAction };
-    } catch (error) {
-      if (![429, 503].includes(error.statusCode)) throw error;
-      console.log('[model-coordinator][decision]', JSON.stringify({
-        request: 'synthesize', decision: 'scale-after-queue-timeout', voiceProfileId: clean(model.voiceProfileId),
-        modelKey: modelKey.slice(0, 12), workerId: queuedWorker.instanceId,
-        desiredCapacity: group.DesiredCapacity,
-      }));
-      const scale = await requestScale(group, modelKey, body, now);
-      return {
-        statusCode: 503,
-        code: scale.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_TIMEOUT',
-        error: scale.simulated
-          ? scale.message
-          : 'This voice is heavily loaded. Your queue wait expired while more GPU capacity was preparing.',
-        retryAfterSeconds: scale.simulated ? 5 : 2,
-        scaleStarted: scale.started,
-        simulated: scale.simulated === true,
-        voiceProfileId: clean(model.voiceProfileId),
-        modelKey,
-      };
-    }
-  };
-
-  if (!selected) {
-    const queuedWorker = chooseQueuedMatchingWorker(workers, modelKey, maxQueuedPerWorker);
-    // Every matching GPU is already at its queue ceiling. The first overflow
-    // request has already asked for more capacity, so retry against the growing
-    // fleet instead of buying another GPU per waiting request.
-    if (!queuedWorker && matchingWorkerCount > 0) {
-      const scaling = pending
-        ? {
-          started: false,
-          simulated: routingOnly(),
-          message: 'Dev capacity simulation: every fixed GPU for this voice is busy with a full waiting list. Staging is already preparing another GPU; retry shortly.',
-        }
-        : await requestScale(group, modelKey, body, now);
-      console.log('[model-coordinator][decision]', JSON.stringify({
-        request: 'synthesize', decision: 'queue-full-retry', voiceProfileId: clean(model.voiceProfileId),
-        modelKey: modelKey.slice(0, 12), matchingWorkers: matchingWorkerCount,
-        maxQueuedPerWorker, alreadyScaling: Boolean(pending), desiredCapacity: group.DesiredCapacity,
-      }));
-      return {
-        statusCode: 503,
-        code: scaling.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_FULL',
-        error: scaling.simulated
-          ? scaling.message
-          : 'This voice is busy and its waiting list is full. More GPU capacity is preparing; your request will retry automatically.',
-        retryAfterSeconds: scaling.simulated ? 5 : 5,
-        scaleStarted: scaling.started === true,
-        retryable: true,
-        simulated: scaling.simulated === true,
-        voiceProfileId: clean(model.voiceProfileId),
-        modelKey,
-      };
-    }
-    if (queuedWorker) return admitQueued(queuedWorker);
-  }
-
-  if (selected) {
-    try {
-      console.log('[model-coordinator][decision]', JSON.stringify({
-        request: 'synthesize', decision: 'route', voiceProfileId: clean(model.voiceProfileId),
-        modelKey: modelKey.slice(0, 12), workerId: selected.instanceId,
-        active: selected.active, queued: selected.queued, desiredCapacity: group.DesiredCapacity,
-      }));
-      const forward = forwardSynthesis(selected, routePath, body, event.headers || {});
-      // A merely-full worker is not evidence of unmet demand. Capacity is
-      // prepared only when a request is actually queued/rejected, so two users
-      // can consume the two configured slots without launching overflow GPUs.
-      return await forward;
-    } catch (error) {
-      if (![429, 503].includes(error.statusCode)) throw error;
-      // A live race consumed the final slot. In a real burst every request sees
-      // free slots and routes optimistically, so this is the COMMON path for the
-      // third caller, not a rare one — rejecting it here skipped the waiting list
-      // entirely and returned a ten-minute "preparing" error while the queue sat
-      // empty. Re-probe and take the bounded queue if it has room; only a
-      // genuinely full waiting list falls through to scale.
-      const current = await probeWorker(selected).catch(() => null);
-      if (current?.reachable && Number(current.queued || 0) < maxQueuedPerWorker) {
-        return admitQueued(current);
+    // A freshly booted worker selected before the lease still has to pass the
+    // same atomic capacity check as every ordinary route.
+    if (selected) {
+      selected = workers.find((worker) => worker.instanceId === selected.instanceId);
+      if (selected && selected.active + selected.queued < selected.maxSlots) {
+        lane = 'direct';
+        reservation = await reserveAdmission(selected, modelKey, lane);
+      } else {
+        selected = null;
       }
+    }
+
+    if (!selected) {
+      const action = chooseSynthesisAdmission({
+        workers,
+        requestedModelKey: modelKey,
+        lastDemandByModel: demandMap(currentItems),
+        now: Date.now(),
+        reassignIdleMs,
+        reassigningWorkerIds: promisedWorkerIds(currentItems),
+        maxQueuedPerWorker,
+      });
+      if (action.type === 'direct') {
+        selected = action.worker;
+        lane = 'direct';
+        reservation = await reserveAdmission(selected, modelKey, lane);
+      } else if (action.type === 'queue' || action.type === 'queue-full') {
+        // Existing matching capacity remains usable while an idle/new GPU is
+        // prepared. Queue the caller instead of returning a false hard stop.
+        if (action.type === 'queue') {
+          selected = action.worker;
+          lane = 'queue';
+          reservation = await reserveAdmission(selected, modelKey, lane);
+        } else {
+          queueFull = true;
+        }
+        if (action.capacityAction.type === 'reassign') {
+          const result = await scheduleReassignment(action.capacityAction.worker, modelKey, body, Date.now());
+          capacityAction = { type: 'reassign', started: result.started };
+        } else {
+          const result = pending
+            ? { started: false, simulated: routingOnly() }
+            : await requestScale(group, modelKey, body, Date.now());
+          capacityAction = {
+            type: result.simulated ? 'simulate-scale' : 'scale',
+            started: result.started === true,
+            atMaximum: result.atMaximum === true,
+            simulated: result.simulated === true,
+          };
+        }
+      } else if (action.type === 'reassign') {
+        const scheduled = await scheduleReassignment(action.worker, modelKey, body, Date.now());
+        startupResponse = {
+          statusCode: 503, code: 'MODEL_CAPACITY_STARTING',
+          error: capacityStartingMessage({ booting: Boolean(pending) }),
+          retryAfterSeconds: bootEstimateSeconds, scaleStarted: false,
+          reassignmentStarted: scheduled.started,
+          voiceProfileId: clean(model.voiceProfileId), modelKey,
+        };
+      }
+    }
+  } finally {
+    await releaseAdmissionLease(lease);
+  }
+
+  if (startupResponse) return startupResponse;
+
+  if (queueFull) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'synthesize', decision: 'queue-full-retry', voiceProfileId: clean(model.voiceProfileId),
+      modelKey: modelKey.slice(0, 12), matchingWorkers: matchingWorkerCount,
+      maxQueuedPerWorker, capacityAction, desiredCapacity: group.DesiredCapacity,
+    }));
+    return {
+      statusCode: 503,
+      code: capacityAction?.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_FULL',
+      error: capacityAction?.simulated
+        ? 'Dev capacity simulation: every fixed GPU for this voice is busy with a full waiting list. Staging would prepare another GPU; retry shortly.'
+        : 'This voice is busy and its waiting list is full. More GPU capacity is preparing; your request will retry automatically.',
+      retryAfterSeconds: 5,
+      scaleStarted: capacityAction?.started === true,
+      retryable: true,
+      simulated: capacityAction?.simulated === true,
+      voiceProfileId: clean(model.voiceProfileId), modelKey,
+    };
+  }
+
+  if (selected && reservation) {
+    console.log('[model-coordinator][decision]', JSON.stringify({
+      request: 'synthesize', decision: lane === 'queue' ? 'queue' : 'route',
+      voiceProfileId: clean(model.voiceProfileId), modelKey: modelKey.slice(0, 12),
+      workerId: selected.instanceId, active: selected.active, queued: selected.queued,
+      capacityAction, desiredCapacity: group.DesiredCapacity,
+    }));
+    try {
+      const result = await forwardSynthesis(selected, routePath, body, event.headers || {}, {
+        allowQueue: lane === 'queue',
+        priority: lane === 'queue',
+      });
+      return lane === 'queue'
+        ? { ...result, queuedAdmission: true, capacityAction }
+        : result;
+    } catch (error) {
+      if (![429, 503].includes(error.statusCode)) throw error;
+      if (lane === 'queue') {
+        return {
+          statusCode: 503,
+          code: capacityAction?.simulated ? 'DEV_CAPACITY_SIMULATED' : 'MODEL_QUEUE_TIMEOUT',
+          error: capacityAction?.simulated
+            ? 'Dev routing simulation: this fixed GPU is busy. Staging would retry this request against the growing fleet.'
+            : 'This voice is heavily loaded. Your queue wait expired while more GPU capacity was preparing; this request will retry automatically.',
+          retryAfterSeconds: capacityAction?.simulated ? 5 : 2,
+          scaleStarted: capacityAction?.started === true,
+          retryable: true,
+          simulated: capacityAction?.simulated === true,
+          voiceProfileId: clean(model.voiceProfileId), modelKey,
+        };
+      }
+      if (event.admissionRetry === true) throw error;
+      // A process-local request outside this coordinator can still consume a
+      // slot after our probe. Re-enter the atomic allocator once rather than
+      // bypassing its queue ceiling with the old same-worker fallback.
+      return synthesize({ ...event, admissionRetry: true });
+    } finally {
+      await releaseAdmission(reservation);
     }
   }
 
@@ -1047,7 +1159,7 @@ async function synthesize(event) {
     return {
       statusCode: 503,
       code: 'MODEL_CAPACITY_STARTING',
-      error: 'An idle GPU is switching to this voice. Please wait a moment and try again.',
+      error: capacityStartingMessage({ booting: Boolean(pending) }),
       retryAfterSeconds: bootEstimateSeconds,
       scaleStarted: false,
       reassignmentStarted: false,
@@ -1101,6 +1213,11 @@ export async function handler(event = {}) {
     return { statusCode: 400, error: 'Unknown coordinator action' };
   } catch (error) {
     console.error('[model-coordinator]', error);
-    return { statusCode: Number(error.statusCode) || 500, error: error.message };
+    return {
+      statusCode: Number(error.statusCode) || 500,
+      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.code === 'MODEL_ADMISSION_BUSY' ? { retryAfterSeconds: 1, retryable: true } : {}),
+    };
   }
 }

@@ -6,18 +6,16 @@
   instances.
 
 
-- [ ] Run a signed-in two-user same-model burst plus two different cloned models against the deployed
-  2026-08-31 (later) coordinator. Prove two occupied slots do not scale, a real third queued request
-  prepares exactly one overflow GPU and queues on the least-loaded matching GPU, a fourth past the
-  two-per-GPU ceiling returns retryable `MODEL_QUEUE_FULL` without a second scale, Dev ignores Staging
-  markers, opposing lecture polls do not model-thrash, and desired capacity naturally returns to 1.
-  Deployment and the selection/anti-thrash guards are already proven live; the concurrency side is not.
+- [ ] Deploy and live-verify the local same-model burst fix after refreshing `VCS_AWS_*`. The code now
+  uses a scoped fleet admission lease plus expiring request reservations, distributes waiting work,
+  enforces two queued per worker, and automatically retries queue-full/timeout responses. Rerun the
+  exact six-request/three-GPU case and a larger super-overflow burst; require no idle-capacity scale.
 
-- [ ] Browser-test the new selection behaviour on Dev TTS, Dev GI, Staging lectures, and Staging
-  Faculty. Selecting a voice/lecture should show a preparing/already-preparing notice that clears when
-  the GPU is ready — the old "this voice will load on demand" text is gone. Also confirm an ElevenLabs
-  stock voice takes no slot and never marks a GPU busy, and that Dev's `SIMULATED` message appears
-  once both Dev GPUs are occupied.
+- [ ] Isolate the frontend-specific automatic speech retry beyond the backend retry window. Staging
+  lecture copy and automatic clearing now pass against real reassignment/scale-out, and one answer
+  became playable without reprompt; Faculty Alice also played during cloned-GPU contention. Still
+  force a long enough capacity failure to observe the 15-second client retry itself, and verify the
+  same on Faculty with a cloned voice. Dev TTS/GI `SIMULATED` browser coverage remains pending.
 
 - [ ] Revoke or refresh the temporary AWS session credentials exposed in the debugging conversation,
   then replace the user-level `VCS_AWS_*` values. Never record the replacement values in the vault,
@@ -30,7 +28,8 @@
 - [ ] Finish authenticated faculty publishing proof with at least two real lecture categories and
   two trained profiles. One-category storage/runtime proof now passes: staging and Dev both expose
   `gi-bleeding -> deanvoice-v1`, mirrored artifacts match, and both GPUs synthesize the exact pair.
-  Still prove lecturer ownership in-browser, category isolation, and standard-voice GPU bypass.
+  Still prove lecturer ownership in-browser and category isolation. Standard-voice GPU bypass passed
+  live with Faculty Alice during cloned-worker saturation.
 - [ ] Add per-model burst planning on top of the implemented lecture binding. Use
   confirmed conversations, admitted/queued work, and expiring reservations to calculate
   each model's slot deficit and batch-launch the required two-slot GPUs with headroom,

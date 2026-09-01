@@ -15,10 +15,9 @@ import { connectInferenceSSE } from '../services/sse.js';
 import {
   capacityWaitMessage,
   isCapacityWaitError,
-  isRetryableSynthesisError,
   sanitizeBackendError,
-  synthesisRetryDelayMs,
 } from '../lib/backendErrors.js';
+import { runSynthesisWithRetry } from '../lib/synthesisRetry.js';
 import {
   VIDEO_POSITION_SYNC_INTERVAL_MS,
   shouldSendVideoPosition,
@@ -81,8 +80,6 @@ const KEEPALIVE_INTERVAL_MS = 15000;
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-const SYNTHESIS_ATTEMPTS = 3;
 
 function getRms(samples) {
   if (!samples.length) return 0;
@@ -544,25 +541,18 @@ export function useLiveSpeech({
   // any clip abandons every clip after it, so the student gets a silent answer
   // from a GPU that was merely still warming up.
   async function withSynthesisRetry(run) {
-    let lastError;
-    for (let attempt = 0; attempt < SYNTHESIS_ATTEMPTS; attempt += 1) {
-      try {
-        return await run();
-      } catch (err) {
-        lastError = err;
-        // A stopped conversation has no reply left to salvage — re-issuing the
-        // clip would only spend GPU time on audio nobody will hear.
-        if (
-          isCancelledRef.current
-          || !isRetryableSynthesisError(err)
-          || attempt === SYNTHESIS_ATTEMPTS - 1
-        ) {
-          throw err;
-        }
-        await wait(synthesisRetryDelayMs(err, attempt));
-      }
-    }
-    throw lastError;
+    const result = await runSynthesisWithRetry(run, {
+      isCancelled: () => isCancelledRef.current,
+      wait,
+      onCapacityWait: (err) => {
+        setError(capacityWaitMessage(err, { autoRetry: true }), 'waiting');
+      },
+    });
+    // A wait banner can belong to an earlier sentence/request. Any successful
+    // synthesis is stronger, newer evidence that this voice has usable
+    // capacity, so never leave that stale status visible while audio plays.
+    setErrorState((current) => current?.tone === 'waiting' ? null : current);
+    return result;
   }
 
   // A capacity wait and a real failure reach the UI by the same four paths; only

@@ -18,6 +18,9 @@ export const CAPACITY_CODES = new Set([
   'MODEL_CAPACITY_STARTING',
   'MODEL_CAPACITY_LIMIT',
   'DEV_CAPACITY_SIMULATED',
+  'MODEL_QUEUE_FULL',
+  'MODEL_QUEUE_TIMEOUT',
+  'MODEL_ADMISSION_BUSY',
 ]);
 
 // A GPU-down request typically comes back as a 502/503/504 from the reverse proxy

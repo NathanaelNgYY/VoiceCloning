@@ -14,3 +14,16 @@ test('live chat cannot remain in preparing state indefinitely', () => {
   assert.match(source, /Live chat setup timed out before the AI session became ready/u);
   assert.match(source, /case 'session\.ready':[\s\S]*?clearTimeout\(sessionReadyTimerRef\.current\)/u);
 });
+
+test('live voice synthesis keeps the answer and retries capacity automatically', () => {
+  assert.match(source, /runSynthesisWithRetry\(run/u);
+  assert.match(source, /capacityWaitMessage\(err, \{ autoRetry: true \}\)/u);
+  assert.match(source, /isCancelled: \(\) => isCancelledRef\.current/u);
+});
+
+test('successful synthesis clears an older capacity-wait banner', () => {
+  assert.match(
+    source,
+    /runSynthesisWithRetry\(run,[\s\S]*?setErrorState\(\(current\) => current\?\.tone === 'waiting' \? null : current\)/u,
+  );
+});

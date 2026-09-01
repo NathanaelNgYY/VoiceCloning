@@ -1,5 +1,68 @@
 # Changelog
 
+## 2026-09-01 — Atomic distributed GPU admission (local; deployment blocked)
+
+- Replaced stale-snapshot synthesis selection with a short, scope-wide DynamoDB admission lease and
+  expiring per-request occupancy rows. The lease covers only selection/reservation, not synthesis;
+  worker refresh cannot overwrite reservations, and out-of-order completion releases capacity.
+- Matching direct work packs oldest-first. Saturated matching work queues least-loaded with a hard
+  two-per-worker ceiling while exactly one reassignment/scale claim prepares capacity. Super-overflow
+  returns retryable `MODEL_QUEUE_FULL` instead of stacking deeper or buying one GPU per caller.
+- Preserved queue-full, queue-timeout and admission-contention codes through the client 503 decoder;
+  Live Fast retains the answer, retries the same speech request using the server hint, and clears the
+  wait banner on success. ElevenLabs remains outside cloned-GPU admission.
+- Added tests for 2/2/2 six-request packing, distributed overflow, queue ceiling, idle-GPU overflow
+  reassignment, stale-probe bridging, out-of-order release, lease ownership and automatic retries.
+  Coordinator 54/54 and the last full Lambda/client/worker/gateway suites plus three builds pass.
+- No AMI change is needed because worker code did not change. AWS role assumption failed with
+  `ExpiredToken` from user-level `VCS_AWS_*`; nothing was deployed or live-tested in this change.
+- The fix is committed and both local Dev/Staging branch pointers are identical. Remote push failed
+  because this shell could not obtain GitHub credentials; remote branches remain unchanged.
+
+## 2026-09-01 — Targeted live capacity verification
+
+- Signed-in lecture cold-state UI tracked the real action: idle Dean -> Nathanael showed reassignment
+  copy at desired 1; a later occupied-worker burst showed scale-out copy, then available-with-extra-
+  capacity-starting copy, and finally cleared the banner automatically when the claimed worker loaded
+  `cs-nathanael-ng-v1`. One submitted answer became playable without a user reprompt. The exact
+  frontend retry branch was not separated from the backend's shorter retry window.
+- Six simultaneous Dean requests against three matching READY GPUs exposed a regression: five RIFFs
+  all used the oldest worker (queue wait max 6.2s), one returned `MODEL_CAPACITY_STARTING`, desired
+  changed 4 -> 5 despite two idle matching GPUs, and the row briefly reported queued 3 above the live
+  configured ceiling 2. A later five-request one-GPU run returned one `MODEL_QUEUE_TIMEOUT`.
+- Concurrent Dean and Nathanael requests passed on separate existing workers with HTTP 200 RIFF,
+  zero queue wait, and no extra scale. Live Full generate/cancel returned a real session, routed one
+  slot, returned `cancelled: true`, and all worker active/queued counters returned to zero.
+- Faculty Alice returned and played the approved answer while cloned Nathanael load still had queue
+  waits up to 23.1s. This is live evidence that ElevenLabs synthesis bypasses cloned-GPU contention.
+- Idle scale-in passed 5 -> 4 -> 3 -> 2 -> 1. `NewestInstance` terminated `i-0cf3...`, `i-003...`,
+  `i-076...`, then `i-064...`, leaving the oldest baseline `i-091...`.
+- Code files changed: none. Project-memory files only. No broad unit/build suite was rerun.
+
+## 2026-09-01 — Capacity waits track readiness and the actual fleet action
+
+- Staging evidence separated a real cold start from stale UI state: the second ASG instance was
+  `InService` before its selected voice was loaded, then later reported coordinator `READY`. Duplicate
+  prepare polls correctly held desired capacity at two instead of scaling again.
+- Fixed the remaining coordinator bug: `prepareCapacity` now consumes a `PENDING` boot marker only
+  when the claimed/new worker is `READY`, matches the requested model, and has a free slot. Synthesis
+  uses the same strict helper, so an older matching worker cannot incorrectly clear a new boot.
+- Faculty Live Fast now keeps the generated assistant response and retries only its speech synthesis
+  every 15 seconds for up to 20 minutes on `MODEL_CAPACITY_STARTING`. Ending/interruption cancels the
+  wait; hard capacity limits and Dev simulation responses are not retried. The warning explicitly
+  says retry is automatic, so the user does not need to repeat the question.
+- A later live load test exposed a second presentation bug. Logs showed a real earlier reassignment,
+  then scale-out from desired 2 -> 4; the lecture kept the old "idle GPU is switching" banner while
+  successful audio played. Successful synthesis now clears any older capacity-wait banner. When both
+  a pending scale-out and reassignment exist, the coordinator reports the stronger fleet-wide fact:
+  "A new GPU is starting and loading this voice," not only the local switch.
+- Deployed the staging coordinator plus Faculty and lecture bundles. Public lecture readback points
+  at `assets/index-B4FJGUtb.js`; CloudFront invalidation completed. Coordinator SHA is
+  `BO74OU/yOBFA8Wlk8emNO605aLFRrF3uFHopqFnqja8=`.
+- Verified: coordinator 46/46 and Lambda 327/327; client targeted 32/32 and full 497/497; GI and
+  Faculty production builds pass. A controlled authenticated browser turn through a fresh cold
+  switch after the latest deployment remains unexercised.
+
 ## 2026-08-31 (concurrency testing) — burst requests skipped the queue entirely
 
 - Ran three simultaneous same-voice synthesis requests against staging. Before the fix: two returned

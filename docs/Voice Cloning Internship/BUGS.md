@@ -1,5 +1,18 @@
 # Bugs
 
+- Fixed locally, not deployed (found live 2026-09-01): same-model burst admission was not atomic across
+  ready matching GPUs. With three READY `deanvoice-v1` workers (two slots each), six simultaneous
+  coordinator requests produced five RIFFs all on the oldest worker, with queue waits up to 6.2s;
+  one request returned `MODEL_CAPACITY_STARTING` and desired capacity changed 4 -> 5 while two
+  matching GPUs were idle. The worker row briefly reached active 2 / queued 3 even though live
+  `MODEL_MAX_QUEUED_PER_WORKER=2`. A later one-GPU five-request run produced one
+  `MODEL_QUEUE_TIMEOUT`. Root cause: concurrent coordinator Lambdas selected from the same stale
+  worker snapshot with no shared admission reservation. The local correction serializes the short
+  fleet decision with a scoped DynamoDB lease, records expiring per-request occupancy, distributes
+  bounded queues, and preserves queue-full/timeout codes for automatic client retry. Coordinator
+  54/54, Lambda 335/335, client 499/499, worker 259/259, gateway 180/180, and three client builds
+  pass. AWS deployment/live proof is blocked by an expired user-level `VCS_AWS_*` session.
+
 - Open: something outside the repo stops freshly-launched staging ASG instances, and the group
   rebuilds them. On 2026-08-31 `i-06377cac29eaadff0` was taken out of service at 09:37:41Z with cause
   "EC2 health check indicating it has been terminated or stopped"; its replacement
@@ -19,10 +32,16 @@
   lecturer cannot write or edit instructions during the wait. The lecture surface correctly uses the
   non-blocking `BUSY_STARTING` notice instead.
 
-- Open: a `PENDING` boot marker is not cleared when the GPU it requested arrives and loads the model,
-  so `prepareCapacity` keeps returning `BUSY_STARTING` ("another GPU is starting") for up to the
-  10-minute TTL after the voice is genuinely ready. `synthesize` does delete the marker on a matching
-  boot; `prepareCapacity` does not.
+- Fixed and deployed 2026-09-01: `prepareCapacity` did not clear a `PENDING` boot marker after its
+  claimed/new GPU became ready, leaving the lecture warning until TTL expiry. Capacity polling and
+  synthesis now share the same strict completion check and delete only after that worker is `READY`,
+  matches the model, and has a free slot. Faculty also retries the pending speech automatically.
+  A second stale-banner path is also fixed: successful speech clears older wait copy, and a live
+  pending boot is now reported as a new GPU starting rather than only an idle GPU switching.
+  Unit/build/public-bundle and live-log evidence pass. A controlled signed-in browser turn now
+  confirms reassignment and scale-out copy change with real AWS state, plus automatic banner clearing
+  when the requested worker becomes ready. One prompt produced playable speech without a reprompt;
+  the frontend retry branch itself was not isolated from the backend's shorter retry window.
 
 - Open: the staging lecture badge showed `cs-nathanael-ng` while `client/env/staging/gi.env` still
   pins `VITE_GI_VOICE_PROFILE_ID=deanvoice-v1`. Confirm which binding wins after a faculty publish.

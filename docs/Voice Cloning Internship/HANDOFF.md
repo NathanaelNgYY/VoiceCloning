@@ -1,6 +1,6 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 ## Current State
 
@@ -13,18 +13,8 @@ Last updated: 2026-08-31
 - Staging owns the inference ASG and is the sole authoring surface via Faculty. Publishing mirrors
   only the selected cloned-voice snapshot and category to Dev; training, analytics and transcripts
   stay isolated.
-- ElevenLabs stock voices bypass the cloned-voice coordinator entirely: selecting one must take no
-  slot and must not evict the resident cloned voice. Asserted by design, not yet exercised.
-
-## 2026-08-31 Autoscaling Incident (resolved)
-
-- One person's model selections drove desired 1->2->3->4: selection preflight could scale and could
-  not see a switch already in progress for a different model. Guards 1-3 below close it. The first
-  fix banned selection-time scaling entirely and is SUPERSEDED as over-broad — it disabled real
-  preparation, and its "load on demand" notice was the confusing frontend message.
-- The 02:09 UTC replacement launches were NOT load scaling: instances were explicitly stopped and
-  replaced. That churn is still unattributed — see BUGS.md.
-- Full narrative and evidence: CHANGELOG, 2026-08-31 entries.
+- ElevenLabs stock voices bypass the cloned-voice coordinator. A signed-in Faculty Alice response
+  played while cloned Nathanael requests still had 23.1s queue waits and one timeout.
 
 ## Verification Status (read this first)
 
@@ -40,24 +30,39 @@ PROVEN LIVE, 2026-08-31:
 - Natural scale-in 2 -> 1 on the 15-minute no-traffic alarm; Dev routing-only simulation message,
   then a real reassign and a real WAV on the fixed GPU.
 
-IMPLEMENTED BUT NEVER EXERCISED — do not call these working:
+PROVEN LIVE/DEPLOYED, 2026-09-01:
 
-- Distributed queueing across 3+ GPUs. The fleet has only ever been 1-2 GPUs. Least-loaded choice is
-  correct by inspection — but so was the race path that proved broken.
-- The 2-queued-per-GPU ceiling, `MODEL_QUEUE_FULL` retry, large-burst redistribution; Live Full as
-  one slot (only Live Fast exercised); interrupted mid-inference requests.
-- ElevenLabs taking no slot. The busy marker is confirmed real by inspection, but no stock-voice
-  request has been run.
-- Faculty publishing and its Dev/Staging mirroring.
-- Scale-in preferring the newest/idlest GPU; only a 2 -> 1 has been seen, which cannot distinguish it.
+- A real lecture request saturated the resident voice, scaled desired capacity 1 -> 2 exactly once,
+  and the new worker later reached `READY`; repeated prepare polls did not scale again.
+- The coordinator clears completed boots and distinguishes pending scale-out from reassignment copy.
+  Faculty and lectures retry only the generated reply's speech every 15 seconds for at most 20 minutes;
+  success clears stale wait banners. A signed-in browser turn confirmed the copy tracks reassignment
+  versus scale-out and clears automatically at READY; one answer became playable without reprompt,
+  although the frontend retry was not isolated from the backend's shorter retry window.
+- Concurrent Dean/Nathanael RIFFs routed separately with zero queue wait; Live Full cancellation
+  cleared its slot, and scale-in reduced 5 -> 1 newest-first, leaving the oldest baseline worker.
+
+FAILED LIVE ON THE CURRENT DEPLOYMENT — do not call it fixed yet:
+- Distributed queueing/ceiling under a simultaneous burst. Six requests with three matching READY
+  GPUs stacked five onto the oldest worker, briefly exceeded the configured queue ceiling, returned
+  one capacity-starting response, and unnecessarily scaled 4 -> 5 while two matching GPUs were idle.
+
+FIXED LOCALLY, NOT DEPLOYED:
+- A scoped DynamoDB lease plus expiring request rows serializes fleet selection. Tests pack six
+  requests 2/2/2, spread queues across workers, stop at depth two, and automatically retry preserved
+  queue/lease codes. Both local branches share one commit; AWS deployment/live proof is blocked by
+  expired `VCS_AWS_*`, and remote push is blocked by unavailable GitHub authentication.
+- Still not isolated end to end: frontend 15-second retry and Faculty Dev/Staging publish mirroring.
 
 CONTRADICTION: the lecture badge showed `cs-nathanael-ng` while `client/env/staging/gi.env` pins
 `deanvoice-v1`. Settle which wins after a faculty publish.
 
 ## Deployment State
 
-- Deployed 2026-08-31: both main Lambdas, both coordinators, Dev/Staging TTS/Faculty and GI bundles.
-- Tests at head: Lambda 324/324, coordinator 43/43, client 491/491. `lambda/model-coordinator` needs
+- Deployed 2026-09-01: staging coordinator, Faculty and lecture bundles for truthful completed-boot,
+  scale/reassignment, automatic-retry and stale-banner behavior. Prior changes are in CHANGELOG.
+- Local tests: Lambda 335/335, coordinator 54/54, client 499/499, inference worker 259/259 and
+  gateway 180/180; default/Live Fast/GI builds pass. `lambda/model-coordinator` needs
   its own `npm install`, or the Lambda suite fails on a missing `@aws-sdk/client-lambda`.
 - No worker/AMI change needed: the worker's `SYNTHESIS_MAX_QUEUE_DEPTH` is 100, so the coordinator
   ceiling binds. Image `ami-07236b80dcdb93bcb`, launch-template v40.
@@ -83,8 +88,8 @@ CONTRADICTION: the lecture badge showed `cs-nathanael-ng` while `client/env/stag
   explicit event prewarm.
 - Queueing IS distributed: least-loaded matching worker, bounded by `MODEL_MAX_QUEUED_PER_WORKER` (2).
   Past the ceiling, retryable 503 `MODEL_QUEUE_FULL`, scaling only if no boot is already pending.
-- A request losing the slot race falls back to that worker's waiting list when it has room — the
-  COMMON path for the third caller in a burst, which previously skipped the queue entirely.
+- A short fleet-wide lease plus request reservations prevents independent Lambdas from selecting the
+  same stale snapshot. The lease is released before synthesis; only occupancy remains reserved.
 - No GPU has the model: reassign an idle GPU and return retry, or scale if none is safely
   reassignable; the HTTP request is never held through a cold start.
 - Routing packs older matching capacity so newer overflow GPUs go idle and scale in. Not round-robin.
@@ -101,19 +106,14 @@ CONTRADICTION: the lecture badge showed `cs-nathanael-ng` while `client/env/stag
 
 ## Next Session
 
-1. Distributed queueing at scale. Take Staging to 3-4 GPUs on one voice, fire ~10-15 concurrent
-   requests, prove waiting lists spread rather than stack, the 2-per-GPU ceiling holds, overflow
-   returns retryable `MODEL_QUEUE_FULL` without one scale per request, and capacity returns to
-   baseline. Largest untested area; costs real GPU time, so agree the spend first.
-2. Live Full and interruption: confirm one Full request takes one slot, and decide what should happen
-   when a user interrupts mid-inference — that behaviour is unknown, not merely unverified.
-3. ElevenLabs bypass: run a stock-voice request; confirm no slot, no busy marker, no eviction.
-4. Faculty publishing: start the Dev GPU, publish two profiles across two lecture categories, confirm
+1. Refresh user-level `VCS_AWS_*`, deploy both coordinators/main Lambdas and affected clients from one
+   commit, then repeat the six-request three-GPU and super-overflow tests with no idle-capacity scale.
+2. Isolate the deployed frontend retry path with a synthesis failure lasting beyond the backend retry
+   window; require one answer bubble, automatic speech, and no stale banner or second prompt.
+3. Faculty publishing: start the Dev GPU, publish two profiles across two lecture categories, confirm
    Dev and Staging resolve the same pair, then settle the `gi.env` vs lecture-badge contradiction.
-5. Dev GI lecture surface — never opened in a browser; its GPU is stopped and must be started.
-6. Ask an administrator for `cloudtrail:LookupEvents` to finish the ASG churn trace, and to clear the
-   orphaned snapshot and stopped canaries in TODO.md.
+4. Open Dev GI after starting its GPU; ask an administrator for CloudTrail attribution and orphan cleanup.
 
 Also open (BUGS.md): the Faculty full-screen "Starting the GPU" modal blocks authoring while capacity
-warms, and a `PENDING` marker is not cleared when its GPU arrives, so "another GPU is starting"
-persists for the 10-minute TTL after the voice is ready.
+warms. The stale completed-boot marker and Faculty manual-retry problem were fixed and deployed on
+2026-09-01.

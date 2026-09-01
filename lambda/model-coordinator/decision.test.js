@@ -5,6 +5,7 @@ import {
   chooseCapacityAction,
   choosePreparationAction,
   chooseQueuedMatchingWorker,
+  chooseSynthesisAdmission,
   fleetIsInMotion,
   matchingFreeSlots,
 } from './decision.js';
@@ -264,6 +265,86 @@ test('a worker below the ceiling still accepts overflow while another is full', 
   ], 'dean', 2);
 
   assert.equal(selected.instanceId, 'i-room');
+});
+
+test('six atomic admissions fill three matching GPUs two slots at a time', () => {
+  const fleet = [
+    worker({ instanceId: 'i-old', firstSeenAt: now - 900_000 }),
+    worker({ instanceId: 'i-middle', firstSeenAt: now - 600_000 }),
+    worker({ instanceId: 'i-new', firstSeenAt: now - 300_000 }),
+  ];
+  const assigned = [];
+  for (let request = 0; request < 6; request += 1) {
+    const admission = chooseSynthesisAdmission({
+      workers: fleet,
+      requestedModelKey: 'dean',
+      maxQueuedPerWorker: 2,
+      now,
+    });
+    assert.equal(admission.type, 'direct');
+    assigned.push(admission.worker.instanceId);
+    const target = fleet.find((item) => item.instanceId === admission.worker.instanceId);
+    target.active += 1;
+  }
+  assert.deepEqual(assigned, ['i-old', 'i-old', 'i-middle', 'i-middle', 'i-new', 'i-new']);
+});
+
+test('three overflow admissions spread across four saturated matching GPUs', () => {
+  const fleet = ['i-a', 'i-b', 'i-c', 'i-d'].map((instanceId) =>
+    worker({ instanceId, active: 2 }));
+  const assigned = [];
+  for (let request = 0; request < 3; request += 1) {
+    const admission = chooseSynthesisAdmission({
+      workers: fleet,
+      requestedModelKey: 'dean',
+      maxQueuedPerWorker: 2,
+      now,
+    });
+    assert.equal(admission.type, 'queue');
+    assigned.push(admission.worker.instanceId);
+    fleet.find((item) => item.instanceId === admission.worker.instanceId).queued += 1;
+  }
+  assert.deepEqual(assigned, ['i-a', 'i-b', 'i-c']);
+});
+
+test('super-overflow stops at two queued requests per matching GPU', () => {
+  const fleet = ['i-a', 'i-b', 'i-c', 'i-d'].map((instanceId) =>
+    worker({ instanceId, active: 2 }));
+  const admissions = [];
+  for (let request = 0; request < 9; request += 1) {
+    const admission = chooseSynthesisAdmission({
+      workers: fleet,
+      requestedModelKey: 'dean',
+      maxQueuedPerWorker: 2,
+      now,
+    });
+    admissions.push(admission.type);
+    if (admission.type === 'queue') {
+      fleet.find((item) => item.instanceId === admission.worker.instanceId).queued += 1;
+    }
+  }
+  assert.deepEqual(admissions, [
+    'queue', 'queue', 'queue', 'queue',
+    'queue', 'queue', 'queue', 'queue',
+    'queue-full',
+  ]);
+  assert.deepEqual(fleet.map((item) => item.queued), [2, 2, 2, 2]);
+});
+
+test('same-model overflow queues while an idle different-model GPU is reassigned', () => {
+  const admission = chooseSynthesisAdmission({
+    workers: [
+      worker({ instanceId: 'i-dean', active: 2 }),
+      worker({ instanceId: 'i-idle', modelKey: 'alex', active: 0 }),
+    ],
+    requestedModelKey: 'dean',
+    maxQueuedPerWorker: 2,
+    now,
+  });
+  assert.equal(admission.type, 'queue');
+  assert.equal(admission.worker.instanceId, 'i-dean');
+  assert.equal(admission.capacityAction.type, 'reassign');
+  assert.equal(admission.capacityAction.worker.instanceId, 'i-idle');
 });
 
 test('a live reassignment for another model still counts as fleet motion', () => {

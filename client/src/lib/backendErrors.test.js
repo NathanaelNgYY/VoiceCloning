@@ -149,6 +149,14 @@ test('tracks a re-configured estimate without a client change', () => {
   assert.match(capacityWaitMessage(capacityErr(600)), /about 10 minutes/);
 });
 
+test('explains when the page will retry voice synthesis automatically', () => {
+  const message = capacityWaitMessage(capacityErr(600), { autoRetry: true });
+
+  assert.match(message, /about 10 minutes/);
+  assert.match(message, /retry automatically when ready/);
+  assert.doesNotMatch(message, /try again then/);
+});
+
 test('drops the timing clause when the backend sends no estimate', () => {
   const message = capacityWaitMessage(capacityErr(0));
 
