@@ -2,19 +2,26 @@
 
 ## Current Shape
 
-### Autoscaling decision boundary (2026-08-31)
+### Autoscaling decision boundary (2026-09-01)
 
-- Local regression correction is not deployed yet. Live evidence at 08:15:26Z/08:15:27Z showed
-  successful direct admissions triggering two speculative `post-admission -> scale` decisions and
-  desired 1->2->3. Deploy only the two coordinator functions after review; no client/worker/AMI change
-  is required for this patch. Then prove two occupied slots do not scale and a real third queued or
-  rejected request starts exactly one overflow worker.
-- TTS and Faculty dropdown selection resolves/pins metadata only and must not call coordinator
-  preparation. Lecture page preflight calls coordinator prepare with scaling disabled; it may
-  route/reassign existing idle capacity but cannot call `UpdateAutoScalingGroup`.
-- Real initial synthesis may route, queue, reassign, or scale. Explicit event prewarm may separately
-  opt into scale. Search coordinator logs for `[model-coordinator][decision]` to attribute the source
-  and exact decision before interpreting an instance-count change.
+- Atomic fleet admission is implemented locally at commit `7b297dc` but is not deployed. The
+  previous live failure was real rather than a display-only defect: six simultaneous requests chose
+  one stale oldest-worker snapshot, queue depth exceeded two, one request failed, and desired capacity
+  increased 4->5 while two matching GPUs were idle.
+- The coordinator now serializes only the short scheduling decision with a scoped DynamoDB lease and
+  records expiring per-request reservations. Synthesis and model loading remain outside the lease.
+  Matching free slots pack oldest-first to two active requests per GPU; overflow uses the least-loaded
+  matching queue with at most two waiting requests per GPU. Excess demand returns retryable
+  `MODEL_QUEUE_FULL` instead of exceeding the bound.
+- Selection on TTS and Faculty and lecture selection/opening may prepare the chosen cloned voice.
+  Preparation first routes to matching capacity, then reassigns an eligible idle GPU, and scales only
+  when neither exists. Real synthesis follows the same reuse-first order and may queue behind a loaded
+  matching voice while one model-scoped scale claim prepares overflow.
+- Client retries preserve preparation, full-queue, timeout, and admission-contention codes. A pending
+  answer retries its own speech after the server hint; successful audio clears stale capacity notices.
+  ElevenLabs synthesis bypasses cloned-voice GPU admission and does not consume a slot.
+- Search coordinator logs for `[model-coordinator][decision]` to attribute the exact route, queue,
+  reassignment, retry, or scale decision before interpreting an instance-count change.
 - Event mode writes a coordinator residency lock for the default event voice and configured minimum.
   Protected minimum workers are unavailable to other-model reassignment; overflow workers remain
   reusable. A scheduled scale-down supplies the lock expiry; disabling event mode removes the lock.
@@ -27,6 +34,50 @@
   interpret legacy unscoped markers as live state. `MODEL_PREFLIGHT_REASSIGN_IDLE_MS=30000` protects
   an idle prepared lecture voice from opposing 15-second polls; real synthesis keeps immediate idle
   reassignment through `MODEL_REASSIGN_IDLE_MS=0`.
+
+### Atomic admission release and acceptance (commit `7b297dc`)
+
+This release changes Lambda/coordinator scheduling and all three affected client surfaces. It does not
+change `gpu-inference-worker`, so do not patch workers, create an AMI, or promote a launch-template
+version for this release.
+
+1. Start from a clean tree. Refresh the user-level temporary credentials, map them into process-only
+   `AWS_*` variables, assume the authorised role, and verify `aws sts get-caller-identity` reports the
+   intended account. Confirm both local environment branches contain `7b297dc`; push them before cloud
+   deployment so source control matches the release.
+2. Re-run the focused baseline if the commit changes: `npm.cmd test` in `lambda/`, `npm.cmd test` in
+   `client/`, `node --test "src/**/*.test.js"` in both `gpu-inference-worker/` and `gpu-worker/`, and
+   the default, `live-fast`, and `gi` client builds. Package both Lambda archives and inspect the
+   coordinator ZIP for the admission implementation.
+3. From `separate-containers-new`, run
+   `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy-lambda.ps1 -Env dev`, wait for
+   both function updates to succeed, then deploy `-Env dev -Mode live-fast` and
+   `-Env dev -Mode chatbot` with `deploy-client.ps1`.
+4. Switch to `codex/staging-multi-user-scaling` and confirm it resolves to the same reviewed commit.
+   Run `deploy-lambda.ps1 -Env staging`, wait for both function updates to succeed, then use
+   `deploy-client.ps1` for Staging modes `live-fast`, `chatbot`, and `chatbot-text`. Wait for every
+   CloudFront invalidation and read back each public `index.html` plus its current hashed bundle.
+5. Dev is routing-only: verify selection prepares a fixed idle GPU, two overlapping requests use its
+   two slots, queue/preparation responses auto-retry without a second prompt, and no ASG mutation is
+   attempted. Start the second fixed GPU manually only when the scenario requires it.
+6. In Staging, establish three ready workers with the same test voice and issue six simultaneous
+   requests. Require six successful responses, a 2/2/2 direct-admission distribution in oldest-first
+   order, no queue depth above two, and no desired-capacity increase.
+7. With four matching workers' direct slots occupied, issue three more requests. Require their waiting
+   reservations to spread across the least-loaded workers rather than stack on the oldest worker. Fill
+   all bounded queues and confirm further requests receive retryable `MODEL_QUEUE_FULL`, then succeed
+   automatically when capacity becomes available.
+8. Exercise the two scaling boundaries separately. With matching workers full and an eligible idle
+   different-model GPU present, require queue admission plus idle reassignment and no scale-out. With no
+   matching or reusable idle GPU, require exactly one model-scoped scale claim, a truthful preparation
+   notice, automatic retry after the new worker becomes ready, and removal of the stale notice on audio.
+9. Confirm an ElevenLabs request creates no cloned-voice admission reservation or worker occupancy.
+   During event mode, confirm protected minimum GPUs cannot switch; after traffic and event protection
+   end, verify the newest continuously idle overflow worker is selected for scale-in.
+10. Restore the normal Staging schedule and minimum/desired values after temporary capacity testing,
+    wait for replacement/scale-in activity to settle, and run one final signed-in TTS, lecture, and
+    Faculty synthesis. Record request IDs, coordinator decisions, worker assignment, queue depth, and
+    desired-capacity history for the acceptance evidence; do not infer correctness from frontend text.
 
 The repo docs describe a split cloud deployment:
 
