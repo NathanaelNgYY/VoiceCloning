@@ -12,7 +12,14 @@ then the coordinator routes by the exact GPT+SoVITS weight pair rather than disp
 
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
 **Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
-**Last control-plane inventory:** 2026-08-25 · **Last public-path check:** 2026-08-25
+**Last control-plane inventory:** 2026-09-05 · **Last public-path check:** 2026-08-25
+
+**Operational shutdown (2026-09-05):** Prof. Sung lecture GPU capacity is intentionally off.
+The fixed staging and Dev GPUs are stopped; staging ASG `vcs-staging-gpu-inference` is
+min/desired 0 with no members. Both daily ASG actions preserve min/desired 0, the staging
+coordinator is routing-only, and both GPU-control Lambdas use an always-closed `0` to `0`
+schedule so browser traffic cannot restart a fixed GPU. Restore the prior schedule,
+coordinator mode, and ASG floor deliberately before the next lecture.
 
 > **Keep this file up to date.** Any change to staging infra (console, CLI, or script) must be reflected here in the same PR/commit. Every ID below was read from AWS on the date above — an AI session can diff this file against `aws describe-*` output to detect drift.
 >
@@ -31,17 +38,15 @@ Browser
         │ /api/* (control)     → Lambda Function URL (start/stop GPU, model list, presign…)
         │ GPU paths (below)    → ALB voice-gpu-alb-staging → GPU instance ports 3001-3003
         ▼
-   GPU instance i-0f0da8be59367f7a8 (g6.xlarge, PRIVATE subnet, no public IP)
+   GPU instance i-0f0da8be59367f7a8 (g6.xlarge, STOPPED, PRIVATE subnet, no public IP)
         │ outbound internet via NAT nat-0dadc68ca781b8df9
         └─ S3 via gateway endpoint vpce-0386d983dfdff41dc
 ```
 
-The fixed GPU is running and its live Lambda schedule was verified as enabled with
-start 0, end 24, timezone Singapore. The inference ASG matches
-that availability with a continuous minimum floor of 1. Its retained recurring 07:00
-and 19:00 Singapore actions set min 1 and max 192 but leave desired capacity unset,
-so neither action resets a busy autoscaled fleet. The 19:00 action keeps its historical
-`daily-stop` name but no longer scales the ASG to zero or one.
+The fixed GPU and inference fleet are intentionally shut down as recorded above. The
+historical baseline was one fixed GPU plus an ASG min/desired floor of 1; do not restore
+that baseline without also restoring the fixed-controller schedule and coordinator
+autoscale mode.
 
 ### Model-aware lecture capacity (current staging rule)
 
@@ -786,10 +791,9 @@ The implemented staging design keeps the public hostnames and separates roles:
    `vcs-staging-gpu-inference`
    (`lt-07728350a25e691a4`, default version 29) uses this AMI, `g6.xlarge`,
    `VoiClo_GPU`, and the staging GPU security group.
-   ASG `vcs-staging-gpu-inference` has a continuous min/desired floor of 1;
+   ASG `vcs-staging-gpu-inference` is intentionally min/desired 0 with no members;
    `AWSServiceRoleForAutoScaling` also exists. Retained recurring 07:00 and 19:00
-   actions both set min 1 and max 192 while leaving desired capacity unset, matching
-   the fixed GPU's 24-hour availability without resetting autoscaled capacity.
+   actions both preserve min/desired 0 and max 192 during the lecture shutdown.
 4. `scripts/provision-staging-autoscaling.ps1` creates/updates the launch template,
    ASG, target tracking, listener switch, and scheduled actions. Prewarm is configured
    by `VCS_STAGING_PREWARM_AT`, `VCS_STAGING_PREWARM_CAPACITY`,
