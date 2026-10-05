@@ -1,5 +1,14 @@
 # Active TODO
 
+- [ ] Live MC (staging): run a real human microphone session in Chrome/Edge in both turn-based and
+  continuous modes (headphones for continuous). Only scripted text/PCM turns have been verified.
+
+- [ ] Reconcile `origin/codex/staging-multi-user-scaling` (2 commits not on local branches) with
+  `separate-containers-new` before re-syncing Dev/Staging pointers; it was not force-pushed.
+
+- [ ] Decide when to shut staging GPU capacity down again after Live MC testing (runs 24/7 now;
+  reverse steps in docs/deployment.md).
+
 - [ ] Ask an administrator for `cloudtrail:LookupEvents` (or a CloudTrail Lake query) to attribute the
   staging ASG instance stops recorded in BUGS.md. Until then the churn cannot be traced: the Lambda
   scheduler/idle-stop touches only the fixed `i-0f0da8be59367f7a8`, and no repo script stops ASG
