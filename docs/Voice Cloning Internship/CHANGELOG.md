@@ -1882,3 +1882,33 @@
 - Tests run: client config 27/27; Lambda instance/coordinator 28/28; coordinator 11/11;
   inference worker 258/258; live AWS Lambda/ASG/target-health checks; two real Dev TTS calls.
 - Not tested: authenticated faculty Publish from the browser and a full multi-user scale-out event.
+
+# 2026-09-05
+
+- Shut down Prof. Sung lecture GPU capacity in AWS account `329599637774`: stopped the fixed
+  Staging GPU (Dev was already stopped), set the Staging ASG to min/desired 0, and neutralized both
+  recurring ASG actions at zero. The sole account Fargate services were already desired/running 0.
+- Prevented automatic restart by giving both fixed-GPU controllers an always-closed schedule and
+  switching the Staging model coordinator from autoscale to routing-only.
+- Updated `docs/staging-architecture.md` and `scripts/deploy.config.json`; live verification checked
+  EC2 state, ASG capacity/membership/actions, Lambda control settings, and all-region ECS inventory.
+
+# 2026-10-05
+
+- Added a staging Live MC site: `client/src/pages/McSessionPage.jsx`, `client/src/lib/mcSession.js`
+  (MC system prompt + status copy), build mode `mc` (lazy-loaded from `main.jsx`, kiosk in
+  `appMode.js`), `client/env/staging/mc.env`, new CloudFront `E2F49Q71ZUM0G0` /
+  `d32nzk2gacfhag.cloudfront.net` in `deploy.config.json` and `deploy-client.ps1`.
+- Uses the shared Live Fast pipeline (OpenAI realtime + `deanvoice-v1`, phrases mode) with the
+  same server-resolved Dean settings as the pinned chatbot. Collapsible system instructions,
+  reference-style avatar placeholder tile with mic/waveform/end-call pill, and a fullscreen stage
+  (edge-to-edge tile + chat-bubble transcript); falls back to a window-filling overlay when native
+  fullscreen is refused or hangs.
+- `useLiveSpeech`/`liveConversation`: new `listeningMode` (`turns` gates mic input and barge-in
+  while the AI replies; `continuous` is unchanged default) and a fix for mic streams left running
+  when a session ends while mic permission is pending.
+- Staging restored (see deployment.md): `scripts/configure-staging-mc.mjs` (CORS/auth origin,
+  S3 OAC policy for `dist-mc`, schedule 00-24, autoscale, ASG daily min 1).
+- Tests: client `node --test` 503/503; live `scripts/test-staging-mc.mjs` PASS (text turn + PCM
+  speech turn -> OpenAI -> DeanVoice WAV, context kept, admin API not routed); Chrome checks of
+  normal/fullscreen/fallback layouts. Not tested: a real human microphone session in the browser.

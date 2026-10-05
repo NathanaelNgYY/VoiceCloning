@@ -21,7 +21,7 @@
   - Owns the GPU start/status button.
 - `src/pages/TrainingPage.jsx`
   - Upload training audio, start/stop training, read training state.
-- `src/pages/LivePage.jsx`
+- `src/pages/LivePage.jsx`; `src/pages/McSessionPage.jsx` (+ `src/lib/mcSession.js`) — staging-only Live MC page, build mode `mc`
   - Live chatbot UI, model selection, trained reference selection, cloned voice playback, Text to Speech tab, pronunciation admin panel.
 - `src/pages/SupervisorDashboardPage.jsx` — dev `/admin` graph ranking and learner evidence; S3 index/evidence replays: `scripts/backfill-analytics-user-index.mjs`, `scripts/backfill-learner-evidence.mjs`.
 - `src/hooks/useSSE.js` — Nine-step training SSE including speaker verification.

@@ -139,10 +139,14 @@ always read and live-verify it before AWS work.
   score. Use two distinct authenticated learners to validate cohort ranking; repeated actions
   by one learner still count as one learner for that concept.
 
-| Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) |
-|---|---|---|---|---|
-| staging | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | d3k2rz0hqm8nxi.cloudfront.net |
-| dev | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | none |
+| Environment | Training | TTS | GI bleeding chatbot | Dean chatbot (not video GI) | Live MC |
+|---|---|---|---|---|---|
+| staging | d1qh0ebsvevhy3.cloudfront.net | dfzrfr93t2ruf.cloudfront.net | d25sg72wp8oj5g.cloudfront.net | d3k2rz0hqm8nxi.cloudfront.net | d32nzk2gacfhag.cloudfront.net |
+| dev | d3dghqhnk7aoku.cloudfront.net | doovx82fh9tfs.cloudfront.net | d2o0cbe2zunqkr.cloudfront.net | none | none |
+
+Live MC (`deploy-client.ps1 -Env staging -Mode mc`, S3 `echolect-staging/dist-mc`) routes only
+`/api/live/chat/realtime` (ALB), `/api/live/tts-sentence` and `/api/live/cancel` (Lambda URL);
+no admin, auth or capacity APIs. Smoke test: `node scripts/test-staging-mc.mjs <24kHz mono wav>`.
 
 Staging uses the `echolect-staging/` application prefix and the `-staging` Lambda;
 dev uses `echolect/` and the Lambda without a suffix. `d3fwx6qxeaxfmo.cloudfront.net`
@@ -379,15 +383,21 @@ reference, five auxiliary references, throwaway synthesis, and the real TTS rout
 prepared once by each ASG instance before Target Optimizer starts. This avoids a
 redundant student-entry warm-up burst.
 
-## Staging ASG State (2026-08-21)
+## Staging ASG State (verified 2026-10-05)
+
+- Restored for the Live MC page: fixed staging `i-0f0da8be59367f7a8` running, ASG
+  `vcs-staging-gpu-inference` min 1/max 192 with both daily actions keeping min 1, staging
+  Lambda `GPU_SCHEDULE_START_HOUR=0`/`END_HOUR=24`, coordinator `autoscale`
+  (`scripts/configure-staging-mc.mjs --apply`). Dev `i-03f258d470a2fa73f` remains stopped.
+  To shut down again, reverse all of these together.
 
 - Current image `ami-0fdeab564c09be219` contains inference latency fix `331586a`; launch
   template `lt-07728350a25e691a4` version 30 is latest/default and the ASG follows `$Default`.
   It uses `g6.xlarge`, `VoiClo_GPU`, and the staging GPU security group. Verify a fresh v30
   boot on the next natural scale-out.
-- ASG `vcs-staging-gpu-inference` is min 1/max 192/desired 1. The healthy baseline
-  instance is selected by the ASG; describe it live instead of relying on a saved
-  instance ID. Min 1 keeps a warm baseline in `subnet-0c1937ef298f54500`.
+- ASG `vcs-staging-gpu-inference` is currently min 0/max 192/desired 0 with no instance.
+  Its normal operating baseline before the shutdown was one warm GPU in
+  `subnet-0c1937ef298f54500`.
 - Listener rule 3 routes inference/model/reference traffic to Target Optimizer group
   `vcs-stg-opt-3103`.
 - Live scale-out is model-aware in the coordinator: route to an existing matching free slot;

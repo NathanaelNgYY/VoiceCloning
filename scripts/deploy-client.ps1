@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory)][ValidateSet('dev','staging')] [string]$Env,
-  [Parameter(Mandatory)][ValidateSet('training','live-fast','chatbot','chatbot-text')] [string]$Mode,
+  [Parameter(Mandatory)][ValidateSet('training','live-fast','chatbot','chatbot-text','mc')] [string]$Mode,
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
@@ -25,6 +25,7 @@ $envDst = "$repo\client\.env.$buildMode.local"
 $dist = "$repo\client\dist-$buildMode"
 $target = $cfg.clientTargets.$Mode
 $distro = $cfg.distributions.$Mode
+if (-not $target -or -not $distro) { throw "No $Mode deployment target is configured for $Env" }
 
 # kiosk modes must be built from the chatbot branch's client tree
 if ($Mode -eq 'chatbot' -or $Mode -eq 'chatbot-text') {

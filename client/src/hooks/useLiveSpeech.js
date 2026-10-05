@@ -149,6 +149,7 @@ export function useLiveSpeech({
   voiceProfileId = '',
   voiceModel = null,
   systemPrompt = '',
+  listeningMode = 'continuous',
   fastMaxChunkWords = 0,
   fastMaxSentencesPerChunk = 1,
   getVideoPosition = null,
@@ -235,6 +236,11 @@ export function useLiveSpeech({
   const voiceProfileIdRef = useRef(voiceProfileId);
   const voiceModelRef = useRef(voiceModel);
   const systemPromptRef = useRef(systemPrompt);
+  const listeningModeRef = useRef(listeningMode);
+  useEffect(() => {
+    listeningModeRef.current = listeningMode;
+    syncOpenAiInputWithMic();
+  }, [listeningMode]);
   const getVideoPositionRef = useRef(getVideoPosition);
   const fastMaxChunkWordsRef = useRef(fastMaxChunkWords);
   const fastMaxSentencesPerChunkRef = useRef(fastMaxSentencesPerChunk);
@@ -275,6 +281,11 @@ export function useLiveSpeech({
   function setPhase(phase) {
     phaseRef.current = phase;
     setPhaseState(phase);
+    if (listeningModeRef.current === 'turns') {
+      gatePrerollRef.current = [];
+      voiceGateRef.current = createVoiceGateState();
+      syncOpenAiInputWithMic(phase);
+    }
   }
 
   function setSelectedReplyId(id) {
@@ -530,7 +541,7 @@ export function useLiveSpeech({
   }
 
   function syncOpenAiInputWithMic(nextPhase = phaseRef.current) {
-    if (micInputEnabledRef.current && isLiveInputPhase(nextPhase)) {
+    if (shouldSendLiveMicAudio({ phase: nextPhase, micInputEnabled: micInputEnabledRef.current, listeningMode: listeningModeRef.current })) {
       resumeOpenAiInput();
       return;
     }
@@ -1242,6 +1253,7 @@ export function useLiveSpeech({
 
       let sentForBargeIn = false;
       if (shouldTriggerLiveBargeIn({
+        listeningMode: listeningModeRef.current,
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current || bargeInArmedRef.current,
         rms: smoothedLevel,
@@ -1268,6 +1280,7 @@ export function useLiveSpeech({
       }
 
       if (shouldSendLiveMicAudio({
+        listeningMode: listeningModeRef.current,
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current,
       }) && !sentForBargeIn) {
@@ -1317,8 +1330,13 @@ export function useLiveSpeech({
       return;
     }
 
+    const micRunId = runIdRef.current;
     try {
       const stream = await requestMicStream();
+      if (micRunId !== runIdRef.current || isCancelledRef.current || streamRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
       startMicCapture(stream);
       syncOpenAiInputWithMic();
@@ -1327,6 +1345,7 @@ export function useLiveSpeech({
       }
       showNotice('Mic on.');
     } catch (err) {
+      if (micRunId !== runIdRef.current || isCancelledRef.current) return;
       setError(err.message === 'This browser does not support live microphone recording.'
         ? err.message
         : 'Microphone access denied. Please allow microphone access and try again.');
@@ -1739,6 +1758,7 @@ export function useLiveSpeech({
       try {
         stream = await requestMicStream();
       } catch (err) {
+        if (runId !== runIdRef.current || isCancelledRef.current) return false;
         conversationSynthesisRef.current = null;
         setPhase('idle');
         setError(err.message === 'This browser does not support live microphone recording.'
@@ -1748,6 +1768,10 @@ export function useLiveSpeech({
       }
 
       try {
+        if (runId !== runIdRef.current || isCancelledRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return false;
+        }
         streamRef.current = stream;
         startMicCapture(stream);
       } catch (err) {

@@ -184,8 +184,9 @@ export function isLiveInputPhase(phase) {
   return phase === 'listening' || phase === 'thinking';
 }
 
-export function shouldSendLiveMicAudio({ phase, micInputEnabled }) {
-  return Boolean(micInputEnabled) && isLiveInputPhase(phase);
+export function shouldSendLiveMicAudio({ phase, micInputEnabled, listeningMode = 'continuous' }) {
+  return Boolean(micInputEnabled) && (phase === 'listening'
+    || (listeningMode !== 'turns' && phase === 'thinking'));
 }
 
 export function shouldTriggerLiveBargeIn({
@@ -193,8 +194,9 @@ export function shouldTriggerLiveBargeIn({
   micInputEnabled,
   rms,
   threshold = 0.04,
+  listeningMode = 'continuous',
 }) {
-  return phase === 'speaking' && Boolean(micInputEnabled) && Number(rms) >= threshold;
+  return listeningMode !== 'turns' && phase === 'speaking' && Boolean(micInputEnabled) && Number(rms) >= threshold;
 }
 
 export function getMicOffAction({ phase, hasPendingAudio, hasVoiceEvidence = true }) {

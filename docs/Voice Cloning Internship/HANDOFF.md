@@ -1,18 +1,18 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-09-01
+Last updated: 2026-10-05
 
 ## Current State
 
 - One application tree. Dev `separate-containers-new` and Staging `codex/staging-multi-user-scaling`
   must point at the same commit; runtime config owns the deliberate differences (Staging hides
   advanced settings, Dev does not autoscale, Dev has no Faculty).
-- Dev has two fixed inference GPUs: the original is activity-managed with a 30-minute idle stop, the
-  comparison GPU is manual-only. The Dev coordinator routes, reassigns and queues exactly like
-  Staging but only simulates scale decisions as log/UI messages.
-- Staging owns the inference ASG and is the sole authoring surface via Faculty. Publishing mirrors
-  only the selected cloned-voice snapshot and category to Dev; training, analytics and transcripts
-  stay isolated.
+- 2026-10-05: Staging GPU capacity restored for the Live MC page (`https://d32nzk2gacfhag.cloudfront.net`,
+  CloudFront `E2F49Q71ZUM0G0`): fixed gateway running, ASG min 1 (daily actions keep 1), fixed
+  GPU schedule 00-24, coordinator autoscale. Runs 24/7 (cost); Dev stays stopped. Live MC changes
+  are uncommitted on `separate-containers-new`.
+- Staging remains the sole authoring surface via Faculty. Publishing mirrors only the selected
+  cloned-voice snapshot and category to Dev; training, analytics and transcripts stay isolated.
 - ElevenLabs stock voices bypass the cloned-voice coordinator. A signed-in Faculty Alice response
   played while cloned Nathanael requests still had 23.1s queue waits and one timeout.
 

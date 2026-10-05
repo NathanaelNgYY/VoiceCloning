@@ -1,4 +1,4 @@
-const APP_MODES = new Set(['combined', 'training', 'live-fast', 'chatbot', 'gi']);
+const APP_MODES = new Set(['combined', 'training', 'live-fast', 'chatbot', 'gi', 'mc']);
 
 const LIVE_DEMO_LOCKOUT_EXEMPT_HOSTS = new Set([
   'd3k2rz0hqm8nxi.cloudfront.net',
@@ -22,7 +22,7 @@ export function normalizeAppMode(value) {
 export function getAppModeConfig(value) {
   const mode = normalizeAppMode(value);
   const gi = mode === 'gi';
-  const kiosk = mode === 'chatbot' || gi;
+  const kiosk = mode === 'chatbot' || gi || mode === 'mc';
   const showTraining = mode === 'combined' || mode === 'training';
   const showLiveFast = mode === 'combined' || mode === 'live-fast' || mode === 'chatbot';
   const showTextToSpeech = mode === 'combined' || mode === 'live-fast';
