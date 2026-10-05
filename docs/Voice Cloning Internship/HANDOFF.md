@@ -9,8 +9,8 @@ Last updated: 2026-10-05
   advanced settings, Dev does not autoscale, Dev has no Faculty).
 - 2026-10-05: Staging GPU capacity restored for the Live MC page (`https://d32nzk2gacfhag.cloudfront.net`,
   CloudFront `E2F49Q71ZUM0G0`): fixed gateway running, ASG min 1 (daily actions keep 1), fixed
-  GPU schedule 00-24, coordinator autoscale. Runs 24/7 (cost); Dev stays stopped. Live MC changes
-  are uncommitted on `separate-containers-new`.
+  GPU schedule 00-24, coordinator autoscale. Runs 24/7 (cost); Dev stays stopped. Live MC is committed and
+  pushed on `separate-containers-new`; the remote staging branch has diverged (not fast-forwarded).
 - Staging remains the sole authoring surface via Faculty. Publishing mirrors only the selected
   cloned-voice snapshot and category to Dev; training, analytics and transcripts stay isolated.
 - ElevenLabs stock voices bypass the cloned-voice coordinator. A signed-in Faculty Alice response
