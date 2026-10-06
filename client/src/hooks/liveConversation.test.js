@@ -32,6 +32,8 @@ import {
   createVoiceGateState,
   nextVoiceGateState,
   resolveSpeakingContinuation,
+  buildReconnectSystemPrompt,
+  liveReconnectDelayMs,
 } from './liveConversation.js';
 
 test('fixSpeechPronunciation rejoins the dragged GI initialism for speech', () => {
@@ -909,4 +911,43 @@ test('hasPendingReplyWork ignores voice-stopped background generation', () => {
   assert.equal(hasPendingReplyWork(messages), false);
   const foreground = [makeReply('reply-2', { parts: [{ status: 'generating' }] })];
   assert.equal(hasPendingReplyWork(foreground), true);
+});
+
+test('buildReconnectSystemPrompt carries recent turns so a resumed session keeps context', () => {
+  const prompt = buildReconnectSystemPrompt('Be the MC.', [
+    { role: 'user', text: 'What is tonight?' },
+    { role: 'assistant', text: 'The NTU Innovation Evening.' },
+    { role: 'assistant', text: '   ' },
+  ]);
+  assert.match(prompt, /^Be the MC\./);
+  assert.match(prompt, /Host: What is tonight\?\nYou: The NTU Innovation Evening\.$/);
+  assert.match(prompt, /do not greet again/);
+});
+
+test('buildReconnectSystemPrompt keeps the plain prompt with no transcript and bounds long ones', () => {
+  assert.equal(buildReconnectSystemPrompt('Be the MC.', []), 'Be the MC.');
+  const long = Array.from({ length: 40 }, (_, i) => ({ role: 'user', text: `turn ${i} ${'x'.repeat(500)}` }));
+  const prompt = buildReconnectSystemPrompt('Be the MC.', long);
+  assert.ok(prompt.length < 4400);
+  assert.match(prompt, /turn 39/);
+  assert.doesNotMatch(prompt, /turn 20 /);
+});
+
+test('liveReconnectDelayMs backs off 1s, 2s, 4s, then caps at 8s', () => {
+  assert.deepEqual([1, 2, 3, 4, 9].map(liveReconnectDelayMs), [1000, 2000, 4000, 8000, 8000]);
+});
+
+test('shouldSendLiveMicAudio full duplex keeps a pausing speaker heard and lets continuous mode hear barge-ins', () => {
+  const on = { micInputEnabled: true, fullDuplex: true };
+  assert.equal(shouldSendLiveMicAudio({ ...on, phase: 'speaking', listeningMode: 'turns' }), false);
+  assert.equal(shouldSendLiveMicAudio({ ...on, phase: 'speaking', listeningMode: 'continuous' }), true);
+  assert.equal(shouldSendLiveMicAudio({ ...on, phase: 'speaking', listeningMode: 'continuous', micInputEnabled: false }), false);
+  assert.equal(shouldSendLiveMicAudio({ phase: 'thinking', listeningMode: 'turns', micInputEnabled: true }), false, 'non-duplex turns unchanged');
+});
+
+test('turn-based stays half duplex even with full duplex on, so nothing can cancel a reply', () => {
+  const base = { micInputEnabled: true, fullDuplex: true, listeningMode: 'turns' };
+  assert.equal(shouldSendLiveMicAudio({ ...base, phase: 'listening' }), true);
+  assert.equal(shouldSendLiveMicAudio({ ...base, phase: 'thinking' }), false);
+  assert.equal(shouldSendLiveMicAudio({ ...base, phase: 'speaking' }), false);
 });

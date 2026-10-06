@@ -1912,3 +1912,78 @@
 - Tests: client `node --test` 503/503; live `scripts/test-staging-mc.mjs` PASS (text turn + PCM
   speech turn -> OpenAI -> DeanVoice WAV, context kept, admin API not routed); Chrome checks of
   normal/fullscreen/fallback layouts. Not tested: a real human microphone session in the browser.
+
+# 2026-10-06
+
+- Live MC turn detection: the client noise gate stopped sending audio ~1.5s after speech, so
+  OpenAI `semantic_vad` never heard the trailing silence it needs and turns hung on "Listening...".
+  `useLiveSpeech.js` now sends ~4s of digital-zero frames after the gate closes
+  (`VOICE_GATE_SILENCE_TAIL_FRAMES`). Shared hook: other live clients get it on their next deploy.
+- Live MC reconnect: opt-in `autoReconnect` in `useLiveSpeech` (enabled in `McSessionPage.jsx`).
+  A dropped socket after the first `session.ready` reopens with backoff (1/2/4/8s, 10 attempts),
+  re-sends the system prompt plus the recent transcript (`buildReconnectSystemPrompt` in
+  `liveConversation.js`), and keeps a playing reply. MC status shows "Connection dropped · reconnecting".
+- Added `scripts/soak-staging-mc.mjs` (long-held public MC socket with periodic turns).
+- Deployed staging `mc` client twice. Tests: client `node --test` 507/507; live
+  `test-staging-mc.mjs` PASS; Chrome fake-mic runs: trailing-off utterance -> turn end 0.8s after
+  speech, reply text 1.5s; forced socket close -> reopened and ready in <3s with context kept.
+  Not tested: a real human microphone; drops caused by OpenAI's session time limit (soak running).
+- Live MC voice capture (later 2026-10-06): the client noise gate (RMS 0.02) dropped normal
+  phone-distance speech entirely (fake mic at RMS 0.0156 never produced `speech.started`). New
+  `useLiveSpeech` option `noiseGate: false` (MC only) streams all mic audio to OpenAI's VAD.
+- Turn ending: `session.init` may carry `turnEagerness` (low/medium/high/auto) for semantic_vad;
+  gateway `openaiRealtimeEvents.js`/`openaiRealtimeBridge.js`/`routes/liveChat.js`, client
+  `liveChatHandshake.js`/`liveChatSocket.js`; MC sends `high`. Other clients unchanged (auto).
+- Deployed: staging gateway files via SSM to `i-0f0da8be59367f7a8` (ap-northeast-2, pm2
+  `live-gateway`, backups `*.bak-20261006101344`), then `pm2 restart`; staging `mc` client.
+- Tests: gateway 182/182, client 507/507, `test-staging-mc.mjs` PASS after restart. Chrome fake mic
+  (voice RMS 0.014 + noise 0.005): old build never heard it; ungated heard it but ended the turn
+  4.4s after speech; with `high` 2.5s (reply text 2.8s). Soak stopped at ~40 min (6/6 turns <1.1s)
+  for the gateway restart; the 60-minute OpenAI session cap is still unsoaked.
+- Live MC capture/turn-taking overhaul (later 2026-10-06; inference untouched):
+  - Gateway `session.init` accepts validated `turnDetection` (server/semantic VAD, clamped), `noiseReduction`
+    and `transcriptionPrompt`. `scripts/vad-bench-mc.mjs` streams real-time speech with 0.5/0.7/1.1s
+    mid-sentence pauses: semantic VAD median 1.4-1.6s but tail 3-5s; server VAD 700ms ended turns in
+    1.29-1.37s every time and rode out 0.5-0.7s pauses. MC uses server VAD 0.5/700ms/500ms prefix, far field.
+  - Capture: `client/src/lib/micCapture.js` (AudioWorklet off the main thread, ScriptProcessor fallback) and
+    `micResampler.js` (windowed-sinc anti-aliasing; the old box average aliased at 44.1 kHz). 40ms frames
+    when ungated, 85ms when gated (gate timings unchanged for other pages).
+  - `useLiveSpeech` `fullDuplex` (MC): mic streams until the reply is audible in both modes, so a speaker
+    who pauses and continues cancels the half-ready reply; continuous mode streams while the AI speaks and
+    barge-in comes from OpenAI's VAD (`user.speech.started`), not an RMS threshold. Reply-start input pauses
+    now defer to the phase rule. Mute mid-sentence commits on OpenAI speech evidence (quiet voices).
+  - MC UI: statuses Listening / Hearing you / Got it · replying / speaking · mic paused (or talk to
+    interrupt) / Muted · tap the mic to talk; typing dots replace placeholder bubbles.
+- Staging gateway box: systemd `voice-live-gateway` and pm2 both supervised the gateway and raced for
+  :3002 (19,666 systemd restarts; every restart was a race). pm2 app deleted and `dump.pm2` saved empty
+  (backup `dump.pm2.bak-20261006`); systemd is the only supervisor.
+- Tests: gateway 183/183, client 517/517. Chrome fake-mic on staging (worklet path confirmed): pause then
+  continue -> early reply dropped unvoiced, full thought answered, turn end 1.08s; mute mid-sentence ->
+  commit in 10ms, exact partial transcript; continuous barge-in -> reply stopped, interruption answered.
+  Not tested: a real human mic, speaker echo in continuous mode (browser AEC), Safari/iOS, Firefox.
+- Live MC follow-up (user report: turn-based replies were being cut off, transcripts fragmented):
+  - Turn-based is strictly half duplex again: mic closes when a turn ends, replies always finish; only
+    continuous mode cancels/interrupts. Turn-based pause 900ms (continuous 700ms); mode locked per session.
+  - MC transcript (`mcTranscriptEntries`): replies cancelled before any audio was heard are hidden; consecutive
+    user fragments merge into one bubble. Level meter is flat whenever the mic is not being sent.
+  - "Voice capture settings" panel (saved per browser, applied at session start): noise filter Off
+    (no browser NS, no OpenAI noise reduction) / Standard (both, far field) / Strong (+ VAD threshold 0.65);
+    pause Short/Normal/Long. Hook option `micConstraints`.
+  - Gateway `transcriptionContext`: after each reply the transcriber prompt is refreshed with the last
+    exchange (~600 chars) via a full session.update.
+  - Tests: client 519/519, gateway 185/185, build OK. Bench (quiet voice + noise, 900ms): Standard 1.60s,
+    Strong 1.49s, Off 1.44s turn end, no misses, Off accepted by OpenAI.
+  - NOT DEPLOYED: AWS session credentials expired before the gateway/client deploy.
+- Live MC follow-up, deployed (supersedes the "NOT DEPLOYED" entry above):
+  - Reverted per user: no user-bubble merging; interrupted AI replies stay visible, tagged "Interrupted".
+  - Transcriber benchmark (quiet voice + noise): gpt-4o-transcribe 5.6% WER (kept); gpt-4o-mini 12.9%;
+    gpt-transcribe 194% with a 7.4s stall; a conversation-context prompt leaked earlier turns into
+    transcripts (e.g. "Yes." -> a paragraph), so the context feature was removed. Gateway keeps a
+    whitelisted per-session `transcriptionModel` option for future tests.
+  - Background-talker bench: false turns 6 (threshold 0.5) / 4 (0.65) / 2 (0.8); no noise reduction never
+    ended a turn; a soft speaker was still caught at 0.8. Sliders: noise Off/Low/Medium(0.65, default)/
+    High(0.72)/Max(0.8); pause 0.4-1.5s, default 0.7s (reply starts ~pause + 0.6s). Mode/slider changes
+    mid-session show "applies to the next session"; the running session keeps its start settings.
+  - Fixed a race where End then immediate Start reused the previous session's capture settings.
+  - Tests: client 519/519, gateway 184/184; Chrome on staging verified slider values reach getUserMedia and
+    session.init (Max/1.0s and Off/0.5s), OpenAI accepts noise reduction off, mid-session notice shows.

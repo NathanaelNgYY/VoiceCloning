@@ -19,6 +19,7 @@ function withLanguageParam(path, language) {
 export function createLiveChatSocket({
   language = 'en',
   systemPrompt = '',
+  sessionOptions = null,
   getAuthToken = null,
   onOpen,
   onMessage,
@@ -43,7 +44,7 @@ export function createLiveChatSocket({
     // of session.auth.
     void (async () => {
       try {
-        await sequencer.run({ getAuthToken, systemPrompt });
+        await sequencer.run({ getAuthToken, systemPrompt, sessionOptions });
       } catch (err) {
         onError?.(new Error(`Live chat sign-in failed: ${err.message}`));
         socket.close(1000, 'Authentication unavailable');

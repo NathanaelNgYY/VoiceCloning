@@ -184,9 +184,14 @@ export function isLiveInputPhase(phase) {
   return phase === 'listening' || phase === 'thinking';
 }
 
-export function shouldSendLiveMicAudio({ phase, micInputEnabled, listeningMode = 'continuous' }) {
-  return Boolean(micInputEnabled) && (phase === 'listening'
-    || (listeningMode !== 'turns' && phase === 'thinking'));
+// Turn-based is strictly half duplex: once a turn ends the mic is closed until
+// the reply has finished, so nothing can cancel it. fullDuplex (Live MC
+// continuous) also streams while the AI speaks, so OpenAI's VAD hears a barge-in.
+export function shouldSendLiveMicAudio({ phase, micInputEnabled, listeningMode = 'continuous', fullDuplex = false }) {
+  if (!micInputEnabled) return false;
+  if (phase === 'listening') return true;
+  if (listeningMode === 'turns') return false;
+  return phase === 'thinking' || (phase === 'speaking' && fullDuplex);
 }
 
 export function shouldTriggerLiveBargeIn({
@@ -839,4 +844,31 @@ export function fixSpeechPronunciation(text) {
 
 export function findFirstReplayablePart(message) {
   return (message?.audioParts || []).find((part) => part.audioUrl) || null;
+}
+
+// A dropped live socket (venue Wi-Fi blip, gateway restart, OpenAI's session
+// time limit) reconnects with a fresh OpenAI session, which starts with no
+// memory. Carry the recent transcript in its instructions so the AI continues
+// the same conversation instead of greeting the room again.
+const RECONNECT_CONTEXT_TURNS = 12;
+const RECONNECT_CONTEXT_CHARS = 4000;
+
+export function buildReconnectSystemPrompt(systemPrompt, messages) {
+  const lines = (messages || [])
+    .filter((message) => (message.role === 'user' || message.role === 'assistant') && String(message.text || '').trim())
+    .slice(-RECONNECT_CONTEXT_TURNS)
+    .map((message) => `${message.role === 'user' ? 'Host' : 'You'}: ${String(message.text).trim()}`);
+  let transcript = lines.join('\n');
+  if (transcript.length > RECONNECT_CONTEXT_CHARS) transcript = transcript.slice(-RECONNECT_CONTEXT_CHARS);
+  const base = String(systemPrompt || '');
+  if (!transcript) return base;
+  return `${base}\n\nThe live connection briefly dropped and has resumed. Continue the same conversation naturally; do not greet again or mention the interruption. Conversation so far:\n${transcript}`;
+}
+
+// 1s, 2s, 4s, then every 8s. Give up after this many consecutive failures
+// (about a minute), so a real outage ends the session with a clear error.
+export const LIVE_RECONNECT_MAX_ATTEMPTS = 10;
+
+export function liveReconnectDelayMs(attempt) {
+  return Math.min(8000, 1000 * 2 ** Math.max(0, attempt - 1));
 }

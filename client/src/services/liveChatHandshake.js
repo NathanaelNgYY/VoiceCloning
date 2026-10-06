@@ -34,14 +34,14 @@ export function createHandshakeSequencer({ send }) {
      *
      * @param {{ getAuthToken?: (() => Promise<string>) | null, systemPrompt?: string }} options
      */
-    async run({ getAuthToken = null, systemPrompt = '' } = {}) {
+    async run({ getAuthToken = null, systemPrompt = '', sessionOptions = null } = {}) {
       if (getAuthToken) {
         const token = await getAuthToken();
         send({ type: 'session.auth', token });
       }
 
       // The gateway defers connecting to OpenAI until it sees this.
-      send({ type: 'session.init', systemPrompt: systemPrompt || '' });
+      send({ ...(sessionOptions || {}), type: 'session.init', systemPrompt: systemPrompt || '' });
 
       complete = true;
       while (queued.length > 0) {

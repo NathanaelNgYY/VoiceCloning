@@ -153,3 +153,14 @@ test('handleBrowserMessage ignores message types it does not know', () => {
 
   handleBrowserMessage(bridge, Buffer.from(JSON.stringify({ type: 'keepalive' })));
 });
+
+test('session.init can request a semantic_vad eagerness; unknown values leave the bridge default', () => {
+  const init = parseLiveChatInit(JSON.stringify({ type: 'session.init', systemPrompt: 'MC', turnEagerness: 'high' }));
+  assert.equal(init.turnEagerness, 'high');
+  const bridge = { systemPrompt: '', turnEagerness: 'auto' };
+  applyLiveChatInitToBridge(bridge, init);
+  assert.equal(bridge.turnEagerness, 'high');
+  const other = { systemPrompt: '', turnEagerness: 'auto' };
+  applyLiveChatInitToBridge(other, { systemPrompt: 'x', turnEagerness: 'instant' });
+  assert.equal(other.turnEagerness, 'auto');
+});

@@ -198,13 +198,56 @@ export function buildClientEvent(type, payload = {}) {
   return { type, ...payload };
 }
 
+// semantic_vad's longest wait for an uncertain end of turn: low 8s, medium 4s
+// (auto), high 2s. A client may ask for one per session; anything else is auto.
+export const TURN_EAGERNESS = new Set(['low', 'medium', 'high', 'auto']);
+export const NOISE_REDUCTION = new Set(['near_field', 'far_field', 'off']);
+// Transcript-bubble transcribers a session may pick. gpt-transcribe carries
+// earlier turns as context by itself, so it gets no hand-built prompt.
+export const TRANSCRIPTION_MODELS = new Set(['gpt-4o-transcribe', 'gpt-transcribe', 'gpt-4o-mini-transcribe']);
+
+const clampNumber = (value, min, max, fallback) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+};
+
+// A client-requested turn detector (session.init `turnDetection`), validated
+// and clamped so a page cannot push OpenAI outside sane limits. Returns null
+// for anything unusable, which keeps the gateway default.
+export function normalizeTurnDetection(value) {
+  if (!value || typeof value !== 'object') return null;
+  if (value.type === 'server_vad') {
+    return {
+      type: 'server_vad',
+      threshold: clampNumber(value.threshold, 0.2, 0.95, 0.5),
+      prefix_padding_ms: Math.round(clampNumber(value.prefixMs, 100, 1000, 300)),
+      silence_duration_ms: Math.round(clampNumber(value.silenceMs, 200, 2000, 650)),
+    };
+  }
+  if (value.type === 'semantic_vad') {
+    return {
+      type: 'semantic_vad',
+      eagerness: TURN_EAGERNESS.has(value.eagerness) ? value.eagerness : 'auto',
+    };
+  }
+  return null;
+}
+
 export function buildRealtimeSessionUpdate({
   systemPrompt = DEFAULT_SYSTEM_PROMPT,
   vadMode = 'semantic_vad',
   language = REALTIME_LANGUAGES.en.code,
+  turnEagerness = 'auto',
+  turnDetection: requestedTurnDetection = null,
+  transcriptionPrompt = '',
+  noiseReduction = 'near_field',
+  transcriptionModel = 'gpt-4o-transcribe',
 } = {}) {
   const languageCode = normalizeRealtimeLanguage(language);
-  const turnDetection = vadMode === 'server_vad'
+  const requested = normalizeTurnDetection(requestedTurnDetection);
+  const turnDetection = requested
+    ? { ...requested, create_response: true, interrupt_response: true }
+    : vadMode === 'server_vad'
     ? {
         type: 'server_vad',
         threshold: 0.5,
@@ -215,7 +258,7 @@ export function buildRealtimeSessionUpdate({
       }
     : {
         type: 'semantic_vad',
-        eagerness: 'auto',
+        eagerness: TURN_EAGERNESS.has(turnEagerness) ? turnEagerness : 'auto',
         create_response: true,
         interrupt_response: true,
       };
@@ -237,12 +280,17 @@ export function buildRealtimeSessionUpdate({
             // utterances ("GIB" -> "GPT") and mis-detecting English as CJK,
             // which fed the non-Latin suppression. Applies only to the user's
             // speech bubble — gpt-realtime hears the raw audio either way.
-            model: 'gpt-4o-transcribe',
+            model: TRANSCRIPTION_MODELS.has(transcriptionModel) ? transcriptionModel : 'gpt-4o-transcribe',
             language: languageCode,
+            // Names and terms the speaker is likely to use, so they are spelled
+            // right in the transcript bubble.
+            ...(transcriptionModel !== 'gpt-transcribe' && typeof transcriptionPrompt === 'string' && transcriptionPrompt.trim()
+              ? { prompt: transcriptionPrompt.trim().slice(0, 1000) }
+              : {}),
           },
-          noise_reduction: {
-            type: 'near_field',
-          },
+          noise_reduction: noiseReduction === 'off'
+            ? null
+            : { type: NOISE_REDUCTION.has(noiseReduction) ? noiseReduction : 'near_field' },
           turn_detection: turnDetection,
         },
       },

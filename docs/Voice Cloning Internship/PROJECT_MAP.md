@@ -26,7 +26,7 @@
 - `src/pages/SupervisorDashboardPage.jsx` — dev `/admin` graph ranking and learner evidence; S3 index/evidence replays: `scripts/backfill-analytics-user-index.mjs`, `scripts/backfill-learner-evidence.mjs`.
 - `src/hooks/useSSE.js` — Nine-step training SSE including speaker verification.
 - `src/hooks/useInferenceSSE.js` — Long-text inference SSE.
-- `src/hooks/useLiveSpeech.js`
+- `src/hooks/useLiveSpeech.js` (mic capture: `src/lib/micCapture.js`, `src/lib/micResampler.js`)
   - Mic capture, streamed first-sentence TTS, cloned reply playback, barge-in behavior.
 - `src/hooks/liveConversation.js`
   - Pure helpers for phrase splitting, playback selection, language-specific TTS params.

@@ -193,6 +193,12 @@ Notes:
 - Training SSE: `/train/progress/:sessionId`
 - Inference SSE: `/inference/progress/:sessionId`
 - Live WebSocket: `/api/live/chat/realtime`
+  - First frame `session.init` (`systemPrompt`) may also carry, all optional and validated/clamped by the
+    gateway: `turnDetection` (`{type:'server_vad', threshold, silenceMs, prefixMs}` or
+    `{type:'semantic_vad', eagerness}`), `noiseReduction` (`near_field`/`far_field`/`off`),
+    `transcriptionModel` (`gpt-4o-transcribe` default, `gpt-transcribe`, `gpt-4o-mini-transcribe`),
+    `transcriptionPrompt`, `turnEagerness`. Omitted fields keep the gateway default (Live MC sends
+    its slider values; other clients send none).
 
 ## Main Source Files
 

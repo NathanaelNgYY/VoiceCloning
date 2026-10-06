@@ -1,15 +1,35 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLiveSpeech } from '../hooks/useLiveSpeech.js';
-import { MC_SYSTEM_PROMPT, mcSessionStatus } from '../lib/mcSession.js';
+import { MC_SYSTEM_PROMPT, NOISE_LEVELS, PAUSE_RANGE, mcMicConstraints, mcSessionOptions, mcSessionStatus, mcTranscriptEntries, normalizeCaptureSettings, sameCaptureSettings } from '../lib/mcSession.js';
 import { nextAudioErrorAction } from '../hooks/liveConversation.js';
 import ntuLogo from '../assets/ntu-logo.png';
 import { Maximize2, Mic, MicOff, Minimize2, Phone, PhoneOff } from 'lucide-react';
 
 const REFERENCE_PARAMS = {};
+const CAPTURE_STORAGE_KEY = 'mc-capture-settings-v2';
+
+function loadCaptureSettings() {
+  try {
+    return normalizeCaptureSettings(JSON.parse(window.localStorage.getItem(CAPTURE_STORAGE_KEY) || 'null'));
+  } catch {
+    return normalizeCaptureSettings(null);
+  }
+}
 
 export default function McSessionPage() {
   const [instructions, setInstructions] = useState(MC_SYSTEM_PROMPT);
   const [listeningMode, setListeningMode] = useState('turns');
+  const [captureSettings, setCaptureSettings] = useState(loadCaptureSettings);
+  function updateCaptureSettings(change) {
+    const next = normalizeCaptureSettings({ ...captureSettings, ...change });
+    setCaptureSettings(next);
+    try { window.localStorage.setItem(CAPTURE_STORAGE_KEY, JSON.stringify(next)); } catch { /* per-browser convenience only */ }
+  }
+  // The running session keeps the mode and capture settings it started with;
+  // changes made meanwhile wait for the next session.
+  const [applied, setApplied] = useState(null);
+  const sessionMode = applied ? applied.mode : listeningMode;
+  const sessionCapture = applied ? applied.capture : captureSettings;
   const [playbackError, setPlaybackError] = useState('');
   const [fullscreen, setFullscreen] = useState(false);
   // Browsers that refuse element fullscreen (iOS Safari, embedded views) get the
@@ -25,10 +45,17 @@ export default function McSessionPage() {
     refParams: REFERENCE_PARAMS,
     voiceProfileId: 'deanvoice-v1',
     engine: 'fast', replyMode: 'phrases', language: 'en',
-    systemPrompt: instructions, listeningMode,
+    systemPrompt: instructions, listeningMode: sessionMode, autoReconnect: true, noiseGate: false, fullDuplex: true,
+    sessionOptions: mcSessionOptions(sessionCapture), micConstraints: mcMicConstraints(sessionCapture),
   });
   const active = live.isConversationActive;
-  const status = mcSessionStatus({ phase: live.phase, micEnabled: live.isMicInputEnabled, listeningMode });
+  const pendingChanges = active && applied
+    && (applied.mode !== listeningMode || !sameCaptureSettings(applied.capture, captureSettings));
+  // Clears the started-with settings when a session ends on its own (errors,
+  // dropped connection); the End button clears them itself so an immediate
+  // restart never inherits them.
+  useEffect(() => { if (!active) setApplied(null); }, [active]);
+  const status = mcSessionStatus({ phase: live.phase, micEnabled: live.isMicInputEnabled, listeningMode: sessionMode, reconnecting: live.isReconnecting, userSpeaking: live.isUserSpeaking, replyAudible: Boolean(live.selectedReplyId && live.audioSrc) });
 
   useEffect(() => { document.title = 'Live MC | NTU Singapore'; }, []);
   useEffect(() => {
@@ -83,17 +110,21 @@ export default function McSessionPage() {
   }
 
   function transcriptContent() {
-    const messages = live.messages.length === 0 && !live.interimTranscript
-      ? <p className="text-sm leading-6 text-slate-500">Your conversation will appear here when the session begins.</p>
-      : live.messages.map((message) => (
-        <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-          <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.role === 'user' ? 'rounded-br-md bg-[#eef0f8] text-[#1d2240]' : 'rounded-bl-md bg-[#f4f3f0]'}`}>
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{message.role === 'user' ? 'You' : 'AI MC'}</p>
-            <p className="whitespace-pre-wrap break-words text-sm leading-6">{message.text}</p>
-          </div>
+    if (live.messages.length === 0) {
+      return <p className="text-sm leading-6 text-slate-500">Your conversation will appear here when the session begins.</p>;
+    }
+    // Placeholder text from the shared hook becomes a typing indicator; the
+    // status line already says what is happening.
+    return mcTranscriptEntries(live.messages).map((entry) => (
+      <div key={entry.id} className={`flex ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${entry.role === 'user' ? 'rounded-br-md bg-[#eef0f8] text-[#1d2240]' : 'rounded-bl-md bg-[#f4f3f0]'}`}>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{entry.role === 'user' ? 'You' : 'AI MC'}</p>
+          {entry.text && <p className="whitespace-pre-wrap break-words text-sm leading-6">{entry.text}{entry.interrupted && <span className="ml-1 text-slate-400">…</span>}</p>}
+          {entry.interrupted && <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-amber-700">Interrupted</p>}
+          {entry.pending && <p aria-label={entry.role === 'user' ? 'Hearing you' : 'Preparing a reply'} className="flex h-6 items-center gap-1">{[0, 1, 2].map((dot) => <span key={dot} className="h-1.5 w-1.5 rounded-full bg-slate-400" style={{ animation: `mc-dot 1.2s ease-in-out ${dot * 0.18}s infinite` }} />)}</p>}
         </div>
-      ));
-    return <>{messages}{live.interimTranscript && <div className="flex justify-end"><p className="max-w-[85%] rounded-2xl rounded-br-md border border-dashed border-[#c9cde3] px-4 py-3 text-sm italic leading-6 text-slate-500">{live.interimTranscript}</p></div>}</>;
+      </div>
+    ));
   }
 
   function onAudioError() {
@@ -121,7 +152,7 @@ export default function McSessionPage() {
         <p className="mt-4 max-w-lg text-base leading-7 text-slate-600">You lead the moment. Your AI MC joins the conversation, speaking with the Dean voice.</p>
 
         <section aria-label="Session controls" className="mt-10 rounded-3xl border border-[#e5e3df] bg-white p-3 sm:p-4">
-          <style>{'@keyframes mc-wave{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}'}</style>
+          <style>{'@keyframes mc-wave{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}@keyframes mc-dot{0%,80%,100%{opacity:.25}40%{opacity:1}}'}</style>
           <div ref={stageRef} className={immersive ? `${windowFill ? 'fixed inset-0 z-50' : 'relative'} grid h-[100dvh] w-full grid-rows-[minmax(0,1fr)_minmax(12rem,0.6fr)] bg-white text-[#252b3a] md:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] md:grid-rows-1` : 'relative'}>
             <div className={`relative isolate flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_center,#2b3157_0%,#151a33_70%)] ${immersive ? '' : 'aspect-video rounded-2xl'}`}>
               {/* Avatar slot: the future avatar video/image goes here with object-contain, centred and never stretched. */}
@@ -144,11 +175,13 @@ export default function McSessionPage() {
                   {Array.from({ length: 22 }, (_, index) => {
                     const shape = 0.35 + 0.65 * Math.sin(index * 1.3) ** 2;
                     const speaking = live.phase === 'speaking';
-                    const level = active && live.isMicInputEnabled && !speaking ? Math.min(1, 0.12 + live.audioLevel * 1.6 * shape) : 0.12;
+                    // Flat whenever the mic is not actually being sent (muted, or turn-based while the AI has the floor).
+                    const sending = active && live.isMicInputEnabled && (live.phase === 'listening' || (sessionMode !== 'turns' && live.phase === 'thinking'));
+                    const level = sending ? Math.min(1, 0.12 + live.audioLevel * 1.6 * shape) : 0.12;
                     return <span key={index} className="h-full w-[3px] rounded-full bg-white/85" style={speaking ? { animation: `mc-wave ${0.7 + (index % 5) * 0.12}s ease-in-out ${index * 0.04}s infinite` } : { transform: `scaleY(${level})`, transition: 'transform 120ms ease-out' }} />;
                   })}
                 </div>
-                <button type="button" aria-label={active ? 'End session' : 'Start session'} onClick={() => active ? live.stop() : live.start()} disabled={!active && (!instructions.trim() || !live.speechApiAvailable)} className={`flex h-11 items-center justify-center gap-2 rounded-full text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-50 ${active ? 'w-11 bg-red-500 hover:bg-red-600' : 'bg-[#a6192e] px-5 hover:bg-[#861426]'}`}>
+                <button type="button" aria-label={active ? 'End session' : 'Start session'} onClick={() => { if (active) { setApplied(null); live.stop(); return; } setApplied({ mode: listeningMode, capture: captureSettings }); live.start(); }} disabled={!active && (!instructions.trim() || !live.speechApiAvailable)} className={`flex h-11 items-center justify-center gap-2 rounded-full text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-50 ${active ? 'w-11 bg-red-500 hover:bg-red-600' : 'bg-[#a6192e] px-5 hover:bg-[#861426]'}`}>
                   {active ? <PhoneOff size={19} /> : <><Phone size={17} />Start session</>}
                 </button>
               </div>
@@ -175,14 +208,35 @@ export default function McSessionPage() {
                 <label key={value} className="flex cursor-pointer items-center gap-2"><input type="radio" name="listening-mode" value={value} checked={listeningMode === value} onChange={() => setListeningMode(value)} className="accent-[#a6192e]" />{label}</label>
               ))}
             </div>
-            <p className="mt-3 text-center text-xs leading-5 text-slate-500">{listeningMode === 'turns' ? 'Listening pauses during the reply and resumes automatically.' : 'Keep talking naturally. Speaking over the AI interrupts its reply. Headphones recommended.'}</p>
+            <p className="mt-3 text-center text-xs leading-5 text-slate-500">{listeningMode === 'turns'
+              ? 'Speak, then pause: the AI MC replies when you finish and always completes its reply. Your mic closes while it replies and reopens after. Mute any time; muting mid-sentence sends what you said.'
+              : 'Hands-free: the mic stays open, and talking over the AI MC interrupts it. Keep its speaker away from your mic, or use headphones.'}</p>
           </fieldset>
+          {pendingChanges && <p role="status" className="mx-3 mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">Changes apply to the next session. End the session to switch to them.</p>}
           {!live.speechApiAvailable && <p role="alert" className="mx-3 mt-5 text-sm text-red-800">This browser does not support microphone audio. Use a current Chrome, Edge, or Safari browser.</p>}
           {live.error && <p role="alert" className="mx-3 mt-5 text-sm leading-6 text-red-800">{live.error}</p>}
           {playbackError && <div role="alert" className="mx-3 mt-5 text-sm text-red-800"><p>{playbackError}</p>{live.shouldPlayAudio && <button className="mt-2 underline" onClick={() => audioRef.current.play().then(() => setPlaybackError('')).catch(() => setPlaybackError('Audio is still unavailable. Check your audio output and retry.'))}>Play reply</button>}</div>}
         </section>
 
         <details className="mt-7 border-b border-[#e5e3df] pb-5">
+          <summary className="cursor-pointer text-sm font-medium">Voice capture settings</summary>
+          <div className="mt-5 grid gap-8 sm:grid-cols-2">
+            <div>
+              <label htmlFor="mc-noise" className="flex items-baseline justify-between text-sm text-slate-600">Background noise filter<span className="font-medium text-[#252b3a]">{NOISE_LEVELS[captureSettings.noiseLevel].label}</span></label>
+              <input id="mc-noise" type="range" min={0} max={NOISE_LEVELS.length - 1} step={1} value={captureSettings.noiseLevel} onChange={(event) => updateCaptureSettings({ noiseLevel: Number(event.target.value) })} aria-valuetext={NOISE_LEVELS[captureSettings.noiseLevel].label} className="mt-3 w-full accent-[#a6192e]" />
+              <div className="mt-1 flex justify-between text-[11px] text-slate-400" aria-hidden="true">{NOISE_LEVELS.map((level) => <span key={level.label}>{level.label}</span>)}</div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">{NOISE_LEVELS[captureSettings.noiseLevel].hint}</p>
+            </div>
+            <div>
+              <label htmlFor="mc-pause" className="flex items-baseline justify-between text-sm text-slate-600">Pause before the AI replies<span className="font-medium text-[#252b3a]">{(captureSettings.pauseMs / 1000).toFixed(1)} s</span></label>
+              <input id="mc-pause" type="range" min={PAUSE_RANGE.min} max={PAUSE_RANGE.max} step={PAUSE_RANGE.step} value={captureSettings.pauseMs} onChange={(event) => updateCaptureSettings({ pauseMs: Number(event.target.value) })} aria-valuetext={`${(captureSettings.pauseMs / 1000).toFixed(1)} seconds`} className="mt-3 w-full accent-[#a6192e]" />
+              <div className="mt-1 flex justify-between text-[11px] text-slate-400" aria-hidden="true"><span>Faster</span><span>Recommended 0.7 s</span><span>Patient</span></div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">Silence that ends your turn. The AI starts replying about {((captureSettings.pauseMs + 600) / 1000).toFixed(1)} s after you stop; a hesitation longer than {(captureSettings.pauseMs / 1000).toFixed(1)} s ends your turn early.</p>
+            </div>
+          </div>
+          <p className="mt-4 text-xs text-slate-500">Saved in this browser. Applied when a session starts{active ? '; this session keeps the settings it started with.' : '.'}</p>
+        </details>
+        <details className="mt-5 border-b border-[#e5e3df] pb-5">
           <summary className="cursor-pointer text-sm font-medium">System instructions</summary>
           <label htmlFor="mc-instructions" className="mt-5 block text-sm text-slate-600">Guide your AI co-host</label>
           <textarea id="mc-instructions" rows={10} maxLength={12000} value={instructions} disabled={active} onChange={(event) => setInstructions(event.target.value)} className="mt-2 w-full resize-y rounded-xl border border-slate-300 bg-white p-4 text-sm leading-6 focus:outline-[#a6192e] disabled:bg-slate-50" />

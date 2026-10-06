@@ -2,6 +2,12 @@
 
 ## Architecture
 
+- Live MC turn-taking (2026-10-06): server VAD (threshold 0.5, 700ms silence, 500ms prefix, far-field
+  noise reduction) sent per session via `session.init`; chosen from `scripts/vad-bench-mc.mjs` because
+  semantic VAD's 3-5s tail felt broken on stage. Defaults: 0.7s pause, threshold 0.65 + far-field
+  (user sliders adjust). Turn-based is strictly half duplex (a reply is never cancelled); continuous is
+  full duplex and OpenAI's VAD drives barge-in. Transcript bubbles use gpt-4o-transcribe with no prompt
+  (context prompts leak). Other live clients keep the gateway default until re-measured.
 - Capacity preparation and synthesis admission are distinct. Voice selection and page preflight may
   route or reassign existing idle capacity but must never increase ASG desired capacity. Only a real
   synthesis admission or an explicitly authorized event-prewarm request may scale. Model warming

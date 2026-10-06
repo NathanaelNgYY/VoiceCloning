@@ -1,5 +1,13 @@
 # Bugs
 
+- Fixed and deployed 2026-10-06 (staging MC): spoken turns hung on "Listening..." because the
+  client noise gate (RMS 0.02) dropped normal-volume speech and cut the trailing silence OpenAI's VAD
+  needs; any live socket drop also ended the session. MC is now ungated, eager, and reconnects.
+  Other live clients keep the gate (only the silence tail) and need a redeploy to get that.
+- Fixed 2026-10-06 (staging gateway box `i-0f0da8be59367f7a8`): systemd `voice-live-gateway` and pm2
+  both ran the gateway and raced for :3002 on every restart. pm2 copy removed; systemd only.
+- Fixed and deployed 2026-10-06 (staging MC): turn-based mode closed the mic as soon as a reply began
+  synthesizing, so speech after a mid-sentence pause was discarded; continuous barge-in relied on RMS 0.04.
 - Fixed locally, not deployed (found live 2026-09-01): same-model burst admission was not atomic across
   ready matching GPUs. With three READY `deanvoice-v1` workers (two slots each), six simultaneous
   coordinator requests produced five RIFFs all on the oldest worker, with queue waits up to 6.2s;

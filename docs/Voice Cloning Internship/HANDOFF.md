@@ -1,6 +1,6 @@
 # Voice Cloning Project Handoff
 
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 ## Current State
 
@@ -11,6 +11,7 @@ Last updated: 2026-10-05
   CloudFront `E2F49Q71ZUM0G0`): fixed gateway running, ASG min 1 (daily actions keep 1), fixed
   GPU schedule 00-24, coordinator autoscale. Runs 24/7 (cost); Dev stays stopped. Live MC is committed and
   pushed on `separate-containers-new`; the remote staging branch has diverged (not fast-forwarded).
+- 2026-10-06: Live MC capture/VAD/duplex overhaul, strict turns and capture sliders deployed to staging (`mc` + gateway). All uncommitted.
 - Staging remains the sole authoring surface via Faculty. Publishing mirrors only the selected
   cloned-voice snapshot and category to Dev; training, analytics and transcripts stay isolated.
 - ElevenLabs stock voices bypass the cloned-voice coordinator. A signed-in Faculty Alice response
@@ -115,5 +116,4 @@ CONTRADICTION: the lecture badge showed `cs-nathanael-ng` while `client/env/stag
 4. Open Dev GI after starting its GPU; ask an administrator for CloudTrail attribution and orphan cleanup.
 
 Also open (BUGS.md): the Faculty full-screen "Starting the GPU" modal blocks authoring while capacity
-warms. The stale completed-boot marker and Faculty manual-retry problem were fixed and deployed on
-2026-09-01.
+warms.

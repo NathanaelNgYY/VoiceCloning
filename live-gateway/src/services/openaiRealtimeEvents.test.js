@@ -271,3 +271,36 @@ test('buildRealtimeSessionUpdate transcribes user speech with the full-size mode
   // mis-detecting English as CJK; the full-size model is markedly more accurate.
   assert.equal(update.session.audio.input.transcription.model, 'gpt-4o-transcribe');
 });
+
+test('buildRealtimeSessionUpdate applies a requested semantic_vad eagerness and ignores unknown values', () => {
+  const eager = buildRealtimeSessionUpdate({ turnEagerness: 'high' });
+  assert.equal(eager.session.audio.input.turn_detection.eagerness, 'high');
+  assert.equal(buildRealtimeSessionUpdate({ turnEagerness: 'instant' }).session.audio.input.turn_detection.eagerness, 'auto');
+  assert.equal(buildRealtimeSessionUpdate().session.audio.input.turn_detection.eagerness, 'auto');
+});
+
+test('buildRealtimeSessionUpdate accepts a clamped per-session turn detector, transcription prompt and noise mode', () => {
+  const update = buildRealtimeSessionUpdate({
+    turnDetection: { type: 'server_vad', threshold: 3, silenceMs: 50, prefixMs: 400 },
+    transcriptionPrompt: '  NTU, Nanyang Technological University  ',
+    noiseReduction: 'far_field',
+  });
+  const input = update.session.audio.input;
+  assert.deepEqual(input.turn_detection, {
+    type: 'server_vad', threshold: 0.95, prefix_padding_ms: 400, silence_duration_ms: 200,
+    create_response: true, interrupt_response: true,
+  });
+  assert.equal(input.transcription.prompt, 'NTU, Nanyang Technological University');
+  assert.deepEqual(input.noise_reduction, { type: 'far_field' });
+  assert.equal(buildRealtimeSessionUpdate({ noiseReduction: 'off' }).session.audio.input.noise_reduction, null);
+  assert.equal(buildRealtimeSessionUpdate({ turnDetection: { type: 'magic' } }).session.audio.input.turn_detection.type, 'semantic_vad');
+  assert.equal(buildRealtimeSessionUpdate().session.audio.input.transcription.prompt, undefined);
+});
+
+test('buildRealtimeSessionUpdate picks an allowed transcription model and skips the prompt for gpt-transcribe', () => {
+  const input = (options) => buildRealtimeSessionUpdate(options).session.audio.input.transcription;
+  assert.equal(input({}).model, 'gpt-4o-transcribe');
+  assert.equal(input({ transcriptionModel: 'whisper-9000' }).model, 'gpt-4o-transcribe');
+  assert.deepEqual(input({ transcriptionModel: 'gpt-transcribe', transcriptionPrompt: 'ctx' }), { model: 'gpt-transcribe', language: 'en' });
+  assert.equal(input({ transcriptionModel: 'gpt-4o-mini-transcribe', transcriptionPrompt: 'ctx' }).prompt, 'ctx');
+});

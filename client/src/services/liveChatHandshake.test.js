@@ -115,3 +115,20 @@ test('an empty system prompt is still sent as a string', async () => {
 
   assert.deepEqual(sent, [{ type: 'session.init', systemPrompt: '' }]);
 });
+
+test('session options ride on session.init but cannot replace its type or prompt', async () => {
+  const { sent, send } = recorder();
+  const sequencer = createHandshakeSequencer({ send });
+
+  await sequencer.run({
+    systemPrompt: 'MC prompt',
+    sessionOptions: { type: 'evil', systemPrompt: 'other', turnDetection: { type: 'server_vad', silenceMs: 700 }, noiseReduction: 'far_field' },
+  });
+
+  assert.deepEqual(sent, [{
+    type: 'session.init',
+    systemPrompt: 'MC prompt',
+    turnDetection: { type: 'server_vad', silenceMs: 700 },
+    noiseReduction: 'far_field',
+  }]);
+});

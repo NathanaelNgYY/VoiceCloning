@@ -49,6 +49,11 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     this.model = model;
     this.systemPrompt = systemPrompt;
     this.vadMode = vadMode;
+    this.turnEagerness = 'auto';
+    this.turnDetection = null;
+    this.transcriptionPrompt = '';
+    this.noiseReduction = 'near_field';
+    this.transcriptionModel = 'gpt-4o-transcribe';
     this.language = language;
     this.WebSocketClass = WebSocketClass;
     this.socket = null;
@@ -96,11 +101,7 @@ export class OpenAiRealtimeBridge extends EventEmitter {
         return;
       }
 
-      this.sendOpenAi(buildRealtimeSessionUpdate({
-        systemPrompt: this.systemPrompt,
-        vadMode: this.vadMode,
-        language: this.language,
-      }));
+      this.sendOpenAi(this.buildSessionUpdate());
     });
 
     socket.on('message', (data) => {
@@ -148,6 +149,19 @@ export class OpenAiRealtimeBridge extends EventEmitter {
     for (const appEvent of this.mapper.map(event)) {
       this.emit('app-event', buildClientEvent(appEvent.type, appEvent));
     }
+  }
+
+  buildSessionUpdate() {
+    return buildRealtimeSessionUpdate({
+      systemPrompt: this.systemPrompt,
+      vadMode: this.vadMode,
+      turnEagerness: this.turnEagerness,
+      turnDetection: this.turnDetection,
+      transcriptionPrompt: this.transcriptionPrompt,
+      noiseReduction: this.noiseReduction,
+      transcriptionModel: this.transcriptionModel,
+      language: this.language,
+    });
   }
 
   setVideoPosition({ seconds, paused = false, behavior = {} } = {}) {

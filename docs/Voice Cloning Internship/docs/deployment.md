@@ -556,3 +556,12 @@ Historical only:
 
 - The repo currently checks in `gpu-inference-worker.service`.
 - Matching checked-in systemd units for `gpu-worker` and `live-gateway` were not present in this scan.
+
+## Staging Live Gateway Hotfix Path (2026-10-06)
+
+- `/api/live/chat/realtime` on the MC distribution goes to `voice-gpu-alb-815777974`
+  (ap-northeast-2); the gateway is a plain copy under `/home/ubuntu/VoiceCloning/live-gateway`
+  on `i-0f0da8be59367f7a8`, supervised only by systemd `voice-live-gateway` (pm2 copy removed
+  2026-10-06; never re-add it, the two race for :3002). Not a git checkout.
+- Update: compare md5 of LF-normalized repo files first, back up, write via SSM, `node --check`,
+  `systemctl restart voice-live-gateway`. A restart drops open live sockets (MC reconnects).

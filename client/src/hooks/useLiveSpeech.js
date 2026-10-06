@@ -8,6 +8,7 @@ import {
   synthesizeSentence,
 } from '../services/api.js';
 import { createLiveChatSocket } from '../services/liveChatSocket.js';
+import { MIC_TARGET_SAMPLE_RATE, startMicFrames } from '../lib/micCapture.js';
 import { acquireApiToken, shouldAttachApiToken } from '../auth/msalClient.js';
 
 export const LIVE_SESSION_READY_TIMEOUT_MS = 15_000;
@@ -55,6 +56,9 @@ import {
   shouldTriggerLiveBargeIn,
   shouldSendLiveMicAudio,
   updateMessage,
+  buildReconnectSystemPrompt,
+  liveReconnectDelayMs,
+  LIVE_RECONNECT_MAX_ATTEMPTS,
 } from './liveConversation.js';
 
 // While the shared GPU is stopping/restarting, in-flight synth and live-gateway
@@ -68,6 +72,8 @@ function friendlyLiveError(rawMessage, { prefix = '', fallback = 'The GPU is res
 
 const LIVE_TARGET_SAMPLE_RATE = 24000;
 const MANUAL_COMMIT_SILENCE_MS = 360;
+// ~4s of 4096-sample frames: covers semantic_vad's longest end-of-turn wait.
+const VOICE_GATE_SILENCE_TAIL_FRAMES = 48;
 const BARGE_IN_MIN_FRAMES = 2;
 const BARGE_IN_COOLDOWN_MS = 900;
 // While a long reply plays, the mic is muted so nothing flows over the WebSocket.
@@ -154,6 +160,17 @@ export function useLiveSpeech({
   fastMaxSentencesPerChunk = 1,
   getVideoPosition = null,
   onUserQuestion = null,
+  // Reopen a dropped live socket instead of ending the conversation (Live MC).
+  autoReconnect = false,
+  // false streams all mic audio to OpenAI instead of only above-threshold frames.
+  noiseGate = true,
+  // OpenAI's VAD drives interruption: continuous mode keeps streaming while the
+  // AI speaks, and speech during "thinking" drops the half-ready reply.
+  fullDuplex = false,
+  // Extra session.init fields (turnDetection, noiseReduction, ...) for the gateway.
+  sessionOptions = null,
+  // getUserMedia audio constraint overrides (e.g. { noiseSuppression: false }).
+  micConstraints = null,
 } = {}) {
   const isPhraseMode = replyMode === LIVE_REPLY_MODES.phrases;
   const liveLanguage = normalizeLiveLanguage(language);
@@ -186,12 +203,37 @@ export function useLiveSpeech({
   const phaseRef = useRef('idle');
   const socketRef = useRef(null);
   const keepAliveTimerRef = useRef(null);
+  const autoReconnectRef = useRef(autoReconnect);
+  autoReconnectRef.current = autoReconnect;
+  const noiseGateRef = useRef(noiseGate);
+  noiseGateRef.current = noiseGate;
+  const fullDuplexRef = useRef(fullDuplex);
+  fullDuplexRef.current = fullDuplex;
+  const micCaptureRef = useRef(null);
+  const micConstraintsRef = useRef(micConstraints);
+  micConstraintsRef.current = micConstraints;
+  // OpenAI's VAD says the user is talking right now (between speech events).
+  const userSpeakingRef = useRef(false);
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  function setUserSpeaking(value) {
+    userSpeakingRef.current = value;
+    setIsUserSpeaking(value);
+  }
+  // reconnectingRef spans the gap between a drop and the next session.ready, so
+  // the conversation counts as live (not idle) while the socket is reopened.
+  const reconnectingRef = useRef(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  function setReconnecting(value) {
+    reconnectingRef.current = value;
+    setIsReconnecting(value);
+  }
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef(null);
+  const sessionEverReadyRef = useRef(false);
   const videoPositionTimerRef = useRef(null);
   const lastSentVideoPositionRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
-  const processorRef = useRef(null);
-  const sourceRef = useRef(null);
   const isCancelledRef = useRef(false);
   const runIdRef = useRef(0);
   const messageSeqRef = useRef(0);
@@ -210,6 +252,8 @@ export function useLiveSpeech({
   const userTranscriptTimersRef = useRef(new Map());
   const voiceGateRef = useRef(createVoiceGateState());
   const gatePrerollRef = useRef([]);
+  // Frames of digital silence still owed to OpenAI after the gate closes.
+  const gateSilenceTailRef = useRef(0);
   const turnVoicedFramesRef = useRef(0);
   const assistantTextRef = useRef('');
   const streamedFastReplyRef = useRef(null);
@@ -540,8 +584,19 @@ export function useLiveSpeech({
     sendAudioChunk(new Float32Array(sampleCount), LIVE_TARGET_SAMPLE_RATE);
   }
 
+  // A reply starting used to close the mic outright. Full duplex keeps it open
+  // (a continuation or a barge-in must still be heard) and lets the phase rule
+  // decide instead.
+  function pauseInputForReply() {
+    if (fullDuplexRef.current) {
+      syncOpenAiInputWithMic();
+      return;
+    }
+    pauseOpenAiInput();
+  }
+
   function syncOpenAiInputWithMic(nextPhase = phaseRef.current) {
-    if (shouldSendLiveMicAudio({ phase: nextPhase, micInputEnabled: micInputEnabledRef.current, listeningMode: listeningModeRef.current })) {
+    if (shouldSendLiveMicAudio({ fullDuplex: fullDuplexRef.current, phase: nextPhase, micInputEnabled: micInputEnabledRef.current, listeningMode: listeningModeRef.current })) {
       resumeOpenAiInput();
       return;
     }
@@ -634,7 +689,7 @@ export function useLiveSpeech({
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
-    pauseOpenAiInput();
+    pauseInputForReply();
     setSelectedReplyId(messageId);
     setPhase('speaking');
     patchMessage(messageId, { status: 'generating_voice', error: null });
@@ -666,7 +721,7 @@ export function useLiveSpeech({
       const outcome = reportSynthesisFailure(err, (patch) => patchMessage(messageId, patch));
       if (!isVoiceStoppedMessage(messageId)) {
         setSynthesisBanner(err, outcome);
-        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        const nextPhase = hasLiveConnection() ? 'listening' : 'idle';
         setPhase(nextPhase);
         syncOpenAiInputWithMic(nextPhase);
       }
@@ -703,7 +758,7 @@ export function useLiveSpeech({
 
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
-    pauseOpenAiInput();
+    pauseInputForReply();
     clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, {
@@ -778,7 +833,7 @@ export function useLiveSpeech({
       if (!isVoiceStoppedMessage(messageId)) {
         setSynthesisBanner(err, outcome);
         setSelectedReplyId('');
-        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        const nextPhase = hasLiveConnection() ? 'listening' : 'idle';
         setPhase(nextPhase);
         syncOpenAiInputWithMic(nextPhase);
       }
@@ -804,7 +859,7 @@ export function useLiveSpeech({
     if (!isVoiceStoppedMessage(state.messageId)) {
       setSynthesisBanner(err, outcome);
       setSelectedReplyId('');
-      const nextPhase = socketRef.current ? 'listening' : 'idle';
+      const nextPhase = hasLiveConnection() ? 'listening' : 'idle';
       setPhase(nextPhase);
       syncOpenAiInputWithMic(nextPhase);
     }
@@ -874,7 +929,7 @@ export function useLiveSpeech({
     streamedFastReplyRef.current = state;
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
-    pauseOpenAiInput();
+    pauseInputForReply();
     clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, {
@@ -912,7 +967,7 @@ export function useLiveSpeech({
   async function synthesizeFullQueuedAssistantReply(messageId, text, runId, synthesis, activeRefParams) {
     currentSynthesisMessageIdRef.current = messageId;
     cancelledReplyIdsRef.current.delete(messageId);
-    pauseOpenAiInput();
+    pauseInputForReply();
     clearReplySelectionUnlessPlaying();
     setPhase('speaking');
     patchMessage(messageId, { status: 'generating_voice', error: null, audioParts: [] });
@@ -993,7 +1048,7 @@ export function useLiveSpeech({
       if (!isVoiceStoppedMessage(messageId)) {
         setSynthesisBanner(err, outcome);
         setSelectedReplyId('');
-        const nextPhase = socketRef.current ? 'listening' : 'idle';
+        const nextPhase = hasLiveConnection() ? 'listening' : 'idle';
         setPhase(nextPhase);
         syncOpenAiInputWithMic(nextPhase);
       }
@@ -1075,7 +1130,20 @@ export function useLiveSpeech({
     videoPositionTimerRef.current = window.setInterval(sync, VIDEO_POSITION_SYNC_INTERVAL_MS);
   }
 
+  function hasLiveConnection() {
+    return Boolean(socketRef.current) || reconnectingRef.current;
+  }
+
+  function stopReconnect() {
+    setReconnecting(false);
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }
+
   function closeSocket() {
+    stopReconnect();
     stopKeepAlive();
     stopVideoPositionSync();
     if (socketRef.current) {
@@ -1092,19 +1160,12 @@ export function useLiveSpeech({
     gatePrerollRef.current = [];
     turnVoicedFramesRef.current = 0;
 
-    if (processorRef.current) {
-      processorRef.current.onaudioprocess = null;
-      try { processorRef.current.disconnect(); } catch { /* ignore */ }
-      processorRef.current = null;
+    setUserSpeaking(false);
+    if (micCaptureRef.current) {
+      micCaptureRef.current.stop();
+      micCaptureRef.current = null;
     }
-    if (sourceRef.current) {
-      try { sourceRef.current.disconnect(); } catch { /* ignore */ }
-      sourceRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
+    audioContextRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -1112,6 +1173,7 @@ export function useLiveSpeech({
   }
 
   function endConversationFromSocket() {
+    stopReconnect();
     socketRef.current = null;
     pendingTextRef.current = '';
     stopKeepAlive();
@@ -1134,7 +1196,7 @@ export function useLiveSpeech({
   //   Remaining clips keep generating in the background, marked voiceStopped
   //   so nothing auto-plays them until the user presses Play voice.
   function interruptPlayback({ cancelPendingSynthesis = true } = {}) {
-    if (phaseRef.current !== 'speaking') return;
+    if (phaseRef.current !== 'speaking' && phaseRef.current !== 'thinking') return;
     const playback = findSelectedPlayback(messagesRef.current, selectedReplyIdRef.current);
     const currentReplyId = playback?.message.id || currentSynthesisMessageIdRef.current;
     if (!playback && !currentReplyId) return;
@@ -1186,7 +1248,7 @@ export function useLiveSpeech({
       // being generated in the background chain on after the replay.
       patchMessage(messageId, { voiceStopped: false });
     }
-    pauseOpenAiInput();
+    pauseInputForReply();
     setSelectedReplyId(playbackId);
     setPhase('speaking');
   }
@@ -1214,27 +1276,18 @@ export function useLiveSpeech({
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
+        ...(micConstraintsRef.current || {}),
       },
     });
   }
 
-  function startMicCapture(stream) {
+  async function startMicCapture(stream) {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) {
       setSpeechApiAvailable(false);
       throw new Error('This browser does not support live audio processing.');
     }
 
-    const audioCtx = new AudioContextCtor();
-    const source = audioCtx.createMediaStreamSource(stream);
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-
-    source.connect(processor);
-    processor.connect(audioCtx.destination);
-
-    audioContextRef.current = audioCtx;
-    sourceRef.current = source;
-    processorRef.current = processor;
     setSpeechApiAvailable(true);
     setMicInputEnabled(true);
     voiceGateRef.current = createVoiceGateState();
@@ -1242,17 +1295,22 @@ export function useLiveSpeech({
     turnVoicedFramesRef.current = 0;
 
     let smoothedLevel = 0;
-    processor.onaudioprocess = (event) => {
-      const input = event.inputBuffer.getChannelData(0);
-      const output = event.outputBuffer.getChannelData(0);
-      output.fill(0);
-
+    let shownLevel = 0;
+    // Every frame is 24 kHz mono, already resampled with an anti-aliasing filter.
+    const handleFrame = (input) => {
       const rms = getRms(input);
       smoothedLevel = smoothedLevel * 0.82 + rms * 0.18;
-      setAudioLevel(Math.min(1, smoothedLevel * 5));
+      // Only re-render for a visible change in the level meter.
+      const level = Math.min(1, smoothedLevel * 5);
+      if (Math.abs(level - shownLevel) > 0.03) {
+        shownLevel = level;
+        setAudioLevel(level);
+      }
 
       let sentForBargeIn = false;
-      if (shouldTriggerLiveBargeIn({
+      // Full duplex leaves barge-in to OpenAI's VAD (user.speech.started), which
+      // hears real speech instead of guessing from loudness.
+      if (!fullDuplexRef.current && shouldTriggerLiveBargeIn({
         listeningMode: listeningModeRef.current,
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current || bargeInArmedRef.current,
@@ -1272,36 +1330,57 @@ export function useLiveSpeech({
         setMicInputEnabled(true);
         setBargeInArmed(false);
         interruptPlayback();
-        sentForBargeIn = sendAudioChunk(input, audioCtx.sampleRate);
+        sentForBargeIn = sendAudioChunk(input, MIC_TARGET_SAMPLE_RATE);
         if (sentForBargeIn && rms > 0.006) {
           pendingInputAudioRef.current = true;
           turnVoicedFramesRef.current += 1;
         }
       }
 
-      if (shouldSendLiveMicAudio({
+      if (shouldSendLiveMicAudio({ fullDuplex: fullDuplexRef.current,
         listeningMode: listeningModeRef.current,
         phase: phaseRef.current,
         micInputEnabled: micInputEnabledRef.current,
       }) && !sentForBargeIn) {
+        // Ungated (Live MC): stream every frame and let OpenAI's VAD find the
+        // speech. A fixed RMS threshold drops soft or distant voices outright.
+        if (!noiseGateRef.current) {
+          const sent = sendAudioChunk(input, MIC_TARGET_SAMPLE_RATE);
+          if (sent && rms >= VOICE_GATE.threshold) {
+            pendingInputAudioRef.current = true;
+            turnVoicedFramesRef.current += 1;
+          }
+          return;
+        }
         // Noise-gate what OpenAI hears: sub-threshold frames are buffered, not
         // sent, so its server VAD can't flag breaths/clicks as new speech. On
         // opening, replay the pre-roll so soft speech onsets aren't clipped.
+        const wasOpen = voiceGateRef.current.open;
         const gate = nextVoiceGateState(voiceGateRef.current, rms);
         voiceGateRef.current = gate;
         if (gate.open) {
+          gateSilenceTailRef.current = 0;
           if (gate.justOpened) {
             for (const buffered of gatePrerollRef.current) {
-              sendAudioChunk(buffered, audioCtx.sampleRate);
+              sendAudioChunk(buffered, MIC_TARGET_SAMPLE_RATE);
             }
             gatePrerollRef.current = [];
           }
-          const sent = sendAudioChunk(input, audioCtx.sampleRate);
+          const sent = sendAudioChunk(input, MIC_TARGET_SAMPLE_RATE);
           if (sent && rms >= VOICE_GATE.threshold) {
             pendingInputAudioRef.current = true;
             turnVoicedFramesRef.current += 1;
           }
         } else {
+          // OpenAI's VAD ends a turn by hearing silence after speech; if the
+          // stream simply stops when the gate closes, the turn hangs on
+          // "Listening..." until noise reopens it. Keep its clock running with
+          // true zeros (never mistaken for speech) for a bounded tail.
+          if (wasOpen) gateSilenceTailRef.current = VOICE_GATE_SILENCE_TAIL_FRAMES;
+          if (gateSilenceTailRef.current > 0) {
+            gateSilenceTailRef.current -= 1;
+            sendAudioChunk(new Float32Array(input.length), MIC_TARGET_SAMPLE_RATE);
+          }
           // The processor reuses `input`; the pre-roll needs its own copy.
           gatePrerollRef.current.push(new Float32Array(input));
           if (gatePrerollRef.current.length > VOICE_GATE.prerollFrames) {
@@ -1310,6 +1389,19 @@ export function useLiveSpeech({
         }
       }
     };
+    // Gated pages keep ~85 ms frames (their gate timings assume it); ungated
+    // capture uses 40 ms frames so OpenAI's VAD hears the end of speech sooner.
+    const capture = await startMicFrames(stream, {
+      frameSize: noiseGateRef.current ? 2048 : 960,
+      onFrame: handleFrame,
+      AudioContextCtor,
+    });
+    if (streamRef.current !== stream) {
+      capture.stop();
+      return;
+    }
+    micCaptureRef.current = capture;
+    audioContextRef.current = capture.audioContext;
   }
 
   async function enableMicInput() {
@@ -1319,7 +1411,7 @@ export function useLiveSpeech({
     }
     if (micInputEnabledRef.current) return;
 
-    if (processorRef.current && streamRef.current) {
+    if (micCaptureRef.current && streamRef.current) {
       setMicInputEnabled(true);
       setBargeInArmed(false);
       syncOpenAiInputWithMic();
@@ -1338,7 +1430,8 @@ export function useLiveSpeech({
         return;
       }
       streamRef.current = stream;
-      startMicCapture(stream);
+      await startMicCapture(stream);
+      if (micRunId !== runIdRef.current || isCancelledRef.current) return;
       syncOpenAiInputWithMic();
       if (isLiveInputPhase(phaseRef.current)) {
         setInterimTranscript('Listening...');
@@ -1358,7 +1451,9 @@ export function useLiveSpeech({
     const action = getMicOffAction({
       phase: phaseAtToggle,
       hasPendingAudio: pendingInputAudioRef.current,
-      hasVoiceEvidence: turnVoicedFramesRef.current >= MIN_COMMIT_VOICE_FRAMES,
+      // OpenAI's VAD hearing speech is evidence too: a quiet voice may never
+      // cross the local loudness threshold, and must still be sent, not dropped.
+      hasVoiceEvidence: turnVoicedFramesRef.current >= MIN_COMMIT_VOICE_FRAMES || userSpeakingRef.current,
     });
 
     if (action === 'commit') {
@@ -1504,10 +1599,21 @@ export function useLiveSpeech({
         endConversationFromSocket();
         break;
 
-      case 'session.ready':
+      case 'session.ready': {
         if (sessionReadyTimerRef.current) {
           window.clearTimeout(sessionReadyTimerRef.current);
           sessionReadyTimerRef.current = null;
+        }
+        const resumed = reconnectingRef.current;
+        setReconnecting(false);
+        reconnectAttemptRef.current = 0;
+        sessionEverReadyRef.current = true;
+        if (resumed) setNotice('');
+        // A reply still playing from before the drop keeps playing; only the
+        // new gateway session's input gate needs to match it.
+        if (resumed && phaseRef.current === 'speaking') {
+          syncOpenAiInputWithMic('speaking');
+          break;
         }
         setPhase('listening');
         // A text-only session has no mic, so "Listening..." would be a lie.
@@ -1515,8 +1621,17 @@ export function useLiveSpeech({
         setNotice('');
         flushPendingTextMessage();
         break;
+      }
 
       case 'user.speech.started': {
+        setUserSpeaking(true);
+        // Continuous full duplex: speaking over the AI, or again while a reply
+        // is being prepared, cancels that reply (OpenAI already stopped its
+        // generation). Turn-based never gets here: its mic is closed by then.
+        if (fullDuplexRef.current && listeningModeRef.current !== 'turns'
+          && (phaseRef.current === 'speaking' || phaseRef.current === 'thinking')) {
+          interruptPlayback();
+        }
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = true;
           // A new turn starting proves the previous turn is over: if its bubble
@@ -1535,6 +1650,7 @@ export function useLiveSpeech({
       }
 
       case 'user.speech.stopped': {
+        setUserSpeaking(false);
         if (phaseRef.current !== 'speaking') {
           pendingInputAudioRef.current = false;
           // The server closed this turn; voiced frames from it must not count
@@ -1638,7 +1754,7 @@ export function useLiveSpeech({
             currentSynthesisMessageIdRef.current = '';
           }
           setSelectedReplyId('');
-          const nextPhase = socketRef.current ? 'listening' : 'idle';
+          const nextPhase = hasLiveConnection() ? 'listening' : 'idle';
           setPhase(nextPhase);
           syncOpenAiInputWithMic(nextPhase);
         }
@@ -1740,6 +1856,9 @@ export function useLiveSpeech({
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
     isCancelledRef.current = false;
+    stopReconnect();
+    reconnectAttemptRef.current = 0;
+    sessionEverReadyRef.current = false;
     messageSeqRef.current = 0;
     assistantTextRef.current = '';
     pendingTextRef.current = '';
@@ -1773,7 +1892,8 @@ export function useLiveSpeech({
           return false;
         }
         streamRef.current = stream;
-        startMicCapture(stream);
+        await startMicCapture(stream);
+        if (runId !== runIdRef.current || isCancelledRef.current) return false;
       } catch (err) {
         conversationSynthesisRef.current = null;
         stopMicCapture();
@@ -1783,40 +1903,88 @@ export function useLiveSpeech({
       }
     }
 
-    const socket = createLiveChatSocket({
-      language: liveLanguage,
-      systemPrompt: systemPromptRef.current,
-      // Same gate the REST client uses, so the socket and the API agree on
-      // whether this build authenticates at all.
-      getAuthToken: shouldAttachApiToken() ? acquireApiToken : null,
-      onOpen: () => {
-        if (runId === runIdRef.current) {
-          setNotice('Connected. Preparing live chat...');
-        }
-      },
-      onMessage: (event) => handleSocketEvent(event, runId),
-      onError: (err) => {
-        if (runId !== runIdRef.current) return;
-        setError(friendlyLiveError(err.message, { fallback: 'The GPU is restarting — reconnecting shortly.' }));
-        endConversationFromSocket();
-      },
-      onClose: () => {
-        if (runId !== runIdRef.current) return;
-        if (phaseRef.current !== 'idle' && phaseRef.current !== 'stopping') {
-          endConversationFromSocket();
-        }
-      },
-    });
-    socketRef.current = socket;
+    connectLiveSocket(runId, systemPromptRef.current);
     sessionReadyTimerRef.current = window.setTimeout(() => {
       if (runId !== runIdRef.current || phaseRef.current !== 'connecting') return;
       sessionReadyTimerRef.current = null;
       setError('Live chat setup timed out before the AI session became ready. End the chat and try once more.');
       endConversationFromSocket();
     }, LIVE_SESSION_READY_TIMEOUT_MS);
-    startKeepAlive();
     startVideoPositionSync();
     return true;
+  }
+
+  // Opens the gateway socket for this run; after a drop, reopens it. Only the
+  // current socket may end or reconnect the conversation, so a replaced
+  // socket's late error/close is ignored.
+  function connectLiveSocket(runId, prompt) {
+    let socket = null;
+    let ready = false;
+    let readyTimer = null;
+    const isCurrent = () => runId === runIdRef.current && socket !== null && socketRef.current === socket;
+    const lose = (err) => {
+      window.clearTimeout(readyTimer);
+      if (!isCurrent() || phaseRef.current === 'idle' || phaseRef.current === 'stopping') return;
+      if (autoReconnectRef.current && sessionEverReadyRef.current) {
+        if (reconnectAttemptRef.current < LIVE_RECONNECT_MAX_ATTEMPTS) {
+          scheduleReconnect(runId);
+          return;
+        }
+        setError('Lost the live connection and could not reconnect. Start the session again.');
+      } else if (err) {
+        setError(friendlyLiveError(err.message, { fallback: 'The GPU is restarting — reconnecting shortly.' }));
+      }
+      endConversationFromSocket();
+    };
+    socket = createLiveChatSocket({
+      language: liveLanguage,
+      systemPrompt: prompt,
+      sessionOptions,
+      // Same gate the REST client uses, so the socket and the API agree on
+      // whether this build authenticates at all.
+      getAuthToken: shouldAttachApiToken() ? acquireApiToken : null,
+      onOpen: () => {
+        if (isCurrent() && !reconnectingRef.current) {
+          setNotice('Connected. Preparing live chat...');
+        }
+      },
+      onMessage: (event) => {
+        if (event?.type === 'session.ready') {
+          ready = true;
+          window.clearTimeout(readyTimer);
+        }
+        handleSocketEvent(event, runId);
+      },
+      onError: (err) => lose(err),
+      onClose: () => lose(null),
+    });
+    socketRef.current = socket;
+    // A reopened socket that never becomes ready counts as another failed attempt.
+    if (reconnectingRef.current) {
+      readyTimer = window.setTimeout(() => {
+        if (!ready) lose(null);
+      }, LIVE_SESSION_READY_TIMEOUT_MS);
+    }
+    startKeepAlive();
+  }
+
+  function scheduleReconnect(runId) {
+    const dropped = socketRef.current;
+    socketRef.current = null;
+    setReconnecting(true);
+    stopKeepAlive();
+    dropped?.close();
+    reconnectAttemptRef.current += 1;
+    // A reply that was still being written is lost with the old session.
+    if (phaseRef.current === 'thinking') setPhase('listening');
+    setInterimTranscript('');
+    setNotice('Connection dropped — reconnecting...');
+    if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (runId !== runIdRef.current || !reconnectingRef.current) return;
+      connectLiveSocket(runId, buildReconnectSystemPrompt(systemPromptRef.current, messagesRef.current));
+    }, liveReconnectDelayMs(reconnectAttemptRef.current));
   }
 
   // The mic button's entry point. Kept as a zero-argument wrapper because it is
@@ -1856,10 +2024,10 @@ export function useLiveSpeech({
   }
 
   function settleAfterPlayback() {
-    const nextPhase = socketRef.current ? 'listening' : 'idle';
+    const nextPhase = hasLiveConnection() ? 'listening' : 'idle';
     setPhase(nextPhase);
     syncOpenAiInputWithMic(nextPhase);
-    setInterimTranscript(socketRef.current && micInputEnabledRef.current ? 'Listening...' : '');
+    setInterimTranscript(hasLiveConnection() && micInputEnabledRef.current ? 'Listening...' : '');
     if (!micInputEnabledRef.current && bargeInArmedRef.current) {
       stopMicCapture();
     }
@@ -2002,6 +2170,8 @@ export function useLiveSpeech({
     isBargeInArmed: bargeInArmed,
     notice,
     isConversationActive: phase !== 'idle',
+    isReconnecting,
+    isUserSpeaking,
     shouldPlayAudio,
     start,
     stop,

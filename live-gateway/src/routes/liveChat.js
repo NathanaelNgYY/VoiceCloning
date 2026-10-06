@@ -24,7 +24,13 @@ import {
   parseAuthFrame,
 } from '../services/liveChatAuth.js';
 import { OpenAiRealtimeBridge } from '../services/openaiRealtimeBridge.js';
-import { normalizeRealtimeLanguage } from '../services/openaiRealtimeEvents.js';
+import {
+  NOISE_REDUCTION,
+  normalizeRealtimeLanguage,
+  TRANSCRIPTION_MODELS,
+  normalizeTurnDetection,
+  TURN_EAGERNESS,
+} from '../services/openaiRealtimeEvents.js';
 import { createTranscriptStore } from '../services/transcriptStore.js';
 import { enforceFacultyAccess, isFacultyRequest } from '../services/facultyAccess.js';
 
@@ -241,12 +247,32 @@ export function parseLiveChatInit(data) {
 
   return {
     systemPrompt: typeof message.systemPrompt === 'string' ? message.systemPrompt : '',
+    ...(typeof message.turnEagerness === 'string' ? { turnEagerness: message.turnEagerness } : {}),
+    ...(message.turnDetection && typeof message.turnDetection === 'object' ? { turnDetection: message.turnDetection } : {}),
+    ...(typeof message.transcriptionPrompt === 'string' ? { transcriptionPrompt: message.transcriptionPrompt } : {}),
+    ...(typeof message.noiseReduction === 'string' ? { noiseReduction: message.noiseReduction } : {}),
+    ...(typeof message.transcriptionModel === 'string' ? { transcriptionModel: message.transcriptionModel } : {}),
   };
 }
 
 export function applyLiveChatInitToBridge(bridge, init) {
   if (init && typeof init.systemPrompt === 'string' && init.systemPrompt.trim()) {
     bridge.systemPrompt = init.systemPrompt;
+  }
+  if (init && TURN_EAGERNESS.has(init.turnEagerness)) {
+    bridge.turnEagerness = init.turnEagerness;
+  }
+  if (init && normalizeTurnDetection(init.turnDetection)) {
+    bridge.turnDetection = init.turnDetection;
+  }
+  if (init && typeof init.transcriptionPrompt === 'string') {
+    bridge.transcriptionPrompt = init.transcriptionPrompt.slice(0, 1000);
+  }
+  if (init && NOISE_REDUCTION.has(init.noiseReduction)) {
+    bridge.noiseReduction = init.noiseReduction;
+  }
+  if (init && TRANSCRIPTION_MODELS.has(init.transcriptionModel)) {
+    bridge.transcriptionModel = init.transcriptionModel;
   }
 }
 

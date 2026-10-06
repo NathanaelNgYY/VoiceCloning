@@ -1,7 +1,13 @@
 # Active TODO
 
+- [ ] Live MC: read-aloud test with a real human voice (names, long sentence with pauses, short "yes")
+  and compare transcript bubbles word for word; tune noise/pause defaults from it.
+
 - [ ] Live MC (staging): run a real human microphone session in Chrome/Edge in both turn-based and
-  continuous modes (headphones for continuous). Only scripted text/PCM turns have been verified.
+  continuous modes (headphones for continuous). Scripted and fake-mic browser turns pass (2026-10-06).
+
+- [ ] Redeploy the other live clients (chatbot/GI, Faculty, lectures) so they get the 2026-10-06
+  VAD silence-tail fix in the shared `useLiveSpeech` hook.
 
 - [ ] Reconcile `origin/codex/staging-multi-user-scaling` (2 commits not on local branches) with
   `separate-containers-new` before re-syncing Dev/Staging pointers; it was not force-pushed.
