@@ -12,14 +12,17 @@ then the coordinator routes by the exact GPT+SoVITS weight pair rather than disp
 
 **Environment:** `staging` (the stable copy for users; development happens on `dev`)
 **Region:** ap-northeast-2 (Seoul) · **Account:** 329599637774
-**Last control-plane inventory:** 2026-09-05 · **Last public-path check:** 2026-08-25
+**Last control-plane inventory:** 2026-10-08 · **Last public-path check:** 2026-08-25
 
-**Operational shutdown (2026-09-05):** Prof. Sung lecture GPU capacity is intentionally off.
-The fixed staging and Dev GPUs are stopped; staging ASG `vcs-staging-gpu-inference` is
-min/desired 0 with no members. Both daily ASG actions preserve min/desired 0, the staging
-coordinator is routing-only, and both GPU-control Lambdas use an always-closed `0` to `0`
-schedule so browser traffic cannot restart a fixed GPU. Restore the prior schedule,
-coordinator mode, and ASG floor deliberately before the next lecture.
+**Operational shutdown (2026-10-08):** Live AWS history confirmed both daily ASG actions
+restored minimum 1 after manual scale-to-zero, relaunching GPUs. ASG
+`vcs-staging-gpu-inference` and both daily actions now have min/desired/max 0.
+The staging coordinator is routing-only. Both fixed GPU-control Lambdas have an
+always-closed enabled `0` to `0` schedule, blocking browser-triggered starts.
+Fixed staging, Dev, and the Dev manual-routing GPU are stopped. The remaining ASG
+worker is in EC2 `shutting-down` state. Restore capacity only deliberately; the prior
+maximum was 192. This supersedes older capacity baselines below. Provisioning/event
+scripts may restore their own defaults; do not run them during this shutdown.
 
 > **Keep this file up to date.** Any change to staging infra (console, CLI, or script) must be reflected here in the same PR/commit. Every ID below was read from AWS on the date above — an AI session can diff this file against `aws describe-*` output to detect drift.
 >

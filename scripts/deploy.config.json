@@ -20,7 +20,17 @@
       "serviceLinkedRoleReady": true,
       "created": true,
       "desiredCapacity": 0,
-      "maxCapacity": 192,
+      "maxCapacity": 0,
+      "operationalShutdown": {
+        "date": "2026-10-08",
+        "minCapacity": 0,
+        "dailyScheduledMinDesiredMax": 0,
+        "coordinatorMode": "routing-only",
+        "fixedGpuScheduleEnabled": true,
+        "fixedGpuScheduleStartHour": 0,
+        "fixedGpuScheduleEndHour": 0,
+        "previousMaxCapacity": 192
+      },
       "eventPreWarmCapacity": 50,
       "scheduledActionsCreated": true,
       "eventPreWarmAt": "2026-08-04T13:30:00+08:00",
