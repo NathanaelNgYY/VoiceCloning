@@ -7,6 +7,7 @@ import { Maximize2, Mic, MicOff, Minimize2, Phone, PhoneOff } from 'lucide-react
 
 const REFERENCE_PARAMS = {};
 const CAPTURE_STORAGE_KEY = 'mc-capture-settings-v2';
+const CONSOLE_TABS = [['transcript', 'Transcript'], ['capture', 'Voice capture'], ['instructions', 'Instructions']];
 
 function loadCaptureSettings() {
   try {
@@ -30,6 +31,7 @@ export default function McSessionPage() {
   const [applied, setApplied] = useState(null);
   const sessionMode = applied ? applied.mode : listeningMode;
   const sessionCapture = applied ? applied.capture : captureSettings;
+  const [consoleTab, setConsoleTab] = useState('transcript');
   const [playbackError, setPlaybackError] = useState('');
   const [fullscreen, setFullscreen] = useState(false);
   // Browsers that refuse element fullscreen (iOS Safari, embedded views) get the
@@ -94,7 +96,18 @@ export default function McSessionPage() {
     for (const transcript of [transcriptRef.current, stageTranscriptRef.current]) {
       if (transcript) transcript.scrollTop = transcript.scrollHeight;
     }
-  }, [live.messages, live.interimTranscript, immersive]);
+  }, [live.messages, live.interimTranscript, immersive, consoleTab]);
+
+  // Arrow keys move between console tabs, per the WAI-ARIA tabs pattern.
+  function onConsoleTabKeyDown(event) {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const index = CONSOLE_TABS.findIndex(([id]) => id === consoleTab);
+    const [next] = CONSOLE_TABS[(index + step + CONSOLE_TABS.length) % CONSOLE_TABS.length];
+    setConsoleTab(next);
+    document.getElementById(`mc-tab-${next}`)?.focus();
+  }
 
   async function toggleFullscreen() {
     if (document.fullscreenElement === stageRef.current) await document.exitFullscreen().catch(() => {});
@@ -142,23 +155,33 @@ export default function McSessionPage() {
 
   return (
     <div className="min-h-[100dvh] bg-[#faf9f7] text-[#252b3a]">
-      <header className="mx-auto flex max-w-5xl items-center justify-between gap-4 border-b border-[#e5e3df] px-6 py-6 sm:px-10">
-        <img src={ntuLogo} alt="Nanyang Technological University Singapore" className="h-auto w-44 sm:w-52" />
-        <span className="text-xs font-medium tracking-[0.16em] text-slate-500">LIVE SESSION</span>
+      <header className="border-b border-[#e5e3df] bg-white">
+        <div className="mx-auto flex max-w-[85rem] items-center justify-between gap-4 px-6 py-4 sm:px-10">
+          <img src={ntuLogo} alt="Nanyang Technological University Singapore" className="h-auto w-40 sm:w-44" />
+          <div className="flex items-center gap-3">
+            {active && <span className="inline-flex items-center gap-2 rounded-full bg-[#fdf1f2] px-3 py-1.5 text-xs font-semibold text-[#a6192e]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#a6192e]" />Live</span>}
+            <span className="text-xs font-medium tracking-[0.16em] text-slate-500">LIVE SESSION</span>
+          </div>
+        </div>
       </header>
-      <main className="mx-auto max-w-3xl px-6 pb-12 pt-12 sm:px-10 sm:pt-16">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#a6192e]">A conversation on stage</p>
-        <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-5xl">Meet your AI co-host.</h1>
-        <p className="mt-4 max-w-lg text-base leading-7 text-slate-600">You lead the moment. Your AI MC joins the conversation, speaking with the Dean voice.</p>
+      <main className="mx-auto max-w-[85rem] px-6 pb-12 pt-8 sm:px-10 sm:pt-10">
+        <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#a6192e]">A conversation on stage</p>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-[2.5rem] sm:leading-tight">Meet your AI co-host.</h1>
+          </div>
+          <p className="max-w-md text-[15px] leading-7 text-slate-600">You lead the moment. Your AI MC joins the conversation, speaking with the Dean voice.</p>
+        </div>
 
-        <section aria-label="Session controls" className="mt-10 rounded-3xl border border-[#e5e3df] bg-white p-3 sm:p-4">
+        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
+        <section aria-label="Session controls" className="min-w-0 rounded-3xl border border-[#e5e3df] bg-white p-3 sm:p-4">
           <style>{'@keyframes mc-wave{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}@keyframes mc-dot{0%,80%,100%{opacity:.25}40%{opacity:1}}'}</style>
           <div ref={stageRef} className={immersive ? `${windowFill ? 'fixed inset-0 z-50' : 'relative'} grid h-[100dvh] w-full grid-rows-[minmax(0,1fr)_minmax(12rem,0.6fr)] bg-white text-[#252b3a] md:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] md:grid-rows-1` : 'relative'}>
-            <div className={`relative isolate flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_center,#2b3157_0%,#151a33_70%)] ${immersive ? '' : 'aspect-video rounded-2xl'}`}>
+            <div className={`relative isolate flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_center,#2b3157_0%,#151a33_70%)] ${immersive ? '' : 'aspect-[4/3] rounded-2xl sm:aspect-video'}`}>
               {/* Avatar slot: the future avatar video/image goes here with object-contain, centred and never stretched. */}
               <div role="img" aria-label="AI avatar placeholder" className="flex flex-col items-center text-center">
-                <div className={`flex items-center justify-center rounded-full border border-white/15 bg-white/5 font-semibold tracking-wide text-white/80 transition-shadow ${immersive ? 'h-40 w-40 text-4xl' : 'h-24 w-24 text-2xl'} ${live.phase === 'speaking' ? 'ring-4 ring-[#a6192e]/70' : ''}`}>AI</div>
-                <p className={`mt-5 font-medium text-white/85 ${immersive ? 'text-xl' : 'text-base'}`}>AI MC</p>
+                <div className={`flex items-center justify-center rounded-full border border-white/15 bg-white/5 font-semibold tracking-wide text-white/80 transition-shadow ${immersive ? 'h-40 w-40 text-4xl' : 'h-24 w-24 text-2xl sm:h-32 sm:w-32 sm:text-3xl'} ${live.phase === 'speaking' ? 'ring-4 ring-[#a6192e]/70' : ''}`}>AI</div>
+                <p className={`mt-5 font-medium text-white/85 ${immersive ? 'text-xl' : 'text-base sm:text-lg'}`}>AI MC</p>
                 <p className="mt-1 text-xs text-white/50">Avatar coming soon</p>
               </div>
               <p className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-black/45 px-3 py-1.5 text-xs font-medium text-white backdrop-blur sm:left-5 sm:top-5">
@@ -197,30 +220,48 @@ export default function McSessionPage() {
               <p className="shrink-0 border-t border-[#efeee9] px-6 py-3 text-xs text-slate-400">AI-generated · Cloned Dean voice</p>
             </aside>}
           </div>
-          <div className="flex items-center gap-3 px-3 pt-4" role="status" aria-live="polite">
-            <span className={`h-2.5 w-2.5 rounded-full ${active ? 'bg-[#a6192e]' : 'bg-slate-300'}`} />
-            <span className="text-sm font-medium">{status}</span>
-          </div>
-          <fieldset className="mx-3 mt-4 border-t border-slate-100 pb-3 pt-5">
-            <legend className="sr-only">Listening mode</legend>
-            <div className="flex flex-wrap justify-center gap-5 text-sm">
-              {[['turns', 'Turn-based'], ['continuous', 'Continuous listening']].map(([value, label]) => (
-                <label key={value} className="flex cursor-pointer items-center gap-2"><input type="radio" name="listening-mode" value={value} checked={listeningMode === value} onChange={() => setListeningMode(value)} className="accent-[#a6192e]" />{label}</label>
-              ))}
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-2 pt-4">
+            <div className="flex items-center gap-3" role="status" aria-live="polite">
+              <span className={`h-2.5 w-2.5 rounded-full ${active ? 'bg-[#a6192e]' : 'bg-slate-300'}`} />
+              <span className="text-sm font-medium">{status}</span>
             </div>
-            <p className="mt-3 text-center text-xs leading-5 text-slate-500">{listeningMode === 'turns'
+            <fieldset className="flex w-full gap-1 rounded-full border border-[#e5e3df] bg-[#f6f5f2] p-1 sm:w-auto">
+              <legend className="sr-only">Listening mode</legend>
+              {[['turns', 'Turn-based'], ['continuous', 'Continuous listening']].map(([value, label]) => (
+                <label key={value} className={`flex min-h-9 flex-1 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full px-3 text-xs transition-colors sm:flex-none sm:px-4 sm:text-[13px] focus-within:outline focus-within:outline-2 focus-within:outline-[#a6192e] ${listeningMode === value ? 'bg-white font-semibold shadow-sm' : 'text-slate-600 hover:text-[#252b3a]'}`}><input type="radio" name="listening-mode" value={value} checked={listeningMode === value} onChange={() => setListeningMode(value)} className="m-0 accent-[#a6192e]" />{label}</label>
+              ))}
+            </fieldset>
+          </div>
+          <div className="px-2 pb-1">
+            <p className="mt-3 text-xs leading-5 text-slate-500">{listeningMode === 'turns'
               ? 'Speak, then pause: the AI MC replies when you finish and always completes its reply. Your mic closes while it replies and reopens after. Mute any time; muting mid-sentence sends what you said.'
               : 'Hands-free: the mic stays open, and talking over the AI MC interrupts it. Keep its speaker away from your mic, or use headphones.'}</p>
-          </fieldset>
+          </div>
           {pendingChanges && <p role="status" className="mx-3 mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm text-amber-900">Changes apply to the next session. End the session to switch to them.</p>}
           {!live.speechApiAvailable && <p role="alert" className="mx-3 mt-5 text-sm text-red-800">This browser does not support microphone audio. Use a current Chrome, Edge, or Safari browser.</p>}
           {live.error && <p role="alert" className="mx-3 mt-5 text-sm leading-6 text-red-800">{live.error}</p>}
           {playbackError && <div role="alert" className="mx-3 mt-5 text-sm text-red-800"><p>{playbackError}</p>{live.shouldPlayAudio && <button className="mt-2 underline" onClick={() => audioRef.current.play().then(() => setPlaybackError('')).catch(() => setPlaybackError('Audio is still unavailable. Check your audio output and retry.'))}>Play reply</button>}</div>}
         </section>
 
-        <details className="mt-7 border-b border-[#e5e3df] pb-5">
-          <summary className="cursor-pointer text-sm font-medium">Voice capture settings</summary>
-          <div className="mt-5 grid gap-8 sm:grid-cols-2">
+        {/* On large screens the console is pinned to the stage column's height
+            (absolute inner box) so a long transcript or prompt scrolls inside it
+            instead of stretching the row. */}
+        <aside aria-label="Session console" className="relative flex min-h-[16rem] min-w-0 flex-col lg:min-h-[24rem] overflow-hidden rounded-3xl border border-[#e5e3df] bg-white">
+          <div className="flex min-h-0 flex-1 flex-col lg:absolute lg:inset-0">
+          <div role="tablist" aria-label="Session console" className="flex shrink-0 gap-1 overflow-x-auto border-b border-[#efeee9] px-3 pt-2">
+            {CONSOLE_TABS.map(([id, label]) => (
+              <button key={id} id={`mc-tab-${id}`} type="button" role="tab" aria-selected={consoleTab === id} aria-controls={`mc-panel-${id}`} tabIndex={consoleTab === id ? 0 : -1} onClick={() => setConsoleTab(id)} onKeyDown={onConsoleTabKeyDown} className={`-mb-px min-h-11 whitespace-nowrap border-b-2 px-3.5 text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#a6192e] ${consoleTab === id ? 'border-[#a6192e] font-semibold text-[#252b3a]' : 'border-transparent text-slate-500 hover:text-[#252b3a]'}`}>
+                {label}{id === 'transcript' && live.messages.length > 0 && ` · ${live.messages.length}`}
+              </button>
+            ))}
+          </div>
+          {consoleTab === 'transcript' && <div id="mc-panel-transcript" role="tabpanel" aria-labelledby="mc-tab-transcript" className="flex min-h-0 flex-1 flex-col">
+            <div ref={transcriptRef} className="max-h-[28rem] min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 lg:max-h-none" role="log" aria-label="Conversation transcript">
+              {transcriptContent()}
+            </div>
+          </div>}
+          {consoleTab === 'capture' && <div id="mc-panel-capture" role="tabpanel" aria-labelledby="mc-tab-capture" className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-1">
             <div>
               <label htmlFor="mc-noise" className="flex items-baseline justify-between text-sm text-slate-600">Background noise filter<span className="font-medium text-[#252b3a]">{NOISE_LEVELS[captureSettings.noiseLevel].label}</span></label>
               <input id="mc-noise" type="range" min={0} max={NOISE_LEVELS.length - 1} step={1} value={captureSettings.noiseLevel} onChange={(event) => updateCaptureSettings({ noiseLevel: Number(event.target.value) })} aria-valuetext={NOISE_LEVELS[captureSettings.noiseLevel].label} className="mt-3 w-full accent-[#a6192e]" />
@@ -234,21 +275,17 @@ export default function McSessionPage() {
               <p className="mt-2 text-xs leading-5 text-slate-500">Silence that ends your turn. The AI starts replying about {((captureSettings.pauseMs + 600) / 1000).toFixed(1)} s after you stop; a hesitation longer than {(captureSettings.pauseMs / 1000).toFixed(1)} s ends your turn early.</p>
             </div>
           </div>
-          <p className="mt-4 text-xs text-slate-500">Saved in this browser. Applied when a session starts{active ? '; this session keeps the settings it started with.' : '.'}</p>
-        </details>
-        <details className="mt-5 border-b border-[#e5e3df] pb-5">
-          <summary className="cursor-pointer text-sm font-medium">System instructions</summary>
-          <label htmlFor="mc-instructions" className="mt-5 block text-sm text-slate-600">Guide your AI co-host</label>
-          <textarea id="mc-instructions" rows={10} maxLength={12000} value={instructions} disabled={active} onChange={(event) => setInstructions(event.target.value)} className="mt-2 w-full resize-y rounded-xl border border-slate-300 bg-white p-4 text-sm leading-6 focus:outline-[#a6192e] disabled:bg-slate-50" />
-          <p className="mt-2 text-xs text-slate-500">{active ? 'End the session to edit. Changes apply to the next session.' : 'Changes stay in this tab. Add event details here before starting.'}</p>
-        </details>
-        <details className="mt-5 border-b border-[#e5e3df] pb-5">
-          <summary className="cursor-pointer text-sm font-medium">Conversation transcript {live.messages.length > 0 && `(${live.messages.length})`}</summary>
-          <div ref={transcriptRef} className="mt-5 max-h-80 space-y-5 overflow-y-auto" role="log" aria-label="Conversation transcript">
-            {transcriptContent()}
+          <p className="mt-6 text-xs leading-5 text-slate-500">Saved in this browser. Applied when a session starts{active ? '; this session keeps the settings it started with.' : '.'}</p>
+          </div>}
+          {consoleTab === 'instructions' && <div id="mc-panel-instructions" role="tabpanel" aria-labelledby="mc-tab-instructions" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-5">
+            <label htmlFor="mc-instructions" className="block text-sm text-slate-600">Guide your AI co-host</label>
+            <textarea id="mc-instructions" rows={10} maxLength={12000} value={instructions} disabled={active} onChange={(event) => setInstructions(event.target.value)} className="mt-2 min-h-[10rem] w-full flex-1 resize-y rounded-xl border border-slate-300 bg-white p-4 text-sm leading-6 focus:outline-[#a6192e] disabled:bg-slate-50 lg:resize-none" />
+            <p className="mt-2 shrink-0 text-xs text-slate-500">{active ? 'End the session to edit. Changes apply to the next session.' : 'Changes stay in this tab. Add event details here before starting.'}</p>
+          </div>}
           </div>
-        </details>
-        <p className="mt-8 text-xs leading-5 text-slate-500">AI-generated conversation · Cloned Dean voice<br />Microphone audio is sent during the session. End session disconnects the microphone and conversation.</p>
+        </aside>
+        </div>
+        <p className="mt-8 text-xs leading-5 text-slate-500">AI-generated conversation · Cloned Dean voice · Microphone audio is sent during the session. End session disconnects the microphone and conversation.</p>
       </main>
       <audio ref={audioRef} onEnded={live.onAudioEnded} onError={onAudioError} />
     </div>
