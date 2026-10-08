@@ -156,7 +156,7 @@ export default function McSessionPage() {
   return (
     <div className="min-h-[100dvh] bg-[#faf9f7] text-[#252b3a]">
       <header className="border-b border-[#e5e3df] bg-white">
-        <div className="mx-auto flex max-w-[85rem] items-center justify-between gap-4 px-6 py-4 sm:px-10">
+        <div className="mx-auto flex max-w-[110rem] items-center justify-between gap-4 px-6 py-4 sm:px-10">
           <img src={ntuLogo} alt="Nanyang Technological University Singapore" className="h-auto w-40 sm:w-44" />
           <div className="flex items-center gap-3">
             {active && <span className="inline-flex items-center gap-2 rounded-full bg-[#fdf1f2] px-3 py-1.5 text-xs font-semibold text-[#a6192e]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#a6192e]" />Live</span>}
@@ -164,7 +164,7 @@ export default function McSessionPage() {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-[85rem] px-6 pb-12 pt-8 sm:px-10 sm:pt-10">
+      <main className="mx-auto max-w-[110rem] px-6 pb-12 pt-8 sm:px-10 sm:pt-10">
         <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#a6192e]">A conversation on stage</p>
@@ -173,15 +173,17 @@ export default function McSessionPage() {
           <p className="max-w-md text-[15px] leading-7 text-slate-600">You lead the moment. Your AI MC joins the conversation, speaking with the Dean voice.</p>
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
+        <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)]">
         <section aria-label="Session controls" className="min-w-0 rounded-3xl border border-[#e5e3df] bg-white p-3 sm:p-4">
           <style>{'@keyframes mc-wave{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}@keyframes mc-dot{0%,80%,100%{opacity:.25}40%{opacity:1}}'}</style>
           <div ref={stageRef} className={immersive ? `${windowFill ? 'fixed inset-0 z-50' : 'relative'} grid h-[100dvh] w-full grid-rows-[minmax(0,1fr)_minmax(12rem,0.6fr)] bg-white text-[#252b3a] md:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] md:grid-rows-1` : 'relative'}>
-            <div className={`relative isolate flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_center,#2b3157_0%,#151a33_70%)] ${immersive ? '' : 'aspect-[4/3] rounded-2xl sm:aspect-video'}`}>
+            {/* On wide screens the stage takes the window height left after the header,
+                heading and controls (~30rem) rather than a fixed 16:9, so it fills the screen. */}
+            <div className={`relative isolate flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-[radial-gradient(ellipse_at_center,#2b3157_0%,#151a33_70%)] ${immersive ? '' : 'aspect-[4/3] rounded-2xl sm:aspect-video xl:aspect-auto xl:h-[clamp(26rem,calc(100dvh_-_30rem),60rem)]'}`}>
               {/* Avatar slot: the future avatar video/image goes here with object-contain, centred and never stretched. */}
               <div role="img" aria-label="AI avatar placeholder" className="flex flex-col items-center text-center">
-                <div className={`flex items-center justify-center rounded-full border border-white/15 bg-white/5 font-semibold tracking-wide text-white/80 transition-shadow ${immersive ? 'h-40 w-40 text-4xl' : 'h-24 w-24 text-2xl sm:h-32 sm:w-32 sm:text-3xl'} ${live.phase === 'speaking' ? 'ring-4 ring-[#a6192e]/70' : ''}`}>AI</div>
-                <p className={`mt-5 font-medium text-white/85 ${immersive ? 'text-xl' : 'text-base sm:text-lg'}`}>AI MC</p>
+                <div className={`flex items-center justify-center rounded-full border border-white/15 bg-white/5 font-semibold tracking-wide text-white/80 transition-shadow ${immersive ? 'h-40 w-40 text-4xl' : 'h-24 w-24 text-2xl sm:h-32 sm:w-32 sm:text-3xl lg:h-40 lg:w-40 lg:text-4xl'} ${live.phase === 'speaking' ? 'ring-4 ring-[#a6192e]/70' : ''}`}>AI</div>
+                <p className={`mt-5 font-medium text-white/85 ${immersive ? 'text-xl' : 'text-base sm:text-lg lg:text-xl'}`}>AI MC</p>
                 <p className="mt-1 text-xs text-white/50">Avatar coming soon</p>
               </div>
               <p className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-black/45 px-3 py-1.5 text-xs font-medium text-white backdrop-blur sm:left-5 sm:top-5">
@@ -243,11 +245,11 @@ export default function McSessionPage() {
           {playbackError && <div role="alert" className="mx-3 mt-5 text-sm text-red-800"><p>{playbackError}</p>{live.shouldPlayAudio && <button className="mt-2 underline" onClick={() => audioRef.current.play().then(() => setPlaybackError('')).catch(() => setPlaybackError('Audio is still unavailable. Check your audio output and retry.'))}>Play reply</button>}</div>}
         </section>
 
-        {/* On large screens the console is pinned to the stage column's height
+        {/* On wide screens the console is pinned to the stage column's height
             (absolute inner box) so a long transcript or prompt scrolls inside it
             instead of stretching the row. */}
-        <aside aria-label="Session console" className="relative flex min-h-[16rem] min-w-0 flex-col lg:min-h-[24rem] overflow-hidden rounded-3xl border border-[#e5e3df] bg-white">
-          <div className="flex min-h-0 flex-1 flex-col lg:absolute lg:inset-0">
+        <aside aria-label="Session console" className="relative flex min-h-[16rem] min-w-0 flex-col xl:min-h-[24rem] overflow-hidden rounded-3xl border border-[#e5e3df] bg-white">
+          <div className="flex min-h-0 flex-1 flex-col xl:absolute xl:inset-0">
           <div role="tablist" aria-label="Session console" className="flex shrink-0 gap-1 overflow-x-auto border-b border-[#efeee9] px-3 pt-2">
             {CONSOLE_TABS.map(([id, label]) => (
               <button key={id} id={`mc-tab-${id}`} type="button" role="tab" aria-selected={consoleTab === id} aria-controls={`mc-panel-${id}`} tabIndex={consoleTab === id ? 0 : -1} onClick={() => setConsoleTab(id)} onKeyDown={onConsoleTabKeyDown} className={`-mb-px min-h-11 whitespace-nowrap border-b-2 px-3.5 text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#a6192e] ${consoleTab === id ? 'border-[#a6192e] font-semibold text-[#252b3a]' : 'border-transparent text-slate-500 hover:text-[#252b3a]'}`}>
@@ -256,12 +258,12 @@ export default function McSessionPage() {
             ))}
           </div>
           {consoleTab === 'transcript' && <div id="mc-panel-transcript" role="tabpanel" aria-labelledby="mc-tab-transcript" className="flex min-h-0 flex-1 flex-col">
-            <div ref={transcriptRef} className="max-h-[28rem] min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 lg:max-h-none" role="log" aria-label="Conversation transcript">
+            <div ref={transcriptRef} className="max-h-[28rem] min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 xl:max-h-none" role="log" aria-label="Conversation transcript">
               {transcriptContent()}
             </div>
           </div>}
           {consoleTab === 'capture' && <div id="mc-panel-capture" role="tabpanel" aria-labelledby="mc-tab-capture" className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="grid gap-8 sm:grid-cols-2 xl:grid-cols-1">
             <div>
               <label htmlFor="mc-noise" className="flex items-baseline justify-between text-sm text-slate-600">Background noise filter<span className="font-medium text-[#252b3a]">{NOISE_LEVELS[captureSettings.noiseLevel].label}</span></label>
               <input id="mc-noise" type="range" min={0} max={NOISE_LEVELS.length - 1} step={1} value={captureSettings.noiseLevel} onChange={(event) => updateCaptureSettings({ noiseLevel: Number(event.target.value) })} aria-valuetext={NOISE_LEVELS[captureSettings.noiseLevel].label} className="mt-3 w-full accent-[#a6192e]" />
@@ -279,7 +281,7 @@ export default function McSessionPage() {
           </div>}
           {consoleTab === 'instructions' && <div id="mc-panel-instructions" role="tabpanel" aria-labelledby="mc-tab-instructions" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-5">
             <label htmlFor="mc-instructions" className="block text-sm text-slate-600">Guide your AI co-host</label>
-            <textarea id="mc-instructions" rows={10} maxLength={12000} value={instructions} disabled={active} onChange={(event) => setInstructions(event.target.value)} className="mt-2 min-h-[10rem] w-full flex-1 resize-y rounded-xl border border-slate-300 bg-white p-4 text-sm leading-6 focus:outline-[#a6192e] disabled:bg-slate-50 lg:resize-none" />
+            <textarea id="mc-instructions" rows={10} maxLength={12000} value={instructions} disabled={active} onChange={(event) => setInstructions(event.target.value)} className="mt-2 min-h-[10rem] w-full flex-1 resize-y rounded-xl border border-slate-300 bg-white p-4 text-sm leading-6 focus:outline-[#a6192e] disabled:bg-slate-50 xl:resize-none" />
             <p className="mt-2 shrink-0 text-xs text-slate-500">{active ? 'End the session to edit. Changes apply to the next session.' : 'Changes stay in this tab. Add event details here before starting.'}</p>
           </div>}
           </div>
