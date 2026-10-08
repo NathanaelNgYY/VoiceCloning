@@ -130,9 +130,10 @@ export default function McSessionPage() {
     // status line already says what is happening.
     return mcTranscriptEntries(live.messages).map((entry) => (
       <div key={entry.id} className={`flex ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-        <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${entry.role === 'user' ? 'rounded-br-md bg-[#eef0f8] text-[#1d2240]' : 'rounded-bl-md bg-[#f4f3f0]'}`}>
+        <div className={`rounded-2xl ${entry.role === 'user' ? 'max-w-[85%] rounded-br-md bg-[#eef0f8] px-4 py-3 text-[#1d2240]' : 'max-w-[94%] rounded-bl-md bg-[#f4f3f0] px-5 py-4'}`}>
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{entry.role === 'user' ? 'You' : 'AI MC'}</p>
-          {entry.text && <p className="whitespace-pre-wrap break-words text-sm leading-6">{entry.text}{entry.interrupted && <span className="ml-1 text-slate-400">…</span>}</p>}
+          {/* The AI's replies are what the room follows along with, so they read larger than the host's lines. */}
+          {entry.text && <p className={`whitespace-pre-wrap break-words ${entry.role === 'user' ? 'text-sm leading-6' : 'text-lg leading-8'}`}>{entry.text}{entry.interrupted && <span className="ml-1 text-slate-400">…</span>}</p>}
           {entry.interrupted && <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-amber-700">Interrupted</p>}
           {entry.pending && <p aria-label={entry.role === 'user' ? 'Hearing you' : 'Preparing a reply'} className="flex h-6 items-center gap-1">{[0, 1, 2].map((dot) => <span key={dot} className="h-1.5 w-1.5 rounded-full bg-slate-400" style={{ animation: `mc-dot 1.2s ease-in-out ${dot * 0.18}s infinite` }} />)}</p>}
         </div>
